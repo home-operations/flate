@@ -141,7 +141,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					}
 					for _, name := range []string{"dependent", "independent"} {
 						id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
-						if o.store.GetObject(id) == nil || len(res.Manifests[testutil.KustomizationID("flux-system", name)]) != 1 {
+						if o.store.GetObject(id) == nil || len(outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", name)]) != 1 {
 							t.Fatalf("active output missing: %s", id)
 						}
 					}
@@ -439,7 +439,7 @@ spec:
 			t.Fatalf("provider count=%d, want %d", count, depth+1)
 		}
 		proofs := 0
-		for _, doc := range res.Manifests[testutil.KustomizationID("flux-system", "apps")] {
+		for _, doc := range outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", "apps")] {
 			if doc["kind"] == "Widget" {
 				proofs++
 			}
@@ -447,7 +447,7 @@ spec:
 		if proofs != depth {
 			t.Fatalf("rendered provider proofs=%d, want %d", proofs, depth)
 		}
-		output, err := json.Marshal(res.Manifests[testutil.KustomizationID("flux-system", "apps")])
+		output, err := json.Marshal(outputByParent(res.Manifests)[testutil.KustomizationID("flux-system", "apps")])
 		if err != nil {
 			t.Fatal(err)
 		}

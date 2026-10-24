@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
-// fluxKS is a minimal Flux Kustomization spec for driving RenderFlux against a
+// fluxKS is a minimal Flux Kustomization spec for driving Render against a
 // subPath; the auto-generate path keys off the directory, not these fields.
 func fluxKS() *manifest.Kustomization {
 	return &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps"}
@@ -27,17 +27,17 @@ func cmChild(t *testing.T, root, name string, id manifest.NamedResource) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+id.Name+"}\ndata: {k: v}\n")
 }
 
-// TestRenderFlux_DuplicateID_NamesProducers is the repro: two children emit the
+// TestRender_DuplicateID_NamesProducers is the repro: two children emit the
 // same id, the auto-generated parent accumulates both and fails, and the error
 // now names BOTH producing paths (sorted) instead of just the one kustomize hit.
-func TestRenderFlux_DuplicateID_NamesProducers(t *testing.T) {
+func TestRender_DuplicateID_NamesProducers(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	cmChild(t, root, "a", manifest.NamedResource{Namespace: "shared", Name: "dup"})
 	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "dup"})
-	// No apps/kustomization.yaml → RenderFlux synthesizes one over a + b.
+	// No apps/kustomization.yaml → Render synthesizes one over a + b.
 
-	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
+	_, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected a duplicate-id build failure")
 	}
@@ -57,31 +57,31 @@ func TestRenderFlux_DuplicateID_NamesProducers(t *testing.T) {
 	}
 }
 
-// TestRenderFlux_DistinctIDs_NoDiagnostic confirms a healthy aggregate renders
+// TestRender_DistinctIDs_NoDiagnostic confirms a healthy aggregate renders
 // without ever running the diagnostic.
-func TestRenderFlux_DistinctIDs_NoDiagnostic(t *testing.T) {
+func TestRender_DistinctIDs_NoDiagnostic(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	cmChild(t, root, "a", manifest.NamedResource{Namespace: "shared", Name: "a-cm"})
 	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "b-cm"})
 
-	out, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
+	out, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err != nil {
-		t.Fatalf("RenderFlux: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 	if len(out) == 0 {
 		t.Fatal("empty render")
 	}
 }
 
-// TestRenderFlux_NonDuplicateError_Unannotated confirms a build failure that
+// TestRender_NonDuplicateError_Unannotated confirms a build failure that
 // isn't a duplicate id is surfaced verbatim — the diagnostic stays out of it.
-func TestRenderFlux_NonDuplicateError_Unannotated(t *testing.T) {
+func TestRender_NonDuplicateError_Unannotated(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources:\n- missing.yaml\n")
 
-	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
+	_, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected a build failure")
 	}
@@ -90,13 +90,13 @@ func TestRenderFlux_NonDuplicateError_Unannotated(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
+func TestRender_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources:\n- missing.yaml\n")
 	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "dup"})
 	cmChild(t, root, "c", manifest.NamedResource{Namespace: "shared", Name: "dup"})
-	_, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
+	_, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected a build failure")
 	}
@@ -105,10 +105,10 @@ func TestRenderFlux_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
 	}
 }
 
-// TestRenderFlux_DuplicateID_Unattributable_FallsBack confirms graceful
+// TestRender_DuplicateID_Unattributable_FallsBack confirms graceful
 // fallback: when the collision is between two leaf files of one kustomization
 // (no directory producer to attribute), the raw error stands unchanged.
-func TestRenderFlux_DuplicateID_Unattributable_FallsBack(t *testing.T) {
+func TestRender_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml",
@@ -118,7 +118,7 @@ func TestRenderFlux_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 	testutil.WriteFile(t, root, "apps/two.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dup}\ndata: {k: v}\n")
 
-	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
+	_, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected a duplicate-id build failure")
 	}
@@ -131,7 +131,7 @@ func TestRenderFlux_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
+func TestRender_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	var body strings.Builder
@@ -143,7 +143,7 @@ func TestRenderFlux_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
 	testutil.WriteFile(t, root, "apps/k01/kustomization.yaml", existingKustomization("cm.yaml"))
 	testutil.WriteFile(t, root, "apps/k01/cm.yaml", cmYAML("cm-000"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", existingKustomization("k00", "k01"))
-	_, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
+	_, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{})
 	if err == nil {
 		t.Fatal("expected duplicate-id failure")
 	}

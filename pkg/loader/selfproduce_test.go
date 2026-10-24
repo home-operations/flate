@@ -109,7 +109,7 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 			admitForTest(s, dir)
 			l := loaderFixture(s, nil)
 			l.SourceRoot = dir
-			if _, err := l.Load(t.Context(), filepath.Join(dir, "kubernetes/apps/bare")); err != nil {
+			if _, err := loadForTest(t.Context(), t, l, filepath.Join(dir, "kubernetes/apps/bare")); err != nil {
 				t.Fatal(err)
 			}
 			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
@@ -153,7 +153,7 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 				t.Fatalf("consumer %s not indexed: records=%+v", consumer, idx.Records)
 			}
 			assert.Diff(t, record.Refs, []manifest.NamedResource{generated})
-			obj, ok := s.Get[*manifest.Kustomization](consumer)
+			obj, ok := candidateForTest(t, l, consumer).(*manifest.Kustomization)
 			if !ok {
 				t.Fatalf("consumer %s not stored", consumer)
 			}
@@ -530,7 +530,11 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			}
 			want := manifest.DiscoveryRecord{Authored: id, Path: path, File: file, Parent: tc.wantParent}
 			for _, owner := range tc.emitters {
-				want.Productions = append(want.Productions, manifest.Production{Owner: owner, Authored: id, Path: path, File: file, Source: manifest.BootstrapSourceID})
+				production := manifest.Production{Owner: owner, Authored: id, File: file, Source: manifest.BootstrapSourceID}
+				if !id.KindInfo().Runnable || l.Store.GetObject(id) != nil {
+					production.Path = path
+				}
+				want.Productions = append(want.Productions, production)
 			}
 			if len(want.Productions) == 0 {
 				want.Productions = []manifest.Production{{Authored: id, Path: path, File: file, Source: manifest.BootstrapSourceID}}
@@ -919,7 +923,7 @@ data: {value: fixture}
 			l.PreferExisting = true
 			l.SourceRoot = root
 			for _, dir := range []string{"flux", "apps"} {
-				if _, err := l.Load(t.Context(), filepath.Join(root, dir)); err != nil {
+				if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, dir)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -973,6 +977,9 @@ func TestLoader_DotDotPaths(t *testing.T) {
 			l.documents = documents
 			var wantRoots []string
 			if tc.accepted {
+				if _, err := l.Load(t.Context(), dir); err != nil {
+					t.Fatal(err)
+				}
 				wantRoots = []string{tc.path}
 			}
 			if got := l.standaloneRoots(root, nil); !slices.Equal(got, wantRoots) {
@@ -1243,5 +1250,29 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: name}
 		record, _ := b.idx.Lookup(id)
 		assert.Equal(t, len(record.Productions), want)
+	}
+}
+
+func TestFinalizeIndex_UntraversedBuilder(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "evidence/kustomization.yaml", "configMapGenerator:\n- name: untraversed\n  literals: [value=hidden]\n")
+	testutil.WriteFile(t, root, "selected/kustomization.yaml", "configMapGenerator:\n- name: selected\n  literals: [value=visible]\n")
+	l := New(store.New())
+	l.SourceRoot = root
+	admitForTest(l.Store, root)
+	l.mountSources()
+	l.documents.read(filepath.Join(root, "evidence"))
+	_, err := l.Load(t.Context(), filepath.Join(root, "selected"))
+	assert.NoError(t, err)
+	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"untraversed", "selected"} {
+		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name}
+		_, indexed := l.Index.Lookup(id)
+		if indexed != (name == "selected") {
+			t.Fatalf("generator %s indexed = %v", name, indexed)
+		}
 	}
 }

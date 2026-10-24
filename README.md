@@ -210,8 +210,8 @@ ctx := context.Background()
 o, _ := orchestrator.New(ctx, orchestrator.Config{Path: "/path/to/cluster"})
 res, err := o.Render(ctx)
 // res is non-nil even when err != nil — partial output stays usable.
-for id, docs := range res.Manifests {
-    // rendered YAML docs for the KS / HR with this id
+for _, batch := range res.Manifests {
+    // batch.Documents contains rendered YAML; batch.Parent is nil for ownerless entry documents.
 }
 for id, info := range res.Failed {
     // structured failure list keyed by NamedResource

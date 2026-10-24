@@ -13,18 +13,18 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-// TestRenderFlux_RespectsCanceledContext asserts the renderer bails
+// TestRender_RespectsCanceledContext asserts the renderer bails
 // fast when ctx is already done. The fluxcd/pkg/kustomize Generator
 // and SecureBuild don't take ctx themselves, so flate checks at
 // coarse boundaries — this guards that those checks fire.
-func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
+func TestRender_RespectsCanceledContext(t *testing.T) {
 	t.Parallel()
 	cache := newTestTreeCache(t, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := RenderFlux(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	_, err := Render(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
@@ -35,7 +35,7 @@ func TestRenderFlux_RespectsCanceledContext(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_Metadata(t *testing.T) {
+func TestRender_Metadata(t *testing.T) {
 	t.Parallel()
 	const plain = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: c, namespace: ns}\ndata: {k: v}\n"
 	const ownerName = "kustomize.toolkit.fluxcd.io/name"
@@ -134,10 +134,10 @@ func TestRenderFlux_Metadata(t *testing.T) {
 			snapshot := manifest.DeepCopyMap(borrowed)
 			cache := newTestTreeCache(t, "")
 			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: ks}
-			out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
+			out, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			assert.Diff(t, borrowed, snapshot)
-			repeated, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
+			repeated, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 			assert.Diff(t, repeated, out)
 			assert.NoError(t, err)
 			assert.Diff(t, borrowed, snapshot)
@@ -159,7 +159,7 @@ func TestRenderFlux_Metadata(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_TypedNulls(t *testing.T) {
+func TestRender_TypedNulls(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name      string
@@ -193,7 +193,7 @@ patches:
 				"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, labels: {app: original}}\ndata: {value: original}\n",
 			})
 			req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: parsedKS(t, ksDoc(tc.spec))}
-			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			out, err := Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("render error = %v, want %q", err, tc.wantError)
@@ -201,11 +201,11 @@ patches:
 				return
 			}
 			assert.NoError(t, err)
-			repeated, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			repeated, err := Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			assert.Diff(t, repeated, out)
 			req.Spec = parsedKS(t, ksDoc(nil))
-			absent, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			absent, err := Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			assert.Diff(t, out, absent)
 			got := out[0]

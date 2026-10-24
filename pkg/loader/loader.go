@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -31,8 +32,10 @@ type Options struct {
 	RemoteRetry  cache.RetryConfig
 }
 
-// Loader walks source views and adds Flux objects to a Store. Source membership
-// MUST remain stable across its Load calls.
+// Loader collects source-qualified discovery evidence before admitting roots.
+// Source membership MUST remain stable across sequential Load calls. The first
+// Load classifies the entry for all subsequent loads; independent entry policies
+// require separate loaders.
 type Loader struct {
 	Store   *store.Store
 	Options Options
@@ -46,9 +49,12 @@ type Loader struct {
 
 	// Index records static discovery facts and is initialized by New. Caller
 	// replacements MUST initialize Records before Load. Mutable until FinalizeIndex returns.
-	Index     *manifest.DiscoveryIndex
-	documents documentReader
-	scopes    *scopeConstruction
+	Index      *manifest.DiscoveryIndex
+	documents  documentReader
+	scopes     *scopeConstruction
+	entry      entryKind
+	candidates map[manifest.NamedResource]manifest.BaseManifest
+	admitted   map[manifest.NamedResource]manifest.BaseManifest
 
 	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
 	// reads in place of <root>/.krmignore, with its patterns anchored
@@ -66,6 +72,14 @@ type Loader struct {
 	PreferExisting bool
 }
 
+type entryKind uint8
+
+const (
+	entryUnset entryKind = iota
+	entryPlain
+	entryKustomize
+)
+
 // New initializes discovery state and configures the Loader to wipe secrets.
 func New(s *store.Store) *Loader {
 	return &Loader{
@@ -75,7 +89,129 @@ func New(s *store.Store) *Loader {
 	}
 }
 
-// Load discovers Flux objects under root by walking the kustomize
+// KustomizeRoot reports recognized builder presence in a previously loaded directory.
+func (l *Loader) KustomizeRoot(root string) bool {
+	_, file := l.documents.read(root)
+	return file != ""
+}
+
+// Sources yields immutable source-artifact evidence in unspecified order.
+func (l *Loader) Sources() iter.Seq[manifest.BaseManifest] {
+	return func(yield func(manifest.BaseManifest) bool) {
+		for id, r := range l.Index.Files() {
+			if !id.KindInfo().SourceArtifact {
+				continue
+			}
+			obj := l.indexedObject(id, r)
+			if obj != nil && !yield(obj) {
+				return
+			}
+		}
+	}
+}
+
+// AdmitsRoot applies the source-qualified scope boundary to every indexed document.
+func (l *Loader) AdmitsRoot(id manifest.NamedResource, file string) bool {
+	r, ok := l.Index.Lookup(id)
+	if !ok || r.Path != file {
+		return false
+	}
+	if r.Path == "" {
+		return r.Authored == (manifest.NamedResource{}) && l.candidates[id] != nil
+	}
+	if l.entry != entryKustomize && id.KindInfo().Discovery && l.candidates[id] != nil && l.documents.cache[file].loaded && !l.documents.cache[file].bootstrap {
+		return true
+	}
+	return l.rootAdmission(file, r.File, id.KindInfo().Structural).admits(l, id, r)
+}
+
+type rootAdmission struct {
+	owners []manifest.NamedResource
+	peers  [][]manifest.NamedResource
+}
+
+func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdmission {
+	var scope rootAdmission
+	if l.scopes != nil {
+		for _, v := range l.scopes.visits[file] {
+			if v.owner != (manifest.NamedResource{}) {
+				scope.owners = appendUniqueProducer(scope.owners, v.owner)
+			}
+		}
+	}
+	if origin := l.documents.localPath(file); origin != file {
+		coordinate = l.fileCoordinate(origin)
+	}
+	owners, ancestors := l.Index.OwnersOfFile(coordinate)
+	for _, owner := range append(owners, ancestors...) {
+		scope.owners = appendUniqueProducer(scope.owners, owner)
+	}
+	if !structural {
+		return scope
+	}
+	for _, group := range l.Index.Claims {
+		if !l.documents.cache[file].bootstrap || slices.ContainsFunc(group, func(owner manifest.NamedResource) bool {
+			record, _ := l.Index.Lookup(owner)
+			return record.Path == file
+		}) {
+			scope.peers = append(scope.peers, group)
+		}
+	}
+	return scope
+}
+
+func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, record manifest.DiscoveryRecord) bool {
+	var peers [][]manifest.NamedResource
+	if id.KindInfo().Structural {
+		for _, group := range a.peers {
+			if slices.ContainsFunc(group, func(peer manifest.NamedResource) bool { return l.selfClaim(peer, record.Authored) }) {
+				peers = append(peers, group)
+			}
+		}
+	}
+	for _, owner := range a.owners {
+		if owner == id || l.selfClaim(owner, record.Authored) {
+			continue
+		}
+		peer, _ := l.Index.Lookup(owner)
+		if l.documents.cache[record.Path].bootstrap && peer.Path != record.Path {
+			return false
+		}
+		if !slices.ContainsFunc(peers, func(group []manifest.NamedResource) bool { return slices.Contains(group, owner) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// Kustomizations returns admitted and reachable source-qualified owner evidence.
+func (l *Loader) Kustomizations() []*manifest.Kustomization {
+	out := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+	for id, r := range l.Index.Files() {
+		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization || l.Store.GetObject(id) != nil {
+			continue
+		}
+		obj := l.indexedObject(id, r)
+		if ks, ok := obj.(*manifest.Kustomization); ok {
+			out = append(out, ks)
+		}
+	}
+	slices.SortFunc(out, func(a, b *manifest.Kustomization) int { return a.Named().Compare(b.Named()) })
+	return out
+}
+
+func (l *Loader) indexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) manifest.BaseManifest {
+	if obj := l.candidates[id]; obj != nil {
+		return obj
+	}
+	obj := l.authoredObject(r.Path, r.Authored)
+	if obj != nil && obj.Named().Namespace != id.Namespace {
+		obj = obj.WithNamespace(id.Namespace)
+	}
+	return obj
+}
+
+// Load records Flux objects under root by walking the kustomize
 // resource graph. When root has a kustomization.yaml it's treated as
 // a kustomize package and only files reachable through `resources:`
 // are loaded; when it has none, a recursive walk finds and enters
@@ -110,10 +246,17 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		l.documents.views[inputRoot] = input.FS.(*gittree.FS).OperationView()
 	}
 	l.ensureScopes()
-	l.scopes.complete = false
+	_, builder := l.documents.read(abs)
+	if l.entry == entryUnset {
+		l.entry = entryPlain
+		if builder != "" {
+			l.entry = entryKustomize
+		}
+	}
 	if _, scanned := l.scopes.scanned[abs]; scanned {
 		return 0, nil
 	}
+	l.scopes.complete = false
 	var ignore *ignoreSet
 	if l.IgnoreFile != "" {
 		input, name := l.documents.input(abs)
@@ -137,6 +280,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		ignore:      ignore,
 		visited:     map[string]struct{}{},
 		scanRoot:    abs,
+		build:       builder != "",
 		ignoreCache: map[ignoreKey]bool{},
 	}
 	n, err := w.descend(ctx, abs)
@@ -159,6 +303,7 @@ type walker struct {
 	// descended sub-package — the rel path would be sub-tree-relative
 	// instead of scan-root-relative.
 	scanRoot string
+	build    bool
 	visited  map[string]struct{}
 
 	// ignoreCache memoizes ignore.matches results for the duration of
@@ -226,6 +371,9 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 	w.visited[dir] = struct{}{}
 
 	k, kpath := w.loader.documents.read(dir)
+	if kpath != "" && k == nil {
+		return 0, nil
+	}
 	if k != nil {
 		if isKustomizeComponent(k) {
 			slog.Debug("loader: skipping kustomize Component directory", "dir", dir)
@@ -239,6 +387,9 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 }
 
 func (w *walker) walkKustomize(ctx context.Context, dir, kpath string) (int, error) {
+	cached := w.loader.documents.cache[dir]
+	cached.traversed = true
+	w.loader.documents.cache[dir] = cached
 	count := 0
 	if kpath != "" && !w.ignoreMatches(kpath, false) {
 		n, err := w.loader.loadFile(kpath)
@@ -287,22 +438,13 @@ func (w *walker) walkKustomize(ctx context.Context, dir, kpath string) (int, err
 			count += n
 		}
 	}
-	return count + w.scanBootstrapFluxKS(dir, kpath), nil
+	if !w.build {
+		count += w.scanBootstrapFluxKS(dir, kpath)
+	}
+	return count, nil
 }
 
 func (w *walker) scanBootstrapFluxKS(dir, kpath string) int {
-	// A genuine bootstrap *entry* KS is a root — no other Kustomization's
-	// spec.path covers its directory. A KS commented-out of (excluded from)
-	// a kustomization.yaml lives inside a tree another KS already renders
-	// (e.g. cluster-apps' spec.path covers apps/<cluster>/<ns>/); real Flux
-	// renders that dir solely from its kustomization.yaml `resources:`, so a
-	// sibling KS left out of them is a disabled app, not a bootstrap entry.
-	// Surfacing it here is a false positive. Skip the scan when dir is already
-	// claimed by another loaded KS's spec.path — the same coverage predicate
-	// promoteOrphans applies via manifest.StrictParent.
-	if w.loader.dirCoveredByOtherKS(dir) {
-		return 0
-	}
 	seen := map[string]struct{}{kpath: {}}
 	spec, _ := w.loader.documents.read(dir)
 	for ref := range kustomizeinput.Kustomization(spec) {
@@ -356,52 +498,21 @@ func (w *walker) scanBootstrapFluxKS(dir, kpath string) int {
 			if !w.loader.acceptObject(obj.Named()) {
 				continue
 			}
-			w.loader.addObject(obj, abs)
+			w.loader.recordObject(obj, abs)
+			cached := w.loader.documents.cache[abs]
+			cached.bootstrap = true
+			w.loader.documents.cache[abs] = cached
 			count++
 		}
 	}
 	return count
 }
 
-// dirCoveredByOtherKS reports whether dir (an absolute kustomize-package
-// directory) sits under some loaded Flux Kustomization's spec.path — i.e. it
-// is part of a tree another KS renders, where a sibling KS excluded from the
-// local kustomization.yaml is a disabled app rather than a bootstrap entry.
-// Claims MUST use the scanned source view, never another alias or pin.
-// Without SourceRoot, discovery retains direct-input bootstrap admission.
-//
-// A KS being surfaced by scanBootstrapFluxKS is not yet in the Store at its
-// own dir's first scan, so a true entry KS reads as uncovered and is still
-// surfaced; only a strictly-enclosing (or equal) prefix from an already-loaded
-// KS marks the dir covered.
-func (l *Loader) dirCoveredByOtherKS(dir string) bool {
-	if l.SourceRoot == "" {
-		return false
-	}
-	root := l.documents.mountedRoot(dir)
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return false
-	}
-	dirRel := filepath.ToSlash(rel) + "/"
-	for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
-		if ks.IsFragment() {
-			continue
-		}
-		sourceRoot, _, _ := SourceView(l.Store, ks.SourceID(), l.SourceRoot)
-		if sourceRoot != root {
-			continue
-		}
-		base := l.documents.claimBase(root, ks.Path)
-		if strings.HasPrefix(dirRel, base+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 // Component resources retain data evidence without admitting templated Flux objects.
 func (w *walker) walkComponentData(ctx context.Context, dir string) (int, error) {
+	cached := w.loader.documents.cache[dir]
+	cached.traversed = true
+	w.loader.documents.cache[dir] = cached
 	spec, _ := w.loader.documents.read(dir)
 	for ref := range kustomizeinput.Kustomization(spec) {
 		if ref.Role != kustomizeinput.Resource && ref.Role != kustomizeinput.Component {
@@ -478,20 +589,8 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			if path == root {
 				return nil
 			}
-			// Subdirectory: if it's a kustomize package, switch to
-			// graph walk and SkipDir to keep filepath.WalkDir from
-			// descending again. Pull the file path out of the same
-			// read so walkKustomize doesn't open kustomization.yaml a
-			// second time.
-			if k, kpath := w.loader.documents.read(path); k != nil {
-				if isKustomizeComponent(k) {
-					if _, err := w.walkComponentData(ctx, path); err != nil {
-						return err
-					}
-					return filepath.SkipDir
-				}
-				w.visited[path] = struct{}{}
-				n, err := w.walkKustomize(ctx, path, kpath)
+			if _, kpath := w.loader.documents.read(path); kpath != "" {
+				n, err := w.descend(ctx, path)
 				if err != nil {
 					return err
 				}
@@ -518,11 +617,17 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 
 // Authored input replaces synthetic aliases and their ready artifacts.
 func (l *Loader) acceptObject(id manifest.NamedResource) bool {
-	if !l.PreferExisting || l.Store.GetObject(id) == nil {
+	if !l.PreferExisting {
+		return true
+	}
+	if l.Index.Records[id].Path != "" {
+		return false
+	}
+	if l.Store.GetObject(id) == nil {
 		return true
 	}
 	artifact, _ := l.Store.GetArtifact(id).(*store.SourceArtifact)
-	if artifact == nil || !artifact.InputAlias || l.Index.Records[id].Path != "" {
+	if artifact == nil || !artifact.InputAlias {
 		return false
 	}
 	l.Store.DeleteObject(id)
@@ -531,7 +636,7 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 
 // Decode errors retain their file coordinate until scope attribution.
 func (l *Loader) loadFile(path string) (int, error) {
-	if l.documents.cache[path].loaded {
+	if l.documents.cache[path].loaded || l.documents.cache[path].selected {
 		return 0, nil
 	}
 	reader := l.documents
@@ -578,34 +683,21 @@ func (l *Loader) loadFile(path string) (int, error) {
 		if !l.acceptObject(id) {
 			continue
 		}
-		if !info.Discovery {
-			// Under render-driven discovery, HRs / ConfigMaps /
-			// Secrets / raw manifests stay out of the Store at file-
-			// load time. They reach the Store via KS render
-			// emission (emitRenderedChildren), depwait's lazy-
-			// promotion fallback, or the orchestrator's orphan
-			// sweep. The discovery index records the {id, path}
-			// pair so the depwait fallback can re-parse the file
-			// on demand without deadlocking the producing KS.
-			l.recordObject(obj, path)
-			continue
+		l.recordObject(obj, path)
+		if info.Discovery {
+			count++
 		}
-		l.addObject(obj, path)
-		count++
 	}
 	l.documents.cache[path] = document{objects: objs, loaded: true}
 	return count, nil
 }
 
-// addObject publishes admitted objects and their immutable discovery coordinates.
-func (l *Loader) addObject(obj manifest.BaseManifest, path string) {
-	l.Store.AddObject(obj)
-	l.recordObject(obj, path)
-}
-
 // recordDataFile keeps Component data available for lazy promotion without
 // publishing untemplated Component resources into the Store.
 func (l *Loader) recordDataFile(absPath string) error {
+	if l.documents.cache[absPath].selected {
+		return nil
+	}
 	objs, err := l.documents.parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
 	if err != nil {
 		return err
@@ -629,6 +721,12 @@ func (l *Loader) recordDataFile(absPath string) error {
 // recordObject retains raw locations and authored source references for deferred admission.
 func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	id := obj.Named()
+	if l.candidates[id] != nil {
+		if record, exists := l.Index.Lookup(id); exists && record.Path == "" {
+			return
+		}
+	}
+	delete(l.candidates, id)
 	r := manifest.DiscoveryRecord{Authored: id, Path: absPath, File: l.fileCoordinate(absPath)}
 	var buf [16]manifest.NamedResource
 	refs := buf[:0]

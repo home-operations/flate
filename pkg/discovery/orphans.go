@@ -16,17 +16,21 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 	var saved []*manifest.Secret
 	for _, id := range standaloneSecrets {
 		record, _ := index.Lookup(id)
-		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && d.admitOrphan(id, record.Path) {
+		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && d.loader.AdmitsRoot(id, record.Path) {
 			saved = append(saved, obj)
 			d.cfg.Store.DeleteObject(id)
 		}
 	}
 	for id, record := range index.Files() {
-		if d.cfg.Store.GetObject(id) != nil || !d.admitOrphan(id, record.Path) {
+		if d.cfg.Store.GetObject(id) != nil || !d.loader.AdmitsRoot(id, record.Path) {
 			continue
 		}
-		admit := func(obj manifest.BaseManifest) bool { return d.admitOrphan(obj.Named(), record.Path) }
-		if !loader.Promote(ctx, d.cfg.Store, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, WipeSecrets: d.cfg.WipeSecrets, Admit: admit}) {
+		admit := func(obj manifest.BaseManifest) bool { return d.loader.AdmitsRoot(obj.Named(), record.Path) }
+		opts := loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, WipeSecrets: d.cfg.WipeSecrets, Admit: admit}
+		if record.Path == "" {
+			opts.Documents = d.built
+		}
+		if !loader.Promote(ctx, d.cfg.Store, id, opts) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}
@@ -35,14 +39,4 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 			d.cfg.Store.AddObject(obj)
 		}
 	}
-}
-
-func (d *discoverer) admitOrphan(id manifest.NamedResource, path string) bool {
-	record, ok := d.loader.Index.Lookup(id)
-	if !ok || record.Path == "" || record.Path != path {
-		return false
-	}
-	owners, ancestors := d.loader.Index.OwnersOfFile(record.File)
-	return !slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool { return owner != id }) &&
-		!slices.ContainsFunc(ancestors, func(owner manifest.NamedResource) bool { return owner != id })
 }

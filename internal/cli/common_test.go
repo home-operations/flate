@@ -470,7 +470,7 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("gitops-system", "apps")
 	for i, side := range []orchestrator.Rendered{base, head} {
-		docs := side.Result.Manifests[id]
+		docs := outputByParent(side.Result.Manifests)[id]
 		if len(docs) != 1 || docs[0]["data"].(map[string]any)["greeting"] != []string{"before", "hi"}[i] {
 			t.Fatalf("side %d lost admitted source identity: %v", i, side.Result.Manifests)
 		}
@@ -796,3 +796,13 @@ type countFailWriter struct {
 }
 
 func (w *countFailWriter) Write([]byte) (int, error) { w.writes++; return 0, w.err }
+
+func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource][]map[string]any {
+	out := make(map[manifest.NamedResource][]map[string]any, len(batches))
+	for _, batch := range batches {
+		if batch.Parent != nil {
+			out[batch.Parent.Named()] = batch.Documents
+		}
+	}
+	return out
+}

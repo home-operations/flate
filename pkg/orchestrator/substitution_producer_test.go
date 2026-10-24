@@ -104,14 +104,14 @@ func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 			}
 			if kind == manifest.KindConfigMap {
 				target := manifest.NamedResource{Kind: kind, Namespace: consumer.Namespace, Name: "settings"}
-				if res.Failed[consumer].Status != store.StatusFailed || !slices.Equal(res.Blocked[consumer], []manifest.NamedResource{target}) || len(res.Manifests[consumer]) != 0 {
-					t.Fatalf("unaccepted prediction supplied required content: failures=%v blocked=%v manifests=%v", res.Failed, res.Blocked, res.Manifests[consumer])
+				if res.Failed[consumer].Status != store.StatusFailed || !slices.Equal(res.Blocked[consumer], []manifest.NamedResource{target}) || len(outputByParent(res.Manifests)[consumer]) != 0 {
+					t.Fatalf("unaccepted prediction supplied required content: failures=%v blocked=%v manifests=%v", res.Failed, res.Blocked, outputByParent(res.Manifests)[consumer])
 				}
 			} else {
-				if len(res.Manifests[consumer]) != 1 || len(res.Blocked[consumer]) != 0 {
+				if len(outputByParent(res.Manifests)[consumer]) != 1 || len(res.Blocked[consumer]) != 0 {
 					t.Fatalf("declared Secret absence blocked rendering: %+v", res)
 				}
-				assert.Diff(t, res.Manifests[consumer][0]["data"], map[string]any{"version": "${VERSION:=empty}"})
+				assert.Diff(t, outputByParent(res.Manifests)[consumer][0]["data"], map[string]any{"version": "${VERSION:=empty}"})
 			}
 		})
 	}
@@ -224,7 +224,7 @@ spec:
 					assert.Diff(t, consumed, "zulu")
 					res := &Result{Manifests: o.collectManifests(), Warnings: o.store.Warnings()}
 					count := 0
-					for owner, docs := range res.Manifests {
+					for owner, docs := range outputByParent(res.Manifests) {
 						for _, doc := range docs {
 							name, ns := manifest.DocMetadata(doc)
 							if manifest.DocKind(doc) != kind || name != "shared" || ns != "apps" {
@@ -261,7 +261,7 @@ spec:
 					return res
 				}
 				first, second := run(false), run(true)
-				assert.Diff(t, second.Manifests, first.Manifests)
+				assert.Diff(t, outputByParent(second.Manifests), outputByParent(first.Manifests))
 				assert.Diff(t, second.Warnings, first.Warnings)
 			})
 		}

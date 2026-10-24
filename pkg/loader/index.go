@@ -22,7 +22,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 		for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 			l.scopes.ready[l.sourceState(ks.SourceID())] = struct{}{}
 		}
-		l.ApplyNamespaces(repoRoot)
+		l.admit(repoRoot)
 	}
 	var claims []manifest.KSClaim
 	if l.scopes != nil {

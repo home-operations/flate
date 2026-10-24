@@ -27,10 +27,7 @@ func (l *Loader) finalizeRecords(repoRoot string, emittedFiles map[string][]mani
 			return obj
 		}
 		r, _ := l.Index.Lookup(id)
-		obj := l.authoredObject(r.Path, r.Authored)
-		if obj != nil && obj.Named().Namespace != id.Namespace {
-			obj = obj.WithNamespace(id.Namespace)
-		}
+		obj := l.indexedObject(id, r)
 		objects[id] = obj
 		return obj
 	}

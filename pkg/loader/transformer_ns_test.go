@@ -56,7 +56,7 @@ func leafKS(name, path string) *manifest.Kustomization {
 	return &manifest.Kustomization{Name: name, Path: path}
 }
 
-func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
+func TestAdmit_SelfProducedTransformerIdentity(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFlatopsOverlay(t, root, "apps")
@@ -71,10 +71,10 @@ func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
 	s.AddObject(parent)
 	l := loaderFixture(s, nil)
 	l.SourceRoot = root
-	if _, err := l.Load(t.Context(), filepath.Join(root, "apps/apps")); err != nil {
+	if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps/apps")); err != nil {
 		t.Fatal(err)
 	}
-	l.ApplyNamespaces(root)
+	l.Admit(root)
 
 	for _, tc := range []struct {
 		name, namespace string
@@ -87,7 +87,7 @@ func TestApplyNamespaces_SelfProducedTransformerIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			id := testutil.KustomizationID(tc.namespace, child.Name)
-			if _, ok := s.Get[*manifest.Kustomization](id); ok != tc.want {
+			if _, ok := s.Get[*manifest.Kustomization](id); ok {
 				t.Errorf("stored identity %s present=%t, want %t", id, ok, tc.want)
 			}
 			record, ok := l.Index.Records[id]
@@ -191,14 +191,14 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 					}
 					removed := testutil.KustomizationID(removedNS, "removed")
 					_, indexed := l.Index.Lookup(removed)
-					if (st.GetObject(removed) != nil) != (version == 0) || indexed != (version == 0) {
+					if st.GetObject(removed) != nil || indexed != (version == 0) {
 						t.Fatalf("removed declaration: store=%t index=%t version=%d", st.GetObject(removed) != nil, indexed, version)
 					}
 					if (len(l.Index.Errors) != 0) != (version == 0) {
 						t.Fatalf("decode errors after mount version %d: %v", version, l.Index.Errors)
 					}
 				}
-				l.ApplyNamespaces(root)
+				l.Admit(root)
 				check(ns)
 			}
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
@@ -207,7 +207,7 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 			check(tc.namespaces[len(tc.namespaces)-1])
 			if tc.mounted {
 				st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "removed", LocalRoot: root, LocalPath: local})
-				l.ApplyNamespaces(root)
+				l.Admit(root)
 				for _, name := range []string{"gpu-operator", "explicit"} {
 					id := testutil.KustomizationID("", name)
 					_, indexed := l.Index.Lookup(id)
@@ -526,5 +526,23 @@ resources:
 	got, _ := s.Get[*manifest.Kustomization](ks.Named())
 	if got.TargetNamespace != "inner" {
 		t.Errorf("TargetNamespace=%q want inner (deepest overlay)", got.TargetNamespace)
+	}
+}
+
+func TestAdmit_UnloadedAncestorNamespace(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFlatopsOverlay(t, root, "outside")
+	testutil.WriteFile(t, root, "apps/outside/selected/ks.yaml", testutil.KustomizationYAML("selected", "apps", "  path: ./leaf\n"))
+	l := New(store.New())
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps/outside/selected"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Admit(root)
+	owners := l.Kustomizations()
+	if len(owners) != 1 || owners[0].TargetNamespace != "" || owners[0].Namespace != "apps" {
+		t.Fatalf("unloaded ancestor injected namespace: %+v", owners)
 	}
 }

@@ -19,7 +19,6 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Discovery drivers stay in the Store; deferred content stays in the file index.
 func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -43,6 +42,12 @@ func TestDiscovery_SkipsNonDiscoveryKinds(t *testing.T) {
 	if _, err := l.Load(t.Context(), dir); err != nil {
 		t.Fatal(err)
 	}
+	for id := range l.Index.Files() {
+		if st.GetObject(id) != nil {
+			t.Fatalf("evidence became runnable before admission: %s", id)
+		}
+	}
+	l.Admit(dir)
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
 			t.Parallel()
@@ -80,7 +85,7 @@ data:
 	st := store.New()
 	admitForTest(st, dir)
 	l := loaderFixture(st, nil)
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
@@ -132,7 +137,7 @@ data:
 	st := store.New()
 	admitForTest(st, dir)
 	l := loaderFixture(st, nil)
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	// Remove the file behind the index.
@@ -148,66 +153,67 @@ data:
 	}
 }
 
-// TestPromote_MultiDocLoadsSiblings pins the
-// "whole-file parse" contract documented on Promote: a YAML file
-// packing CM + Secret + HR together promotes ALL three when ANY one
-// is requested. This is what allows depwait to avoid re-opening the
-// same file once per dep in the common multi-doc fixture pattern.
 func TestPromote_MultiDocLoadsSiblings(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "bundle.yaml", `
-apiVersion: v1
+	for _, input := range []string{"file", "built"} {
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			const bundle = `apiVersion: v1
 kind: ConfigMap
-metadata:
-  name: app-config
-  namespace: default
-data:
-  KEY: value
+metadata: {name: app-config, namespace: apps}
+data: {KEY: value}
 ---
 apiVersion: v1
 kind: Secret
-metadata:
-  name: app-secret
-  namespace: default
-type: Opaque
-data:
-  TOKEN: dG9rZW4=
-`)
-	st := store.New()
-	admitForTest(st, dir)
-	l := loaderFixture(st, nil)
-	if _, err := l.Load(context.Background(), dir); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "app-config"}
-	secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-secret"}
-	if !Promote(t.Context(), l.Store, cmID, PromoteOptions{Record: productionForTest(l.Index.Records[cmID]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
-		t.Fatalf("promoteForTest(t.Context(), cm) should succeed")
-	}
-	if st.GetObject(cmID) == nil {
-		t.Errorf("CM not in store after Promote")
-	}
-	if st.GetObject(secretID) == nil {
-		t.Errorf("sibling Secret should have been promoted alongside the CM (whole-file parse contract)")
+metadata: {name: app-secret, namespace: apps}
+stringData: {TOKEN: "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"}
+sops: {encrypted_regex: "^(data|stringData)$", version: 3.9.0}
+`
+			testutil.WriteFile(t, dir, "bundle.yaml", bundle)
+			st := store.New()
+			admitForTest(st, dir)
+			cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "app-config"}
+			secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "app-secret"}
+			record := manifest.Production{Authored: cmID, Path: filepath.Join(dir, "bundle.yaml")}
+			opts := PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}
+			if input == "built" {
+				record = manifest.Production{}
+				opts.Documents = builtObjectsForTest(t, bundle)
+			}
+			opts.Record = record
+			if !Promote(t.Context(), st, cmID, opts) {
+				t.Fatal("ConfigMap promotion failed")
+			}
+			for _, id := range []manifest.NamedResource{cmID, secretID} {
+				if st.GetObject(id) == nil {
+					t.Errorf("admitted sibling %s was not promoted", id)
+				}
+			}
+			secret := st.GetObject(secretID).(*manifest.Secret)
+			assert.Diff(t, secret.StringData, map[string]any{"TOKEN": manifest.ValuePlaceholder("TOKEN")})
+		})
 	}
 }
 
 func TestPromote_AdmissionAndPreferExisting(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name     string
-		secret   bool
-		existing bool
-	}{
-		{name: "admitted request"},
-		{name: "rejected request", secret: true},
-		{name: "rendered object retained", existing: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, input := range []string{"file", "built"} {
+		t.Run(input, func(t *testing.T) {
 			t.Parallel()
-			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "bundle.yaml", `apiVersion: v1
+			for _, tc := range []struct {
+				name     string
+				secret   bool
+				existing bool
+			}{
+				{name: "admitted request"},
+				{name: "rejected request", secret: true},
+				{name: "rendered object retained", existing: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					dir := t.TempDir()
+					const bundle = `apiVersion: v1
 kind: ConfigMap
 metadata: {name: selected, namespace: apps}
 data: {source: raw}
@@ -216,31 +222,36 @@ apiVersion: v1
 kind: Secret
 metadata: {name: excluded, namespace: apps}
 stringData: {value: fixture}
-`)
-			cm := &manifest.ConfigMap{Name: "selected", Namespace: "apps", Data: map[string]any{"source": "rendered"}}
-			secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "excluded"}
-			st := store.New()
-			if tc.existing {
-				st.AddObject(cm)
-			}
-			admitForTest(st, dir)
-			idx := loaderFixture(st, nil)
-			for _, id := range []manifest.NamedResource{cm.Named(), secret} {
-				idx.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
-			}
-			id := cm.Named()
-			if tc.secret {
-				id = secret
-			}
-			admit := func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }
-			if got := Promote(t.Context(), idx.Store, id, PromoteOptions{Record: productionForTest(idx.Index.Records[id]), WipeSecrets: true, Admit: admit}); got == tc.secret {
-				t.Errorf("Promote returned %v, want %v", got, !tc.secret)
-			}
-			if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {
-				t.Error("admission must apply separately to requested and sibling objects")
-			}
-			if tc.existing && st.GetObject(cm.Named()) != cm {
-				t.Error("existing rendered object must take precedence")
+`
+					testutil.WriteFile(t, dir, "bundle.yaml", bundle)
+					cm := &manifest.ConfigMap{Name: "selected", Namespace: "apps", Data: map[string]any{"source": "rendered"}}
+					secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "excluded"}
+					st := store.New()
+					if tc.existing {
+						st.AddObject(cm)
+					}
+					admitForTest(st, dir)
+					id := cm.Named()
+					if tc.secret {
+						id = secret
+					}
+					record := manifest.Production{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
+					opts := PromoteOptions{WipeSecrets: true, Admit: func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }}
+					if input == "built" {
+						record = manifest.Production{}
+						opts.Documents = builtObjectsForTest(t, bundle)
+					}
+					opts.Record = record
+					if got := Promote(t.Context(), st, id, opts); got == tc.secret {
+						t.Errorf("Promote returned %v, want %v", got, !tc.secret)
+					}
+					if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {
+						t.Error("admission must apply separately to requested and sibling objects")
+					}
+					if tc.existing && st.GetObject(cm.Named()) != cm {
+						t.Error("existing rendered object must take precedence")
+					}
+				})
 			}
 		})
 	}
@@ -279,7 +290,7 @@ spec:
 
 	st := store.New()
 	l := loaderFixture(st, nil)
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 

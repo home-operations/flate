@@ -462,7 +462,7 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 					if output == nil || output.Data["greeting"] != "exact" || o.store.EmissionOwner(target) != supplier {
 						t.Fatalf("ResourceSet input not consumed: %+v", output)
 					}
-					result := o.collectManifests()
+					result := outputByParent(o.collectManifests())
 					if previous != nil {
 						assert.Diff(t, result, previous)
 					}
@@ -609,7 +609,7 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(selected), 2)
 			for side, want := range []string{"fallback", "exact"} {
-				docs := selected[side].Manifests[reader]
+				docs := outputByParent(selected[side].Manifests)[reader]
 				if len(docs) != 1 {
 					t.Fatalf("side %d selected manifests=%v", side, docs)
 				}

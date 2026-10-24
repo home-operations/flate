@@ -195,7 +195,7 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 			wantFailure := tc.broken && !tc.optional
 			requiredFailure := tc.broken && !tc.optional && !tc.absent
 			_, readerFailed := res.Failed[hr]
-			if (len(res.Manifests[hr]) == 0) != requiredFailure || readerFailed != requiredFailure || (len(res.Blocked[hr]) != 0) != requiredFailure {
+			if (len(outputByParent(res.Manifests)[hr]) == 0) != requiredFailure || readerFailed != requiredFailure || (len(res.Blocked[hr]) != 0) != requiredFailure {
 				t.Fatalf("consumer did not render independently: failed=%v blocked=%v", res.Failed, res.Blocked)
 			}
 			if _, failed := res.Failed[producer]; failed != tc.broken {
@@ -283,7 +283,7 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 			res := run.Result
 			id := testutil.KustomizationID("flux-system", "selected")
 			requiredFailure := tc.broken && tc.required
-			if res == nil || (len(res.Manifests[id]) == 0) != requiredFailure || (len(res.Blocked[id]) != 0) != requiredFailure {
+			if res == nil || (len(outputByParent(res.Manifests)[id]) == 0) != requiredFailure || (len(res.Blocked[id]) != 0) != requiredFailure {
 				t.Fatalf("consumer did not render independently: %+v", res)
 			}
 			out, stderr, code := runCLI(t, "build", "ks", "selected", "--path", cfg.Path, "--cache-dir", t.TempDir(), "--concurrency", "2")
@@ -345,7 +345,7 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
 	o.Store().AddObject(selected)
 	other := testutil.KustomizationID("apps", "other")
-	res := &orchestrator.Result{Manifests: map[manifest.NamedResource][]map[string]any{selected.Named(): {{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}}}, Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
+	res := &orchestrator.Result{Manifests: []manifest.DocumentBatch{{Parent: selected, Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}}}}, Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
 	t.Cleanup(func() {
 		if err := o.Stop(); err != nil {
 			t.Errorf("Stop: %v", err)
@@ -357,7 +357,7 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 			runErr := errors.Join(&orchestrator.FailuresError{Message: "raw reconcile failures"}, fatal)
 			selection, selectedErr, remainder := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: res}}, runErr,
 				[]manifest.NamedResource{testutil.KustomizationID("", selected.Name)}, nil)
-			if len(selection) != 1 || len(selection[0].Manifests[selected.Named()]) != 1 {
+			if len(selection) != 1 || len(outputByParent(selection[0].Manifests)[selected.Named()]) != 1 {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer

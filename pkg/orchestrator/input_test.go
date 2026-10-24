@@ -126,7 +126,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				if err == nil || result == nil || result.Failed[changed].Status != store.StatusFailed {
 					t.Fatalf("selected producer must fail after discovery: result=%+v err=%v", result, err)
 				}
-				if len(result.Manifests[changed]) != 0 || len(result.Manifests[same]) != 0 {
+				if len(outputByParent(result.Manifests)[changed]) != 0 || len(outputByParent(result.Manifests)[same]) != 0 {
 					t.Fatalf("unavailable producer or unchanged sibling emitted: %v", result.Manifests)
 				}
 				for _, cm := range o.Store().ListObjects("", manifest.KindConfigMap) {
@@ -141,8 +141,8 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				orchestrator.Tree{Path: headRoot, SelfURLs: []string{url}}, cfg)
 			assert.NoError(t, err)
 			for side, rendered := range []orchestrator.Rendered{base, head} {
-				docs := rendered.Result.Manifests[changed]
-				if len(docs) != 1 || len(rendered.Result.Manifests[same]) != 0 {
+				docs := outputByParent(rendered.Result.Manifests)[changed]
+				if len(docs) != 1 || len(outputByParent(rendered.Result.Manifests)[same]) != 0 {
 					t.Fatalf("side %d lost producer ownership or unchanged selection: %v", side, rendered.Result.Manifests)
 				}
 				name, ns := manifest.DocMetadata(docs[0])

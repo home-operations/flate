@@ -12,7 +12,6 @@ import (
 
 var (
 	hrParent = Parent{NamedResource: testutil.HelmReleaseID("monitoring", "grafana-operator")}
-	hrID     = testutil.HelmReleaseID("monitoring", "grafana-operator")
 	ksParent = Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "apps"}
 )
 

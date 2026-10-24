@@ -14,8 +14,50 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 )
+
+func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [source.yaml, child.yaml]\n")
+	testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: 'https://example.test/cluster'}\n")
+	testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+	st := store.New()
+	l := loader.New(st)
+	l.SourceRoot = root
+	d := discoverer{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st, SelfURLs: []string{"https://example.test/cluster"}}, loader: l}
+	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Load(t.Context(), d.cfg.Path); err != nil {
+		t.Fatal(err)
+	}
+	l.Admit(root)
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster"}
+	if count, err := d.resolveEntrySources(t.Context(), false); err != nil || count != 1 {
+		t.Fatalf("initial evidence resolution = %d, %v", count, err)
+	}
+	before := st.GetArtifact(id).(*store.SourceArtifact)
+	if !st.DeleteObject(id) {
+		t.Fatal("source was not admitted before removal")
+	}
+	st.DeleteObject(testutil.KustomizationID("apps", "child"))
+	if st.GetObject(id) != nil || st.GetArtifact(id) != nil || st.GetObject(testutil.KustomizationID("apps", "child")) != nil {
+		t.Fatal("source removal retained published evidence")
+	}
+	if count, err := d.resolveEntrySources(t.Context(), false); err != nil || count != 1 {
+		t.Fatalf("removed evidence resolution = %d, %v", count, err)
+	}
+	after, ok := st.GetArtifact(id).(*store.SourceArtifact)
+	if !ok || !after.InputAlias || after.LocalRoot != before.LocalRoot || after.LocalPath != before.LocalPath || st.GetObject(id) != nil {
+		t.Fatalf("loader evidence lost source identity: %+v", after)
+	}
+	if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(id) != after {
+		t.Fatalf("unchanged evidence resolution = %d, %v", count, err)
+	}
+}
 
 func TestResolveEntrySources_Identity(t *testing.T) {
 	t.Parallel()

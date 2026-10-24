@@ -449,7 +449,7 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 		if res == nil {
 			t.Fatalf("Render returned nil Result: %v", err)
 		}
-		for _, m := range res.Manifests[clusterApps] {
+		for _, m := range outputByParent(res.Manifests)[clusterApps] {
 			if m["kind"] != "ConfigMap" {
 				continue
 			}
@@ -564,6 +564,7 @@ func TestRS_EmissionGrouping(t *testing.T) {
 
 			s := store.New()
 			parent := testutil.KustomizationID("flux-system", "parent")
+			s.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 			a := &manifest.ResourceSet{Name: "a", Namespace: "apps"}
 			b := &manifest.ResourceSet{Name: "b", Namespace: "apps"}
 			s.AddObject(a)
@@ -579,13 +580,13 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			for _, id := range ids {
 				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true})
 			}
-			assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: docs})
+			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: docs})
 			second := manifest.DeepCopyMap(doc)
 			second["metadata"].(map[string]any)["name"] = "second"
 			for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
 				entries, authoritative := base.ParseChildren(b.Named(), ordered, manifest.ParseDocOptions{})
 				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true})
-				if got := o.collectManifests()[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
+				if got := outputByParent(o.collectManifests())[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
 					t.Fatalf("authoritative document order lost: %v", got)
 				}
 			}
@@ -599,7 +600,7 @@ func TestRS_EmissionGrouping(t *testing.T) {
 					s.RecordEmitted(id, &store.Emission{Children: changed, Manifests: changedDocs, Complete: true})
 				}
 			}
-			assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: changedDocs})
+			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: changedDocs})
 		})
 	}
 }
@@ -627,9 +628,9 @@ data: {k: v}
 		t.Fatal("Render returned nil Result")
 	}
 	ksID := testutil.KustomizationID("flux-system", "apps")
-	mans, ok := res.Manifests[ksID]
+	mans, ok := outputByParent(res.Manifests)[ksID]
 	if !ok {
-		t.Fatalf("Result.Manifests missing %s; keys=%v", ksID, keysOf(res.Manifests))
+		t.Fatalf("Result.Manifests missing %s; keys=%v", ksID, keysOf(outputByParent(res.Manifests)))
 	}
 	if len(mans) == 0 {
 		t.Errorf("expected rendered docs for %s; got empty", ksID)
@@ -749,7 +750,7 @@ spec:
 	if owners := testutil.Owners(o.Store().Productions(rsID, nil)); !slices.Contains(owners, ksID) {
 		t.Fatalf("missing independent contributor: %v", owners)
 	}
-	mans := res.Manifests[ksID]
+	mans := outputByParent(res.Manifests)[ksID]
 	var found bool
 	for _, doc := range mans {
 		md, _ := doc["metadata"].(map[string]any)
@@ -761,7 +762,7 @@ spec:
 		}
 	}
 	if !found {
-		t.Errorf("expected ExternalSecret/acl in res.Manifests[%s] (the RS-rendered child); kinds in stream: %v",
+		t.Errorf("expected ExternalSecret/acl in outputByParent(res.Manifests)[%s] (the RS-rendered child); kinds in stream: %v",
 			ksID, kindsOf(mans))
 	}
 }
@@ -1398,7 +1399,7 @@ spec:
 				assert.Equal(t, o.cfg.DisableChartDigestTracking == nil, true)
 				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, producer == "file")
 				ks := testutil.KustomizationID("flux-system", "apps")
-				docs := slices.Clone(res.Manifests[ks])
+				docs := slices.Clone(outputByParent(res.Manifests)[ks])
 				slices.SortFunc(docs, func(a, b map[string]any) int {
 					return strings.Compare(a["kind"].(string), b["kind"].(string))
 				})
@@ -1880,7 +1881,7 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 			s := store.New()
 			a := &manifest.ResourceSet{Name: ownerA.Name, Namespace: ownerA.Namespace}
 			b := &manifest.ResourceSet{Name: ownerB.Name, Namespace: ownerB.Namespace}
-			s.AddObjects([]manifest.BaseManifest{a, b})
+			s.AddObjects([]manifest.BaseManifest{a, b, &manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}})
 			o := &Orchestrator{store: s, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{ownerA: {Parent: parent}, ownerB: {Parent: parent}}}}
 			ids := []manifest.NamedResource{ownerA, ownerB}
 			if reverse {
@@ -1924,7 +1925,7 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 			}
 			assert.Equal(t, s.GetObject(testutil.KustomizationID("flux-system", "invalid")), manifest.BaseManifest(nil))
 			want := append(slices.Clone(incomplete), docB, other, winningCM, namespaceB)
-			assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: want})
+			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: want})
 		})
 	}
 }
@@ -2205,7 +2206,7 @@ data: {marker: aaa-explicit}
 				assert.NoError(t, err)
 				assert.Equal(t, len(result.Failed), 0)
 				var got []map[string]any
-				for parent, docs := range result.Manifests {
+				for parent, docs := range outputByParent(result.Manifests) {
 					for _, doc := range docs {
 						if manifest.DocKind(doc) == manifest.KindConfigMap {
 							assert.Equal(t, parent, testutil.KustomizationID("flux-system", "apps"))
@@ -2226,9 +2227,9 @@ data: {marker: aaa-explicit}
 					assert.Equal(t, present, false)
 				}
 				if previous != nil {
-					assert.Diff(t, result.Manifests, previous)
+					assert.Diff(t, outputByParent(result.Manifests), previous)
 				}
-				previous = result.Manifests
+				previous = outputByParent(result.Manifests)
 			}
 		})
 	}
@@ -2253,7 +2254,7 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 		}
 
 		counts := map[string]int{}
-		for _, docs := range result.Manifests {
+		for _, docs := range outputByParent(result.Manifests) {
 			for _, doc := range docs {
 				name, ns := manifest.DocMetadata(doc)
 				if name == "raw" || name == "duplicate" {
@@ -2290,8 +2291,8 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 			}
 		}
 		if previous != nil {
-			assert.Diff(t, result.Manifests, previous)
+			assert.Diff(t, outputByParent(result.Manifests), previous)
 		}
-		previous = result.Manifests
+		previous = outputByParent(result.Manifests)
 	}
 }

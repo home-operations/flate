@@ -25,7 +25,7 @@ const dupDiagBuildLimit = 256
 // report naming every accumulated path that emits the colliding resource.
 //
 // An aggregate build — most often a Flux Kustomization whose spec.path has no
-// kustomization.yaml, so RenderFlux synthesizes one over the whole subtree —
+// kustomization.yaml, so Render synthesizes one over the whole subtree —
 // merges every child into one build. kustomize then names only the colliding id
 // and the path it was re-added from, never the one that registered it first,
 // which makes a localized duplicate (a copy-paste namespace, a component pulled
@@ -36,7 +36,7 @@ const dupDiagBuildLimit = 256
 // resource id → paths pinpoints every producer. It returns "" when a collision
 // lies within one entry or against a leaf file, leaving the raw error unchanged.
 //
-// kustomizationYAML is the merged kustomization RenderFlux already built for
+// kustomizationYAML is the merged kustomization Render already built for
 // subDir (absolute); subPath is the repo-relative spec.path, used to render
 // producer paths the reader can open.
 func duplicateProducers(memFS filesys.FileSystem, subDir, subPath string, kustomizationYAML []byte) string {

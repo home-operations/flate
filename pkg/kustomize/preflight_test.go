@@ -155,11 +155,11 @@ func TestPreflightRemoteResources_WalksNestedKustomizations(t *testing.T) {
 	}
 }
 
-// TestRenderFlux_RemotePreflightDoesNotMutateSource proves the in-memory render
+// TestRender_RemotePreflightDoesNotMutateSource proves the in-memory render
 // never touches the user's working tree: after a render that pre-fetches a
 // remote resource, the on-disk source kustomization is byte-for-byte unchanged
 // and no fetched files were written to disk.
-func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
+func TestRender_RemotePreflightDoesNotMutateSource(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: remote}\n"))
 	}))
@@ -171,14 +171,14 @@ func TestRenderFlux_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, err := RenderFlux(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	_, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
 	})}, sourcecache.RetryConfig{})
 	if err != nil {
-		t.Fatalf("RenderFlux: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 
 	got, err := os.ReadFile(filepath.Join(src, "child", "kustomization.yaml"))
@@ -252,7 +252,7 @@ func TestPreflightRemoteResources_FetchesEachURLOnce(t *testing.T) {
 	}
 
 	// A second preflight against the same cache (production runs one preflight
-	// per RenderFlux) must NOT re-fetch.
+	// per Render) must NOT re-fetch.
 	fsys2 := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/shared.yaml\n"})
 	if err := preflightRemoteResources(context.Background(), cache, fsys2, "."); err != nil {
 		t.Fatalf("second preflight: %v", err)
@@ -342,7 +342,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			original := http.DefaultTransport
 			http.DefaultTransport = srv.Client().Transport
 			t.Cleanup(func() { http.DefaultTransport = original })
-			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
+			out, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil || !hasRenderField(out, "name", "remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
@@ -465,7 +465,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				spec.Components = []string{"../component"}
 			}
 			before := manifest.Fingerprint(spec)
-			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: tc.subpath, Spec: spec}, sourcecache.RetryConfig{})
+			out, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: tc.subpath, Spec: spec}, sourcecache.RetryConfig{})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error=%v, want %q", err, tc.wantErr)

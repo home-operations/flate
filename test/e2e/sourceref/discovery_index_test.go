@@ -154,7 +154,7 @@ func TestE2E_BootstrapGeneratorSopsSubstitution(t *testing.T) {
 	testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps/b\n  postBuild: {substituteFrom: [{kind: Secret, name: creds}]}\n"))
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux, apps/a]\n")
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
-	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "secretGenerator:\n- name: creds\n  namespace: flux-system\n  envs: [creds.sops.env]\n")
+	testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "generatorOptions: {disableNameSuffixHash: true}\nsecretGenerator:\n- name: creds\n  namespace: flux-system\n  envs: [creds.sops.env]\n")
 	testutil.WriteFile(t, root, "apps/a/creds.sops.env", "API_KEY=ENC[AES256_GCM,data:abcd1234,iv:xyz,tag:tt,type:str]\nsops_version=3.8.1\nsops_mac=ENC[fixture]\n")
 	testutil.WriteFile(t, root, "apps/b/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "apps/b/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {key: '${API_KEY}'}\n")

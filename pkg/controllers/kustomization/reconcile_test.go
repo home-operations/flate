@@ -381,7 +381,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 
 // TestReconcile_FingerprintDedup_SkipsRender locks the dedup
 // short-circuit from PR #220: a second AddObject with byte-equal
-// post-Prepare spec must not re-run kustomize.RenderFlux. We force
+// post-Prepare spec must not re-run kustomize.Render. We force
 // the issue by AddObject'ing the same KS twice and verifying the
 // artifact's identity persists (SetArtifact dedupes via DeepEqual).
 func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
@@ -558,7 +558,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 }
 
 // TestReconcile_MissingPathFails covers the error path: spec.path
-// points at a directory that doesn't exist → kustomize.RenderFlux
+// points at a directory that doesn't exist → kustomize.Render
 // errors → reconcile returns it → status flips Failed.
 func TestReconcile_MissingPathFails(t *testing.T) {
 	t.Parallel()

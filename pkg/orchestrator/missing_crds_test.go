@@ -500,7 +500,7 @@ spec:
 		if first == nil {
 			first = res
 		} else {
-			assert.Diff(t, res.Manifests, first.Manifests)
+			assert.Diff(t, outputByParent(res.Manifests), outputByParent(first.Manifests))
 			assert.Diff(t, res.Warnings, first.Warnings)
 		}
 	}

@@ -10,8 +10,8 @@ import (
 )
 
 // Parent identifies the Flux Kustomization or HelmRelease that rendered a
-// manifest. It is a pairing discriminator so resources from different
-// producers never match, and identifies the producer in structured output.
+// manifest. Its zero value identifies an ownerless document. It distinguishes
+// resources from different producers and attributes structured output.
 type Parent struct {
 	manifest.NamedResource
 	// Path is the Flux Kustomization spec.path (only set for KS
@@ -20,7 +20,7 @@ type Parent struct {
 	Path string `json:"path"`
 }
 
-// Doc pairs a rendered manifest with its parent.
+// Doc pairs a rendered manifest with its optional parent.
 type Doc struct {
 	Manifest map[string]any
 	Parent   Parent

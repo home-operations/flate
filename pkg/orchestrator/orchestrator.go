@@ -182,7 +182,8 @@ type Orchestrator struct {
 	repoRoot string
 
 	// index is published once by Bootstrap and remains immutable during rendering.
-	index *manifest.DiscoveryIndex
+	index     *manifest.DiscoveryIndex
+	documents []map[string]any
 
 	// orphans records resources Run demoted from Failed → Ready because
 	// they aren't referenced by any parent KS. Populated during Run,
@@ -229,18 +230,10 @@ type Orchestrator struct {
 	ownNetwork bool
 }
 
-// Result is the structured output of Orchestrator.Render: the rendered
-// manifests keyed by the originating Kustomization / HelmRelease, the
-// set of resources that failed reconcile, and the orphans flate
-// detected (sources sitting under a parent KS's spec.path but never
-// emitted by that parent's render — real Flux would not reconcile
-// them either).
-//
-// Manifests is empty for an HR that had nothing to render or a KS
-// whose render produced zero docs; Failed/Orphans are empty when
-// everything reconciled cleanly.
+// Result contains rendered document batches, failures and discovery diagnostics.
+// Ownerless documents have no producer; all borrowed payloads MUST remain immutable.
 type Result struct {
-	Manifests map[manifest.NamedResource][]map[string]any
+	Manifests []manifest.DocumentBatch
 	Failed    map[manifest.NamedResource]store.StatusInfo
 	Orphans   map[manifest.NamedResource]string
 	// DependsOn is the declared spec.dependsOn graph: each Kustomization or
@@ -445,11 +438,24 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 			err = o.bootstrapErr
 		}
 	}()
+	gitFetcher := &git.Fetcher{
+		Cache: o.cache, Depth: o.cfg.GitDepth,
+		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
+	}
+	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
+		if artifact != nil {
+			for _, warning := range artifact.Warnings {
+				o.store.AddWarning(manifest.NamedResource{}, warning)
+			}
+		}
+		return artifact, err
+	})
 	admitFromDisk := o.cfg.Input == nil && o.store.GetArtifact(manifest.BootstrapSourceID) == nil
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
 		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
-		RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
+		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 	})
 	if err != nil {
 		return err
@@ -468,6 +474,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	}
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
+	o.documents = res.Documents
 	o.dependencySubstitutions = res.DependencySubstitutions
 
 	o.freezeSubstitutions()
@@ -479,19 +486,6 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
 		o.hrc.Options.DisableChartDigestTracking = *requested
 	}
-	gitFetcher := &git.Fetcher{
-		Cache: o.cache, Depth: o.cfg.GitDepth,
-		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
-	}
-	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
-		if artifact != nil {
-			for _, warning := range artifact.Warnings {
-				o.store.AddWarning(manifest.NamedResource{}, warning)
-			}
-		}
-		return artifact, err
-	})
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
 	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
 		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})

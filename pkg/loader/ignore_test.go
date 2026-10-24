@@ -150,7 +150,7 @@ data: {env: `+env+`}
 		s := store.New()
 		admitForTest(s, dir)
 		l := New(s)
-		if _, err := l.Load(t.Context(), dir); err != nil {
+		if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 			t.Fatalf("Load: %v", err)
 		}
 		return l
@@ -231,7 +231,7 @@ data: {env: `+env+`}
 		admitForTest(s, dir)
 		l := loaderFixture(s, nil)
 		l.IgnoreFile = ignoreFile
-		if _, err := l.Load(t.Context(), dir); err != nil {
+		if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 			t.Fatalf("Load: %v", err)
 		}
 		if !Promote(t.Context(), s, appID, PromoteOptions{Record: productionForTest(l.Index.Records[appID]), Admit: func(manifest.BaseManifest) bool { return true }}) {
@@ -267,7 +267,7 @@ data: {env: `+env+`}
 	t.Run("missing override file errors", func(t *testing.T) {
 		l := New(store.New())
 		l.IgnoreFile = filepath.Join(dir, "nope.krmignore")
-		if _, err := l.Load(t.Context(), dir); err == nil {
+		if _, err := loadForTest(t.Context(), t, l, dir); err == nil {
 			t.Fatal("Load: expected error for missing IgnoreFile")
 		}
 	})
@@ -292,7 +292,7 @@ func TestLoader_KrmignoreNormalization(t *testing.T) {
 			}
 			st := store.New()
 			l := New(st)
-			_, err := l.Load(t.Context(), root)
+			_, err := loadForTest(t.Context(), t, l, root)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Load error = %v, want %v", err, tc.wantErr)
 			}

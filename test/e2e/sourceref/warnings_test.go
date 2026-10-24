@@ -116,18 +116,16 @@ func TestE2E_LoaderParseWarnings(t *testing.T) {
 	for _, site := range []string{"sibling", "component"} {
 		t.Run(site, func(t *testing.T) {
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml]\n")
 			testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
 			message := "bootstrap-sibling parse failed"
 			if site == "component" {
-				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml]\ncomponents: [component]\n")
 				testutil.WriteFile(t, root, "component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [bad.yaml]\n")
 				testutil.WriteFile(t, root, "component/bad.yaml", "apiVersion: v1\nkind: ConfigMap\nbroken: [unclosed\n")
 				message = "component data file failed to parse"
 			} else {
-				testutil.WriteFile(t, root, "bad.yaml", "apiVersion: v1\nkind: ConfigMap\nbroken: [unclosed\n")
+				testutil.WriteFile(t, root, "apps/bad.yaml", "apiVersion: v1\nkind: ConfigMap\nbroken: [unclosed\n")
 			}
 			for _, verb := range []string{"build", "test"} {
 				t.Run(verb, func(t *testing.T) {

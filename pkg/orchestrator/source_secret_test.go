@@ -165,7 +165,7 @@ spec:
 				}
 			}
 			hrID := testutil.HelmReleaseID("flux-system", "demo")
-			if docs := res.Manifests[hrID]; len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindConfigMap {
+			if docs := outputByParent(res.Manifests)[hrID]; len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindConfigMap {
 				t.Fatalf("HelmRelease output = %+v, want the chart's ConfigMap", docs)
 			}
 		})

@@ -1,6 +1,8 @@
 package loader
 
 import (
+	"cmp"
+	"context"
 	"io/fs"
 	"maps"
 	"os"
@@ -13,6 +15,28 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func loadForTest(ctx context.Context, t *testing.T, l *Loader, dir string) (int, error) {
+	t.Helper()
+	n, err := l.Load(ctx, dir)
+	if err == nil {
+		l.Admit(cmp.Or(l.SourceRoot, l.documents.mountedRoot(dir)))
+	}
+	return n, err
+}
+
+func candidateForTest(t *testing.T, l *Loader, id manifest.NamedResource) manifest.BaseManifest {
+	t.Helper()
+	r, _ := l.Index.Lookup(id)
+	obj := l.candidates[id]
+	if obj == nil {
+		obj = l.authoredObject(r.Path, r.Authored)
+		if obj != nil && obj.Named().Namespace != id.Namespace {
+			obj = obj.WithNamespace(id.Namespace)
+		}
+	}
+	return obj
+}
 
 func loaderFixture(s *store.Store, files map[manifest.NamedResource]string) *Loader {
 	l := New(s)
@@ -27,6 +51,12 @@ func stampForTest(s *store.Store, files map[manifest.NamedResource]string, root 
 	l.documents = readerForTest(root)
 	cache := map[string]nsResolution{}
 	for id, file := range files {
+		for dir := filepath.Dir(filepath.Join(root, file)); ; dir = filepath.Dir(dir) {
+			l.documents.read(dir)
+			if dir == root || dir == filepath.Dir(dir) {
+				break
+			}
+		}
 		if ks, ok := s.Get[*manifest.Kustomization](id); ok {
 			predicted, _ := l.predictNamespaces(ks, root, manifest.DiscoveryRecord{File: file}, cache)
 			s.AddObject(predicted)

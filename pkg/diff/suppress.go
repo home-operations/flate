@@ -118,20 +118,24 @@ func unavailableReason(info store.StatusInfo, side Side) string {
 }
 
 // Producer identity excludes paths; counts measure withheld document entries.
-func suppress(orig, current Snapshot) ([]manifest.BaseManifest, []manifest.BaseManifest, []Suppression) {
+func suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.DocumentBatch, []Suppression) {
 	plans := selectedSuppressionPlans(orig.Unavailable, current.Unavailable)
-	keep := func(snapshot Snapshot, side Side) []manifest.BaseManifest {
-		out := make([]manifest.BaseManifest, 0, len(snapshot.Objects))
-		for _, obj := range snapshot.Objects {
-			id := obj.Named()
-			plan, ok := plans[id]
-			if !ok {
-				out = append(out, obj)
+	keep := func(snapshot Snapshot, side Side) []manifest.DocumentBatch {
+		out := make([]manifest.DocumentBatch, 0, len(snapshot.Manifests))
+		for _, batch := range snapshot.Manifests {
+			if batch.Parent == nil {
+				out = append(out, batch)
 				continue
 			}
-			plan.note.Parent = objectParent(obj)
+			id := batch.Parent.Named()
+			plan, ok := plans[id]
+			if !ok {
+				out = append(out, batch)
+				continue
+			}
+			plan.note.Parent = objectParent(batch.Parent)
 			if plan.note.Side == SideBoth || plan.note.Side != side {
-				plan.note.Count += len(snapshot.Manifests[id])
+				plan.note.Count += len(batch.Documents)
 			}
 			plans[id] = plan
 		}

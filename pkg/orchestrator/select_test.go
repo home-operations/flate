@@ -94,12 +94,12 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	hr := &manifest.HelmRelease{Name: "same", Namespace: "apps"}
 	ks := &manifest.Kustomization{Name: "same", Namespace: "apps"}
 	ks.Labels = map[string]string{"env": ""}
-	run := selectedRun(&Result{Manifests: map[manifest.NamedResource][]map[string]any{ks.Named(): {{"kind": "ConfigMap"}}}})
+	run := selectedRun(&Result{Manifests: []manifest.DocumentBatch{{Parent: ks, Documents: []map[string]any{{"kind": "ConfigMap"}}}}})
 	run.store.AddObject(hr)
 	run.store.AddObject(ks)
 	run.store.AddObject(&manifest.Kustomization{Name: "other", Namespace: "apps", Labels: ks.Labels})
 	run.store.UpdateStatus(hr.Named(), store.StatusReady, store.ReasonSuspended, "suspended")
-	raw := maps.Clone(run.Result.Manifests)
+	raw := outputByParent(run.Result.Manifests)
 	roots := []manifest.NamedResource{testutil.HelmReleaseID("", "same"), testutil.KustomizationID("", "same")}
 	selected, err, _ := Select([]Rendered{run}, nil, roots, map[string]string{"env": ""})
 	if err != nil {
@@ -110,7 +110,7 @@ func TestSelect_CountsBeforeLabelsAndRequestedOrder(t *testing.T) {
 	if len(res.Objects) != 1 || res.Objects[0] != ks || len(res.Manifests) != 1 {
 		t.Fatalf("label or raw snapshot changed: selected=%+v raw=%+v", res, run.Result)
 	}
-	assert.Diff(t, run.Result.Manifests, raw)
+	assert.Diff(t, outputByParent(run.Result.Manifests), raw)
 	selected, err, _ = Select([]Rendered{run}, nil, roots, nil)
 	if err != nil || len(selected[0].Objects) != 2 || selected[0].Objects[0] != hr || selected[0].Objects[1] != ks {
 		t.Fatalf("requested grouping changed: %+v %v", selected, err)
@@ -577,7 +577,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s_%s_reverse_%t", disposition.Status, disposition.Message, reverse), func(t *testing.T) {
 				t.Parallel()
-				orig := selectedRun(&Result{Manifests: map[manifest.NamedResource][]map[string]any{child: {{"kind": "Deployment"}}}})
+				orig := selectedRun(&Result{Manifests: []manifest.DocumentBatch{{Parent: &manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace}, Documents: []map[string]any{{"kind": "Deployment"}}}}})
 				current := selectedRun(&Result{})
 				orig.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
 				publishFixture(t, orig.store, parent, []manifest.NamedResource{child})
@@ -657,9 +657,9 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	run.store.UpdateStatus(otherNamespace.Named(), store.StatusReady, "", "")
 	run.store.UpdateStatus(foreignChart.Named(), store.StatusFailed, "", "foreign chart failed")
 	run.Result.Failed = run.store.FailedResources()
-	run.Result.Manifests = make(map[manifest.NamedResource][]map[string]any)
+	run.Result.Manifests = nil
 	for _, obj := range run.store.ListObjects("", "") {
-		run.Result.Manifests[obj.Named()] = []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": obj.Named().Name}}}
+		run.Result.Manifests = append(run.Result.Manifests, manifest.DocumentBatch{Parent: obj, Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": obj.Named().Name}}}})
 	}
 	for _, tc := range []struct {
 		name     string
@@ -693,9 +693,9 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 			assert.Diff(t, res.Counts, map[string]int{tc.root.Kind: len(tc.objects)})
 			wantDocs := make(map[manifest.NamedResource][]map[string]any)
 			for _, obj := range tc.objects {
-				wantDocs[obj.Named()] = run.Result.Manifests[obj.Named()]
+				wantDocs[obj.Named()] = outputByParent(run.Result.Manifests)[obj.Named()]
 			}
-			assert.Diff(t, res.Manifests, wantDocs)
+			assert.Diff(t, outputByParent(res.Manifests), wantDocs)
 			slices.SortFunc(tc.statuses, manifest.NamedResource.Compare)
 			assert.Diff(t, slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare), tc.statuses)
 			assert.Equal(t, maps.Equal(res.Failed, run.Result.Failed), true)
@@ -1063,7 +1063,7 @@ func TestSelect_DiagnosticOnlyRuns(t *testing.T) {
 	for _, scenario := range []string{"single", "orig", "current"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			failed := Rendered{Result: &Result{Warnings: []manifest.Warning{warning, coverage}, Manifests: map[manifest.NamedResource][]map[string]any{testutil.KustomizationID("ns", "partial"): {{"kind": "ConfigMap"}}}}, Err: failure}
+			failed := Rendered{Result: &Result{Warnings: []manifest.Warning{warning, coverage}, Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{"kind": "ConfigMap"}}}}}, Err: failure}
 			complete := selectedRun(&Result{Warnings: []manifest.Warning{{Category: manifest.WarnSkippedSubmodule, Message: "complete", Count: 1}}})
 			complete.store.AddObject(&manifest.Kustomization{Name: "completed", Namespace: "ns"})
 			runs := []Rendered{failed}
@@ -1152,4 +1152,163 @@ func TestRenderOne_BootstrapWarningOnly(t *testing.T) {
 		t.Fatalf("failed bootstrap exposed content: %v, %+v, %v", o, result, err)
 	}
 	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
+}
+
+func TestSelect_OwnerlessDocuments(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		roots   []manifest.NamedResource
+		labels  map[string]string
+		want    []string
+		objects int
+	}{
+		{name: "all", roots: []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, want: []string{"child-hr", "child-ks", "driver-hr", "driver-ks", "foreign", "static"}, objects: 2},
+		{name: "named driver", roots: []manifest.NamedResource{testutil.HelmReleaseID("", "driver-hr")}, want: []string{"child-hr", "driver-hr"}, objects: 1},
+		{name: "mixed kinds", roots: []manifest.NamedResource{testutil.HelmReleaseID("", ""), {Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}, want: []string{"child-hr", "driver-hr"}, objects: 1},
+		{name: "driver kind", roots: []manifest.NamedResource{testutil.KustomizationID("", "")}, want: []string{"child-ks", "driver-ks"}, objects: 1},
+		{name: "namespace", roots: []manifest.NamedResource{testutil.KustomizationID("apps", ""), testutil.HelmReleaseID("apps", "")}, want: []string{"child-hr", "child-ks", "driver-hr", "driver-ks", "static"}, objects: 2},
+		{name: "labels", roots: []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, labels: map[string]string{"selected": "yes"}, want: []string{"child-ks", "driver-ks", "static"}, objects: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			run := selectedRun(&Result{})
+			ks := &manifest.Kustomization{Name: "driver-ks", Namespace: "apps", Labels: map[string]string{"selected": "yes"}}
+			hr := &manifest.HelmRelease{Name: "driver-hr", Namespace: "apps"}
+			for _, obj := range []manifest.BaseManifest{ks, hr, &manifest.ConfigMap{Name: "dependency", Namespace: "apps"}} {
+				run.store.AddObject(obj)
+			}
+			document := func(version, kind, namespace, name string) map[string]any {
+				return map[string]any{"apiVersion": version, "kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace}}
+			}
+			run.documents = []map[string]any{
+				document("v1", manifest.KindConfigMap, "apps", "static"),
+				document("v1", manifest.KindConfigMap, "other", "foreign"),
+				document("kustomize.toolkit.fluxcd.io/v1", manifest.KindKustomization, "apps", ks.Name),
+				document("helm.toolkit.fluxcd.io/v2", manifest.KindHelmRelease, "apps", hr.Name),
+			}
+			for _, i := range []int{0, 2} {
+				run.documents[i]["metadata"].(map[string]any)["labels"] = map[string]any{"selected": "yes"}
+			}
+			for _, obj := range []manifest.BaseManifest{ks, hr} {
+				name := "child-ks"
+				if obj == hr {
+					name = "child-hr"
+				}
+				run.store.RecordEmitted(obj.Named(), &store.Emission{Manifests: []map[string]any{document("v1", manifest.KindConfigMap, "unrelated", name)}, Complete: true})
+				run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+			}
+			run.Result.Manifests = run.collectManifests()
+			selected, err, _ := Select([]Rendered{run}, nil, tc.roots, tc.labels)
+			assert.NoError(t, err)
+			res := selected[0]
+			assert.Equal(t, len(res.Objects), tc.objects)
+			assert.Equal(t, len(res.Statuses), tc.objects)
+			var names []string
+			for _, batch := range res.Manifests {
+				for _, doc := range batch.Documents {
+					names = append(names, manifest.DocIdentity(doc).Name)
+				}
+			}
+			slices.Sort(names)
+			assert.Diff(t, names, tc.want)
+		})
+	}
+
+	t.Run("failed and skipped declarations", func(t *testing.T) {
+		t.Parallel()
+		for _, outcome := range []store.StatusInfo{
+			{Status: store.StatusFailed, Message: "real driver failed"},
+			{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "real driver skipped"},
+			{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"},
+		} {
+			t.Run(outcome.Message, func(t *testing.T) {
+				t.Parallel()
+				run := selectedRun(&Result{})
+				ks := &manifest.Kustomization{Name: "actual", Namespace: "apps"}
+				run.store.AddObject(ks)
+				run.store.UpdateStatus(ks.Named(), outcome.Status, outcome.Reason, outcome.Message)
+				run.documents = []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": ks.Name, "namespace": ks.Namespace}}}
+				run.Result.Manifests = run.collectManifests()
+				run.Result.Failed = run.store.FailedResources()
+				if outcome.Status == store.StatusFailed {
+					run.Err = &FailuresError{Message: outcome.Message}
+				}
+				selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{ks.Named()}, nil)
+				if (err != nil) != (outcome.Status == store.StatusFailed) {
+					t.Fatalf("failure attribution: %v", err)
+				}
+				if len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent != nil || len(selected[0].Objects) != 1 {
+					t.Fatalf("real driver declaration lost: %+v", selected[0])
+				}
+			})
+		}
+	})
+
+	t.Run("winning emissions retain driver descendants", func(t *testing.T) {
+		t.Parallel()
+		run := selectedRun(&Result{})
+		ks := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+		hr := &manifest.HelmRelease{Name: "actual", Namespace: "apps"}
+		run.store.AddObject(ks)
+		run.store.AddObject(hr)
+		declaration := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease, "metadata": map[string]any{"name": hr.Name, "namespace": hr.Namespace}}
+		original := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "shared", "namespace": "apps"}, "data": map[string]any{"marker": "built"}}
+		winner := manifest.DeepCopyMap(original)
+		winner["data"] = map[string]any{"marker": "emitted"}
+		shared := &manifest.ConfigMap{Name: "shared", Namespace: "apps"}
+		run.documents = []map[string]any{declaration, original}
+		run.store.RecordEmitted(ks.Named(), &store.Emission{Children: []store.Child{{Obj: hr, Doc: declaration}, {Obj: shared, Doc: winner}}, Manifests: []map[string]any{declaration, winner}, Complete: true})
+		descendant := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "descendant", "namespace": "apps"}}
+		run.store.RecordEmitted(hr.Named(), &store.Emission{Manifests: []map[string]any{descendant}, Complete: true})
+		for _, obj := range []manifest.BaseManifest{ks, hr} {
+			run.store.UpdateStatus(obj.Named(), store.StatusReady, "", "")
+		}
+		run.Result.Manifests = run.collectManifests()
+		selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+		assert.NoError(t, err)
+		counts := map[string]int{}
+		for _, batch := range selected[0].Manifests {
+			if batch.Parent == nil {
+				t.Fatal("winning emissions duplicated as ownerless documents")
+			}
+			for _, doc := range batch.Documents {
+				counts[manifest.DocIdentity(doc).Name]++
+				if manifest.DocIdentity(doc) == shared.Named() {
+					assert.Diff(t, doc["data"], map[string]any{"marker": "emitted"})
+				}
+			}
+		}
+		assert.Diff(t, counts, map[string]int{"actual": 1, "shared": 1, "descendant": 1})
+		selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{hr.Named()}, nil)
+		assert.NoError(t, err)
+		if len(selected[0].Manifests) != 1 || manifest.DocIdentity(selected[0].Manifests[0].Documents[0]).Name != "descendant" {
+			t.Fatal("deduplicated driver lost its independent output")
+		}
+	})
+
+	t.Run("changed-only both sides", func(t *testing.T) {
+		t.Parallel()
+		var runs []Rendered
+		for _, name := range []string{"removed", "added"} {
+			run := selectedRun(&Result{})
+			doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": name, "namespace": "apps"}}
+			unrelated := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unrelated", "namespace": "apps"}}
+			run.documents = []map[string]any{doc, unrelated}
+			id := manifest.DocIdentity(doc)
+			run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}}, Readers: map[string][]manifest.NamedResource{"kustomization.yaml": {id}}}
+			run.filter = change.NewFilter(change.NewSet([]string{"kustomization.yaml"}), run.index, run.store)
+			run.Result.Manifests = run.collectManifests()
+			runs = append(runs, run)
+		}
+		selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+		assert.NoError(t, err)
+		for i, name := range []string{"removed", "added"} {
+			if len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 1 || manifest.DocIdentity(selected[i].Manifests[0].Documents[0]).Name != name {
+				t.Fatalf("side %d selected wrong changed documents: %+v", i, selected[i].Manifests)
+			}
+			assert.Equal(t, len(selected[i].Objects), 0)
+			assert.Equal(t, len(selected[i].Counts), 0)
+		}
+	})
 }

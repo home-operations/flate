@@ -122,7 +122,7 @@ func newGetImagesCmd() *cobra.Command {
 				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
 			}, func(inv *selectedInvocation) selectedPayload {
 				res := inv.sides[0]
-				imgs := slices.Sorted(maps.Keys(imageutil.Collect(res.Objects, res.Manifests)))
+				imgs := slices.Sorted(maps.Keys(imageutil.Collect(res.Manifests)))
 				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs)}
 			})
 		},

@@ -10,10 +10,10 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-// BenchmarkRenderFlux_SmallKS measures the end-to-end RenderFlux call
+// BenchmarkRender_SmallKS measures the end-to-end Render call
 // for a tiny single-resource kustomize tree. Reasonable upper bound on
 // the per-KS cost in a real run.
-func BenchmarkRenderFlux_SmallKS(b *testing.B) {
+func BenchmarkRender_SmallKS(b *testing.B) {
 	src := b.TempDir()
 	testutil.WriteFile(b, src, "kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(b, src, "cm.yaml", `apiVersion: v1
@@ -39,9 +39,9 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		out, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
 		if err != nil {
-			b.Fatalf("RenderFlux: %v", err)
+			b.Fatalf("Render: %v", err)
 		}
 		if len(out) == 0 {
 			b.Fatalf("empty render")
@@ -49,8 +49,8 @@ data:
 	}
 }
 
-// BenchmarkRenderFlux_CacheHit measures read-set replay on a warm disk render cache.
-func BenchmarkRenderFlux_CacheHit(b *testing.B) {
+// BenchmarkRender_CacheHit measures read-set replay on a warm disk render cache.
+func BenchmarkRender_CacheHit(b *testing.B) {
 	src := b.TempDir()
 	resources := make([]string, 0, 20)
 	for i := range 20 {
@@ -75,12 +75,12 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 		}),
 	}
 	ctx := b.Context()
-	if _, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{}); err != nil {
+	if _, err := Render(ctx, cache, req, sourcecache.RetryConfig{}); err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, req, sourcecache.RetryConfig{})
+		out, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -90,11 +90,11 @@ func BenchmarkRenderFlux_CacheHit(b *testing.B) {
 	}
 }
 
-// BenchmarkRenderFlux_DeepComponentStack measures RenderFlux against a
+// BenchmarkRender_DeepComponentStack measures Render against a
 // KS whose kustomize tree pulls in 5 nested Components — the real cost
 // pattern when a flux-system overlay stacks multiple shared component
 // fragments.
-func BenchmarkRenderFlux_DeepComponentStack(b *testing.B) {
+func BenchmarkRender_DeepComponentStack(b *testing.B) {
 	src := b.TempDir()
 	const depth = 5
 
@@ -142,9 +142,9 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		out, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
 		if err != nil {
-			b.Fatalf("RenderFlux: %v", err)
+			b.Fatalf("Render: %v", err)
 		}
 		if len(out) == 0 {
 			b.Fatalf("empty render")
@@ -152,10 +152,10 @@ data:
 	}
 }
 
-// BenchmarkRenderFlux_MultiKSPerRoot measures concurrent renders of distinct
+// BenchmarkRender_MultiKSPerRoot measures concurrent renders of distinct
 // subPaths under the SAME source root — the bulk of a single-cluster repo,
 // with private construction overlays over a shared read-only source.
-func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
+func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 	src := b.TempDir()
 	const apps = 40
 	for i := range apps {
@@ -181,9 +181,9 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
-			out, err := RenderFlux(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec}, sourcecache.RetryConfig{})
+			out, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec}, sourcecache.RetryConfig{})
 			if err != nil {
-				b.Fatalf("RenderFlux: %v", err)
+				b.Fatalf("Render: %v", err)
 			}
 			if len(out) == 0 {
 				b.Fatalf("empty render")
@@ -192,6 +192,6 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 	})
 }
 
-func BenchmarkRenderFlux_CacheHitConstructed(b *testing.B) {
-	BenchmarkRenderFlux_CacheHit(b)
+func BenchmarkRender_CacheHitConstructed(b *testing.B) {
+	BenchmarkRender_CacheHit(b)
 }

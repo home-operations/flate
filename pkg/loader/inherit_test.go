@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
@@ -23,8 +24,83 @@ import (
 
 var writeFile = testutil.WriteFile
 
-func TestApplyNamespaceInheritance_GraphProjection(t *testing.T) {
+func TestAdmit_UnchangedInputs(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
+	var docs strings.Builder
+	for i := range 4 {
+		if i != 0 {
+			docs.WriteString("---\n")
+		}
+		docs.WriteString(testutil.KustomizationYAML(fmt.Sprintf("peer-%d", i), "apps", "  path: ./app\n"))
+	}
+	testutil.WriteFile(t, root, "app/peers.yaml", docs.String())
+	l := New(store.New())
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	l.Admit(root)
+	before := l.Kustomizations()
+	assert.Equal(t, len(before), 4)
+	allocs := testing.AllocsPerRun(10, func() { l.Admit(root) })
+	t.Logf("unchanged admission: %.0f allocations", allocs)
+	if allocs > 3 {
+		t.Fatalf("unchanged admission repeated scope work: %.0f allocations", allocs)
+	}
+	if !slices.Equal(l.Kustomizations(), before) {
+		t.Fatal("unchanged admission replaced peer identities")
+	}
+	assert.Equal(t, len(l.Index.Claims), 1)
+}
+
+func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "peers.yaml", testutil.KustomizationYAML("one", "apps", "  path: .\n")+"---\n"+testutil.KustomizationYAML("two", "apps", "  path: .\n"))
+	l := New(store.New())
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	l.Admit(root)
+	id := testutil.KustomizationID("apps", "one")
+	file := filepath.Join(root, "peers.yaml")
+	allocs := testing.AllocsPerRun(10, func() {
+		if !l.AdmitsRoot(id, file) {
+			t.Fatal("plain discovery candidate was rejected")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("plain discovery admission allocated: %.0f allocations", allocs)
+	}
+}
+
+func TestAdmit_GraphProjection(t *testing.T) {
 	t.Parallel()
+	t.Run("bootstrap_document_owners", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "app/siblings.yaml", testutil.KustomizationYAML("excluded", "apps", "  path: ./leaf\n")+"---\n"+testutil.KustomizationYAML("self", "apps", "  path: ./app\n"))
+		l := New(store.New())
+		l.SourceRoot = root
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		l.Admit(root)
+		self := testutil.KustomizationID("apps", "self")
+		excluded := testutil.KustomizationID("apps", "excluded")
+		first := l.Store.GetObject(self)
+		if first == nil || l.Store.GetObject(excluded) != nil {
+			t.Fatalf("document admission: self=%v excluded=%v", first, l.Store.GetObject(excluded))
+		}
+		_, err = l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		l.Admit(root)
+		if l.Store.GetObject(self) != first {
+			t.Fatal("unchanged admission replaced self-owner")
+		}
+		if _, ok := l.Index.Lookup(excluded); ok {
+			t.Fatal("excluded peer survived projection")
+		}
+	})
 	for _, tc := range []struct {
 		name   string
 		hrDir  string
@@ -177,7 +253,7 @@ spec:
 					t.Fatal(err)
 				}
 				if tc.name == "named_ready" && scan == "flux" {
-					l.ApplyNamespaces(root)
+					l.Admit(root)
 					if _, ok := l.Index.Lookup(testutil.HelmReleaseID("", "app")); !ok {
 						t.Fatalf("unresolved source records before loading its path: %+v", l.Index.Records)
 					}
@@ -186,10 +262,11 @@ spec:
 					l.Store.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
 				}
 			}
+			l.Admit(root)
 			if tc.pinned || tc.alias {
 				ks := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)[0]
 				artifact := l.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
-				if _, err := l.Load(t.Context(), filepath.Join(artifact.LocalPath, "apps")); err != nil {
+				if _, err := loadForTest(t.Context(), t, l, filepath.Join(artifact.LocalPath, "apps")); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -197,14 +274,21 @@ spec:
 			var raw manifest.DiscoveryRecord
 			if len(tc.wantKS) != 0 {
 				id := testutil.KustomizationID("flux-system", "myapp")
-				original, _ = l.Store.Get[*manifest.Kustomization](id)
+				var r manifest.DiscoveryRecord
+				for _, record := range l.Index.Files() {
+					if record.Authored == id {
+						r = record
+						break
+					}
+				}
+				original, _ = l.authoredObject(r.Path, r.Authored).(*manifest.Kustomization)
 				if original == nil {
 					t.Fatal("authored Kustomization missing")
 				}
 				snapshot = original.Clone()
-				raw, _ = l.Index.Lookup(id)
+				raw = r
 			}
-			l.ApplyNamespaces(root)
+			l.Admit(root)
 			if original != nil {
 				if diff := cmp.Diff(original, snapshot, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 					t.Fatalf("authored object mutated (-want +got): %s", diff)
@@ -309,7 +393,7 @@ spec:
 		l.SourceRoot = root
 		admitForTest(st, root)
 		for _, dir := range []string{"flux", "kubernetes/apps"} {
-			if _, err := l.Load(t.Context(), filepath.Join(root, dir)); err != nil {
+			if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, dir)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -317,7 +401,7 @@ spec:
 		if owner == nil {
 			t.Fatal("parent missing")
 		}
-		l.ApplyNamespaces(root)
+		l.Admit(root)
 		if _, _, external := SourceView(st, owner.SourceID(), root); !external {
 			t.Fatal("unavailable source borrowed bootstrap coordinates")
 		}
@@ -357,11 +441,11 @@ spec:
 			}
 			raw[name] = record
 		}
-		l.ApplyNamespaces(root)
+		l.Admit(root)
 		for _, name := range []string{"child", "explicit"} {
 			id := testutil.KustomizationID("media", name)
 			record, ok := l.Index.Lookup(id)
-			if !ok || st.GetObject(id) == nil || record.File != raw[name].File || record.Path != filepath.Join(mount, "apps", name+".yaml") || record.Path != raw[name].Path {
+			if !ok || candidateForTest(t, l, id) == nil || st.GetObject(id) == nil || record.File != raw[name].File || record.Path != filepath.Join(mount, "apps", name+".yaml") || record.Path != raw[name].Path {
 				t.Fatalf("projected %s record=%+v, raw=%+v", id, record, raw[name])
 			}
 		}
@@ -387,10 +471,10 @@ spec:
 		writeFile(t, root, "apps/ks.yaml", testutil.KustomizationYAML("immich-db", "pg", "  {path: ./output, targetNamespace: pg}\n"))
 		l := loaderFixture(store.New(), nil)
 		l.SourceRoot = root
-		if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
+		if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps")); err != nil {
 			t.Fatal(err)
 		}
-		l.ApplyNamespaces(root)
+		l.Admit(root)
 		if err := l.FinalizeIndex(t.Context(), root); err != nil {
 			t.Fatal(err)
 		}
@@ -410,7 +494,7 @@ spec:
 	})
 }
 
-func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
+func TestAdmit_SourceKinds(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		kind, spec string
@@ -431,11 +515,11 @@ func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "source"}
-			original := l.Store.GetObject(raw)
+			original := l.authoredObject(filepath.Join(root, "source.yaml"), raw)
 			if original == nil {
 				t.Fatal("source not loaded")
 			}
-			l.ApplyNamespaces(root)
+			l.Admit(root)
 			projected := raw
 			projected.Namespace = "apps"
 			if l.Store.GetObject(projected) == nil {
@@ -454,7 +538,7 @@ func TestApplyNamespaceInheritance_SourceKinds(t *testing.T) {
 	}
 }
 
-func TestApplyNamespaceInheritance_LateFallback(t *testing.T) {
+func TestAdmit_LateFallback(t *testing.T) {
 	t.Parallel()
 	for _, owned := range []bool{false, true} {
 		t.Run(fmt.Sprintf("owned_%t", owned), func(t *testing.T) {
@@ -480,10 +564,10 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 			if owned {
 				l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "owner", Path: "./apps"})
 			}
-			if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
+			if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps")); err != nil {
 				t.Fatal(err)
 			}
-			l.ApplyNamespaces(root)
+			l.Admit(root)
 			for _, obj := range l.Store.ListObjects("", "") {
 				if obj.Named().Kind == manifest.KindKustomization {
 					continue
@@ -491,6 +575,25 @@ spec: {chart: app, sourceRef: {kind: HelmRepository, name: repo}}
 				want := ""
 				if obj.Named().Namespace != want {
 					t.Errorf("%s namespace = %q, want %q", obj.Named().Kind, obj.Named().Namespace, want)
+				}
+			}
+			_, err := l.Load(t.Context(), filepath.Join(root, "apps"))
+			assert.NoError(t, err)
+			l.Admit(root)
+			l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "owner", Path: "./apps", TargetNamespace: "media"})
+			l.Admit(root)
+			for _, id := range []manifest.NamedResource{
+				{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "media", Name: "apps"},
+				{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "media", Name: "inputs"},
+				{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "media", Name: "chart"},
+			} {
+				if l.Store.GetObject(id) == nil {
+					t.Fatalf("late owner did not project %s", id)
+				}
+				raw := id
+				raw.Namespace = ""
+				if l.Store.GetObject(raw) != nil {
+					t.Fatalf("late owner left raw %s", raw)
 				}
 			}
 		})
@@ -522,5 +625,81 @@ func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 			r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.HelmReleaseID("authored", "child")}
 			assert.Diff(t, l.recordNamespaces(r, ""), []string{tc.want})
 		})
+	}
+}
+
+func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\ntransformers: [transformers]\n")
+	testutil.WriteFile(t, root, "app/transformers/kustomization.yaml", "namespace: apps\nresources: [../../transformers]\n")
+	testutil.WriteFile(t, root, "transformers/kustomization.yaml", "resources: [transformer.yaml]\n")
+	testutil.WriteFile(t, root, "transformers/transformer.yaml", namespaceTransformer)
+	testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n"))
+	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\n")
+	l := New(store.New())
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	l.Admit(root)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+
+	projected := testutil.KustomizationID("apps", "sibling")
+	authored := testutil.KustomizationID("flux-system", "sibling")
+	file := filepath.Join(root, "app/sibling.yaml")
+	check := func() *manifest.Kustomization {
+		t.Helper()
+		ks, ok := l.Store.Get[*manifest.Kustomization](projected)
+		if !ok {
+			t.Fatal("projected bootstrap sibling lost at admission fixpoint")
+		}
+		record, ok := l.Index.Lookup(projected)
+		if !ok || record.Authored != authored || record.Path != file {
+			t.Fatalf("projected sibling provenance = %+v, indexed=%t", record, ok)
+		}
+		if !l.AdmitsRoot(projected, file) {
+			t.Fatal("projected bootstrap sibling is not admitted")
+		}
+		if _, ok := l.Index.Lookup(authored); ok || l.Store.GetObject(authored) != nil {
+			t.Fatal("stale authored sibling identity survived projection")
+		}
+		doc, err := ks.RenderDocument()
+		assert.NoError(t, err)
+		name, namespace := manifest.DocMetadata(doc)
+		if name != "sibling" || namespace != "apps" || doc["spec"].(map[string]any)["targetNamespace"] != "apps" {
+			t.Fatalf("projected sibling document = %v", doc)
+		}
+		return ks
+	}
+	first := check()
+	l.Admit(root)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	if check() != first {
+		t.Fatal("repeat admission replaced the stable projected candidate")
+	}
+}
+
+func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
+	testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "apps", "  path: ./leaf\n"))
+	l := New(store.New())
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	l.Admit(root)
+	sibling := testutil.KustomizationID("apps", "sibling")
+	if l.Store.GetObject(sibling) == nil {
+		t.Fatal("bootstrap sibling not initially admitted")
+	}
+	l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
+	l.Admit(root)
+	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := l.Index.Lookup(sibling); ok || l.Store.GetObject(sibling) != nil {
+		t.Fatal("excluded bootstrap sibling resurrected through projection")
 	}
 }

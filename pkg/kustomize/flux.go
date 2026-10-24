@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"oras.land/oras-go/v2/errdef"
@@ -39,17 +40,17 @@ type RenderRequest struct {
 	ApplyIgnore bool
 	// Label mounts source content in kyaml; empty uses Source.LocalPath.
 	Label string
-	// SubPath selects the source directory for this Kustomization.
+	// SubPath selects the source directory to build.
 	SubPath string
-	// Spec is the prepared Flux Kustomization.
+	// Spec is the prepared Flux Kustomization; nil builds without a Flux owner.
 	Spec *manifest.Kustomization
 }
 
-// RenderFlux consumes admitted sources through one filesystem and a private overlay.
+// Render consumes admitted sources through one filesystem and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
-func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]map[string]any, error) {
-	if cache == nil || req.Spec == nil {
+func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]map[string]any, error) {
+	if cache == nil {
 		return nil, fmt.Errorf("%w: incomplete render request", manifest.ErrInput)
 	}
 	if err := ctx.Err(); err != nil {
@@ -72,7 +73,10 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	if err != nil {
 		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
 	}
-	maxAge := req.Spec.Interval.Duration
+	var maxAge time.Duration
+	if req.Spec != nil {
+		maxAge = req.Spec.Interval.Duration
+	}
 	key := renderKey(req, root, ignore)
 	blobKey := sourcecache.BlobKey{Content: key, PersistOnly: true}
 	reader, _, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
@@ -114,26 +118,34 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, req.SubPath)
 	}
 	subDir = canonicalDir.String()
-	ks, err := req.Spec.RenderDocument()
-	if err != nil {
-		return nil, err
+	var ks map[string]any
+	var data []byte
+	var kfile string
+	if req.Spec != nil {
+		ks, err = req.Spec.RenderDocument()
+		if err != nil {
+			return nil, err
+		}
+		data, kfile, err = generateManifest(memFS, subDir, ks)
+		if err != nil {
+			return nil, fmt.Errorf("flux kustomize generator: %w", err)
+		}
+		if err := memFS.WriteFile(kfile, data); err != nil {
+			return nil, fmt.Errorf("write kustomization.yaml: %w", err)
+		}
+	} else {
+		kfile, _ = kustomizationFileIn(memFS, subDir)
 	}
 	subPath := req.SubPath
-
-	data, kfile, err := generateManifest(memFS, subDir, ks)
-	if err != nil {
-		return nil, fmt.Errorf("flux kustomize generator: %w", err)
-	}
-	if err := memFS.WriteFile(kfile, data); err != nil {
-		return nil, fmt.Errorf("write kustomization.yaml: %w", err)
-	}
 
 	if err := preflightRemoteResources(ctx, cache, memFS, subDir); err != nil {
 		return nil, err
 	}
-	data, err = memFS.ReadFile(kfile)
-	if err != nil {
-		return nil, err
+	if kfile != "" {
+		data, err = memFS.ReadFile(kfile)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -145,7 +157,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		return kustomizestate.Build(memFS, subDir)
 	}()
 	if err != nil {
-		built := fmt.Errorf("kustomize build %s: %w", subPath, err)
+		built := fmt.Errorf("%w: kustomize build %s: %w", manifest.ErrFlux, subPath, err)
 		// On a duplicate-resource-id failure, name every accumulated path that
 		// emits the colliding resource so a localized duplicate is locatable.
 		if strings.Contains(err.Error(), "already registered id") {
@@ -155,15 +167,19 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 		}
 		return nil, built
 	}
-	// Owner labels first so user-supplied spec.commonMetadata wins on a key
-	// collision. Matches kustomize-controller's ordering: SetOwnerLabels runs at
-	// reconcile setup, SetCommonMetadata runs at apply time and overwrites.
-	if err := applyOwnerLabels(rm, ks); err != nil {
-		return nil, fmt.Errorf("apply owner labels %s: %w", subPath, err)
+	if req.Spec != nil {
+		// Flux applies owner labels before commonMetadata, which may override them.
+		if err := applyOwnerLabels(rm, ks); err != nil {
+			return nil, fmt.Errorf("apply owner labels %s: %w", subPath, err)
+		}
+		if err := applyCommonMetadata(rm, ks); err != nil {
+			return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
+		}
 	}
-	if err := applyCommonMetadata(rm, ks); err != nil {
-		return nil, fmt.Errorf("apply commonMetadata %s: %w", subPath, err)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
+
 	out, err := rm.AsYaml()
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
@@ -200,6 +216,10 @@ func renderKey(req RenderRequest, root string, ignore any) string {
 	if req.Source.Key != "" {
 		immutable = struct{ Key, Revision, Digest string }{req.Source.Key, req.Source.Revision, req.Source.Digest}
 	}
+	var spec any
+	if req.Spec != nil {
+		spec = req.Spec.Content(nil)
+	}
 	return manifest.Fingerprint(struct {
 		Spec        any
 		SourceRoot  string
@@ -207,7 +227,7 @@ func renderKey(req RenderRequest, root string, ignore any) string {
 		ApplyIgnore bool
 		Ignore      any
 		Immutable   any
-	}{req.Spec.Content(nil), root, req.SubPath, req.ApplyIgnore, ignore, immutable})
+	}{spec, root, req.SubPath, req.ApplyIgnore, ignore, immutable})
 }
 
 type sourceRoot struct {

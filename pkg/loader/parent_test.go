@@ -90,11 +90,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 			assert.Diff(t, testutil.ProductionOwners(l.Index.Records[data]), []manifest.NamedResource{ks.Named()})
 			assert.Diff(t, testutil.Owners(l.Store.Productions(data, l.Index)), []manifest.NamedResource{ks.Named()})
 			assert.Diff(t, testutil.ProductionOwners(l.Index.Records[generated]), []manifest.NamedResource{ks.Named()})
-			sourceRoot, _, _ := SourceView(st, ks.SourceID(), root)
-			assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(sourceRoot, tc.base)), tc.base != "")
-			if tc.pinned {
-				assert.Equal(t, l.dirCoveredByOtherKS(filepath.Join(root, tc.base)), false)
-			}
+
 			assert.Equal(t, ks.Path, tc.path)
 		})
 	}

@@ -95,7 +95,7 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 				source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system", URL: "file://" + root}
 				st.AddObject(source)
 				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(t.TempDir(), "alias"), InputAlias: true, FS: view})
-				_, err = l.Load(t.Context(), filepath.Join(root, "flux"))
+				_, err = loadForTest(t.Context(), t, l, filepath.Join(root, "flux"))
 				assert.NoError(t, err)
 				parent, _ = st.Get[*manifest.Kustomization](parent.Named())
 				if parent == nil {
@@ -110,9 +110,9 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 				st.AddObject(parent)
 			}
 			sourceRoot, _, _ := SourceView(st, parent.SourceID(), root)
-			_, err := l.Load(t.Context(), filepath.Join(sourceRoot, parent.Path))
+			_, err := loadForTest(t.Context(), t, l, filepath.Join(sourceRoot, parent.Path))
 			assert.NoError(t, err)
-			l.ApplyNamespaces(root)
+			l.Admit(root)
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 				want bool
 			}{{"echo", true}, {"tunnel", tc.listed}} {
 				id := testutil.KustomizationID("network", child.name)
-				if got := st.GetObject(id) != nil; got != child.want {
+				if got := st.GetObject(id) != nil; got != (child.want && (tc.alias || tc.external)) {
 					t.Errorf("Store admission for %s = %v, want %v", child.name, got, child.want)
 				}
 				if _, got := l.Index.Lookup(id); got != child.want {
@@ -158,7 +158,7 @@ patches:
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
@@ -186,7 +186,7 @@ data:
 
 	s := store.New()
 	l := New(s)
-	n, err := l.Load(t.Context(), dir)
+	n, err := loadForTest(t.Context(), t, l, dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -221,7 +221,7 @@ resources:
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = root
-	if _, err := l.Load(t.Context(), filepath.Join(root, "entry")); err != nil {
+	if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if s.GetObject(testutil.KustomizationID("flux-system", "crds")) == nil {
@@ -244,7 +244,8 @@ resources:
 	testutil.WriteFile(t, root, "escape.yaml", testutil.KustomizationYAML("escaped", "flux-system", "  path: ./x\n"))
 
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(t.Context(), filepath.Join(root, "entry")); err != nil {
+	l := loaderFixture(s, nil)
+	if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if s.GetObject(testutil.KustomizationID("flux-system", "escaped")) != nil {
@@ -264,7 +265,7 @@ kind: ConfigMap
 metadata: {name: a, namespace: ns}
 `)
 	l := New(store.New())
-	n, err := l.Load(t.Context(), dir)
+	n, err := loadForTest(t.Context(), t, l, dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -282,7 +283,8 @@ func TestLoader_SkipsDotDirs(t *testing.T) {
 			testutil.WriteFile(t, dir, filepath.Join(name, "hidden.yaml"), testutil.KustomizationYAML("hidden", "ns", "  {path: ./hidden, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 			testutil.WriteFile(t, dir, "visible.yaml", testutil.KustomizationYAML("visible", "ns", "  {path: ./visible, sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 			s := store.New()
-			if _, err := New(s).Load(t.Context(), dir); err != nil {
+			l := New(s)
+			if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 				t.Fatalf("Load: %v", err)
 			}
 			if s.GetObject(testutil.KustomizationID("ns", "hidden")) != nil {
@@ -312,7 +314,7 @@ metadata: {name: real, namespace: ns}
 `)
 	s := store.New()
 	l := New(s)
-	n, err := l.Load(t.Context(), dir)
+	n, err := loadForTest(t.Context(), t, l, dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -331,7 +333,8 @@ func TestLoader_SkipsKustomizeComponent_JSONForm(t *testing.T) {
 		`{"apiVersion":"kustomize.config.k8s.io/v1alpha1","kind":"Component"}`)
 	testutil.WriteFile(t, dir, "components/foo/leak.yaml", testutil.KustomizationYAML("${APP}-leak", "ns", "  path: ./irrelevant\n  sourceRef: {kind: GitRepository, name: flux-system}\n  interval: 1h\n"))
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
+	l := loaderFixture(s, nil)
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	got := s.GetObject(testutil.KustomizationID("ns", "${APP}-leak"))
@@ -360,7 +363,8 @@ resources:
 `)
 	testutil.WriteFile(t, dir, "addons/ks.yaml", testutil.KustomizationYAML("addons", "flux-system", "  path: ./addons\n  sourceRef: {kind: GitRepository, name: flux-system}\n  interval: 1h\n"))
 	s := store.New()
-	if _, err := loaderFixture(s, nil).Load(context.Background(), dir); err != nil {
+	l := loaderFixture(s, nil)
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	got := s.GetObject(testutil.KustomizationID("flux-system", "addons"))
@@ -483,7 +487,7 @@ metadata: {name: real, namespace: ns}
 				testutil.WriteFile(t, dir, path, content)
 			}
 			l := New(store.New())
-			n, err := l.Load(t.Context(), dir)
+			n, err := loadForTest(t.Context(), t, l, dir)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -540,11 +544,12 @@ spec:
 	// Entry the loader at `default/` so its kustomization.yaml is the
 	// graph root. The orphan-tree skip only applies under graph-walk;
 	// see Loader.Load doc-comment.
-	if _, err := loaderFixture(s, nil).Load(context.Background(), filepath.Join(dir, "default")); err != nil {
+	l := loaderFixture(s, nil)
+	if _, err := loadForTest(context.Background(), t, l, filepath.Join(dir, "default")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	// Valheim (claimed) MUST be present.
-	if s.GetObject(testutil.KustomizationID("", "valheim")) == nil {
+	if _, ok := l.Index.Lookup(testutil.KustomizationID("", "valheim")); !ok {
 		t.Error("claimed Kustomization 'valheim' missing")
 	}
 	// Atuin (commented out) MUST be absent.
@@ -593,14 +598,14 @@ resources:
 	s.AddObject(&manifest.Kustomization{Name: "games", Path: "./apps/games"})
 	l := New(s)
 	l.SourceRoot = dir
-	if _, err := l.Load(t.Context(), dir); err != nil {
+	if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	// valheim is referenced — must load. Kustomization namespace
 	// is left empty by the parser (the YAML has no
 	// metadata.namespace); the parent kustomization.yaml's
 	// `namespace:` overlay would fill it at render time.
-	if s.GetObject(testutil.KustomizationID("", "valheim")) == nil {
+	if _, ok := l.Index.Lookup(testutil.KustomizationID("games", "valheim")); !ok {
 		t.Error("referenced Kustomization 'valheim' missing from store")
 	}
 	// vrising is NOT referenced — must be skipped as orphan.
@@ -632,7 +637,7 @@ data:
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
@@ -665,7 +670,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
-	if _, err := l.Load(t.Context(), dir); err != nil {
+	if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 		t.Fatal(err)
 	}
 	hrID := testutil.HelmReleaseID("envoy-gateway", "envoy-gateway")
@@ -729,7 +734,7 @@ data:
 	l.SourceRoot = dir
 	// Drive the loader at the outer Component directly — same shape
 	// as TestLoader_SkipsKustomizeComponentSubtree's entry pattern.
-	if _, err := l.Load(context.Background(), filepath.Join(dir, "components/outer")); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, filepath.Join(dir, "components/outer")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
@@ -764,7 +769,7 @@ components:
 	l := loaderFixture(s, nil)
 	// No timeout context: if cycle protection fails, the test hangs
 	// and the test framework's overall timeout surfaces the bug.
-	if _, err := l.Load(context.Background(), filepath.Join(dir, "components/a")); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, filepath.Join(dir, "components/a")); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 }
@@ -813,7 +818,7 @@ spec:
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
@@ -850,7 +855,7 @@ resources:
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if got := len(s.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 1 {
@@ -875,7 +880,7 @@ resources: []
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
-	if _, err := l.Load(context.Background(), dir); err != nil {
+	if _, err := loadForTest(context.Background(), t, l, dir); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if got := len(s.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 0 {
@@ -952,7 +957,7 @@ brokenPointer: [ unclosed
 				}
 				l := New(store.New())
 				l.SourceRoot = filepath.Dir(dir)
-				if _, err := l.Load(t.Context(), dir); err != nil {
+				if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 					t.Fatalf("indexed discovery aborted before ownership was known: %v", err)
 				}
 				first := l.Index.Errors["app/blackbox-exporter.yaml"]
@@ -963,7 +968,7 @@ brokenPointer: [ unclosed
 				} else if !errors.Is(first, manifest.ErrInput) || !strings.Contains(first.Error(), filepath.Join(dir, "blackbox-exporter.yaml")) {
 					t.Fatalf("source-qualified decode error = %v, want manifest.ErrInput", first)
 				}
-				if _, err := l.Load(t.Context(), filepath.Dir(dir)); err != nil {
+				if _, err := loadForTest(t.Context(), t, l, filepath.Dir(dir)); err != nil {
 					t.Fatal(err)
 				}
 				if got := l.Index.Errors["app/blackbox-exporter.yaml"]; !errors.Is(got, first) {
@@ -976,6 +981,44 @@ brokenPointer: [ unclosed
 
 func TestLoader_IndependentRoots(t *testing.T) {
 	t.Parallel()
+	for _, first := range []string{"plain", "builder"} {
+		t.Run(first+" first", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "plain/empty.txt", "")
+			testutil.WriteFile(t, root, "builder/kustomization.yaml", "resources: [ks.yaml]\n")
+			testutil.WriteFile(t, root, "builder/ks.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"))
+			l := New(store.New())
+			l.SourceRoot = root
+			l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./builder"})
+			second := "builder"
+			if first == "builder" {
+				second = "plain"
+			}
+			for _, dir := range []string{first, second} {
+				_, err := l.Load(t.Context(), filepath.Join(root, dir))
+				assert.NoError(t, err)
+			}
+			l.Admit(root)
+			child := testutil.KustomizationID("apps", "child")
+			if _, ok := l.Index.Lookup(child); !ok {
+				t.Fatal("loaded child evidence missing")
+			}
+			if (l.Store.GetObject(child) != nil) != (first == "plain") {
+				t.Fatal("later load changed first entry admission policy")
+			}
+			independent := New(store.New())
+			independent.SourceRoot = root
+			independent.Store.AddObject(l.Store.GetObject(testutil.KustomizationID("apps", "owner")))
+			_, err := independent.Load(t.Context(), filepath.Join(root, "builder"))
+			assert.NoError(t, err)
+			independent.Admit(root)
+			if independent.Store.GetObject(child) != nil {
+				t.Fatal("independent loader inherited first entry policy")
+			}
+		})
+	}
+
 	t.Run("retained native views", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -989,7 +1032,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		s := store.New()
 		s.SetArtifact(manifest.BootstrapSourceID, artifact)
 		l := New(s)
-		n, err := l.Load(t.Context(), filepath.Join(root, "first"))
+		n, err := loadForTest(t.Context(), t, l, filepath.Join(root, "first"))
 		assert.NoError(t, err)
 		assert.Equal(t, n, 1)
 		view := l.documents.views[root]
@@ -1005,7 +1048,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 			t.Fatalf("uncreated file error = %v, want not exist", err)
 		}
 		testutil.WriteFile(t, root, "second/late.yaml", testutil.KustomizationYAML("late", "", "  {path: ./apps}\n"))
-		n, err = l.Load(t.Context(), filepath.Join(root, "second"))
+		n, err = loadForTest(t.Context(), t, l, filepath.Join(root, "second"))
 		assert.NoError(t, err)
 		if n != 1 {
 			t.Fatalf("second graph loaded %d objects, want one from retained directory observations", n)
@@ -1057,7 +1100,8 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		testutil.WriteFile(t, root, "second.yaml", testutil.KustomizationYAML("second", "", "  {path: ./apps}\n"))
 		s := store.New()
 		s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
-		n, err := New(s).Load(t.Context(), root)
+		l := New(s)
+		n, err := loadForTest(t.Context(), t, l, root)
 		assert.NoError(t, err)
 		assert.Equal(t, n, 1)
 		objects := s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
@@ -1091,7 +1135,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 			if tc.bounded {
 				l.SourceRoot = roots[0]
 			}
-			if _, err := l.Load(t.Context(), roots[0]); err != nil {
+			if _, err := loadForTest(t.Context(), t, l, roots[0]); err != nil {
 				t.Fatal(err)
 			}
 			if l.Store.GetArtifact(manifest.BootstrapSourceID) != nil || l.Store.GetObject(manifest.BootstrapSourceID) != nil {
@@ -1101,7 +1145,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 			observed, err := fs.Stat(view, ".")
 			assert.NoError(t, err)
 			for _, root := range []string{roots[1], roots[0]} {
-				_, err := l.Load(t.Context(), root)
+				_, err := loadForTest(t.Context(), t, l, root)
 				if tc.bounded && root == roots[1] {
 					if !errors.Is(err, manifest.ErrInput) {
 						t.Fatalf("outside SourceRoot error = %v, want unavailable source", err)
@@ -1204,5 +1248,80 @@ func TestLoader_WarningConditions(t *testing.T) {
 				t.Fatalf("%s warning = %+v", site, warnings)
 			}
 		})
+	}
+}
+
+func TestLoader_PreferExistingIndexedObject(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "first/kustomization.yaml", "resources: [ks.yaml]\n")
+	for _, dir := range []string{"first", "second"} {
+		testutil.WriteFile(t, root, dir+"/ks.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./"+dir+"\n"))
+	}
+	l := New(store.New())
+	l.SourceRoot, l.PreferExisting = root, true
+	for _, dir := range []string{"first", "second"} {
+		_, err := l.Load(t.Context(), filepath.Join(root, dir))
+		assert.NoError(t, err)
+	}
+	l.Admit(root)
+	id := testutil.KustomizationID("apps", "child")
+	record, _ := l.Index.Lookup(id)
+	if record.Path != filepath.Join(root, "first/ks.yaml") || len(l.Kustomizations()) != 1 || l.Kustomizations()[0].Path != "./first" {
+		t.Fatalf("first indexed object was replaced: %+v, %+v", record, l.Kustomizations())
+	}
+}
+
+func TestLoader_InvalidBuilderStopsRawDescent(t *testing.T) {
+	t.Parallel()
+	for _, entry := range []string{"graph", "plain"} {
+		t.Run(entry, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if entry == "graph" {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [invalid]\n")
+			}
+			testutil.WriteFile(t, root, "invalid/kustomization.yaml", "resources: [\n")
+			testutil.WriteFile(t, root, "invalid/ks.yaml", testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n"))
+			l := New(store.New())
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			l.Admit(root)
+			if _, ok := l.Index.Lookup(testutil.KustomizationID("apps", "raw")); ok {
+				t.Fatal("invalid builder admitted raw resource")
+			}
+		})
+	}
+}
+
+func TestLoader_ProjectedEvidence(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "namespace: apps\nresources: [objects.yaml]\n")
+	testutil.WriteFile(t, root, "objects.yaml", testutil.KustomizationYAML("child", "", "  path: ./leaf\n")+"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/source}\n")
+	l := New(store.New())
+	l.SourceRoot = root
+	l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."})
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	l.Admit(root)
+	for _, cached := range []bool{true, false} {
+		if !cached {
+			l.candidates = nil
+		}
+		sources := 0
+		for source := range l.Sources() {
+			sources++
+			assert.Equal(t, source.Named().Namespace, "apps")
+		}
+		assert.Equal(t, sources, 1)
+		owners := l.Kustomizations()
+		assert.Equal(t, len(owners), 2)
+		for _, owner := range owners {
+			assert.Equal(t, owner.Namespace, "apps")
+		}
+	}
+	for _, obj := range l.documents.cache[filepath.Join(root, "objects.yaml")].objects {
+		assert.Equal(t, obj.Named().Namespace, "")
 	}
 }

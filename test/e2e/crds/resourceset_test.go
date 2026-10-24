@@ -63,6 +63,7 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 func TestE2E_ResourceSetGeneratedData(t *testing.T) {
 	const (
 		cm         = "ConfigMap/default/cm-one"
+		ks         = "Kustomization/flux-system/app"
 		rs         = "ResourceSet/flux-system/demo"
 		sa         = "ServiceAccount/default/sa-one"
 		secret     = "Secret/default/secret-one"
@@ -74,12 +75,12 @@ func TestE2E_ResourceSetGeneratedData(t *testing.T) {
 		want      []string
 		encrypted bool
 	}{
-		{name: "all", flags: []string{"--skip-kinds="}, want: []string{cm, rs, secret, sa}},
+		{name: "all", flags: []string{"--skip-kinds="}, want: []string{cm, ks, rs, secret, sa}},
 		{name: "only-explicit-skips", flags: []string{"--skip-kinds=", "--only-kinds=ConfigMap,Secret"}, want: []string{cm, secret}},
 		{name: "only-implicit-skips", flags: []string{"--only-kinds=ConfigMap,Secret"}, want: []string{cm, secret}},
-		{name: "defaults", want: []string{cm, rs, sa}},
-		{name: "skip-data", flags: []string{"--skip-kinds=ConfigMap,Secret"}, want: []string{rs, sa}},
-		{name: "encrypted", flags: []string{"--skip-kinds="}, want: []string{cm, rs, secret, sa}, encrypted: true},
+		{name: "defaults", want: []string{cm, ks, rs, sa}},
+		{name: "skip-data", flags: []string{"--skip-kinds=ConfigMap,Secret"}, want: []string{ks, rs, sa}},
+		{name: "encrypted", flags: []string{"--skip-kinds="}, want: []string{cm, ks, rs, secret, sa}, encrypted: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -126,7 +127,7 @@ spec:
       kind: ServiceAccount
       metadata: {name: sa-<< inputs.name >>, namespace: default}
 `, fields, secretData, fields))
-			args := append([]string{"build", "all", "--path", filepath.Join(root, "entry"), "--concurrency=2", "--no-progress", "--cache-dir", t.TempDir()}, tc.flags...)
+			args := append([]string{"build", "ks", "app", "--path", filepath.Join(root, "entry"), "--concurrency=2", "--no-progress", "--cache-dir", t.TempDir()}, tc.flags...)
 			stdout, _ := harness.RequireCLIOK(t, args...)
 			if tc.name == "all" {
 				again, _ := harness.RequireCLIOK(t, args...)

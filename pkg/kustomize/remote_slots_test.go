@@ -19,7 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
+func TestRender_RemoteValidationSlots(t *testing.T) {
 	for _, mode := range []string{"validation", "miss", "standalone"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -135,7 +135,7 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 						input := memoryTree(t, map[string]string{
 							"kustomization.yaml": fmt.Sprintf("resources:\n- https://example.invalid%s\n- https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n", path),
 						})
-						out, err := RenderFlux(t.Context(), c, RenderRequest{
+						out, err := Render(t.Context(), c, RenderRequest{
 							Source: &store.SourceArtifact{FS: input}, Spec: demoSpec, HeldSlot: held,
 						}, sourcecache.RetryConfig{})
 						results <- result{out: out, err: err}

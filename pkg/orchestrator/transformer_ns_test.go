@@ -179,7 +179,7 @@ spec:
 		if err != nil || len(res.Failed) != 0 {
 			t.Fatalf("changed-only Render: %v; failures=%v", err, res.Failed)
 		}
-		docs := res.Manifests[other]
+		docs := outputByParent(res.Manifests)[other]
 		if len(docs) != 1 || manifest.DocKind(docs[0]) != manifest.KindHelmRelease {
 			t.Fatalf("rendered children of %s = %v, want one HelmRelease", other, docs)
 		}

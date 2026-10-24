@@ -48,7 +48,7 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			} else {
 				for _, id := range tc.order {
 					record, _ := l.Index.Lookup(id)
-					admit := func(obj manifest.BaseManifest) bool { return d.admitOrphan(obj.Named(), record.Path) }
+					admit := func(obj manifest.BaseManifest) bool { return d.loader.AdmitsRoot(obj.Named(), record.Path) }
 					if !loader.Promote(t.Context(), st, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, Admit: admit}) {
 						t.Fatalf("promotion failed for %s", id)
 					}

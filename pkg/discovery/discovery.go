@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"path/filepath"
 
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -22,6 +24,8 @@ import (
 
 // Result summarizes what discovery hydrated into the store.
 type Result struct {
+	// Documents contains sanitized output of a built entry without a Flux owner.
+	Documents []map[string]any
 	// RepoRoot is the bootstrap input's ownership coordinate. Admitted
 	// inputs may use a synthetic label with no corresponding directory.
 	RepoRoot string
@@ -65,10 +69,12 @@ type Config struct {
 	// scan scopes (e.g. .krmignore.staging / .krmignore.production) and
 	// pick one per run.
 	KRMIgnoreFile string
-	Store         *store.Store
-	WipeSecrets   bool
-	RemoteInputs  *source.HTTPInputs
-	RemoteRetry   cache.RetryConfig
+	// Trees is required when the selected entry needs a bare Kustomize build.
+	Trees        *kustomize.TreeCache
+	Store        *store.Store
+	WipeSecrets  bool
+	RemoteInputs *source.HTTPInputs
+	RemoteRetry  cache.RetryConfig
 }
 
 // Run performs the full discovery phase against cfg and writes results
@@ -80,8 +86,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	l := loader.New(cfg.Store)
 	l.Options = loader.Options{WipeSecrets: cfg.WipeSecrets, RemoteInputs: cfg.RemoteInputs, RemoteRetry: cfg.RemoteRetry}
-	// Discovery drivers and sources reach the Store immediately; other resources
-	// retain indexed evidence for render emission and exact promotion.
 	d := &discoverer{cfg: cfg, loader: l, aliasViews: make(map[string]fs.FS)}
 	_, err := d.resolveEntrySources(ctx, false)
 	if err != nil {
@@ -91,11 +95,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	d.loader.ApplyNamespaces(repoRoot)
-	kustomizations := cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+	d.loader.Admit(repoRoot)
+	kustomizations := d.loader.Kustomizations()
 	substitutions := values.NewDependencySubstitutions(kustomizations)
 	for _, ks := range kustomizations {
-		if resolved := manifest.MapDependsOn(ks, substitutions.Resolve, substitutions.Resolve); resolved != ks {
+		if resolved := manifest.MapDependsOn(ks, substitutions.Resolve, substitutions.Resolve); resolved != ks && cfg.Store.GetObject(ks.Named()) != nil {
 			cfg.Store.AddObject(resolved)
 		}
 	}
@@ -112,7 +116,28 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	cfg.Store.SetDiscoveryIndex(l.Index)
 	d.promoteOrphans(ctx, standaloneSecrets)
+	documents := d.documents[:0]
+	for i, obj := range d.built {
+		current := cfg.Store.GetObject(obj.Named())
+		if current == nil {
+			continue
+		}
+		doc := d.documents[i]
+		if secret, ok := current.(*manifest.Secret); ok && current != obj {
+			doc = maps.Clone(doc)
+			snapshot := secret.Snapshot()
+			for _, key := range []string{"data", "stringData", "type"} {
+				delete(doc, key)
+				if value, ok := snapshot[key]; ok {
+					doc[key] = value
+				}
+			}
+		}
+		documents = append(documents, doc)
+	}
+	d.documents = documents
 	return &Result{
+		Documents:                  d.documents,
 		DependencySubstitutions:    substitutions,
 		RepoRoot:                   repoRoot,
 		Index:                      l.Index,
@@ -122,6 +147,8 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 }
 
 type discoverer struct {
+	documents       []map[string]any
+	built           []manifest.BaseManifest
 	cfg             Config
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]entryResolution
@@ -150,6 +177,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		return err
 	}
 	l.IgnoreFile = ""
+	if err := d.admitEntry(ctx, repoRoot); err != nil {
+		return err
+	}
 	// Projection may introduce a new effective source reference. Resolve it
 	// before Load admits the selected spec.path edge to scope construction.
 	l.PreferExisting = true
@@ -161,7 +191,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	ksExpanded := map[expansion]struct{}{}
 	var pending []expansion
 	for {
-		l.ApplyNamespaces(repoRoot)
+		l.Admit(repoRoot)
 		_, err := d.resolveEntrySources(ctx, false)
 		if err != nil {
 			return err
@@ -169,7 +199,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		if d.hasPins {
 			d.discardPinnedWorkingTreeFiles(repoRoot)
 		}
-		kustomizations := d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+		kustomizations := d.loader.Kustomizations()
 		for _, ks := range kustomizations {
 			art, _ := d.cfg.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
 			key := expansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
@@ -223,6 +253,53 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	return nil
 }
 
+func (d *discoverer) admitEntry(ctx context.Context, repoRoot string) error {
+	if !d.loader.KustomizeRoot(d.cfg.Path) {
+		return nil
+	}
+	if _, err := d.resolveEntrySources(ctx, true); err != nil {
+		return err
+	}
+	for _, ks := range d.loader.Kustomizations() {
+		if ks.IsFragment() {
+			continue
+		}
+		ref := ks.SourceID()
+		root, _, external := loader.SourceView(d.cfg.Store, ref, repoRoot)
+
+		if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot != "" {
+			root = art.LocalRoot
+		}
+		if !external && safepath.Contains(filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)), d.cfg.Path) {
+			d.cfg.Store.AddObject(ks)
+			_, err := d.resolveEntrySources(ctx, true)
+			return err
+		}
+	}
+	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	path, err := filepath.Rel(input.LocalPath, d.cfg.Path)
+	if err != nil {
+		return err
+	}
+	docs, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: filepath.ToSlash(path)}, d.cfg.RemoteRetry)
+	if err != nil {
+		return fmt.Errorf("discovery entry build: %w", err)
+	}
+	for _, doc := range manifest.FlattenLists(docs) {
+		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets})
+		if err != nil {
+			return fmt.Errorf("discovery entry document: %w", err)
+		}
+		if obj != nil {
+			d.built = append(d.built, obj)
+			d.documents = append(d.documents, authoritative)
+		}
+	}
+	d.loader.RegisterBuilt(d.cfg.Path, d.built)
+	d.promoteOrphans(ctx, nil)
+	return nil
+}
+
 // A broad --path scan can overlap a pinned subtree. Its working-tree objects
 // must be discarded before the committed subtree supplies discovery metadata.
 // Resolved sources must retain their objects and artifacts so a pinned root
@@ -230,7 +307,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 	pinnedSources := make(map[manifest.NamedResource]struct{})
 	pinnedKS := make(map[manifest.NamedResource]struct{})
-	for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
+	for _, ks := range d.loader.Kustomizations() {
 		ref := ks.SourceID()
 		if _, pinned, _ := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot); pinned {
 			pinnedSources[ref] = struct{}{}

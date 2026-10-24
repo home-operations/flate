@@ -140,7 +140,9 @@ func TestFinalizeIndex_RemoteCancellation(t *testing.T) {
 	l.documents = readerForTest(root)
 	admitForTest(st, root)
 	l.mountSources()
-	l.documents.read(root)
+	if _, err := l.Load(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
 	network := new(source.Network)
 	defer network.Close()
 	inputs := source.NewHTTPInputs(cachetest.New(t, "", cache.New), network, task.NewBounded(2))

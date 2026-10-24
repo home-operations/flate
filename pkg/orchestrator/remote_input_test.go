@@ -61,9 +61,9 @@ generatorOptions:
 		t.Fatal("bootstrap owner missing")
 	}
 	req := kustomize.RenderRequest{Source: o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact), SubPath: "apps", Spec: ks}
-	first, err := kustomize.RenderFlux(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry)
+	first, err := kustomize.Render(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry)
 	assert.NoError(t, err)
-	second, err := kustomize.RenderFlux(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry)
+	second, err := kustomize.Render(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry)
 	assert.NoError(t, err)
 	if len(first) == 0 || !reflect.DeepEqual(first, second) {
 		t.Fatalf("rendered documents differ: first=%v second=%v", first, second)

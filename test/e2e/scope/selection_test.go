@@ -11,12 +11,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/go-git/go-git/v5/config"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
@@ -784,8 +787,307 @@ spec: {url: 'https://fixture.invalid/other'}
 				if code != 0 || !strings.Contains(stdout, "sibling-output") {
 					t.Fatalf("healthy named sibling failed: exit=%d\n%s\n%s", code, stdout, stderr)
 				}
-			} else if !strings.Contains(stderr, "decode") {
-				t.Fatalf("unowned malformed file lost decode error:\n%s", stderr)
+			} else {
+				want := "decode"
+				if tc.graph {
+					want = "kustomize build monitoring"
+				}
+				if !strings.Contains(stderr, want) {
+					t.Fatalf("unowned malformed file lost its owning error:\n%s", stderr)
+				}
+			}
+		})
+	}
+}
+
+func TestE2E_BootstrapSiblingNamespaceProjection(t *testing.T) {
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\ntransformers: [transformers]\n")
+	testutil.WriteFile(t, root, "app/transformers/kustomization.yaml", "namespace: apps\nresources: [../../transformers]\n")
+	testutil.WriteFile(t, root, "transformers/kustomization.yaml", "resources: [transformer.yaml]\n")
+	testutil.WriteFile(t, root, "transformers/transformer.yaml", `apiVersion: builtin
+kind: NamespaceTransformer
+metadata: {name: apply-ns, namespace: .invalid}
+fieldSpecs:
+  - path: metadata/name
+    kind: Namespace
+    create: true
+  - path: spec/targetNamespace
+    group: kustomize.toolkit.fluxcd.io
+    kind: Kustomization
+    create: true
+`)
+	testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n"))
+	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\n")
+
+	args := []string{"build", "all", "--path", root, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+	first, _ := harness.RequireCLIOK(t, args...)
+	second, _ := harness.RequireCLIOK(t, args...)
+	if first != second {
+		t.Fatal("projected bootstrap output changed between runs")
+	}
+	docs, err := manifest.SplitDocs([]byte(first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, doc := range docs {
+		name, namespace := manifest.DocMetadata(doc)
+		if manifest.DocKind(doc) == "ConfigMap" && name == "leaf" {
+			if namespace != "apps" {
+				t.Fatalf("leaf namespace = %q, want apps:\n%s", namespace, first)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("projected bootstrap root did not render its leaf:\n%s", first)
+	}
+}
+
+func TestE2E_SelectedKustomizeRoot(t *testing.T) {
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "app/kustomization.yaml", `resources: [release.yaml, repository.yaml, child.yaml]
+nameSuffix: -dev
+patches:
+  - target: {kind: HelmRelease, name: podinfo}
+    patch: |-
+      - op: replace
+        path: /spec/chart/spec/version
+        value: 6.5.0
+`)
+	testutil.WriteFile(t, root, "app/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: podinfo, namespace: apps}
+spec:
+  suspend: true
+  chart:
+    spec:
+      chart: podinfo
+      version: 6.0.0
+      sourceRef: {kind: HelmRepository, name: podinfo}
+`)
+	testutil.WriteFile(t, root, "app/repository.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: podinfo, namespace: apps}
+spec: {suspend: true, url: https://fixture.invalid/charts}
+`)
+	testutil.WriteFile(t, root, "app/unlisted.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: unlisted, namespace: apps}
+spec: {suspend: true}
+`)
+	testutil.WriteFile(t, root, "app/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./unavailable\n  suspend: true\n"))
+	testutil.WriteFile(t, root, "app/excluded.yaml", testutil.KustomizationYAML("excluded-driver", "apps", "  path: ./must-not-run\n")+"---\n"+`apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: excluded-source, namespace: apps}
+spec: {url: https://must-not-run.invalid/charts}
+`)
+	testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+
+	out, stderr := harness.RequireCLIOK(t, "get", "hr", "-o", "json", "--path", filepath.Join(root, "app"),
+		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	var releases []struct{ Name, Version string }
+	if err := json.Unmarshal([]byte(out), &releases); err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 1 || releases[0].Name != "podinfo-dev" || releases[0].Version != "6.5.0" {
+		t.Fatalf("selected root lost transformations or admitted a sibling:\n%s\n%s", out, stderr)
+	}
+
+	flags := []string{"--path", filepath.Join(root, "app"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+	build, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	second, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+	if build != second {
+		t.Fatal("direct build output changed between runs")
+	}
+	docs, err := manifest.SplitDocs([]byte(build))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range docs {
+		name, _ := manifest.DocMetadata(doc)
+		if name == "flate-bootstrap" || strings.HasPrefix(name, "excluded-") || name == "unlisted" || name == "child" {
+			t.Fatalf("unexpected authored or bootstrap document: %v", doc)
+		}
+	}
+	kss, _ := harness.RequireCLIOK(t, append([]string{"get", "ks", "-o", "json"}, flags...)...)
+	var owners []struct{ Name string }
+	if err := json.Unmarshal([]byte(kss), &owners); err != nil {
+		t.Fatal(err)
+	}
+	if len(owners) != 1 || owners[0].Name != "child-dev" {
+		t.Fatalf("ordinary root/child collection = %s", kss)
+	}
+	owned, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	ownedDocs, err := manifest.SplitDocs([]byte(owned))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(docs) != 3 || len(ownedDocs) != len(docs) {
+		t.Fatalf("direct/owned document counts: %d/%d", len(docs), len(ownedDocs))
+	}
+	for i, doc := range docs {
+		other := ownedDocs[i]
+		md := other["metadata"].(map[string]any)
+		labels := md["labels"].(map[string]any)
+		if labels[manifest.FluxKustomizeDomain+"/name"] != "owner" || labels[manifest.FluxKustomizeDomain+"/namespace"] != "flux-system" {
+			t.Fatalf("actual Flux owner labels missing: %v", labels)
+		}
+		delete(labels, manifest.FluxKustomizeDomain+"/name")
+		delete(labels, manifest.FluxKustomizeDomain+"/namespace")
+		if len(labels) == 0 {
+			delete(md, "labels")
+		}
+		if difference := cmp.Diff(doc, other); difference != "" {
+			t.Fatalf("direct/owned differ beyond real owner labels (-direct +owned):\n%s", difference)
+		}
+	}
+	tested, _ := harness.RequireCLIOK(t, append([]string{"test", "hr"}, flags...)...)
+	if !strings.Contains(tested, "podinfo-dev") || strings.Contains(tested, "flate-bootstrap") {
+		t.Fatalf("test did not use real transformed identity: %s", tested)
+	}
+
+	t.Run("unsuspended child", func(t *testing.T) {
+		testutil.WriteFile(t, root, "app/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"))
+		testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf-output}\n")
+		out, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+		if !strings.Contains(out, "name: leaf-output") || !strings.Contains(out, "kustomize.toolkit.fluxcd.io/name: child-dev") {
+			t.Fatalf("built child did not render its leaf under its real ownership: %s", out)
+		}
+		named, _ := harness.RequireCLIOK(t, append([]string{"build", "ks", "child-dev"}, flags...)...)
+		if !strings.Contains(named, "name: leaf-output") || strings.Contains(named, "name: podinfo-dev") {
+			t.Fatalf("named child selection mixed root siblings with descendants: %s", named)
+		}
+	})
+
+}
+
+func TestE2E_SelectedKustomizeClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, body string
+		fail             bool
+	}{
+		{name: "yaml", file: "kustomization.yaml", body: "resources: [cm.yaml]\nnameSuffix: -dev\n"},
+		{name: "yml", file: "kustomization.yml", body: "resources: [cm.yaml]\nnameSuffix: -dev\n"},
+		{name: "capitalized", file: "Kustomization", body: "resources: [cm.yaml]\nnameSuffix: -dev\n"},
+		{name: "plain"},
+		{name: "malformed", file: "kustomization.yaml", body: "resources: [\n", fail: true},
+		{name: "multiple", file: "kustomization.yaml", body: "resources: [cm.yaml]\n", fail: true},
+		{name: "component", file: "kustomization.yaml", body: "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [missing.yaml]\n", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\ndata: {value: original}\n")
+			if tc.file != "" {
+				testutil.WriteFile(t, root, tc.file, tc.body)
+			}
+			if tc.name == "multiple" {
+				testutil.WriteFile(t, root, "kustomization.yml", tc.body)
+			}
+			if tc.name == "plain" {
+				testutil.WriteFile(t, root, "entry.yaml", testutil.KustomizationYAML("plain", "apps", "  path: ./unavailable\n  suspend: true\n"))
+				out, _ := harness.RequireCLIOK(t, "get", "ks", "--path", root, "-o", "json", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+				var owners []struct{ Name string }
+				if err := json.Unmarshal([]byte(out), &owners); err != nil || len(owners) != 1 || owners[0].Name != "plain" {
+					t.Fatalf("plain folder roots = %s, %v", out, err)
+				}
+				return
+			}
+			out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root,
+				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			if tc.fail {
+				if code != 1 || strings.Contains(out, "value: original") || stderr == "" {
+					t.Fatalf("upstream failure exposed raw fallback: code=%d stdout=%s stderr=%s", code, out, stderr)
+				}
+				return
+			}
+			want := "input-dev"
+			if tc.name == "plain" {
+				want = "input"
+			}
+			if code != 0 || !strings.Contains(out, "name: "+want+"\n") {
+				t.Fatalf("entry classification lost its resource: code=%d stdout=%s stderr=%s", code, out, stderr)
+			}
+		})
+	}
+}
+
+func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		before, after         string
+		patch, sibling, plain bool
+		want                  map[string]string
+	}{
+		{name: "referenced patch", before: "resources: [deployment.yaml, cm.yaml]\npatches: [{path: patch.yaml}]\n", patch: true, want: map[string]string{"web": "changed"}},
+		{name: "resource removed", before: "resources: [deployment.yaml, cm.yaml]\n", after: "resources: [deployment.yaml]\n", want: map[string]string{"config": "removed"}},
+		{name: "resource added", before: "resources: [deployment.yaml]\n", after: "resources: [deployment.yaml, cm.yaml]\n", want: map[string]string{"config": "added"}},
+		{name: "excluded sibling", before: "resources: [deployment.yaml, cm.yaml]\n", sibling: true},
+		{name: "plain dependency", plain: true, sibling: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orig, current := t.TempDir(), t.TempDir()
+			for _, root := range []string{orig, current} {
+				testutil.GitInit(t, root)
+				if !tc.plain {
+					testutil.WriteFile(t, root, "app/kustomization.yaml", tc.before)
+				}
+				testutil.WriteFile(t, root, "app/deployment.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec: {template: {spec: {containers: [{name: web, image: 'example.test/web:1'}]}}}\n")
+				testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: config}\ndata: {value: selected}\n")
+				testutil.WriteFile(t, root, "app/unlisted.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\ndata: {value: before}\n")
+				if tc.patch {
+					testutil.WriteFile(t, root, "app/patch.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec: {template: {spec: {containers: [{name: web, image: 'example.test/web:1'}]}}}\n")
+				}
+			}
+			if tc.after != "" {
+				testutil.WriteFile(t, current, "app/kustomization.yaml", tc.after)
+			}
+			if tc.patch {
+				harness.MutateFile(t, filepath.Join(current, "app/patch.yaml"), "web:1", "web:2")
+			}
+			if tc.sibling {
+				harness.MutateFile(t, filepath.Join(current, "app/unlisted.yaml"), "value: before", "value: after")
+			}
+			flags := []string{"--path", filepath.Join(current, "app"), "--path-orig", filepath.Join(orig, "app"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			out, _ := harness.RequireCLIOK(t, append([]string{"diff", "all", "-o", "json"}, flags...)...)
+			var result struct {
+				Changes []struct {
+					Name, Status string
+					Parent       map[string]any
+				}
+				Suppressed []any
+			}
+			if err := json.Unmarshal([]byte(out), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Changes) != len(tc.want) || len(result.Suppressed) != 0 {
+				t.Fatalf("unexpected paired diff: %s", out)
+			}
+			for _, change := range result.Changes {
+				if tc.want[change.Name] != change.Status {
+					t.Fatalf("change did not retain resource identity: %s", out)
+				}
+				for _, value := range change.Parent {
+					if value != "" {
+						t.Fatalf("ownerless resource acquired parent attribution: %s", out)
+					}
+				}
+			}
+			if tc.patch {
+				images, _ := harness.RequireCLIOK(t, append([]string{"diff", "images", "--include-removed", "-o", "json"}, flags...)...)
+				var got []string
+				if err := json.Unmarshal([]byte(images), &got); err != nil {
+					t.Fatal(err)
+				}
+				if difference := cmp.Diff([]string{"example.test/web:1", "example.test/web:2"}, got); difference != "" {
+					t.Fatalf("ownerless image diff (-want +got):\n%s", difference)
+				}
 			}
 		})
 	}

@@ -1055,13 +1055,13 @@ func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	}
 	assert.Equal(t, writer.buf.String(), full[:limit])
 	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
-	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 1)
+	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)
 	writer = &outputFailWriter{remaining: limit, err: writeErr}
 	errOut.Reset()
 	assert.Equal(t, Run(args, writer, &errOut), 1)
 	assert.Equal(t, writer.buf.String(), full[:limit])
 	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
-	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 1)
+	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)
 }
 
 type outputFailWriter struct {

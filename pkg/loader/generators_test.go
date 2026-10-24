@@ -16,9 +16,10 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 	t.Parallel()
 	const encrypted = "ENC[AES256_GCM,data:fixture,iv:x,tag:y,type:str]"
 	for _, tc := range []struct {
-		name, kind, namespace, input, value, want string
-		wipe, existing, symlink, external, escape bool
+		name, kind, namespace, input, value, want        string
+		wipe, existing, symlink, external, escape, probe bool
 	}{
+		{name: "unreached_probe", kind: "configMap", input: "literals: [VALUE=fixture]", external: true, probe: true},
 		{name: "outside_flux_graph", kind: "configMap", input: "literals: [VALUE=fixture]", want: "fixture", external: true},
 		{name: "missing_file", kind: "configMap", input: "files: [VALUE=missing.txt]"},
 		{name: "outside_root", kind: "configMap", input: "files: [VALUE=../../../outside.txt]"},
@@ -77,9 +78,24 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			l.documents = readerForTest(root)
 			admitForTest(st, root)
 			l.mountSources()
-			l.documents.read(filepath.Join(root, "apps/a"))
+			if tc.probe {
+				testutil.WriteFile(t, root, "apps/a/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: excluded}\nspec: {suspend: true}\n")
+				testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources: [release.yaml]\nconfigMapGenerator:\n- name: input\n  namespace: inner\n  literals: [VALUE=fixture]\n")
+				l.documents.read(filepath.Join(root, "apps/a"))
+			} else if _, err := l.Load(t.Context(), filepath.Join(root, "apps/a")); err != nil {
+				t.Fatal(err)
+			}
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
+			}
+			if tc.probe {
+				if st.GetObject(id) != nil {
+					t.Fatal("unreached generator was materialized")
+				}
+				if _, indexed := l.Index.Lookup(testutil.HelmReleaseID("", "excluded")); indexed {
+					t.Fatal("unreached generator scope indexed its application")
+				}
+				return
 			}
 			obj := st.GetObject(id)
 			if tc.want == "" {

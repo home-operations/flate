@@ -259,6 +259,7 @@ spec:
 				if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
 					t.Fatal(err)
 				}
+				l.Admit(root)
 				decodeError := l.Index.Errors["apps/extra.yaml"]
 				if !errors.Is(decodeError, manifest.ErrInput) {
 					t.Fatalf("expected working-tree decode error, got %v", decodeError)
@@ -444,6 +445,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				if _, err := heldLoader.Load(t.Context(), filepath.Join(root, heldPath)); err != nil {
 					t.Fatal(err)
 				}
+				heldLoader.Admit(root)
 				heldError := heldLoader.Index.Errors[heldPath+"/extra.yaml"]
 				if !errors.Is(heldError, manifest.ErrInput) {
 					t.Fatal("expected held consumer's decode error")
@@ -525,6 +527,7 @@ spec:
 			if _, err := l.Load(t.Context(), filepath.Join(root, "broken")); err != nil {
 				t.Fatal(err)
 			}
+			l.Admit(root)
 			heldError := l.Index.Errors["broken/cm.yaml"]
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected working-tree decode error, got %v", heldError)
@@ -638,6 +641,7 @@ spec:
 	if _, err := l.Load(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
+	l.Admit(root)
 	wantError := l.Index.Errors["apps/cm.yaml"]
 	if !errors.Is(wantError, manifest.ErrInput) {
 		t.Fatalf("expected a working-tree decode error, got %v", wantError)
@@ -729,6 +733,7 @@ spec:
 			if _, err := l.Load(t.Context(), filepath.Join(root, "held")); err != nil {
 				t.Fatal(err)
 			}
+			l.Admit(root)
 			heldError := l.Index.Errors["held/broken.yaml"]
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
@@ -863,6 +868,7 @@ spec:
 			if _, err := l.Load(t.Context(), filepath.Join(root, "apps/broken")); err != nil {
 				t.Fatal(err)
 			}
+			l.Admit(root)
 			heldError := l.Index.Errors["apps/broken/extra.yaml"]
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)

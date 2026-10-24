@@ -408,7 +408,7 @@ func TestGenerateManifest_TypedOverrides(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_NamespaceIdentity(t *testing.T) {
+func TestRender_NamespaceIdentity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, namespace string
@@ -429,7 +429,7 @@ func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 			})
 			ks := parsedKS(t, ksDoc(map[string]any{"targetNamespace": tc.authored})).Clone()
 			ks.TargetNamespace = tc.namespace
-			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{
+			out, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{
 				Source: localSource(t, root), SubPath: ".", Spec: ks,
 			}, sourcecache.RetryConfig{})
 			assert.NoError(t, err)

@@ -46,8 +46,8 @@
 //		return selectedErr
 //	}
 //	out, warnings, suppressed, err := diff.Compare(
-//		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-//		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+//		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+//		diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 //		selectedErr,
 //		diff.Options{
 //			StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,

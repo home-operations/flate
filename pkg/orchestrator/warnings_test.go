@@ -260,13 +260,13 @@ spec:
 		t.Fatalf("demo should be rescued, not failed; got %+v", info)
 	}
 	sawPlaceholder := false
-	for _, doc := range res.Manifests[demo] {
+	for _, doc := range outputByParent(res.Manifests)[demo] {
 		if manifest.ContainsValuePlaceholder(doc) {
 			sawPlaceholder = true
 		}
 	}
 	if !sawPlaceholder {
-		t.Errorf("rescued render should carry a placeholder; manifests=%v", res.Manifests[demo])
+		t.Errorf("rescued render should carry a placeholder; manifests=%v", outputByParent(res.Manifests)[demo])
 	}
 	warned := false
 	for _, w := range res.Warnings {
@@ -345,7 +345,7 @@ spec:
 	// The ${CLOUDFLARE_TUNNEL_ID} resolved to its placeholder, not empty/literal.
 	want := manifest.ValuePlaceholder("CLOUDFLARE_TUNNEL_ID") + ".cfargotunnel.com"
 	var got string
-	for _, docs := range res.Manifests {
+	for _, docs := range outputByParent(res.Manifests) {
 		for _, d := range docs {
 			md, _ := d["metadata"].(map[string]any)
 			data, _ := d["data"].(map[string]any)

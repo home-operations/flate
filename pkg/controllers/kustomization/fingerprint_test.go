@@ -21,7 +21,7 @@ import (
 // labels (the typical pattern when the parent KS emits a re-stamped
 // child) must produce the same fingerprint as the file-loaded
 // original — otherwise the dedup short-circuit can't fire and
-// kustomize.RenderFlux runs twice for one logical Kustomization.
+// kustomize.Render runs twice for one logical Kustomization.
 func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
 	t.Parallel()
 	base := &manifest.Kustomization{

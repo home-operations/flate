@@ -9,7 +9,7 @@ import (
 // Selection contains the objects and diagnostics projected onto requested roots.
 // Borrowed manifests and document batches MUST remain immutable in use.
 type Selection struct {
-	Manifests map[manifest.NamedResource][]map[string]any
+	Manifests []manifest.DocumentBatch
 	Failed    map[manifest.NamedResource]store.StatusInfo
 	Blocked   map[manifest.NamedResource][]manifest.NamedResource
 	Warnings  []manifest.Warning

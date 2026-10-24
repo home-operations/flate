@@ -50,7 +50,7 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 // TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty covers
 // the #105 path: child Kustomizations whose YAML declares no sourceRef
 // (relying on a parent KS's render-time patches to inject one) used to
-// have resolveSourceRoot return ks.Path itself, which RenderFlux then
+// have resolveSourceRoot return ks.Path itself, which Render then
 // joined against ks.Path again — producing the X/X doubled path.
 //
 // With the seeded bootstrap GitRepository in the store, the fallback

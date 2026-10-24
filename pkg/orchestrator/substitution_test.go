@@ -63,7 +63,7 @@ func suppliedSubstitution(name string) SubstitutionSource {
 
 func substitutionValue(t *testing.T, res *Result, id manifest.NamedResource) string {
 	t.Helper()
-	docs := res.Manifests[id]
+	docs := outputByParent(res.Manifests)[id]
 	if len(docs) != 1 {
 		t.Fatalf("expected one output for %s, got %d", id, len(docs))
 	}
@@ -310,7 +310,7 @@ spec:
 				t.Errorf("HelmRelease failed = %v, want %v", failed, !rescued)
 			}
 			placeholder := false
-			for id, docs := range res.Manifests {
+			for id, docs := range outputByParent(res.Manifests) {
 				for _, doc := range docs {
 					if manifest.ContainsValuePlaceholder(doc) {
 						placeholder = true
@@ -671,11 +671,11 @@ func canonicalBatches(res *Result) []struct {
 		Parent    manifest.NamedResource
 		Documents []map[string]any
 	}
-	for _, id := range slices.SortedFunc(maps.Keys(res.Manifests), manifest.NamedResource.Compare) {
+	for _, id := range slices.SortedFunc(maps.Keys(outputByParent(res.Manifests)), manifest.NamedResource.Compare) {
 		batches = append(batches, struct {
 			Parent    manifest.NamedResource
 			Documents []map[string]any
-		}{Parent: id, Documents: res.Manifests[id]})
+		}{Parent: id, Documents: outputByParent(res.Manifests)[id]})
 	}
 	return batches
 }

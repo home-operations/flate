@@ -71,8 +71,8 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 
 func collectRendered(res *selection.Selection, b *buildFlags) []map[string]any {
 	out := []map[string]any{}
-	for _, obj := range res.Objects {
-		out = append(out, emissionDocs(res.Manifests[obj.Named()], b)...)
+	for _, batch := range res.Manifests {
+		out = append(out, emissionDocs(batch.Documents, b)...)
 	}
 	return out
 }

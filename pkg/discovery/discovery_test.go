@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -47,7 +48,7 @@ func TestRun_SmallTree(t *testing.T) {
 `)
 
 	st := store.New()
-	res, err := discovery.Run(context.Background(), discovery.Config{
+	res, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
 		Path: dir, Store: st, WipeSecrets: true,
 	})
 	if err != nil {
@@ -117,7 +118,7 @@ spec:
 %s`, repo.url, repo.ref))
 					}
 					st := store.New()
-					if _, err := discovery.Run(t.Context(), discovery.Config{
+					if _, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
 						Path: filepath.Join(root, "flux"), Store: st,
 						SelfURLs: []string{"https://example.invalid/self.git"},
 					}); err != nil {
@@ -162,7 +163,7 @@ spec: {target: {name: values}}
 	st := store.New()
 	foreign := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "demo"}
 	st.AddObject(foreign)
-	res, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true})
+	res, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, Store: st, WipeSecrets: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +216,7 @@ func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{
+	if _, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
 		Path: dir, Store: st, WipeSecrets: true,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -249,7 +250,7 @@ func TestRun_AdmittedScanCoordinates(t *testing.T) {
 		parent := t.TempDir()
 		root := filepath.Join(parent, "virtual")
 		input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{}}
-		if _, err := discovery.Run(t.Context(), discovery.Config{
+		if _, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
 			Input: input, Path: filepath.Join(parent, "outside"), Store: store.New(),
 		}); err == nil {
 			t.Fatal("scan outside admitted root succeeded")
@@ -283,7 +284,7 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 	run := func(scan string) store.SourceArtifact {
 		t.Helper()
 		st := store.New()
-		result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Path: scan, Store: st})
+		result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Input: input, Path: scan, Store: st})
 		if err != nil {
 			t.Fatalf("Run with Path %q: %v", scan, err)
 		}
@@ -340,7 +341,7 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 				testutil.WriteFile(t, dir, "kubernetes/consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${K}'}\n")
 				testutil.WriteFile(t, dir, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\n")
 				st := store.New()
-				res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(dir, "kubernetes/clusters/c0"), RepoRoot: dir, Store: st, WipeSecrets: true})
+				res, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "kubernetes/clusters/c0"), RepoRoot: dir, Store: st, WipeSecrets: true})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -445,7 +446,7 @@ spec:
 `)
 
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{
+	if _, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
 		Path: dir, Store: st, WipeSecrets: true,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -472,7 +473,7 @@ spec:
 
 func TestRun_RequiresStoreAndLoader(t *testing.T) {
 	t.Parallel()
-	if _, err := discovery.Run(context.Background(), discovery.Config{Path: t.TempDir()}); err == nil {
+	if _, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t), Path: t.TempDir()}); err == nil {
 		t.Error("Run with nil Store/Loader: want error, got nil")
 	}
 }
@@ -500,7 +501,7 @@ func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
 	testutil.WriteFile(t, dir, "self/ks.yaml", testutil.KustomizationYAML("selfish", "flux-system", "  path: ./self\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 
 	st := store.New()
-	res, err := discovery.Run(context.Background(), discovery.Config{Path: dir, Store: st, WipeSecrets: true})
+	res, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t), Path: dir, Store: st, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -528,7 +529,7 @@ func TestRun_SymlinkEntryResolved(t *testing.T) {
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	got, err := discovery.Run(t.Context(), discovery.Config{Path: link, Store: store.New()})
+	got, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: link, Store: store.New()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +551,7 @@ func TestRun_NoRepositoryUsesScanRoot(t *testing.T) {
 				}
 			}
 			st := store.New()
-			result, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st})
+			result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, Store: st})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -630,7 +631,7 @@ spec:
 				slices.Reverse(objects)
 			}
 			st.AddObjects(objects)
-			if _, err := discovery.Run(t.Context(), discovery.Config{Path: dir, Store: st, WipeSecrets: true}); err != nil {
+			if _, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, Store: st, WipeSecrets: true}); err != nil {
 				t.Fatal(err)
 			}
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}
@@ -687,7 +688,7 @@ spec:
 	testutil.WriteFileAt(t, filepath.Join(dir, "k8s", "apps", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{
+	if _, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
 		Path: dir, Store: st, WipeSecrets: true,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -727,7 +728,7 @@ configMapGenerator:
 	inputs := source.NewHTTPInputs(cachetest.New(t, "", cache.New), network, task.NewBounded(2))
 	inputs.Close()
 	st := store.New()
-	if _, err := discovery.Run(t.Context(), discovery.Config{
+	if _, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
 		Path: dir, Store: st, WipeSecrets: true, RemoteInputs: &inputs,
 	}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -768,7 +769,7 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "leaf", "kustomization.yaml"), "resources: []\n")
 
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{
+	if _, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
 		Path: filepath.Join(dir, "cluster"), RepoRoot: dir, Store: st, WipeSecrets: true,
 		KRMIgnoreFile: filepath.Join(dir, "override.krmignore"),
 	}); err != nil {
@@ -817,7 +818,7 @@ metadata: {name: standalone, namespace: demo}
 data: {value: fixture}
 `)
 			st := store.New()
-			res, err := discovery.Run(t.Context(), discovery.Config{Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
+			res, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -869,7 +870,7 @@ stringData: {HOST: fixture-value}
 			if scenario == "preexisting" {
 				st.AddObject(preexisting)
 			}
-			_, err := discovery.Run(t.Context(), discovery.Config{Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
+			_, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -931,7 +932,7 @@ kind: ConfigMap
 metadata: {name: config, namespace: flux-system}
 data: {value: fixture}
 `)
-			cfg := discovery.Config{Path: filepath.Join(dir, "flux"), RepoRoot: dir, Store: store.New(), WipeSecrets: true}
+			cfg := discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "flux"), RepoRoot: dir, Store: store.New(), WipeSecrets: true}
 			var authored manifest.BaseManifest
 			if strings.HasPrefix(scenario, "declared_") {
 				spec := map[string]any{"url": "oci://registry.invalid/artifact", "ignore": "excluded/", "ref": map[string]any{"tag": "stable"}}
@@ -1024,7 +1025,7 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 				testutil.WriteFile(t, root, file.path, file.body)
 			}
 			st := store.New()
-			res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st})
+			res, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1053,7 +1054,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 				testutil.WriteFile(t, root, file.path, file.body)
 			}
 			st := store.New()
-			res, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st})
+			res, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1117,7 +1118,7 @@ spec:
 				t.Helper()
 				st := store.New()
 				st.AddObject(&manifest.GitRepository{Name: "cluster", Namespace: "apps", URL: "https://example.invalid/self.git"})
-				result, err := discovery.Run(t.Context(), discovery.Config{
+				result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
 					Path: filepath.Join(root, scan), RepoRoot: root, Store: st,
 					SelfURLs: []string{"https://example.invalid/self.git"},
 				})
@@ -1176,6 +1177,17 @@ spec:
 			standalone := testutil.HelmReleaseID("apps", "standalone")
 			assert.Equal(t, slices.Contains(result.Index.Readers["config/prod.yaml"], standalone), true)
 			assert.Equal(t, st.GetObject(standalone) != nil, true)
+			record, ok := result.Index.Lookup(standalone)
+			assert.Equal(t, ok, true)
+			assert.Equal(t, record.Path, "")
+			assert.Equal(t, record.Authored, manifest.NamedResource{})
 		})
 	}
+}
+
+func testTrees(t *testing.T) *kustomize.TreeCache {
+	t.Helper()
+	trees := kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2))
+	t.Cleanup(trees.Close)
+	return trees
 }

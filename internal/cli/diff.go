@@ -86,8 +86,8 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 	}, func(inv *selectedInvocation) selectedPayload {
 		orig, current := inv.sides[0], inv.sides[1]
 		imgs, suppressed, err := diff.CompareImages(
-			diff.Snapshot{Objects: orig.Objects, Manifests: orig.Manifests, Unavailable: orig.Unavailable},
-			diff.Snapshot{Objects: current.Objects, Manifests: current.Manifests, Unavailable: current.Unavailable},
+			diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
+			diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable},
 			nil, includeRemoved,
 		)
 		return selectedPayload{warnings: appendSuppressionWarnings(nil, suppressed), err: errors.Join(err,
@@ -106,8 +106,8 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 	}, func(inv *selectedInvocation) selectedPayload {
 		orig, current := inv.sides[0], inv.sides[1]
 		formatted, warnings, suppressed, err := diff.Compare(
-			diff.Snapshot{Objects: orig.Objects, Manifests: orig.Manifests, Unavailable: orig.Unavailable},
-			diff.Snapshot{Objects: current.Objects, Manifests: current.Manifests, Unavailable: current.Unavailable},
+			diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
+			diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable},
 			nil, diff.Options{StripAttrs: d.stripAttrs, StripFields: d.stripFields, Format: diff.Format(c.output)},
 		)
 		_, writeErr := cmd.OutOrStdout().Write(formatted)

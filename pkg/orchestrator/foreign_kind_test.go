@@ -61,7 +61,7 @@ spec:
 	// deletion of a live resource.
 	ksID := testutil.KustomizationID("flux-system", "apps")
 	var found bool
-	for _, doc := range res.Manifests[ksID] {
+	for _, doc := range outputByParent(res.Manifests)[ksID] {
 		name, ns := manifest.DocMetadata(doc)
 		if manifest.DocKind(doc) == manifest.KindBucket && ns == id.Namespace && name == id.Name {
 			found = true
@@ -71,7 +71,7 @@ spec:
 		}
 	}
 	if !found {
-		t.Errorf("foreign Bucket missing from the parent's rendered output: %+v", res.Manifests[ksID])
+		t.Errorf("foreign Bucket missing from the parent's rendered output: %+v", outputByParent(res.Manifests)[ksID])
 	}
 	for _, kind := range []string{manifest.KindKustomization, manifest.KindHelmRelease, manifest.KindResourceSet} {
 		t.Run(kind, func(t *testing.T) {

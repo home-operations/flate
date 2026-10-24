@@ -135,3 +135,41 @@ func TestE2E_DiffKustomizeInputLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestE2E_DiffSelectedKustomizeInputs(t *testing.T) {
+	for _, input := range []string{"builder", "patch", "unrelated"} {
+		t.Run(input, func(t *testing.T) {
+			root, orig := t.TempDir(), t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml]\nnameSuffix: -dev\npatches: [{path: patch.yaml}]\n")
+			testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\ndata: {value: base}\n")
+			testutil.WriteFile(t, root, "patch.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\ndata: {value: before}\n")
+			testutil.WriteFile(t, root, "unrelated.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\ndata: {value: before}\n")
+			testutil.CopyTree(t, root, orig)
+			switch input {
+			case "builder":
+				harness.MutateFile(t, filepath.Join(root, "kustomization.yaml"), "-dev", "-prod")
+			case "patch":
+				harness.MutateFile(t, filepath.Join(root, "patch.yaml"), "before", "after")
+			case "unrelated":
+				harness.MutateFile(t, filepath.Join(root, "unrelated.yaml"), "before", "after")
+			}
+			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "diff", "--path", root, "--path-orig", orig,
+				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			if input == "unrelated" {
+				if out != "" {
+					t.Fatalf("unrelated file promoted a raw object: %s\n%s", out, stderr)
+				}
+				return
+			}
+			wants := []string{"input-dev", "before", "after"}
+			if input == "builder" {
+				wants = []string{"input-dev", "input-prod"}
+			}
+			for _, want := range wants {
+				if !strings.Contains(out, want) {
+					t.Fatalf("changed input missed %q: %s\n%s", want, out, stderr)
+				}
+			}
+		})
+	}
+}

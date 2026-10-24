@@ -25,8 +25,7 @@ func selectedSnapshot(parent Parent, docs []Doc, unavailable store.StatusInfo) S
 		batch = append(batch, doc.Manifest)
 	}
 	result := Snapshot{
-		Objects:   []manifest.BaseManifest{obj},
-		Manifests: map[manifest.NamedResource][]map[string]any{id: batch},
+		Manifests: []manifest.DocumentBatch{{Parent: obj, Documents: batch}},
 	}
 	if unavailable.Status != "" {
 		result.Unavailable = map[manifest.NamedResource]store.StatusInfo{id: unavailable}
@@ -167,10 +166,9 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 	moved := ksParent
 	moved.Path = "other/apps"
 	right := selectedSnapshot(moved, nil, store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
-	id := left.Objects[0].Named()
 	backing := []Suppression{{Parent: hrParent, Side: SideOrig, Count: 1, Reason: "supplied"}, {Reason: "untouched"}}
 	before := slices.Clone(backing)
-	original := manifest.DeepCopyMap(left.Manifests[id][0])
+	original := manifest.DeepCopyMap(left.Manifests[0].Documents[0])
 	normalized := 0
 	out, warnings, suppressed, err := Compare(left, right, nil, Options{
 		Format: FormatJSON, Suppressed: backing[:1],
@@ -196,7 +194,7 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 	if len(directWarnings) != 0 {
 		t.Errorf("structured changes constructed presentation warnings: %+v", directWarnings)
 	}
-	if !slices.Equal(backing, before) || !reflect.DeepEqual(left.Manifests[id][0], original) || len(left.Objects) != 1 || normalized != 0 {
+	if !slices.Equal(backing, before) || !reflect.DeepEqual(left.Manifests[0].Documents[0], original) || len(left.Manifests) != 1 || normalized != 0 {
 		t.Error("comparison modified caller data or normalized withheld documents")
 	}
 }
@@ -205,14 +203,12 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 	t.Parallel()
 	left := selectedSnapshot(hrParent, hrDocs(2), store.StatusInfo{})
 	right := selectedSnapshot(hrParent, hrDocs(1), store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
-	left.Manifests[hrID][0]["data"] = map[string]any{"images": []any{"ghcr.io/demo/shared:v1", "ghcr.io/demo/shared:v1"}}
-	left.Manifests[hrID][1]["data"] = map[string]any{"image": "ghcr.io/demo/withheld:v1"}
-	right.Manifests[hrID][0]["data"] = map[string]any{"image": "ghcr.io/demo/stale:v1"}
+	left.Manifests[0].Documents[0]["data"] = map[string]any{"images": []any{"ghcr.io/demo/shared:v1", "ghcr.io/demo/shared:v1"}}
+	left.Manifests[0].Documents[1]["data"] = map[string]any{"image": "ghcr.io/demo/withheld:v1"}
+	right.Manifests[0].Documents[0]["data"] = map[string]any{"image": "ghcr.io/demo/stale:v1"}
 	other := &manifest.HelmRelease{Name: "healthy", Namespace: "monitoring"}
-	left.Objects = append(left.Objects, other)
-	right.Objects = append(right.Objects, other)
-	left.Manifests[other.Named()] = []map[string]any{{"image": "ghcr.io/demo/removed:v1"}}
-	right.Manifests[other.Named()] = []map[string]any{{"images": []any{"ghcr.io/demo/shared:v1", "ghcr.io/demo/new:v2", "ghcr.io/demo/new:v2"}, "unencoded": func() {}}}
+	left.Manifests = append(left.Manifests, manifest.DocumentBatch{Parent: other, Documents: []map[string]any{{"image": "ghcr.io/demo/removed:v1"}}})
+	right.Manifests = append(right.Manifests, manifest.DocumentBatch{Parent: other, Documents: []map[string]any{{"images": []any{"ghcr.io/demo/shared:v1", "ghcr.io/demo/new:v2", "ghcr.io/demo/new:v2"}, "unencoded": func() {}}}})
 	selectedErr := errors.New("partial render")
 	for _, includeRemoved := range []bool{false, true} {
 		images, notes, err := CompareImages(left, right, selectedErr, includeRemoved)
@@ -263,5 +259,49 @@ func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
 	}
 	if !reflect.DeepEqual(left[0].Manifest, before) {
 		t.Error("normalization mutated selected manifests")
+	}
+}
+
+func TestCompare_OwnerlessDocuments(t *testing.T) {
+	t.Parallel()
+	owner := &manifest.Kustomization{Name: "actual", Namespace: "apps"}
+	left := selectedSnapshot(Parent{NamedResource: owner.Named()}, nil, store.StatusInfo{})
+	right := selectedSnapshot(Parent{NamedResource: owner.Named()}, nil, store.StatusInfo{Status: store.StatusFailed, Message: "real driver failed"})
+	makeDoc := func(name, image string) map[string]any {
+		return map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": name, "namespace": "apps"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": image}}}}}}
+	}
+	left.Manifests = append(left.Manifests, manifest.DocumentBatch{Documents: []map[string]any{makeDoc("changed", "example.test/app:v1"), makeDoc("removed", "example.test/removed:v1")}})
+	right.Manifests = append(right.Manifests, manifest.DocumentBatch{Documents: []map[string]any{makeDoc("changed", "example.test/app:v2"), makeDoc("added", "example.test/added:v1")}})
+	out, _, _, err := Compare(left, right, nil, Options{Format: FormatJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Changes    []Change      `json:"changes"`
+		Suppressed []Suppression `json:"suppressed"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Changes) != 3 || len(result.Suppressed) != 0 {
+		t.Fatalf("ownerless changes suppressed: %s", out)
+	}
+	statuses := map[string]ChangeStatus{}
+	for _, changed := range result.Changes {
+		if changed.Parent != (Parent{}) || changed.Kind != "Deployment" || changed.Namespace != "apps" {
+			t.Fatalf("ownerless identity changed: %+v", changed)
+		}
+		statuses[changed.Name] = changed.Status
+	}
+	if statuses["changed"] != StatusChanged || statuses["removed"] != StatusRemoved || statuses["added"] != StatusAdded {
+		t.Fatalf("changes = %v", statuses)
+	}
+	images, notes, err := CompareImages(left, right, nil, true)
+	if err != nil || len(notes) != 0 || !slices.Equal(images, []string{"example.test/added:v1", "example.test/app:v1", "example.test/app:v2", "example.test/removed:v1"}) {
+		t.Fatalf("images = %v, notes = %v, err = %v", images, notes, err)
+	}
+	out, _, _, err = Compare(left, right, nil, Options{Format: FormatDiff})
+	if err != nil || bytes.Contains(out, []byte("Kustomization")) || !bytes.Contains(out, []byte("Deployment.apps apps/changed")) {
+		t.Fatalf("ownerless heading = %q, err = %v", out, err)
 	}
 }

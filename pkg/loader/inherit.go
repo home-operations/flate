@@ -21,10 +21,17 @@ type scopeConstruction struct {
 	walks         map[graphContext][]graphVisit
 	scanned       map[string]struct{}
 	ready         map[sourceState]struct{}
+	inputs        []scopeInput
 	complete      bool
 	visits        map[string][]graphVisit
 	contributions []scopeContribution
 	claims        []manifest.KSClaim
+}
+
+type scopeInput struct {
+	owner     *manifest.Kustomization
+	source    sourceState
+	published bool
 }
 
 type scopeContribution struct {
@@ -49,17 +56,29 @@ func (l *Loader) ensureScopes() {
 	}
 }
 
-// ApplyNamespaces closes authored namespace contexts using the shared document reader.
-func (l *Loader) ApplyNamespaces(repoRoot string) {
+// Admit resolves scope evidence and publishes independently runnable discovery roots.
+func (l *Loader) Admit(repoRoot string) {
 	l.mountSources()
+	l.admit(repoRoot)
+}
+
+func (l *Loader) admit(repoRoot string) {
 	l.ensureScopes()
+	if l.scopes.complete && l.scopesMatch(l.Kustomizations()) {
+		return
+	}
+
 	if repoRoot == "" {
 		l.scopes.claims = buildClaims(l.Store, repoRoot, l.documents, localKustomizations(l.Store, repoRoot))
 		l.scopes.complete = true
 		return
 	}
 	for {
-		kss := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+		kss := l.Kustomizations()
+		l.scopes.inputs = l.scopes.inputs[:0]
+		for _, ks := range kss {
+			l.scopes.inputs = append(l.scopes.inputs, scopeInput{owner: ks, source: l.sourceState(ks.SourceID()), published: l.Store.GetObject(ks.Named()) != nil})
+		}
 		for _, ks := range kss {
 			root, _, external := SourceView(l.Store, ks.SourceID(), repoRoot)
 			target := filepath.Clean(filepath.Join(root, ks.Path))
@@ -69,8 +88,11 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 				}
 			}
 		}
-		clear(l.scopes.visits)
-		l.scopes.contributions = nil
+		for file, visits := range l.scopes.visits {
+			clear(visits)
+			l.scopes.visits[file] = visits[:0]
+		}
+		l.scopes.contributions = l.scopes.contributions[:0]
 		for _, dir := range l.standaloneRoots(repoRoot, kss) {
 			l.visitScope(graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID})
 		}
@@ -106,11 +128,28 @@ func (l *Loader) ApplyNamespaces(repoRoot string) {
 			l.visitScope(v)
 		}
 		l.scopes.claims = buildClaims(l.Store, repoRoot, l.documents, local)
-		if !l.projectAuthored(repoRoot) {
+		l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
+		for _, claim := range l.scopes.claims {
+			l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
+		}
+		if changed := l.projectAuthored(repoRoot); !changed || l.scopesMatch(l.Kustomizations()) {
 			l.scopes.complete = true
 			return
 		}
 	}
+}
+
+func (l *Loader) scopesMatch(kss []*manifest.Kustomization) bool {
+	if len(kss) != len(l.scopes.inputs) {
+		return false
+	}
+	for i, ks := range kss {
+		input := l.scopes.inputs[i]
+		if ks != input.owner || l.sourceState(ks.SourceID()) != input.source || (l.Store.GetObject(ks.Named()) != nil) != input.published {
+			return false
+		}
+	}
+	return true
 }
 
 func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
@@ -171,126 +210,198 @@ func (l *Loader) visitScope(root graphVisit) []graphVisit {
 	return visits
 }
 
-func (l *Loader) projectAuthored(repoRoot string) bool {
-	raw := map[string]map[manifest.NamedResource]manifest.DiscoveryRecord{}
-	for _, r := range l.Index.Files() {
-		if r.Authored != (manifest.NamedResource{}) && r.Path != "" {
-			if raw[r.Path] == nil {
-				raw[r.Path] = map[manifest.NamedResource]manifest.DiscoveryRecord{}
-			}
-			raw[r.Path][r.Authored] = r
-		}
-	}
-	next, objects := l.desiredAuthored(raw, repoRoot)
-	deletes, upserts, changed := l.authoredChanges(raw, next, objects)
-	l.applyAuthored(next, objects, deletes, upserts)
-	return changed
+type indexedRecord struct {
+	id manifest.NamedResource
+	manifest.DiscoveryRecord
 }
 
-func (l *Loader) desiredAuthored(raw map[string]map[manifest.NamedResource]manifest.DiscoveryRecord, repoRoot string) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]manifest.BaseManifest) {
+func (l *Loader) projectAuthored(repoRoot string) bool {
+	var indexed []indexedRecord
+	for id, r := range l.Index.Files() {
+		if r.Authored != (manifest.NamedResource{}) && r.Path != "" {
+			indexed = append(indexed, indexedRecord{id, r})
+		}
+	}
+	slices.SortFunc(indexed, func(a, b indexedRecord) int {
+		if a.Path != b.Path {
+			return strings.Compare(a.Path, b.Path)
+		}
+		if c := a.Authored.Compare(b.Authored); c != 0 {
+			return c
+		}
+		return a.id.Compare(b.id)
+	})
+	scopes := make(map[string]rootAdmission)
+	allowed := make(map[manifest.NamedResource]bool)
+	raw := indexed[:0]
+	for start := 0; start < len(indexed); {
+		end := start + 1
+		for end < len(indexed) && indexed[end].Path == indexed[start].Path {
+			end++
+		}
+		file := indexed[start].Path
+		var scope rootAdmission
+		doc := l.documents.cache[file]
+		if doc.bootstrap || l.entry == entryKustomize || !doc.loaded {
+			structural := slices.ContainsFunc(indexed[start:end], func(r indexedRecord) bool { return r.id.KindInfo().Structural })
+			scope = l.rootAdmission(file, indexed[start].File, structural)
+			scopes[file] = scope
+		}
+		for _, r := range indexed[start:end] {
+			if doc.bootstrap {
+				allowed[r.id] = scope.admits(l, r.id, r.DiscoveryRecord)
+				if !allowed[r.id] {
+					continue
+				}
+			}
+			if len(raw) == 0 || raw[len(raw)-1].Path != file || raw[len(raw)-1].Authored != r.Authored {
+				raw = append(raw, r)
+			}
+		}
+		start = end
+	}
+	next, objects := l.desiredAuthored(raw, repoRoot)
+	for id, r := range next {
+		if objects[id] != nil {
+			previous, _ := l.Index.Lookup(id)
+			if _, decided := allowed[id]; decided && previous.Path == r.Path && previous.Authored == r.Authored {
+				continue
+			}
+			allowed[id] = l.entry != entryKustomize && l.documents.cache[r.Path].loaded && !l.documents.cache[r.Path].bootstrap || scopes[r.Path].admits(l, id, r)
+		}
+	}
+	for id, obj := range l.candidates {
+		if r, ok := l.Index.Lookup(id); ok && r.Path == "" && r.Authored == (manifest.NamedResource{}) {
+			objects[id] = obj
+		}
+	}
+	l.candidates = objects
+	return l.applyAuthored(next, objects, allowed)
+}
+
+func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]manifest.BaseManifest) {
 	next := map[manifest.NamedResource]manifest.DiscoveryRecord{}
 	objects := map[manifest.NamedResource]manifest.BaseManifest{}
 	prediction := map[string]nsResolution{}
-	for _, path := range slices.Sorted(maps.Keys(raw)) {
-		for _, id := range slices.SortedFunc(maps.Keys(raw[path]), manifest.NamedResource.Compare) {
-			r := raw[path][id]
-			authored := l.authoredObject(path, id)
-			if authored == nil {
-				continue
+	for _, indexed := range raw {
+		r := indexed.DiscoveryRecord
+		path, id := r.Path, r.Authored
+		authored := l.authoredObject(path, id)
+		if authored == nil {
+			continue
+		}
+		obj := authored
+		forced := ""
+		if ks, ok := obj.(*manifest.Kustomization); ok {
+			obj, forced = l.predictNamespaces(ks, repoRoot, r, prediction)
+		}
+		for _, ns := range l.recordNamespaces(r, forced) {
+			id := obj.Named()
+			id.Namespace = ns
+			projected := obj
+			// Candidate identities MUST stay stable until their source state changes.
+			previous := l.candidates[id]
+			if previous != nil {
+				ks, isKS := obj.(*manifest.Kustomization)
+				if !isKS || previous.(*manifest.Kustomization).TargetNamespace == ks.TargetNamespace {
+					projected = previous
+				}
 			}
-			records, projected := l.projectAuthoredRecord(r, authored, repoRoot, prediction)
-			maps.Copy(next, records)
-			maps.Copy(objects, projected)
+			if projected.Named().Namespace != ns {
+				projected = projected.WithNamespace(ns)
+			}
+			record := r
+			if old, ok := l.Index.Lookup(id); ok && old.Path == r.Path && previous == projected {
+				record.Refs = old.Refs
+			} else {
+				record.Refs = nil
+				for ref := range manifest.References(projected) {
+					if discoveryReference(ref) {
+						record.Refs = append(record.Refs, ref.NamedResource)
+					}
+				}
+			}
+			next[id] = record
+			if manifest.KindOf(projected).Discovery {
+				objects[id] = projected
+			}
 		}
 	}
 	return next, objects
 }
 
 func (l *Loader) authoredObject(path string, id manifest.NamedResource) manifest.BaseManifest {
-	for _, obj := range l.documents.cache[path].objects {
-		if obj.Named() == id {
-			return obj
+	doc := l.documents.cache[path]
+	if len(doc.objects) > 1 {
+		if doc.lookup == nil {
+			doc.lookup = make(map[manifest.NamedResource]manifest.BaseManifest, len(doc.objects))
+			for _, obj := range doc.objects {
+				if doc.lookup[obj.Named()] == nil {
+					doc.lookup[obj.Named()] = obj
+				}
+			}
+			l.documents.cache[path] = doc
 		}
+		return doc.lookup[id]
+	}
+	if len(doc.objects) == 1 && doc.objects[0].Named() == id {
+		return doc.objects[0]
 	}
 	return nil
 }
 
-func (l *Loader) projectAuthoredRecord(r manifest.DiscoveryRecord, authored manifest.BaseManifest, repoRoot string, prediction map[string]nsResolution) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]manifest.BaseManifest) {
-	obj := authored
-	forced := ""
-	if ks, ok := obj.(*manifest.Kustomization); ok {
-		obj, forced = l.predictNamespaces(ks, repoRoot, r, prediction)
-	}
-	records := map[manifest.NamedResource]manifest.DiscoveryRecord{}
-	objects := map[manifest.NamedResource]manifest.BaseManifest{}
-	for _, ns := range l.recordNamespaces(r, forced) {
-		projected := obj
-		if ns != obj.Named().Namespace {
-			projected = obj.WithNamespace(ns)
-		}
-		id := projected.Named()
-		record := r
-		record.Refs = nil
-		for ref := range manifest.References(projected) {
-			if discoveryReference(ref) {
-				record.Refs = append(record.Refs, ref.NamedResource)
-			}
-		}
-		if old, ok := l.Index.Lookup(id); ok && old.Path == r.Path && slices.Equal(old.Refs, record.Refs) {
-			record.Refs = old.Refs
-		}
-		records[id] = record
-		if info := manifest.KindOf(projected); info.Tracked && info.Discovery {
-			objects[id] = projected
-		}
-	}
-	return records, objects
-}
-
-func (l *Loader) authoredChanges(raw map[string]map[manifest.NamedResource]manifest.DiscoveryRecord, next map[manifest.NamedResource]manifest.DiscoveryRecord, objects map[manifest.NamedResource]manifest.BaseManifest) ([]manifest.NamedResource, []manifest.NamedResource, bool) {
-	var deletes, upserts []manifest.NamedResource
+func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.DiscoveryRecord, objects map[manifest.NamedResource]manifest.BaseManifest, allowed map[manifest.NamedResource]bool) bool {
+	var deletes []manifest.NamedResource
 	changed := false
 	for id, r := range l.Index.Files() {
-		if _, processed := raw[r.Path][r.Authored]; !processed {
+		if r.Authored == (manifest.NamedResource{}) || r.Path == "" {
 			continue
 		}
 		if _, survives := next[id]; !survives {
 			deletes = append(deletes, id)
-			changed = true
-		}
-	}
-	for _, id := range slices.SortedFunc(maps.Keys(next), manifest.NamedResource.Compare) {
-		if _, exists := l.Index.Lookup(id); !exists {
-			changed = true
-		}
-		if obj := objects[id]; obj != nil {
-			if existing := l.Store.GetObject(id); existing != nil {
-				ks, isKS := obj.(*manifest.Kustomization)
-				if !isKS || existing.(*manifest.Kustomization).TargetNamespace == ks.TargetNamespace {
-					continue
-				}
-			}
-			upserts = append(upserts, id)
-			changed = true
 		}
 	}
 	slices.SortFunc(deletes, manifest.NamedResource.Compare)
-	return deletes, upserts, changed
-}
-
-func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.DiscoveryRecord, objects map[manifest.NamedResource]manifest.BaseManifest, deletes, upserts []manifest.NamedResource) {
 	for _, id := range deletes {
 		delete(l.Index.Records, id)
 		l.Store.DeleteObject(id)
+		changed = true
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(next), manifest.NamedResource.Compare) {
-		l.Index.Records[id] = next[id]
+		r := next[id]
+		if previous, ok := l.Index.Lookup(id); !ok || previous.Authored != r.Authored || previous.Path != r.Path || previous.File != r.File || !slices.Equal(previous.Refs, r.Refs) {
+			changed = true
+		}
+		l.Index.Records[id] = r
 	}
-	for _, id := range upserts {
-		if obj := objects[id]; obj != nil {
-			l.Store.AddObject(obj)
+	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
+		if _, survives := next[id]; !survives || !allowed[id] {
+			if l.Store.GetObject(id) == l.admitted[id] {
+				l.Store.DeleteObject(id)
+				changed = true
+			}
+			delete(l.admitted, id)
 		}
 	}
+	if l.admitted == nil {
+		l.admitted = map[manifest.NamedResource]manifest.BaseManifest{}
+	}
+	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
+		obj := objects[id]
+		if !allowed[id] || !manifest.KindOf(obj).Discovery {
+			continue
+		}
+		if existing := l.Store.GetObject(id); existing != nil {
+			ks, isKS := obj.(*manifest.Kustomization)
+			if !isKS || existing.(*manifest.Kustomization).TargetNamespace == ks.TargetNamespace {
+				continue
+			}
+		}
+		l.Store.AddObject(obj)
+		l.admitted[id] = obj
+		changed = true
+	}
+	return changed
 }
 
 func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []string {

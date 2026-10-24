@@ -109,7 +109,18 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			}
 		}
 	}
-	if allowMissing {
+	evidence := map[manifest.NamedResource]manifest.BaseManifest{}
+	if d.loader != nil {
+		for obj := range d.loader.Sources() {
+			evidence[obj.Named()] = obj
+		}
+		for _, ks := range d.loader.Kustomizations() {
+			ref := ks.SourceID()
+			if allowMissing || evidence[ref] != nil || d.cfg.Store.GetObject(ref) != nil {
+				groups[ref] = append(groups[ref], ks)
+			}
+		}
+	} else if allowMissing {
 		for _, ks := range d.cfg.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 			groups[ks.SourceID()] = append(groups[ks.SourceID()], ks)
 		}
@@ -118,11 +129,24 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 	var pinned []*manifest.GitRepository
 	for _, id := range slices.SortedFunc(maps.Keys(groups), manifest.NamedResource.Compare) {
 		obj := d.cfg.Store.GetObject(id)
+		if obj == nil {
+			obj = evidence[id]
+			if obj != nil && slices.ContainsFunc(groups[id], func(ks *manifest.Kustomization) bool {
+				return d.cfg.Store.GetObject(ks.Named()) != nil
+			}) {
+				previous, resolved := d.resolvedSources[id]
+				artifact, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
+				d.cfg.Store.AddObject(obj)
+				if resolved && previous.object == obj && artifact != nil {
+					d.publishEntrySource(previous, artifact)
+				}
+			}
+		}
 		previous, seen := d.resolvedSources[id]
 		if seen && obj == nil && previous.input == bootstrap && slices.Equal(previous.refs, groups[id]) {
 			continue
 		}
-		if seen && obj != nil && previous.object == obj {
+		if seen && obj != nil && previous.object == obj && (d.cfg.Store.GetArtifact(id) != nil || d.cfg.Store.GetObject(id) != nil) {
 			art, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
 			if previous.input == bootstrap || art == nil || !art.InputAlias && id != manifest.BootstrapSourceID {
 				continue

@@ -23,8 +23,13 @@ type document struct {
 	body      *types.Kustomization
 	file      string
 	objects   []manifest.BaseManifest
+	built     []manifest.BaseManifest
+	selected  bool
+	lookup    map[manifest.NamedResource]manifest.BaseManifest
 	plugins   *[]pluginInputs
 	loaded    bool
+	bootstrap bool
+	traversed bool
 	pathState pathState
 	searched  bool
 }
@@ -58,12 +63,19 @@ func mountSource(mounted map[string]*store.SourceArtifact, artifact store.Artifa
 	}
 }
 
-func (r *documentReader) mountSources(s sourceReader) []string {
+func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.DiscoveryIndex) []string {
 	mounted := map[string]*store.SourceArtifact{}
 	for info := range manifest.Kinds() {
 		if info.SourceArtifact {
 			for _, obj := range s.ListObjects(info.Group, info.Kind) {
 				mountSource(mounted, s.GetArtifact(obj.Named()))
+			}
+		}
+	}
+	for _, index := range candidates {
+		for id, record := range index.Records {
+			if id.KindInfo().SourceArtifact && record.File != "" {
+				mountSource(mounted, s.GetArtifact(id))
 			}
 		}
 	}
@@ -87,7 +99,12 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 	for _, root := range changed {
 		for file := range r.cache {
 			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
-				delete(r.cache, file)
+				cached := r.cache[file]
+				if cached.selected || cached.built != nil {
+					r.cache[file] = document{selected: cached.selected, built: cached.built}
+				} else {
+					delete(r.cache, file)
+				}
 			}
 		}
 	}
@@ -109,7 +126,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 }
 
 func (l *Loader) mountSources() {
-	changed := l.documents.mountSources(l.Store)
+	changed := l.documents.mountSources(l.Store, l.Index)
 	if len(changed) == 0 {
 		return
 	}
@@ -130,6 +147,7 @@ func (l *Loader) mountSources() {
 		for id, r := range l.Index.Files() {
 			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
 				delete(l.Index.Records, id)
+				delete(l.candidates, id)
 				l.Store.DeleteObject(id)
 			}
 		}
@@ -200,12 +218,16 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 		file := filepath.Join(dir, name)
 		input, name := r.input(file)
 		data, err := fs.ReadFile(input, name)
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		var k types.Kustomization
-		if yaml.Unmarshal(data, &k) != nil {
-			continue
+		if err != nil || yaml.Unmarshal(data, &k) != nil {
+			cached.file, cached.pathState = file, pathDirectory
+			if r.cache != nil {
+				r.cache[dir] = cached
+			}
+			return nil, file
 		}
 		//nolint:staticcheck // Kustomize still accepts these deprecated input fields.
 		fix := k.Kind == types.ComponentKind && k.APIVersion == "" || len(k.Bases)+len(k.ImageTags)+len(k.HelmChartInflationGenerator) != 0
@@ -227,7 +249,7 @@ func (r *documentReader) read(dir string) (*types.Kustomization, string) {
 	if r.cache != nil {
 		r.cache[dir] = cached
 	}
-	return nil, ""
+	return nil, cached.file
 }
 
 func (r documentReader) rememberStat(file string, info fs.FileInfo, err error) document {

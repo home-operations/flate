@@ -32,7 +32,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	var declarations []producerDeclaration
 	remaining := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
-		if doc.body != nil && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
+		if doc.body != nil && !doc.selected && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
 			remaining[dir] = struct{}{}
 		}
 	}
@@ -49,7 +49,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
 		}
-		if v.role != kustomizeinput.Resource {
+		if v.role != kustomizeinput.Resource || v.owner == (manifest.NamedResource{}) && l.documents.cache[v.file].selected {
 			return
 		}
 		if v.document != nil {
@@ -63,6 +63,32 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		}
 		if v.readable {
 			declarations = b.recordProduced(v, l.documents.cache[v.file].objects, declarations)
+		}
+	}
+	for dir, doc := range l.documents.cache {
+		if doc.built == nil {
+			continue
+		}
+		rel, _ := filepath.Rel(repoRoot, dir)
+		root := graphVisit{root: repoRoot, dir: filepath.ToSlash(rel)}
+		for _, visit := range l.scopeWalk(root) {
+			for _, obj := range doc.built {
+				l.recordReader(visit.coordinate, visit.localCoordinate(), obj.Named())
+			}
+		}
+		var candidates []manifest.NamedResource
+		for _, obj := range doc.built {
+			for ref := range manifest.References(obj) {
+				candidates = append(candidates, ref.NamedResource)
+			}
+		}
+		slices.SortFunc(candidates, manifest.NamedResource.Compare)
+		candidates = slices.Compact(candidates)
+		root.source = manifest.BootstrapSourceID
+		_, builder := l.documents.read(dir)
+		root.coordinate = l.fileCoordinate(builder)
+		for _, obj := range doc.built {
+			b.recordProducer(producerDeclaration{obj: obj, authored: obj.Named(), visit: root}, candidates)
 		}
 	}
 	for _, contribution := range l.scopes.contributions {
@@ -106,21 +132,21 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 }
 
 func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]struct{}) []string {
+	pinned := map[manifest.NamedResource]bool{}
+	for _, ks := range l.Kustomizations() {
+		_, pinned[ks.Named()], _ = SourceView(l.Store, ks.SourceID(), repoRoot)
+	}
 	var roots []string
 	for _, dir := range slices.Sorted(maps.Keys(remaining)) {
+		if !l.documents.cache[dir].traversed {
+			continue
+		}
 		rel, err := filepath.Rel(repoRoot, l.documents.cache[dir].file)
 		if err != nil {
 			continue
 		}
 		owners, _ := l.Index.OwnersOfFile(filepath.ToSlash(rel))
-		if slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool {
-			ks, ok := l.Store.Get[*manifest.Kustomization](owner)
-			if !ok {
-				return false
-			}
-			_, pinned, _ := SourceView(l.Store, ks.SourceID(), repoRoot)
-			return pinned
-		}) {
+		if slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool { return pinned[owner] }) {
 			continue
 		}
 		roots = append(roots, filepath.ToSlash(filepath.Dir(rel)))
@@ -202,7 +228,7 @@ func (v graphVisit) localCoordinate() string {
 func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization) []string {
 	roots := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
-		if doc.body != nil {
+		if doc.body != nil && doc.traversed {
 			roots[dir] = struct{}{}
 		}
 	}
@@ -433,6 +459,9 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []manifest.Bas
 			r.Authored, r.Path, r.File = obj.Named(), v.file, v.coordinate
 		}
 		p := manifest.Production{Owner: v.owner, Authored: obj.Named(), Path: v.file, File: v.coordinate, Source: v.source}
+		if v.owner != (manifest.NamedResource{}) && manifest.KindOf(obj).Runnable && b.store.GetObject(id) == nil {
+			p.Path = ""
+		}
 		if ks, ok := b.store.Get[*manifest.Kustomization](v.owner); ok {
 			p.Source = ks.SourceID()
 			if p.Source.Name == "" || p.Source.Kind == "" {

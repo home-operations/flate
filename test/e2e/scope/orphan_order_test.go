@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestE2E_OrphanNotesDeterministic(t *testing.T) {
+func TestE2E_ExcludedSiblingsDeterministic(t *testing.T) {
 	root, cache := t.TempDir(), t.TempDir()
 	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
@@ -22,13 +22,8 @@ func TestE2E_OrphanNotesDeterministic(t *testing.T) {
 			var wantOut, wantErr string
 			for run := range 2 {
 				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", root, "--cache-dir", cache, "--no-progress", "--concurrency=2")
-				if strings.Count(stderr, "[OrphanedResource]") != 8 || strings.Contains(stdout, "warnings") || strings.Contains(stdout, "notes (") || strings.Contains(stderr, "level=WARN") {
+				if strings.Contains(stderr, "[OrphanedResource]") || strings.Contains(stdout, "stray-") || strings.Contains(stderr, "stray-") || strings.Contains(stdout, "warnings") || strings.Contains(stdout, "notes (") || strings.Contains(stderr, "level=WARN") {
 					t.Fatalf("orphan destination: stdout=%s stderr=%s", stdout, stderr)
-				}
-				for _, suffix := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
-					if !strings.Contains(stderr, "flux-system/stray-"+suffix+": resource orphaned") || !strings.Contains(stderr, "missing-"+suffix) {
-						t.Fatalf("orphan reason missing: %s", stderr)
-					}
 				}
 				if verb == "build" && !strings.Contains(stdout, "name: rendered") || verb == "test" && (!strings.Contains(stdout, "passed") || strings.Contains(stdout, "failed")) {
 					t.Fatalf("orphan product changed: %s", stdout)

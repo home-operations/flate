@@ -16,6 +16,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 		name, parentGroup, parentKind, parentNamespace, parentName, apiVersion string
 		pairs                                                                  int
 	}{
+		{"ownerless parent", "", "", "", "", "apps/v1", 2},
 		{"parent name", manifest.HelmReleaseDomain, "HelmRelease", "ns", "b", "apps/v1", 2},
 		{"parent group", "example.test", "HelmRelease", "ns", "a", "apps/v1", 2},
 		{"resource group", manifest.HelmReleaseDomain, "HelmRelease", "ns", "a", "example.test/v1", 2},

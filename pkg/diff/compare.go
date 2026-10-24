@@ -9,11 +9,10 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Snapshot contains selected producer batches and their render availability.
-// Objects, manifests, and status entries remain immutable during comparison.
+// Snapshot contains selected document batches and their render availability.
+// Manifests and status entries remain immutable during comparison.
 type Snapshot struct {
-	Objects     []manifest.BaseManifest
-	Manifests   map[manifest.NamedResource][]map[string]any
+	Manifests   []manifest.DocumentBatch
 	Unavailable map[manifest.NamedResource]store.StatusInfo
 }
 
@@ -23,7 +22,7 @@ type Snapshot struct {
 func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, []manifest.Warning, []Suppression, error) {
 	left, right, suppressed := suppress(orig, current)
 	opts.Suppressed = append(slices.Clone(opts.Suppressed), suppressed...)
-	out, warnings, err := RenderDocs(selectedDocs(left, orig.Manifests), selectedDocs(right, current.Manifests), opts)
+	out, warnings, err := RenderDocs(selectedDocs(left), selectedDocs(right), opts)
 	return out, warnings, opts.Suppressed, errors.Join(err, selectedErr)
 }
 
@@ -32,8 +31,8 @@ func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, [
 // withheld before extraction and disclosed as structured suppressions with document counts.
 func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved bool) ([]string, []Suppression, error) {
 	left, right, suppressed := suppress(orig, current)
-	origImages := imageutil.Collect(left, orig.Manifests)
-	currentImages := imageutil.Collect(right, current.Manifests)
+	origImages := imageutil.Collect(left)
+	currentImages := imageutil.Collect(right)
 	out := make([]string, 0, len(currentImages))
 	for img := range currentImages {
 		if _, ok := origImages[img]; !ok {

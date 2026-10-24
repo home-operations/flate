@@ -25,7 +25,11 @@ func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
 // Claims reuses discovery's source-view documents while the Loader is mutable.
 func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
 	l.mountSources()
-	return buildClaims(l.Store, repoRoot, l.documents, localKustomizations(l.Store, repoRoot))
+	kss := slices.DeleteFunc(l.Kustomizations(), func(ks *manifest.Kustomization) bool {
+		_, _, external := SourceView(l.Store, ks.SourceID(), repoRoot)
+		return external
+	})
+	return buildClaims(l.Store, repoRoot, l.documents, kss)
 }
 
 func localKustomizations(s *store.Store, repoRoot string) []*manifest.Kustomization {

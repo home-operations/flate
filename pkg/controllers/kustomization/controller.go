@@ -183,7 +183,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err := c.run.PreflightError(id); err != nil {
 		return err
 	}
-	docs, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
+	docs, err := kustomize.Render(ctx, c.Trees, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
 	}, c.retry)
 	if err != nil {

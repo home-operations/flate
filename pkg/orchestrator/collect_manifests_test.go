@@ -57,7 +57,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	st.UpdateStatus(failedKS, store.StatusFailed, "", "kustomize build boom")
 
 	o := &Orchestrator{store: st}
-	got := o.collectManifests()
+	got := outputByParent(o.collectManifests())
 
 	if _, ok := got[ready]; !ok {
 		t.Errorf("passing HelmRelease %s must contribute its rendered children", ready)
@@ -72,7 +72,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		t.Errorf("failed successor lost diagnostics: %+v", info)
 	}
 	st.DeleteObject(failedHR)
-	if _, ok := o.collectManifests()[failedHR]; ok {
+	if _, ok := outputByParent(o.collectManifests())[failedHR]; ok {
 		t.Fatal("hidden producer contributed completed output")
 	}
 	t.Run("ResourceSets", func(t *testing.T) {
@@ -81,6 +81,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		st := store.New()
 		owners := []*manifest.ResourceSet{{Name: "a", Namespace: "apps"}, {Name: "z", Namespace: "apps"}}
 		parent := testutil.KustomizationID("apps", "parent")
+		st.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 		index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 		var winningDocs []map[string]any
 		var winningChild store.Child
@@ -104,7 +105,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		assert.Equal(t, st.GetArtifact(winner), store.Artifact(nil))
 		st.UpdateStatus(winner, store.StatusFailed, "", "invalid ResourceSet template")
 		o := &Orchestrator{store: st, index: index}
-		assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{parent: winningDocs})
+		assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: winningDocs})
 		assert.Equal(t, st.GetObject(winningChild.Obj.Named()), winningChild.Obj)
 		assert.Equal(t, st.EmissionOwner(winningChild.Obj.Named()), winner)
 		assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: winningChild.Obj.Named(), Category: manifest.WarnConflictingProducers, Count: 1,
@@ -114,6 +115,24 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		assert.Equal(t, info.Message, "invalid ResourceSet template")
 	})
 
+}
+
+func TestCollectManifests_MissingParent(t *testing.T) {
+	t.Parallel()
+
+	st := store.New()
+	parent := testutil.KustomizationID("apps", "missing")
+	rs := &manifest.ResourceSet{Name: "resources", Namespace: "apps"}
+	st.AddObject(rs)
+	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings", "namespace": "apps"}}
+	children, docs := base.ParseChildren(rs.Named(), []map[string]any{doc}, manifest.ParseDocOptions{})
+	st.RecordEmitted(rs.Named(), &store.Emission{Children: children, Manifests: docs, Complete: true})
+	o := &Orchestrator{store: st, index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		rs.Named(): {Parent: parent},
+	}}}
+	if batches := o.collectManifests(); len(batches) != 0 {
+		t.Fatalf("missing parent contributed output: %+v", batches)
+	}
 }
 
 func TestCollectManifests_ConflictingProducers(t *testing.T) {
@@ -152,7 +171,7 @@ func TestCollectManifests_ConflictingProducers(t *testing.T) {
 				}
 				wg.Wait()
 				o := &Orchestrator{store: st}
-				got := o.collectManifests()
+				got := outputByParent(o.collectManifests())
 				if len(got) != workers {
 					t.Fatalf("output lost producer documents: %v", got)
 				}
@@ -165,7 +184,7 @@ func TestCollectManifests_ConflictingProducers(t *testing.T) {
 					children, docs := base.ParseChildren(owner, got[owners[workers-1]], manifest.ParseDocOptions{})
 					st.RecordEmitted(owner, &store.Emission{Children: children, Manifests: docs, Complete: true})
 				}
-				if got := o.collectManifests(); len(got) != workers {
+				if got := outputByParent(o.collectManifests()); len(got) != workers {
 					t.Fatalf("equal ordinary producer groups changed: %v", got)
 				}
 			})
@@ -220,8 +239,8 @@ func TestCollectManifests_ParentlessResourceSetSharedChild(t *testing.T) {
 				if !parentlessWinner {
 					want[parent.Named()] = winningDocs
 				}
-				assert.Diff(t, o.collectManifests(), want)
-				assert.Diff(t, o.collectManifests(), want)
+				assert.Diff(t, outputByParent(o.collectManifests()), want)
+				assert.Diff(t, outputByParent(o.collectManifests()), want)
 				cm, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"})
 				if !ok {
 					t.Fatal("missing shared ConfigMap")
@@ -253,6 +272,7 @@ func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 				emissions := make([]store.Emission, 2)
 				for i, owner := range owners {
+					st.AddObject(&manifest.Kustomization{Name: parents[i].Name, Namespace: parents[i].Namespace})
 					st.AddObject(owner)
 					index.Records[owner.Named()] = manifest.DiscoveryRecord{Parent: parents[i]}
 					doc := map[string]any{"apiVersion": "v1", "kind": kind,
@@ -288,8 +308,8 @@ func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 				check := func(winner int) {
 					t.Helper()
 					want := map[manifest.NamedResource][]map[string]any{parents[winner]: emissions[winner].Manifests}
-					assert.Diff(t, o.collectManifests(), want)
-					assert.Diff(t, o.collectManifests(), want)
+					assert.Diff(t, outputByParent(o.collectManifests()), want)
+					assert.Diff(t, outputByParent(o.collectManifests()), want)
 					assert.Equal(t, st.EmissionOwner(id), owners[winner].Named())
 					assert.Equal(t, st.GetObject(id), emissions[winner].Children[0].Obj)
 				}
@@ -313,6 +333,7 @@ func TestCollectManifests_ResourceSetChildEligibility(t *testing.T) {
 
 	st := store.New()
 	parent := testutil.KustomizationID("apps", "parent")
+	st.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 	rs := &manifest.ResourceSet{Name: "mixed", Namespace: "apps"}
 	st.AddObject(rs)
 	batch, err := manifest.DecodeDocs(strings.NewReader(`apiVersion: v1
@@ -377,7 +398,7 @@ spec:
 			if len(skip) > 0 {
 				parentDocs = []map[string]any{docs[0], docs[3]}
 			}
-			assert.Diff(t, o.collectManifests(), map[manifest.NamedResource][]map[string]any{
+			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{
 				parent: parentDocs,
 				ks:     ksDocs,
 				hr:     hrDocs,
@@ -398,4 +419,14 @@ spec:
 			}
 		})
 	}
+}
+
+func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource][]map[string]any {
+	out := make(map[manifest.NamedResource][]map[string]any, len(batches))
+	for _, batch := range batches {
+		if batch.Parent != nil {
+			out[batch.Parent.Named()] = batch.Documents
+		}
+	}
+	return out
 }

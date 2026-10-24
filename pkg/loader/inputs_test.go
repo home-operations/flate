@@ -44,7 +44,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 			l := New(s)
 			l.SourceRoot = root
 			admitForTest(s, root)
-			if _, err := l.Load(t.Context(), filepath.Join(root, "entry")); err != nil {
+			if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry")); err != nil {
 				t.Fatal(err)
 			}
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
@@ -92,7 +92,7 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 	l := New(s)
 	l.SourceRoot = root
 	admitForTest(s, root)
-	_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
+	_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry"))
 	assert.NoError(t, err)
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
@@ -300,13 +300,13 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 	l := New(s)
 	l.SourceRoot = root
 	admitForTest(s, root)
-	if _, err := l.Load(t.Context(), filepath.Join(root, "apps")); err != nil {
+	if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps")); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if s.GetObject(testutil.KustomizationID("projected", "dual")) == nil {
+	if candidateForTest(t, l, testutil.KustomizationID("projected", "dual")) == nil || s.GetObject(testutil.KustomizationID("projected", "dual")) != nil {
 		t.Fatal("generator data role suppressed the declared resource")
 	}
 	for _, id := range []manifest.NamedResource{testutil.KustomizationID("authored", "terminal"), testutil.KustomizationID("projected", "terminal"), secretID("projected", "hidden"), secretID("authored", "hidden"), testutil.KustomizationID("authored", "hidden-config"), testutil.KustomizationID("projected", "hidden-config"), testutil.KustomizationID("authored", "directory-config"), testutil.KustomizationID("configuration-only", "directory-config"), testutil.KustomizationID("projected", "directory-config"), secretID("configuration-only", "directory-secret"), secretID("projected", "directory-secret")} {
@@ -319,7 +319,7 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 	}
 }
 
-func TestApplyNamespaces_FluxComponentInputContexts(t *testing.T) {
+func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: effective\n")
@@ -576,7 +576,7 @@ func TestFinalizeIndex_InputSourceViews(t *testing.T) {
 			l := New(s)
 			l.SourceRoot = root
 			admitForTest(s, root)
-			_, err := l.Load(t.Context(), filepath.Join(local, "entry"))
+			_, err := loadForTest(t.Context(), t, l, filepath.Join(local, "entry"))
 			assert.NoError(t, err)
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)

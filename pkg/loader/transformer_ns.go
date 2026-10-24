@@ -65,9 +65,11 @@ type nsResolution struct {
 // wins (first hit walking up), matching kustomize's "closest overlay"
 // semantics.
 func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file string, cache map[string]nsResolution) nsResolution {
-	dir := path.Dir(filepath.ToSlash(file))
-	for dir != "." && dir != "/" && dir != "" {
+	for dir := path.Dir(filepath.ToSlash(file)); dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
 		key := filepath.Join(repoRoot, filepath.FromSlash(dir))
+		if reader.cache[key].body == nil {
+			continue
+		}
 		res, ok := cache[key]
 		if !ok {
 			res = reader.resolveInjectedTargetNamespace(repoRoot, dir)
@@ -76,7 +78,6 @@ func (reader documentReader) resolveOverlayInjectedNamespace(repoRoot, file stri
 		if res.ok {
 			return res
 		}
-		dir = path.Dir(dir)
 	}
 	return nsResolution{}
 }

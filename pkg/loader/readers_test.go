@@ -77,7 +77,7 @@ spec:
 					input.FS = os.DirFS(root)
 					st.SetArtifact(manifest.BootstrapSourceID, art)
 				}
-				_, err := l.Load(t.Context(), filepath.Join(root, "manifests"))
+				_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "manifests"))
 				assert.NoError(t, err)
 				return l, input, want
 			}

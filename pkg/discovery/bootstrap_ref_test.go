@@ -97,7 +97,10 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			childID := testutil.KustomizationID("", "child")
 			phantom := testutil.KustomizationID("", "phantom")
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
-			artifact := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
+			artifact, available := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
+			if !available {
+				t.Fatalf("pinned artifact missing: records=%+v objects=%v", result.Index.Records, st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
+			}
 			if st.GetObject(phantom) != nil || st.GetObject(childID) == nil || parentsForTest(result.Index)[childID] != parent {
 				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), parentsForTest(result.Index)[childID])
 			}
@@ -350,6 +353,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				if _, err := l.Load(t.Context(), filepath.Join(root, "authored")); err != nil {
 					t.Fatal(err)
 				}
+				l.Admit(root)
 			}
 			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 				t.Fatal(err)

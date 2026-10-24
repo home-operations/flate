@@ -141,7 +141,7 @@ func TestFinalizeIndex_Excluded(t *testing.T) {
 			testutil.WriteFile(t, root, "selected.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: selected}\nspec: {url: https://example.test/repo.git}\n")
 			testutil.WriteFile(t, root, "excluded.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: excluded}\nspec:\n  dependsOn: [{apiVersion: '"+version+"', kind: Kustomization, name: missing}]\n")
 			l := New(store.New())
-			_, err := l.Load(t.Context(), root)
+			_, err := loadForTest(t.Context(), t, l, root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -285,7 +285,7 @@ metadata: {name: pending}
 		}}
 		st.SetArtifact(manifest.BootstrapSourceID, input)
 		l := New(st)
-		if _, err := l.Load(t.Context(), child); !errors.Is(err, fs.ErrNotExist) {
+		if _, err := loadForTest(t.Context(), t, l, child); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("missing mounted child error = %v, want absent source content", err)
 		}
 		if len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(l.Index.Errors) != 0 {
@@ -457,7 +457,7 @@ metadata: {name: pending}
 						artifact.LocalPath = committed
 					}
 					st.SetArtifact(manifest.BootstrapSourceID, artifact)
-					if n, err := l.Load(t.Context(), committed); err != nil || n != 1 {
+					if n, err := loadForTest(t.Context(), t, l, committed); err != nil || n != 1 {
 						t.Fatalf("%s Load = %d, %v; want one object", name, n, err)
 					}
 					view := l.documents.views[committed]
@@ -477,26 +477,26 @@ metadata: {name: pending}
 					if name == "first" && child != nil || name == "second" && (child == nil || child.Namespace != "replacement") {
 						t.Fatalf("%s source retained a stale miss: %v", name, child)
 					}
-					id := testutil.KustomizationID("", name)
+					id := testutil.KustomizationID(name, name)
 					if _, ok := l.Index.Lookup(id); !ok || st.GetObject(id) == nil {
 						t.Fatalf("%s replacement object was not stored and indexed", name)
 					}
 					if name == "second" {
-						id.Name = "first"
+						id.Name, id.Namespace = "first", "first"
 						if _, ok := l.Index.Lookup(id); ok || st.GetObject(id) != nil {
 							t.Fatal("replacement retained the previous source's object or index")
 						}
 					}
 				}
 				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: committed})
-				if _, err := l.Load(t.Context(), committed); !errors.Is(err, manifest.ErrInput) {
+				if _, err := loadForTest(t.Context(), t, l, committed); !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("nil replacement read host content: %v", err)
 				}
 				if len(l.Index.Records) != 0 || len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 {
 					t.Fatal("nil replacement retained old objects or index records")
 				}
 				st.SetArtifact(manifest.BootstrapSourceID, replacement)
-				if n, err := l.Load(t.Context(), committed); err != nil || n != 1 {
+				if n, err := loadForTest(t.Context(), t, l, committed); err != nil || n != 1 {
 					t.Fatalf("remounted source Load = %d, %v; want one object", n, err)
 				}
 				l.documents.read(committed)
@@ -533,7 +533,7 @@ metadata: {name: pending}
 		st.SetArtifact(repo.Named(), artifact)
 		l := New(st)
 		for _, dir := range []string{root, filepath.Join(root, "child"), unrelated} {
-			if _, err := l.Load(t.Context(), dir); err != nil {
+			if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -557,7 +557,7 @@ metadata: {name: pending}
 		nested := &manifest.GitRepository{Name: "nested"}
 		st.AddObject(nested)
 		st.SetArtifact(nested.Named(), artifact)
-		if n, err := l.Load(t.Context(), filepath.Join(root, "child")); err != nil || n != 1 {
+		if n, err := loadForTest(t.Context(), t, l, filepath.Join(root, "child")); err != nil || n != 1 {
 			t.Fatalf("late mount Load = %d, %v; want one object", n, err)
 		}
 		if l.documents.views[artifact.LocalPath] == artifact.FS || l.documents.mountedRoot(filepath.Join(root, "child/ks.yaml")) != artifact.LocalPath {
@@ -656,5 +656,83 @@ components: [component]
 	again, _ := r.read(root)
 	if again != body {
 		t.Fatal("input classification replaced the cached document")
+	}
+}
+
+func TestDocumentReader_UnreadableBuilder(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"plain/unreadable/kustomization.yaml": {Mode: fs.ModeDir | 0o755},
+		"plain/unreadable/ks.yaml":            {Data: []byte(testutil.KustomizationYAML("raw", "apps", "  path: ./leaf\n"))},
+	}})
+	l := New(st)
+	l.mountSources()
+	dir := filepath.Join(root, "plain/unreadable")
+	body, file := l.documents.read(dir)
+	if body != nil || file != filepath.Join(dir, "kustomization.yaml") {
+		t.Fatalf("unreadable builder classified as absent: %v, %q", body, file)
+	}
+	if _, absent := l.documents.read(filepath.Join(root, "absent")); absent != "" {
+		t.Fatalf("absent builder classified as present: %q", absent)
+	}
+	_, err := l.Load(t.Context(), filepath.Join(root, "plain"))
+	assert.NoError(t, err)
+	l.Admit(root)
+	if _, ok := l.Index.Lookup(testutil.KustomizationID("apps", "raw")); ok {
+		t.Fatal("unreadable builder admitted raw resource")
+	}
+}
+
+func TestDocumentReader_IndexedSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "namespace: host\n")
+	st := store.New()
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "indexed"}
+	st.SetArtifact(id, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("namespace: authoritative\n")},
+	}})
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		id: {File: "source.yaml"},
+	}}
+	reader := documentReader{cache: map[string]document{}}
+	reader.mountSources(st, index)
+	body, _ := reader.read(root)
+	if body == nil || body.Namespace != "authoritative" || st.GetObject(id) != nil {
+		t.Fatalf("indexed-only source mount = %v", body)
+	}
+}
+
+func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	l := New(store.New())
+	l.SourceRoot = root
+	for _, version := range []string{"first", "second"} {
+		l.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+			"kustomization.yaml": {Data: []byte("namespace: apps\nresources: [objects.yaml]\n")},
+			"objects.yaml":       {Data: []byte(testutil.KustomizationYAML("child", "", "  path: ./"+version+"\n") + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/" + version + "}\n")},
+		}})
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		l.Admit(root)
+		owners := l.Kustomizations()
+		if len(owners) != 1 || owners[0].Namespace != "apps" || owners[0].Path != "./"+version {
+			t.Fatalf("replacement kept stale owner: %+v", owners)
+		}
+		sources := 0
+		for source := range l.Sources() {
+			sources++
+			repo := source.(*manifest.GitRepository)
+			if repo.Namespace != "apps" || repo.URL != "https://fixture.invalid/"+version {
+				t.Fatalf("replacement kept stale source: %+v", repo)
+			}
+		}
+		assert.Equal(t, sources, 1)
+		if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

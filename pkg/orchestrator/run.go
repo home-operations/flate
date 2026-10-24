@@ -160,9 +160,8 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 	}
 	runErr := o.Run(ctx)
 	res := &Result{
-		Manifests: map[manifest.NamedResource][]map[string]any{},
-		Failed:    map[manifest.NamedResource]store.StatusInfo{},
-		Orphans:   map[manifest.NamedResource]string{},
+		Failed:  map[manifest.NamedResource]store.StatusInfo{},
+		Orphans: map[manifest.NamedResource]string{},
 		// The dependsOn graph is fully populated by now (Bootstrap's rebuild +
 		// per-id ReplaceEdges during Run); snapshot it for blast-radius consumers.
 		DependsOn: o.depGraph.Edges(),
@@ -192,7 +191,7 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 
 // collectManifests filters completed output without changing stored documents needed by value consumers.
 // Accepted completed output MUST remain available after a failed successor.
-func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[string]any {
+func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 	skip := o.cfg.HelmOptions.SkipResourceKinds()
 	var objects []manifest.BaseManifest
 	for _, info := range reconcilableKinds {
@@ -200,7 +199,8 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 	}
 	objects = append(objects, o.store.ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSet)...)
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-	out := map[manifest.NamedResource][]map[string]any{}
+	out := make([]manifest.DocumentBatch, 0, len(objects)+1)
+	positions := make(map[manifest.NamedResource]int, len(objects))
 	for _, obj := range objects {
 		id := obj.Named()
 		parent := id
@@ -208,7 +208,7 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 		if parentAttributed {
 			var ok bool
 			parent, ok = o.parentOf(id)
-			if !ok {
+			if !ok || o.store.GetObject(parent) == nil {
 				continue
 			}
 		}
@@ -229,9 +229,25 @@ func (o *Orchestrator) collectManifests() map[manifest.NamedResource][]map[strin
 				target.Namespace = id.Namespace
 			}
 			if !parentAttributed || !identifiable || selected[target] {
-				out[parent] = append(out[parent], doc)
+				position, ok := positions[parent]
+				if !ok {
+					position = len(out)
+					positions[parent] = position
+					out = append(out, manifest.DocumentBatch{Parent: o.store.GetObject(parent)})
+				}
+				out[position].Documents = append(out[position].Documents, doc)
 			}
 		}
+	}
+	var documents []map[string]any
+	for _, doc := range manifest.DropKinds(o.documents, skip) {
+		id := manifest.DocIdentity(doc)
+		if o.store.EmissionOwner(id) == (manifest.NamedResource{}) && o.filter.ShouldReconcile(id) {
+			documents = append(documents, doc)
+		}
+	}
+	if len(documents) != 0 {
+		out = append(out, manifest.DocumentBatch{Documents: documents})
 	}
 	return out
 }

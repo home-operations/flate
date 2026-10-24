@@ -96,10 +96,10 @@ spec:
 					t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
 				}
 			} else if tc.producer {
-				if !f.fetched.Load() || status.Status != store.StatusReady || len(res.Manifests[id]) != 1 {
-					t.Fatalf("fetched=%t status=%+v manifests=%v", f.fetched.Load(), status, res.Manifests[id])
+				if !f.fetched.Load() || status.Status != store.StatusReady || len(outputByParent(res.Manifests)[id]) != 1 {
+					t.Fatalf("fetched=%t status=%+v manifests=%v", f.fetched.Load(), status, outputByParent(res.Manifests)[id])
 				}
-				if name, _ := manifest.DocMetadata(res.Manifests[id][0]); name != "artifact-output" {
+				if name, _ := manifest.DocMetadata(outputByParent(res.Manifests)[id][0]); name != "artifact-output" {
 					t.Fatalf("rendered %q from the working tree instead of the OCI artifact", name)
 				}
 			} else if f.fetched.Load() || status.Status != store.StatusFailed || !strings.Contains(status.Message, "unknown OCI artifact root") || len(status.BlockedBy()) != 0 {

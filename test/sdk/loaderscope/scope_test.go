@@ -22,9 +22,11 @@ spec:
     namespace: explicit
 `)
 	s := store.New()
-	if _, err := loader.New(s).Load(t.Context(), root); err != nil {
+	l := loader.New(s)
+	if _, err := l.Load(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
+	l.Admit(root)
 	rs, ok := s.Get[*manifest.ResourceSet](manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "set", Namespace: "authored"})
 	if !ok {
 		t.Fatal("standalone loader did not admit the ResourceSet")

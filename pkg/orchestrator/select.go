@@ -120,18 +120,65 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 				continue
 			}
 			s.result.Objects = append(s.result.Objects, obj)
-			if docs, ok := s.run.Result.Manifests[id]; ok {
-				if s.result.Manifests == nil {
-					s.result.Manifests = make(map[manifest.NamedResource][]map[string]any)
-				}
-				s.result.Manifests[id] = docs
-			}
 			if version := s.chartVersion(obj); version != "" {
 				if s.result.ChartVersions == nil {
 					s.result.ChartVersions = make(map[manifest.NamedResource]string)
 				}
 				s.result.ChartVersions[id] = version
 			}
+		}
+	}
+	positions := make(map[manifest.NamedResource]int, len(s.run.Result.Manifests))
+	for i, batch := range s.run.Result.Manifests {
+		if batch.Parent != nil {
+			positions[batch.Parent.Named()] = i
+		}
+	}
+	if len(s.run.Result.Manifests) != 0 {
+		s.result.Manifests = make([]manifest.DocumentBatch, 0, len(s.result.Objects)+1)
+	}
+	for _, obj := range s.result.Objects {
+		if i, ok := positions[obj.Named()]; ok {
+			s.result.Manifests = append(s.result.Manifests, s.run.Result.Manifests[i])
+		}
+	}
+	requestedRenderKinds := 0
+	for _, root := range roots {
+		if root.KindInfo().Render {
+			requestedRenderKinds++
+		}
+	}
+	all := roots[0].Name == "" && requestedRenderKinds == len(reconcilableKinds)
+	for _, batch := range s.run.Result.Manifests {
+		if batch.Parent != nil {
+			continue
+		}
+		var documents []map[string]any
+		for _, doc := range batch.Documents {
+			id := manifest.DocIdentity(doc)
+			if !s.includes(id.Namespace) {
+				continue
+			}
+			matched := all
+			for _, root := range roots {
+				if id.Group == root.Group && id.Kind == root.Kind && (root.Name == "" || id.Name == root.Name) {
+					matched = true
+				}
+			}
+			metadata, _ := doc["metadata"].(map[string]any)
+			docLabels, _ := metadata["labels"].(map[string]any)
+			for key, value := range labels {
+				if actual, ok := docLabels[key]; !ok || actual != value {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				documents = append(documents, doc)
+			}
+		}
+		if len(documents) != 0 {
+			s.result.Manifests = append(s.result.Manifests, manifest.DocumentBatch{Documents: documents})
 		}
 	}
 }
@@ -202,8 +249,10 @@ func selectionCandidates(sides []selectionSide) []manifest.NamedResource {
 				producers[id] = struct{}{}
 			}
 		}
-		for id := range side.result.Manifests {
-			producers[id] = struct{}{}
+		for _, batch := range side.result.Manifests {
+			if batch.Parent != nil {
+				producers[batch.Parent.Named()] = struct{}{}
+			}
 		}
 	}
 	return slices.SortedFunc(maps.Keys(producers), manifest.NamedResource.Compare)

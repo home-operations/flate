@@ -226,14 +226,14 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	out, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	out, err := Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
 	})}, sourcecache.RetryConfig{})
 	if err != nil {
-		t.Fatalf("RenderFlux: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 	if !hasRenderField(out, "name", "from-parent-ref") {
 		t.Fatalf("in-repo ../ reference inside the base did not resolve:\n%s", out)
@@ -256,13 +256,13 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 
-	if _, err := RenderFlux(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	if _, err := Render(context.Background(), cache, RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
 	})}, sourcecache.RetryConfig{}); err != nil {
-		t.Fatalf("RenderFlux: %v", err)
+		t.Fatalf("Render: %v", err)
 	}
 
 	got, err := os.ReadFile(filepath.Join(src, "kustomization.yaml"))
@@ -395,7 +395,7 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
+func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 	t.Parallel()
 	const parentURL = "https://example.invalid/o/parent.git"
 	const childURL = "https://example.invalid/o/child.git"
@@ -454,7 +454,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				return RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: duration}}}, sourcecache.RetryConfig{})
+				return Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: duration}}}, sourcecache.RetryConfig{})
 			}
 			update := func(name, body string) {
 				t.Helper()
@@ -497,7 +497,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 	}
 }
 
-func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
+func TestRender_RemoteRetryPolicies(t *testing.T) {
 	for _, concurrency := range []int{2, 4} {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%d/reverse-%t", concurrency, reverse), func(t *testing.T) {
@@ -551,7 +551,7 @@ func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
 						}
 						retry := sourcecache.RetryConfig{Attempts: attempts, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 						input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": {Data: []byte("resources:\n  - https://example.invalid/owner/repo?ref=main\n")}}}
-						body, err := RenderFlux(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: time.Hour}}}, retry)
+						body, err := Render(t.Context(), c, RenderRequest{Source: input, Spec: &manifest.Kustomization{Interval: metav1.Duration{Duration: time.Hour}}}, retry)
 						done <- result{attempts, body, err}
 					}()
 				}

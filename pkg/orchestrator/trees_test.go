@@ -59,7 +59,7 @@ func writeCluster(t *testing.T, dir, aVal, bVal string) {
 // actually rendered.
 func configMapNames(res *orchestrator.Result) map[string]bool {
 	out := map[string]bool{}
-	for _, docs := range res.Manifests {
+	for _, docs := range outputByParent(res.Manifests) {
 		for _, m := range docs {
 			if m["kind"] == "ConfigMap" {
 				if meta, ok := m["metadata"].(map[string]any); ok {
@@ -160,7 +160,7 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 				}
 				ns := obj.Namespace
 				assert.Equal(t, ns, "flux-system")
-				docs := rendered.Result.Manifests[consumer]
+				docs := outputByParent(rendered.Result.Manifests)[consumer]
 				if len(docs) != 1 {
 					t.Fatalf("side %d consumer documents = %d", i, len(docs))
 				}
@@ -172,8 +172,8 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 			selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
 				[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 			body, _, _, err := diff.Compare(
-				diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-				diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+				diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+				diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 				selectedErr, diff.Options{Format: diff.FormatJSON})
 			if err != nil {
 				t.Fatal(err)
@@ -243,7 +243,7 @@ spec:
 		if side.Result == nil || side.Err != nil {
 			t.Fatalf("side %d incomplete: result=%v err=%v", i, side.Result, side.Err)
 		}
-		if len(side.Result.Manifests[testutil.KustomizationID("flux-system", "app-b")]) != 0 || configMapNames(side.Result)["cfg-b"] {
+		if len(outputByParent(side.Result.Manifests)[testutil.KustomizationID("flux-system", "app-b")]) != 0 || configMapNames(side.Result)["cfg-b"] {
 			t.Fatalf("side %d rendered unchanged app-b: %v", i, side.Result.Manifests)
 		}
 		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cm-one"}
@@ -258,8 +258,8 @@ spec:
 		if len(side.Result.Warnings) == 1 {
 			assert.Equal(t, side.Result.Warnings[0].Message, "conflicting producers; using "+winner.String())
 		}
-		identities := make([]string, 0, len(side.Result.Manifests[parent]))
-		for _, doc := range side.Result.Manifests[parent] {
+		identities := make([]string, 0, len(outputByParent(side.Result.Manifests)[parent]))
+		for _, doc := range outputByParent(side.Result.Manifests)[parent] {
 			name, namespace := manifest.DocMetadata(doc)
 			identities = append(identities, manifest.DocKind(doc)+"/"+namespace+"/"+name)
 			switch manifest.DocKind(doc) {
@@ -275,8 +275,8 @@ spec:
 	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
-		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})
 	assert.NoError(t, err)
 	var output struct {
@@ -344,8 +344,8 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
-		diff.Snapshot{Objects: selected[0].Objects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-		diff.Snapshot{Objects: selected[1].Objects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})
 	if err != nil {
 		t.Fatal(err)
@@ -763,4 +763,14 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 			})
 		}
 	})
+}
+
+func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource][]map[string]any {
+	out := make(map[manifest.NamedResource][]map[string]any, len(batches))
+	for _, batch := range batches {
+		if batch.Parent != nil {
+			out[batch.Parent.Named()] = batch.Documents
+		}
+	}
+	return out
 }

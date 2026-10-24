@@ -13,18 +13,18 @@ func TestSelectedDocs_PreservesProducerAndEmissionOrder(t *testing.T) {
 	a.Path = "./apps/a"
 	b := &manifest.Kustomization{Name: "b", Namespace: "ns"}
 	hr := &manifest.HelmRelease{Name: "hr", Namespace: "ns"}
-	objects := []manifest.BaseManifest{a, b, hr}
-	manifests := map[manifest.NamedResource][]map[string]any{
-		b.Named(): {{"kind": "ConfigMap", "metadata": map[string]any{"name": "b1"}}},
-		a.Named(): {
+	manifests := []manifest.DocumentBatch{
+		{Parent: a, Documents: []map[string]any{
 			{"kind": "ConfigMap", "metadata": map[string]any{"name": "a1"}},
 			{"kind": "ConfigMap", "metadata": map[string]any{"name": "a2"}},
-		},
-		hr.Named(): {{"kind": "Service"}},
+		}},
+		{Parent: b, Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "b1"}}}},
+		{Parent: hr, Documents: []map[string]any{{"kind": "Service"}}},
+		{Documents: []map[string]any{{"kind": "Namespace", "metadata": map[string]any{"name": "root"}}}},
 	}
-	docs := selectedDocs(objects, manifests)
-	if len(docs) != 4 {
-		t.Fatalf("want 4 docs, got %d", len(docs))
+	docs := selectedDocs(manifests)
+	if len(docs) != 5 {
+		t.Fatalf("want 5 docs, got %d", len(docs))
 	}
 	if docs[0].Parent.NamedResource != a.Named() || docs[0].Parent.Path != "apps/a" {
 		t.Errorf("doc[0] parent = %+v; want a / apps/a", docs[0].Parent)
@@ -38,7 +38,10 @@ func TestSelectedDocs_PreservesProducerAndEmissionOrder(t *testing.T) {
 	if docs[3].Parent.NamedResource != hr.Named() || docs[3].Parent.Path != "" {
 		t.Errorf("doc[3] parent = %+v; want HelmRelease.helm.toolkit.fluxcd.io / empty path", docs[3].Parent)
 	}
-	if got := selectedDocs(objects, manifests); !reflect.DeepEqual(docs, got) {
+	if docs[4].Parent != (Parent{}) || manifest.DocIdentity(docs[4].Manifest).Name != "root" {
+		t.Fatalf("ownerless identity or attribution lost: %+v", docs[4])
+	}
+	if got := selectedDocs(manifests); !reflect.DeepEqual(docs, got) {
 		t.Error("selectedDocs must preserve the completed selection order")
 	}
 }

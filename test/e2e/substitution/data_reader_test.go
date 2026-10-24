@@ -17,7 +17,7 @@ func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
 				refKind = "ConfigMap"
 			}
 			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  postBuild: {substituteFrom: [{kind: "+refKind+", name: creds}]}\n"))
-			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux]\n"+kind+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n")
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+kind+":\n- name: creds\n  namespace: flux-system\n  files: [VALUE=values.yaml]\n")
 			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml]\n")
 			testutil.WriteFile(t, root, "values.yaml", "enabled: ENC[AES256_GCM,data:fixture,type:str]\n")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")

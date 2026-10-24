@@ -210,7 +210,7 @@ spec:
 			if !slices.Contains(record.Inputs, file) {
 				t.Errorf("%s does not retain built input %s", id, file)
 			}
-			if slices.Contains(l.Index.Readers[file], id) {
+			if slices.ContainsFunc(l.Index.Readers[file], func(r manifest.FileReader) bool { return r.Reader == id }) {
 				t.Errorf("package input %s made %s a render owner", file, id)
 			}
 		}
@@ -446,7 +446,7 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.reader {
-				if !slices.Contains(l.Index.Readers["entry/kustomization.yaml"], owner.Named()) {
+				if !slices.ContainsFunc(l.Index.Readers["entry/kustomization.yaml"], func(r manifest.FileReader) bool { return r.Reader == owner.Named() }) {
 					t.Fatalf("nested generator lost its read edge: %v", l.Index.Readers)
 				}
 				for prefix, owners := range l.Index.Claims {

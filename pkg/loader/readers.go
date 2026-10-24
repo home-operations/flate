@@ -12,10 +12,10 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func (l *Loader) recordReader(file, local string, id manifest.NamedResource) {
-	l.Index.Readers[file] = appendUniqueProducer(l.Index.Readers[file], id)
+func (l *Loader) recordReader(file, local string, reader manifest.FileReader) {
+	l.Index.Readers[file] = appendUniqueProducer(l.Index.Readers[file], reader)
 	if local != "" {
-		l.Index.Readers[local] = appendUniqueProducer(l.Index.Readers[local], id)
+		l.Index.Readers[local] = appendUniqueProducer(l.Index.Readers[local], reader)
 	}
 }
 
@@ -35,27 +35,26 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 	}
 	sources := map[manifest.NamedResource]graphVisit{}
 	charts := map[string][]string{}
-	inputs := map[manifest.NamedResource][]string{}
 	visited := map[manifest.NamedResource]struct{}{}
-	var collect func(manifest.NamedResource, []string) ([]string, error)
-	collect = func(id manifest.NamedResource, files []string) ([]string, error) {
+	var collect func(manifest.NamedResource, manifest.NamedResource) error
+	collect = func(id, consumer manifest.NamedResource) error {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		if _, seen := visited[id]; seen {
-			return files, nil
+			return nil
 		}
 		visited[id] = struct{}{}
 		for ref := range manifest.References(object(id), manifest.ReferenceRelations) {
 			if ref.Content {
 				record, _ := l.Index.Lookup(ref.NamedResource)
-				files = append(files, record.Inputs...)
+				for _, file := range record.Inputs {
+					l.recordReader(file, "", manifest.FileReader{Reader: consumer, Source: manifest.BootstrapSourceID})
+				}
 			}
 			if ref.Use == "chart" {
-				var err error
-				files, err = collect(ref.NamedResource, files)
-				if err != nil {
-					return nil, err
+				if err := collect(ref.NamedResource, consumer); err != nil {
+					return err
 				}
 				continue
 			}
@@ -82,10 +81,7 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			}
 			add := func(name string) {
 				v.coordinate = path.Join(v.prefix, name)
-				files = append(files, v.coordinate)
-				if local := v.localCoordinate(); local != "" {
-					files = append(files, local)
-				}
+				l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true})
 			}
 			for _, name := range ref.Files {
 				clean := path.Clean(name)
@@ -117,7 +113,7 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 					}
 				}
 				if err := ctx.Err(); err != nil {
-					return nil, err
+					return err
 				}
 				charts[location] = names
 			}
@@ -125,21 +121,15 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 				add(name)
 			}
 		}
-		return files, nil
+		return nil
 	}
 	for id, r := range l.Index.Records {
 		if len(r.Refs) == 0 || repoRoot == "" {
 			continue
 		}
 		clear(visited)
-		files := slices.Clone(r.Inputs)
-		files, err := collect(id, files)
-		if err != nil {
+		if err := collect(id, id); err != nil {
 			return err
-		}
-		if len(files) != 0 {
-			slices.Sort(files)
-			inputs[id] = slices.Compact(files)
 		}
 	}
 	for id, r := range l.Index.Records {
@@ -157,9 +147,6 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 				l.documents.cache[r.Path] = doc
 			}
 		}
-		if files, ok := inputs[id]; ok {
-			r.Inputs = files
-		}
 		if r.File != "" {
 			if parents := emittedFiles[r.File]; id.KindInfo().Structural && r.Parent == (manifest.NamedResource{}) && len(parents) == 1 && parents[0] != id {
 				r.Parent = parents[0]
@@ -174,7 +161,8 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 				return false
 			}
 			return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
-				return owner.Owner != (manifest.NamedResource{}) && owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File
+				return owner.Owner != (manifest.NamedResource{}) && (owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
+					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(id, p.Path))
 			})
 		})
 		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })

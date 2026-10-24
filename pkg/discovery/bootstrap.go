@@ -338,7 +338,7 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 	} else {
 		current := bootstrap.FS
 		if subtree != "." {
-			current, err = fs.Sub(current, subtree)
+			current, err = gittree.Sub(current, subtree)
 		}
 		if err == nil {
 			input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: current, Ignore: ignore, Sparse: sparse})
@@ -354,6 +354,7 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 	id := candidate.object.Named()
 	artifact := *bootstrap
 	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+filepath.Join(repoRoot, subtree), input
+	artifact.ContentFingerprint = gittree.ContentFingerprint
 	artifact.InputAlias, artifact.Key = true, ""
 	artifact.Warnings = nil
 	artifact.LocalPath = label

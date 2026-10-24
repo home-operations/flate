@@ -377,7 +377,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			s.AddObject(&fresh)
 			if strings.HasPrefix(state, "filter") {
 
-				opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s)
+				opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s, "")
 				c = resourcesetctrl.New(s, tasks, true)
 				c.Configure(opts)
 				c.StartLifecycle()

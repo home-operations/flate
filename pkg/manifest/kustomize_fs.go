@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"iter"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,34 +19,51 @@ type KSClaim struct {
 	Prefix string
 }
 
+// RenderRoots yields normalized source-relative render roots and components.
+// An empty root denotes the source artifact root.
+func RenderRoots(obj BaseManifest) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		if ks, ok := obj.(*Kustomization); ok {
+			ks.renderRoots(nil, yield)
+		}
+	}
+}
+
+func (k *Kustomization) renderRoots(components []string, yield func(string) bool) {
+	if k.IsFragment() {
+		return
+	}
+	base := NormalizeClaimBase(k.Path)
+	if !yield(base) {
+		return
+	}
+	for _, refs := range [2][]string{k.Components, components} {
+		for _, ref := range refs {
+			resolved, ok := kustpath.Resolve(base, ref, kustpath.Claim)
+			if !ok {
+				continue
+			}
+			if !yield(resolved) {
+				return
+			}
+		}
+	}
+}
+
 // BuildKSClaims constructs longest-prefix-first claims from authored paths and
 // already-decoded components. Kustomizations without a path or source claim nothing.
 func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) []KSClaim {
 	claims := make([]KSClaim, 0, len(kss))
-	add := func(id NamedResource, base, ref string) {
-		resolved, ok := kustpath.Resolve(base, ref, kustpath.Claim)
-		if !ok {
-			return
-		}
-		claims = append(claims, KSClaim{ID: id, Prefix: resolved + "/"})
-	}
 	for _, ks := range kss {
-		if ks.IsFragment() {
-			continue
-		}
 		id := ks.Named()
-		base := NormalizeClaimBase(ks.Path)
-		prefix := base + "/"
-		if base == "" {
-			prefix = ""
-		}
-		claims = append(claims, KSClaim{ID: id, Prefix: prefix})
-		for _, comp := range ks.Components {
-			add(id, base, comp)
-		}
-		for _, comp := range components[id] {
-			add(id, base, comp)
-		}
+		ks.renderRoots(components[id], func(root string) bool {
+			prefix := root
+			if prefix != "" {
+				prefix += "/"
+			}
+			claims = append(claims, KSClaim{ID: id, Prefix: prefix})
+			return true
+		})
 	}
 	slices.SortStableFunc(claims, func(a, b KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
 	return claims

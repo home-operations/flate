@@ -98,7 +98,7 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 				}
 				local = input.FS
 			}
-			artifacts[repository.Named()] = &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: root, Revision: r.hash.String(), FS: local}
+			artifacts[repository.Named()] = &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: root, Revision: r.hash.String(), FS: local, ContentFingerprint: gittree.ContentFingerprint}
 			continue
 		}
 		if repository.RecurseSubmodules {
@@ -121,7 +121,7 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 			return failedLocal(artifacts), localError(repository, err)
 		}
 		label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Source, Key: key})
-		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: label, Revision: r.hash.String(), Key: key, FS: input, Warnings: warnings}
+		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: label, Revision: r.hash.String(), Key: key, FS: input, ContentFingerprint: gittree.ContentFingerprint, Warnings: warnings}
 		artifacts[repository.Named()] = artifact
 	}
 	return artifacts, nil

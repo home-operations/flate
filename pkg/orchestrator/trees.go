@@ -11,6 +11,7 @@ import (
 
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -111,12 +112,6 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 	if directoryInputs && baseTree.RepoRoot == headTree.RepoRoot {
 		inputs[1] = inputs[0]
 	}
-	if cfg.ExternalChanges == nil && inputs[0] != inputs[1] {
-		cfg.ExternalChanges, err = change.Detect(ctx, inputs[0], inputs[1])
-		if err != nil {
-			return base, head, err
-		}
-	}
 	baseCfg := cfg
 	baseCfg.RepoRoot = baseTree.RepoRoot
 	baseCfg.Path = cmp.Or(baseTree.Path, baseTree.RepoRoot)
@@ -130,77 +125,75 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 	headCfg.SelfURLs = headTree.SelfURLs
 	headCfg.Input, headCfg.BaseInput = inputs[1], inputs[0]
 
-	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		o, res, e := discoverOne(gctx, baseCfg)
-		base = Rendered{Orchestrator: o, Result: res, Err: e}
-		if o == nil {
-			return e
-		}
-		return nil
-	})
-	g.Go(func() error {
-		o, res, e := discoverOne(gctx, headCfg)
-		head = Rendered{Orchestrator: o, Result: res, Err: e}
-		if o == nil {
-			return e
-		}
-		return nil
-	})
-	if err := g.Wait(); err != nil {
-		for _, side := range sides {
-			if side.Orchestrator != nil {
-				side.Err = side.Stop()
-				side.Result = &Result{Warnings: side.store.Warnings()}
-				side.Orchestrator = nil
+	configs := [2]Config{baseCfg, headCfg}
+	var orchestrators [2]*Orchestrator
+	var prepared [2]*discovery.Result
+	defer func() {
+		for i, o := range orchestrators {
+			if o != nil {
+				sides[i].Err = errors.Join(sides[i].Err, o.Stop())
 			}
 		}
+		err = joinTreeErrors(base.Err, head.Err)
+		if cfg.HeadOnly {
+			base = Rendered{}
+		}
+	}()
+	g, gctx := errgroup.WithContext(ctx)
+	for i := range 2 {
+		g.Go(func() error {
+			o, e := New(gctx, configs[i])
+			orchestrators[i] = o
+			if e == nil {
+				prepared[i], e = o.prepareBootstrap(gctx)
+			}
+			sides[i].Err = e
+			if o != nil {
+				sides[i].Result = &Result{Warnings: o.store.Warnings()}
+			}
+			return e
+		})
+	}
+	if e := g.Wait(); e != nil {
 		return base, head, joinTreeErrors(base.Err, head.Err)
 	}
-	changes := cfg.ExternalChanges.WithReaders(base.index, head.index)
-	for _, side := range sides {
-		side.cfg.ExternalChanges = changes
-	}
-	renderSides := sides
-	if cfg.HeadOnly {
-		renderSides = sides[1:]
-	}
-	g, gctx = errgroup.WithContext(ctx)
-	for _, side := range renderSides {
-		g.Go(func() error {
-			side.Result, side.Err = side.Render(gctx)
-			if side.Result == nil {
-				side.Result = &Result{Warnings: side.store.Warnings()}
-				side.Orchestrator = nil
-				return side.Err
+	changes := cfg.ExternalChanges
+	if changes != nil || inputs[0] != inputs[1] {
+		changes, err = change.Qualify(ctx, changes, orchestrators[0].store, orchestrators[1].store)
+		if err != nil {
+			base.Err, head.Err = err, err
+			return base, head, err
+		}
+	} else {
+		// The shared direct input keeps the implicit full-render exception.
+		for i, o := range orchestrators {
+			if _, err := o.computeChangeSet(ctx, o.repoRoot); err != nil {
+				sides[i].Err = err
+				return base, head, err
 			}
+		}
+	}
+	changes = changes.WithReaders(orchestrators[0].index, orchestrators[1].index)
+	g, gctx = errgroup.WithContext(ctx)
+	for i := range 2 {
+		if cfg.HeadOnly && i == 0 {
+			continue
+		}
+		g.Go(func() error {
+			o := orchestrators[i]
+			o.cfg.ExternalChanges = changes
+			o.completeBootstrap(prepared[i], o.cfg.ExternalChanges)
+			res, e := o.Render(gctx)
+			*sides[i] = Rendered{Result: res, Err: e}
+			if res == nil {
+				return e
+			}
+			sides[i].Orchestrator = o
 			return nil
 		})
 	}
 	_ = g.Wait()
-	for _, side := range sides {
-		if side.Orchestrator != nil {
-			if stopErr := side.Stop(); stopErr != nil && !errors.Is(side.Err, stopErr) {
-				side.Err = errors.Join(side.Err, stopErr)
-			}
-		}
-	}
-	err = joinTreeErrors(base.Err, head.Err)
-	if cfg.HeadOnly {
-		base = Rendered{}
-	}
 	return base, head, err
-}
-
-func discoverOne(ctx context.Context, cfg Config) (*Orchestrator, *Result, error) {
-	o, err := New(ctx, cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := o.discover(ctx); err != nil {
-		return nil, &Result{Warnings: o.store.Warnings()}, errors.Join(err, o.Stop())
-	}
-	return o, nil, nil
 }
 
 // treeErrors retains side attribution so Select can project resource failures

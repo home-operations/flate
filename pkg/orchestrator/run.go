@@ -6,7 +6,6 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
@@ -16,26 +15,30 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// orchestratorExistence applies runtime admission to immutable discovery locations.
 type orchestratorExistence struct {
-	store       *store.Store
-	index       *manifest.DiscoveryIndex
-	wipeSecrets bool
-	filter      *change.Filter
+	o *Orchestrator
 }
 
 func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSet, id manifest.NamedResource) bool {
-	if obj := e.store.GetObject(id); obj != nil {
-		return e.admit(obj)
+	obj := e.o.store.GetObject(id)
+	var productions []manifest.Production
+	if obj == nil || e.o.filter.Enabled() {
+		if reads != nil {
+			productions = reads.Promotions(id, e.o.index)
+		} else {
+			productions = e.o.store.Productions(id, e.o.index)
+		}
 	}
-	productions := e.store.Productions(id, e.index)
-	if reads != nil {
-		productions = reads.Promotions(id, e.index)
+	if obj != nil {
+		return e.admit(store.Child{Obj: obj, Productions: productions}, reads)
 	}
 	for _, p := range productions {
-		if loader.Promote(ctx, e.store, id, loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.wipeSecrets, Admit: e.admit}) {
+		admit := func(obj manifest.BaseManifest) bool {
+			return e.admit(store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
+		}
+		if loader.Promote(ctx, e.o.store, id, loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit}) {
 			if reads != nil {
-				reads.Productions(id, e.index)
+				reads.Productions(id, e.o.index)
 			}
 			return true
 		}
@@ -43,14 +46,16 @@ func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSe
 	return false
 }
 
-func (e *orchestratorExistence) admit(obj manifest.BaseManifest) bool {
-	info := manifest.KindOf(obj)
-	return info.Tracked && (info.Group == manifest.SourceDomain || !info.Runnable) &&
-		e.filter.ShouldReconcile(obj.Named())
+func (e *orchestratorExistence) admit(child store.Child, reads *store.ReadSet) bool {
+	info := manifest.KindOf(child.Obj)
+	if !info.Tracked || info.Group != manifest.SourceDomain && info.Runnable {
+		return false
+	}
+	return e.o.ksc.KeepEmitted(manifest.NamedResource{}, child, reads)
 }
 
 func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
-	if r, ok := e.index.Lookup(id); ok && r.Path != "" {
+	if r, ok := e.o.index.Lookup(id); ok && r.Path != "" {
 		return true
 	}
 	if id.Namespace == "" {
@@ -58,7 +63,7 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	}
 	// Discovery retains bare identities until parsing applies the parent namespace.
 	id.Namespace = ""
-	r, ok := e.index.Lookup(id)
+	r, ok := e.o.index.Lookup(id)
 	return ok && r.Path != ""
 }
 
@@ -78,6 +83,7 @@ func (o *Orchestrator) Run(ctx context.Context) (err error) {
 	return o.runDAG(ctx)
 }
 
+// Configure MUST precede dispatch; controllers freeze shaping config on start.
 func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Filter:              o.filter,
@@ -93,14 +99,7 @@ func (o *Orchestrator) configureControllers() {
 	// record → fail fast). The orchestrator owns both signals; the
 	// controllers and Waiter consume them via the single
 	// depwait.ExistenceLookup interface.
-	existence := &orchestratorExistence{
-		store:       o.store,
-		index:       o.index,
-		wipeSecrets: o.cfg.WipeSecrets,
-		filter:      o.filter,
-	}
-	// The reconcile-shaping config common to all three render controllers,
-	// built once; each Configure adds its controller-specific fields.
+	existence := &orchestratorExistence{o: o}
 	common := base.Options{
 		SubstituteFrom:          o.substitutionSources,
 		SkipKinds:               o.cfg.HelmOptions.SkipResourceKinds(),

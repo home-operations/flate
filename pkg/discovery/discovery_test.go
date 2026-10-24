@@ -314,6 +314,7 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		assert.Diff(t, input, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"ks.yaml": {Data: []byte(body)}}})
 		aliasCopy := *alias
 		aliasCopy.FS = nil
+		aliasCopy.ContentFingerprint = nil
 		return aliasCopy
 	}
 	assert.Diff(t, run(scan), run(root))
@@ -376,14 +377,14 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 				if producers := testutil.Owners(st.Productions(payload, res.Index)); !slices.Contains(producers, parent) {
 					t.Fatalf("subtree producers = %v", producers)
 				}
-				if readers := slices.Collect(res.Index.ReadersOfFile("kubernetes/apps/x/cm.yaml")); !slices.Contains(readers, parent) {
+				if readers := slices.Collect(res.Index.ReadersOfFile("kubernetes/apps/x/cm.yaml")); !slices.ContainsFunc(readers, func(r manifest.FileReader) bool { return r.Reader == parent }) {
 					t.Fatalf("subtree readers = %v", readers)
 				}
 				if readers := slices.Collect(res.Index.ReadersOfFile("apps/x/cm.yaml")); len(readers) != 0 {
 					t.Fatalf("sibling readers = %v", readers)
 				}
 				for _, file := range []string{"kubernetes/apps/x/cm.yaml", "apps/x/cm.yaml"} {
-					selected := change.NewFilter(change.NewSet([]string{file}), res.Index, st).KeepNames()
+					selected := change.NewFilter(change.NewSet([]string{file}), res.Index, st, "").KeepNames()
 					consumer := child
 					consumer.Name = "consumer"
 					for _, id := range []manifest.NamedResource{parent, child, consumer} {
@@ -1065,7 +1066,7 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st)
+			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st, "")
 			id := testutil.HelmReleaseID(ns, "consumer")
 			if got := filter.ShouldReconcile(id); got != (ns == "apps" && tc.apiVersion == "v1") {
 				t.Fatalf("consumer %s selected=%t", id, got)
@@ -1094,7 +1095,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st)
+			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st, "")
 			id := testutil.KustomizationID("apps", "consumer")
 			if got := filter.ShouldReconcile(id); !got {
 				t.Fatalf("optional=%t consumer selected=%t", optional, got)
@@ -1173,27 +1174,23 @@ spec:
 				}
 				for range 2 {
 					result, st := discover("flux")
-					want := []manifest.NamedResource{demo}
+					source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster"}
+					want := []manifest.FileReader{{Reader: demo, Source: source, Exact: true}}
 					if form == "chartRef" {
-						want = append(want, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"})
+						want = append(want, manifest.FileReader{Reader: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}, Source: source, Exact: true})
 					}
-					slices.SortFunc(want, manifest.NamedResource.Compare)
-					for _, reader := range want {
-						inputRecord, ok := result.Index.Lookup(reader)
-						assert.Equal(t, ok, true)
-						assert.Equal(t, slices.Contains(inputRecord.Inputs, "config/prod.yaml"), true)
-					}
-					assert.Equal(t, len(result.Index.Readers["config/prod.yaml"]), 0)
+					slices.SortFunc(want, func(a, b manifest.FileReader) int { return a.Reader.Compare(b.Reader) })
+					assert.Diff(t, result.Index.Readers["config/prod.yaml"], want)
 					record, ok := result.Index.Lookup(demo)
 					assert.Equal(t, ok, true)
 					assert.Equal(t, record.Parent, owner)
 					assert.Equal(t, st.GetObject(demo) == nil, true)
-					filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), result.Index, st)
+					filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), result.Index, st, "")
 					for _, id := range []manifest.NamedResource{demo, owner, parent} {
 						assert.Equal(t, filter.ShouldReconcile(id), true)
 					}
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
-					assert.Equal(t, len(filter.AddEmitted(owner, &manifest.HelmRelease{Name: "sibling", Namespace: "apps"}, st)), 0)
+					assert.Equal(t, len(filter.AddEmitted(owner, store.Child{Obj: &manifest.HelmRelease{Name: "sibling", Namespace: "apps"}}, st)), 0)
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
 					assert.Equal(t, len(result.Index.Claims["config/"]), 0)
 					if previous != nil {
@@ -1208,18 +1205,15 @@ spec:
 				testutil.WriteFile(t, root, "workloads/demo/chart.yaml", strings.ReplaceAll(chart, "./config/prod.yaml", "./config/next.yaml"))
 			}
 			next, _ := discover("flux")
-			record, _ := next.Index.Lookup(demo)
-			assert.Equal(t, slices.Contains(record.Inputs, "config/next.yaml"), true)
-			assert.Equal(t, slices.Contains(record.Inputs, "config/prod.yaml"), false)
-			old, _ := previous.Lookup(demo)
-			assert.Equal(t, slices.Contains(old.Inputs, "config/prod.yaml"), true)
+			assert.Equal(t, slices.ContainsFunc(next.Index.Readers["config/next.yaml"], func(r manifest.FileReader) bool { return r.Reader == demo }), true)
+			assert.Equal(t, slices.ContainsFunc(next.Index.Readers["config/prod.yaml"], func(r manifest.FileReader) bool { return r.Reader == demo }), false)
+			assert.Equal(t, slices.ContainsFunc(previous.Readers["config/prod.yaml"], func(r manifest.FileReader) bool { return r.Reader == demo }), true)
 			testutil.WriteFile(t, root, "standalone/kustomization.yaml", "resources: [hr.yaml, chart.yaml]\nnamespace: apps\n")
 			testutil.WriteFile(t, root, "standalone/hr.yaml", strings.Replace(hr, "name: demo", "name: standalone", 1))
 			testutil.WriteFile(t, root, "standalone/chart.yaml", chart)
 			result, st := discover("standalone")
 			standalone := testutil.HelmReleaseID("apps", "standalone")
-			standaloneRecord, _ := result.Index.Lookup(standalone)
-			assert.Equal(t, slices.Contains(standaloneRecord.Inputs, "config/prod.yaml"), true)
+			assert.Equal(t, slices.ContainsFunc(result.Index.Readers["config/prod.yaml"], func(r manifest.FileReader) bool { return r.Reader == standalone }), true)
 			assert.Equal(t, st.GetObject(standalone) != nil, true)
 			record, ok := result.Index.Lookup(standalone)
 			assert.Equal(t, ok, true)

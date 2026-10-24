@@ -325,3 +325,18 @@ func referenceExpression(expr *string) *string {
 	}
 	return expr
 }
+
+// ContentInputs yields affected inputs in reverse mode or required execution inputs otherwise.
+func ContentInputs(obj BaseManifest, reverse bool) iter.Seq[NamedResource] {
+	return func(yield func(NamedResource) bool) {
+		for ref := range References(obj, ReferenceRelations) {
+			include := ref.Content || ref.Use == "substituteFrom" && ref.Name != ""
+			if reverse {
+				include = ref.Use == "source" || ref.Use == "artifact" || ref.Use == "chart" || ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Name != ""
+			}
+			if include && !yield(ref.NamedResource) {
+				return
+			}
+		}
+	}
+}

@@ -73,3 +73,9 @@ func (r *ResourceSet) EmissionPolicy() EmissionPolicy {
 	}
 	return p
 }
+
+// MatchesNamespace reports whether the target can belong to the producer's namespace projection.
+func (p EmissionPolicy) MatchesNamespace(target NamedResource) bool {
+	return p.InternalNamespace || p.ExcludeChildren || p.Namespace == "" || HasEnvsubstReference(p.Namespace) ||
+		target.Namespace == "" || !target.KindInfo().Namespaced() || target.Namespace == p.Namespace
+}

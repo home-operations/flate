@@ -30,6 +30,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 func TestResolveLocal_References(t *testing.T) {
@@ -121,6 +122,14 @@ func TestResolveLocal_References(t *testing.T) {
 				wantBody = "dirty"
 			}
 			assert.Equal(t, string(data), wantBody)
+			if artifact.ContentFingerprint == nil {
+				t.Fatal("local source content callback is absent")
+			}
+			fingerprint, err := artifact.ContentFingerprint(t.Context(), artifact.FS)
+			assert.NoError(t, err)
+			assert.Equal(t, fingerprint != "", true)
+			assert.Equal(t, artifact.FS.(*gittree.FS).FileDigests()["value.txt"], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(wantBody))))
+
 			if (artifact.LocalPath == root) != (tc.want == b) {
 				t.Fatalf("unexpected artifact path %q", artifact.LocalPath)
 			}

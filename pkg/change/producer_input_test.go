@@ -85,7 +85,7 @@ spec:
 				owners, ancestors := result.Index.OwnersOfFile("entry/source.yaml")
 				assert.Diff(t, owners, []manifest.NamedResource(nil))
 				assert.Diff(t, ancestors, []manifest.NamedResource(nil))
-				filter := change.NewFilter(changes, result.Index, st)
+				filter := change.NewFilter(changes, result.Index, st, "")
 				for _, id := range []manifest.NamedResource{input, generator, consumer} {
 					if !filter.ShouldReconcile(id) {
 						t.Errorf("side %d: changed producer input did not select %s", side, id)

@@ -1,69 +1,89 @@
 package change
 
 import (
+	"iter"
 	"log/slog"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Filter answers "should I reconcile this resource?" by checking
-// against a keep-set resolved from a file-level diff. Construct via
-// NewFilter — the zero value is the "no filtering" sentinel and
-// returns true from ShouldReconcile for every id.
-//
-// The keep set has two tiers:
-//
-//   - "keep" entries reconcile. resolve() seeds this from file
-//     changes + ancestors of changed files (#58) + structural
-//     parents of owner KSes (#103).
-//   - "primary" is the subset whose render output likely differs
-//     from baseline: file-change owners, their siblings under the
-//     same owner, transitive deps walked from a primary entry, and
-//     runtime entries inserted by AddEmitted from a primary
-//     emitter. Ancestor-only entries are explicitly NOT primary.
-//
-// The keep set extends at runtime via AddEmitted when a primary
-// parent KS renders and emits a child the file-walk couldn't see
-// (kustomize component + replacement patterns generate Flux
-// Kustomizations on the fly — see #204). Ancestor-only emitters
-// don't propagate keep to file-loaded children, which prevents a
-// one-file change from cascading the entire tree into keep.
+type objectReader interface {
+	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
+	IncomingProductions(store.Child, *manifest.DiscoveryIndex) []manifest.Production
+	GetObject(manifest.NamedResource) manifest.BaseManifest
+	GetArtifact(manifest.NamedResource) store.Artifact
+	GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission)
+}
+
+type objects interface {
+	objectReader
+	Objects() []manifest.BaseManifest
+}
+
+// Filter selects affected output and retains its execution dependencies.
+// The zero value disables filtering. Discovery and changes are immutable.
 type Filter struct {
-	changes *Set
-	index   *manifest.DiscoveryIndex
-	objs    ObjectLister
-
-	// mu guards keep + keepByName + primary for runtime Add();
-	// resolve() runs once during construction before the controllers
-	// start, so it doesn't need to hold the lock.
-	mu   sync.RWMutex
-	keep map[manifest.NamedResource]struct{}
-
-	// Runtime uses membership; construction also tracks admission strength.
-	primary map[manifest.NamedResource]uint8
-
-	// keepByName: (Group, Kind, Name) presence set used as an O(1) fallback
-	// when either side of a lookup has an empty namespace.
-	keepByName map[nameKey]struct{}
+	hasInputs bool
+	changes   *Set
+	index     *manifest.DiscoveryIndex
+	objs      objects
+	root      string
+	mu        sync.RWMutex
+	keep      map[manifest.NamedResource]role
+	revision  uint64
 }
 
-type nameKey struct{ group, kind, name string }
+// Ancestor-only entries MUST stay kept for patches, never primary, to prevent unrelated file-loaded sibling cascades.
+type role uint8
 
-// keyOf is the namespace-agnostic key for the keepByName fallback index.
-func keyOf(id manifest.NamedResource) nameKey {
-	return nameKey{id.Group, id.Kind, id.Name}
+const (
+	absent role = iota
+	kept
+	primary
+)
+
+type selectionState struct {
+	consumers          []manifest.NamedResource
+	role, walked       role
+	declarationChecked bool
 }
 
-// NewFilter resolves changed files through an immutable discovery index, then
-// expands content dependencies. Nil changes disables filtering.
-func NewFilter(changes *Set, index *manifest.DiscoveryIndex, objs ObjectLister) *Filter {
-	f := &Filter{changes: changes, index: index, objs: objs}
+type selection struct {
+	filter  *Filter
+	objects objectReader
+	child   store.Child
+	emitter manifest.NamedResource
+	states  map[manifest.NamedResource]selectionState
+	queue   []manifest.NamedResource
+}
+
+// NewFilter resolves changed inputs through the discovery and production relation.
+// root defaults to the admitted bootstrap coordinate; nil changes disables filtering.
+func NewFilter(changes *Set, index *manifest.DiscoveryIndex, objs objects, root string) *Filter {
+	if root == "" && objs != nil {
+		if input, ok := objs.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact); ok {
+			root = input.LocalPath
+		}
+	}
+	f := &Filter{changes: changes, index: index, objs: objs, root: root}
 	if changes != nil {
-		f.resolve()
+		f.hasInputs = len(changes.inputs) != 0
+		changed := len(changes.paths) != 0
+		for _, source := range changes.sources {
+			f.hasInputs = f.hasInputs || len(source.changes.inputs) != 0
+			changed = changed || len(source.changes.paths) != 0
+		}
+		f.keep = make(map[manifest.NamedResource]role)
+		if changed || f.hasInputs {
+			f.selectWork(manifest.NamedResource{}, store.Child{}, objs)
+		}
 	}
 	return f
 }
@@ -71,399 +91,581 @@ func NewFilter(changes *Set, index *manifest.DiscoveryIndex, objs ObjectLister) 
 // Enabled reports whether change-based filtering is active.
 func (f *Filter) Enabled() bool { return f != nil && f.changes != nil }
 
-// ShouldReconcile reports whether the controller for id should do work
-// (true when filtering is disabled). The (Group, Kind, Name) fallback below
-// bridges parent-Kustomization targetNamespace inheritance: a
-// resource loaded from disk with no namespace (entry kept with
-// Namespace="") and queried later with the inherited namespace
-// (lookup with Namespace=X) refers to the same logical resource.
-//
-// The fallback ONLY indexes keep-entries whose Namespace is empty —
-// so a fully-namespaced lookup never matches an unrelated fully-
-// namespaced entry that happens to share (Group, Kind, Name). Without this
-// asymmetry the keep set would silently expand across namespaces
-// (e.g. a kept `Kustomization/cluster-infra/external-secrets`
-// dragging an unrelated `Kustomization/database/external-secrets`
-// into scope on name match alone).
+// ShouldReconcile tests exact selected identity without relation access.
 func (f *Filter) ShouldReconcile(id manifest.NamedResource) bool {
 	if !f.Enabled() {
 		return true
 	}
 	f.mu.RLock()
-	defer f.mu.RUnlock()
-	if _, ok := f.keep[id]; ok {
-		return true
-	}
-	_, ok := f.keepByName[keyOf(id)]
+	_, ok := f.keep[id]
+	f.mu.RUnlock()
 	return ok
 }
 
-func (f *Filter) producersFor(id manifest.NamedResource, objs ObjectLister) []manifest.NamedResource {
-	if f == nil {
+// AddEmitted admits the incoming object and contribution before publication.
+// Returned identities are uniquely newly kept; refire them after this call returns.
+func (f *Filter) AddEmitted(emitter manifest.NamedResource, child store.Child, objs objectReader) []manifest.NamedResource {
+	if !f.Enabled() || child.Obj == nil {
 		return nil
 	}
-	var out []manifest.NamedResource
-	if objs == nil {
-		return nil
-	}
-	for _, p := range objs.Productions(id, f.index) {
-		if id.KindInfo().Discovery && p.Declaration == (manifest.NamedResource{}) {
+	return f.selectWork(emitter, child, objs)
+}
+
+func (f *Filter) selectWork(emitter manifest.NamedResource, child store.Child, objs objectReader) []manifest.NamedResource {
+	for {
+		f.mu.RLock()
+		revision := f.revision
+		f.mu.RUnlock()
+		s := selection{filter: f, objects: objs, emitter: emitter, child: child, states: map[manifest.NamedResource]selectionState{}}
+		if child.Obj == nil {
+			index := manifest.DiscoveryIndex{}
+			if f.index != nil {
+				index = *f.index
+			}
+			bootstrap := s.evidence(manifest.BootstrapSourceID)
+			if bootstrap.changes != nil {
+				for id := range bootstrap.changes.inputs {
+					if bootstrap.input(&s, manifest.BootstrapSourceID, id) {
+						s.add(id, primary)
+					}
+				}
+			}
+			known := 0
+			if f.objs != nil {
+				for _, obj := range f.objs.Objects() {
+					if s.link(obj.Named(), obj) {
+						known++
+					}
+				}
+			}
+			if known < len(index.Records) {
+				for id := range index.Records {
+					if f.objs == nil || f.objs.GetObject(id) == nil {
+						s.link(id, nil)
+					}
+				}
+			}
+			index.Readers = nil
+			for file := range s.files() {
+				for reader := range f.index.ReadersOfFile(file) {
+					if s.changedClaim(reader, file) {
+						s.add(reader.Reader, primary)
+					}
+				}
+				owners, ancestors := index.OwnersOfFile(file)
+				for _, id := range owners {
+					ref := s.source(id)
+					if ref != (manifest.NamedResource{}) && s.changedClaim(manifest.FileReader{Reader: id, Source: ref}, file) {
+						s.add(id, primary)
+					}
+				}
+				for _, id := range ancestors {
+					ref := s.source(id)
+					if ref != (manifest.NamedResource{}) && s.changedClaim(manifest.FileReader{Reader: id, Source: ref}, file) {
+						s.add(id, kept)
+					}
+				}
+			}
+		}
+		if child.Obj != nil {
+			s.add(child.Obj.Named(), s.admit())
+		}
+		s.walk()
+		f.mu.Lock()
+		if revision != f.revision {
+			f.mu.Unlock()
 			continue
 		}
-		if p.Owner != (manifest.NamedResource{}) && !slices.Contains(out, p.Owner) {
-			out = append(out, p.Owner)
+		var added []manifest.NamedResource
+		for id, state := range s.states {
+			r := state.role
+			if f.keep[id] >= r {
+				continue
+			}
+			if f.keep[id] == absent {
+				added = append(added, id)
+			}
+			f.keep[id] = r
+			f.revision++
 		}
+		f.mu.Unlock()
+		slices.SortFunc(added, manifest.NamedResource.Compare)
+		return added
+	}
+}
+
+func (s *selection) read(id manifest.NamedResource) role {
+	return max(s.states[id].role, s.observed(id))
+}
+
+func (s *selection) observed(id manifest.NamedResource) role {
+	s.filter.mu.RLock()
+	r := s.filter.keep[id]
+	s.filter.mu.RUnlock()
+	return r
+}
+
+func (s *selection) add(id manifest.NamedResource, r role) {
+	if id == (manifest.NamedResource{}) {
+		return
+	}
+	r = max(r, s.observed(id))
+	state := s.states[id]
+	if state.role >= r {
+		return
+	}
+	state.role = r
+	s.states[id] = state
+	s.queue = append(s.queue, id)
+}
+
+func (s *selection) object(id manifest.NamedResource) manifest.BaseManifest {
+	if s.child.Obj != nil && s.child.Obj.Named() == id {
+		return s.child.Obj
+	}
+	if s.objects == nil {
+		return nil
+	}
+	return s.objects.GetObject(id)
+}
+
+func (s *selection) productions(id manifest.NamedResource) []manifest.Production {
+	if s.objects != nil {
+		if s.child.Obj != nil && s.child.Obj.Named() == id {
+			return s.objects.IncomingProductions(s.child, s.filter.index)
+		}
+		return s.objects.Productions(id, s.filter.index)
+	}
+	r, _ := s.filter.index.Lookup(id)
+	return r.Productions
+}
+
+// Both branches MUST share one iterator closure to avoid per-reference allocations.
+func (s *selection) deps(obj manifest.BaseManifest, id manifest.NamedResource, reverse bool) iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		if obj != nil {
+			manifest.ContentInputs(obj, reverse)(yield)
+		} else {
+			r, _ := s.filter.index.Lookup(id)
+			slices.Values(r.Refs)(yield)
+		}
+	}
+}
+
+func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) bool {
+	record, known := s.filter.index.Lookup(id)
+	if s.filter.hasInputs && s.changedInput(id, id) {
+		s.add(id, primary)
+	}
+	for dep := range s.deps(obj, id, true) {
+		state := s.states[dep]
+		state.consumers = append(state.consumers, id)
+		checked := state.declarationChecked
+		state.declarationChecked = true
+		s.states[dep] = state
+		if s.filter.hasInputs && s.changedInput(id, dep) {
+			s.add(dep, primary)
+		}
+		if !checked {
+			for _, p := range s.productions(dep) {
+				if materializer := p.Materializer(dep); p.Declaration != (manifest.NamedResource{}) && (materializer != (manifest.NamedResource{}) || p.Owner == (manifest.NamedResource{})) {
+					relative, indexed := s.coordinates(p)
+					if s.changedProduction(p, relative, indexed) {
+						s.add(p.Declaration, primary)
+					}
+				}
+			}
+		}
+	}
+	hasFile := false
+	for _, p := range s.productions(id) {
+		relative, indexed := s.coordinates(p)
+		hasFile = hasFile || indexed == record.File
+		owner := p.Materializer(id)
+		if p.Declaration == (manifest.NamedResource{}) && (owner != (manifest.NamedResource{}) || p.Owner == (manifest.NamedResource{}) || manifest.Resolve(p.Authored, id.Namespace, "") == id) && s.changedProduction(p, relative, indexed) {
+			s.add(id, primary)
+		}
+		if owner == (manifest.NamedResource{}) && p.Owner != (manifest.NamedResource{}) {
+			continue
+		}
+		if p.Declaration != (manifest.NamedResource{}) {
+			owner = p.Declaration
+		}
+		if owner != id {
+			state := s.states[owner]
+			state.consumers = append(state.consumers, id)
+			s.states[owner] = state
+		}
+	}
+	if !known {
+		return false
+	}
+	if bootstrap := s.evidence(manifest.BootstrapSourceID); bootstrap.changes != nil && (!hasFile && bootstrap.changes.Contains(record.File) || slices.ContainsFunc(record.Inputs, bootstrap.changes.Contains)) {
+		s.add(id, primary)
+	}
+	return true
+}
+
+func (s *selection) admit() role {
+	id := s.child.Obj.Named()
+	r := s.read(id)
+	if r == primary || s.read(s.emitter) == primary || s.affectedRoot(s.child.Obj) || s.filter.hasInputs && s.changedInput(id, id) {
+		return primary
+	}
+	for dep := range s.deps(s.child.Obj, id, true) {
+		if s.read(dep) == primary || s.filter.hasInputs && s.changedInput(id, dep) {
+			return primary
+		}
+	}
+	for _, p := range s.productions(id) {
+		if s.read(p.Materializer(id)) == primary || s.read(p.Declaration) == primary || p.Authored != (manifest.NamedResource{}) && s.read(p.Authored) == primary {
+			return primary
+		}
+		relative, file := s.coordinates(p)
+		if s.changedProduction(p, relative, file) {
+			return primary
+		}
+	}
+	return r
+}
+
+type sourceEvidence struct {
+	changes       *Set
+	artifact      *store.SourceArtifact
+	paired, local bool
+}
+
+func (s *selection) evidence(ref manifest.NamedResource) sourceEvidence {
+	f := s.filter
+	if ref == (manifest.NamedResource{}) {
+		ref = manifest.BootstrapSourceID
+	}
+	pair, known := f.changes.sources[ref]
+	out := sourceEvidence{local: ref == manifest.BootstrapSourceID}
+	if out.local && !known {
+		out.changes = f.changes
+		return out
+	}
+	if s.objects != nil && !out.local {
+		_, pinned, external := loader.SourceView(s.objects, ref, f.root)
+		out.local = !pinned && !external
+	}
+	if known {
+		if s.objects != nil {
+			out.artifact, _ = s.objects.GetArtifact(ref).(*store.SourceArtifact)
+			declaration := s.objects.GetObject(ref)
+			for side, artifact := range pair.artifacts {
+				if artifact != nil && artifact == out.artifact && declaration == pair.declarations[side] {
+					out.changes, out.paired = pair.changes, true
+					return out
+				}
+			}
+		}
+		if ref == manifest.BootstrapSourceID {
+			return out
+		}
+	}
+	if out.local {
+		out.changes = s.evidence(manifest.BootstrapSourceID).changes
 	}
 	return out
 }
 
-// AddEmitted extends the keep set with child when emitter is a
-// "primary" keep entry — i.e. one whose own render output differs
-// from baseline (its source file changed, it's a sibling of a
-// changed file under a shared owner KS, or it was itself emitted
-// by another primary parent at runtime). Ancestor-only emitters
-// (kept so their patches/substituteFrom apply to descendants per
-// #58) DON'T propagate keep to file-loaded children: their render
-// output for unrelated siblings is identical to baseline, and
-// cascading those siblings through the keep set turns a one-file
-// change into a full-tree reconcile.
-//
-// child inherits the emitter's primacy. Its content references come from
-// the incoming manifest because admission precedes Store.AddObject, which
-// may still hold a previous child with the same identity. Stored transitive
-// dependencies are traversed recursively; their required producers remain
-// dependency-only.
-//
-// Used by the KS controller when a parent KS in the keep set
-// renders and emits id as a child. Covers the kustomize
-// component+replacement pattern (parent emits render-only per-app
-// Kustomization from a CM-driven replacement, see #204) AND the
-// patch-propagation chain (primary parent emits patched file-loaded
-// child whose render-with-new-patches differs from baseline).
-//
-// Ordering contract for embedders: call AddEmitted(parent, child)
-// BEFORE the emitting Store.AddObject(child). Store events fire
-// synchronously on the calling goroutine, so the controller's
-// listener invokes PreGate (and thus ShouldReconcile) inside that
-// AddObject — if AddEmitted ran after, the listener sees the old
-// keep set and short-circuits to Ready/"unchanged".
-//
-// Returns newly-kept ids after releasing the filter lock so callers can publish admission.
-func (f *Filter) AddEmitted(emitter manifest.NamedResource, child manifest.BaseManifest, objs ObjectLister) []manifest.NamedResource {
-	if !f.Enabled() {
-		return nil
+func (e sourceEvidence) input(s *selection, ref, id manifest.NamedResource) bool {
+	if e.changes == nil {
+		return false
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, primaryEmitter := f.primary[emitter]; !primaryEmitter {
-		return nil
+	file, known := e.changes.inputs[id]
+	if !known {
+		return false
 	}
-	id := child.Named()
-	var added []manifest.NamedResource
-	if _, kept := f.keep[id]; !kept {
-		f.markKept(id)
-		added = append(added, id)
+	if e.paired {
+		return true
 	}
-	f.primary[id] = 1
-	for _, accepted := range acceptedChildren(id, objs) {
-		added = append(added, f.addRecursiveLocked(accepted.Obj.Named(), objs)...)
+	artifact := e.artifact
+	if artifact == nil && s.objects != nil {
+		artifact, _ = s.objects.GetArtifact(ref).(*store.SourceArtifact)
 	}
-	var refs [8]manifest.NamedResource
-	for _, dep := range appendReferences(refs[:0], child, false) {
-		added = append(added, f.addRecursiveLocked(dep, objs)...)
-		added = append(added, f.addDependencyOnlyRecursiveLocked(objs, f.producersFor(dep, objs)...)...)
+	if artifact == nil {
+		return false
 	}
-	return added
+	root := s.filter.root
+	if (e.changes.origins[0] != nil || e.changes.origins[1] != nil) && !slices.ContainsFunc(e.changes.origins[:], func(input *store.SourceArtifact) bool {
+		return input != nil && (input.LocalPath == root || input.LocalRoot == root)
+	}) {
+		return false
+	}
+	origin := loader.OriginPath(artifact, artifact.LocalPath)
+	base, err := filepath.Rel(root, origin)
+	base = filepath.ToSlash(base)
+	return err == nil && (base == "." || file == base || strings.HasPrefix(file, base+"/"))
 }
 
-// markKept records id in the keep set, mirroring it into keepByName
-// only for empty-namespace ids (see ShouldReconcile for the asymmetry
-// rationale). Caller MUST hold f.mu.Lock().
-func (f *Filter) markKept(id manifest.NamedResource) {
-	f.keep[id] = struct{}{}
-	if id.Namespace == "" {
-		f.keepByName[keyOf(id)] = struct{}{}
+func (s *selection) changedInput(consumer, dep manifest.NamedResource) bool {
+	inputs := [2]manifest.NamedResource{dep, dep}
+	inputs[1].Namespace = ""
+	groups := s.filter.changes.groups
+	if len(groups) == 0 {
+		groups = []sourceGroup{{changes: s.filter.changes}}
 	}
-}
-
-// addRecursiveLocked is the lock-free body of addRecursive — the
-// caller MUST hold f.mu.Lock(). Pulled out so AddEmitted can do its
-// gate-and-recurse atomically under a single lock acquisition.
-func (f *Filter) addRecursiveLocked(id manifest.NamedResource, objs ObjectLister) []manifest.NamedResource {
-	var added []manifest.NamedResource
-	stack := []manifest.NamedResource{id}
-	for len(stack) > 0 {
-		cur := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		_, alreadyKeep := f.keep[cur]
-		_, alreadyPrimary := f.primary[cur]
-		if alreadyKeep && alreadyPrimary {
-			continue
-		}
-		if !alreadyKeep {
-			f.markKept(cur)
-			added = append(added, cur)
-		}
-		// Promote ancestor-only entries to primary when a runtime
-		// add reaches them: the primary parent's render contains
-		// this entry's manifest, so the entry's spec-as-rendered
-		// differs from baseline and its own emissions must cascade
-		// too. This is symmetric with resolve()'s enqueuePrimary
-		// upgrade path.
-		f.primary[cur] = 1
-		// Transitive walk: a runtime-added KS / HR pulls its
-		// sourceRef / chartRef / valuesFrom into keep with it.
-		// objs may be nil for tests that construct a Filter without
-		// an ObjectLister; in that case the walk is a no-op (the
-		// resolve() pre-build covered the initial graph already).
-		if objs == nil {
-			continue
-		}
-		for _, child := range acceptedChildren(cur, objs) {
-			stack = append(stack, child.Obj.Named())
-		}
-		var refs [8]manifest.NamedResource
-		for _, dep := range appendReferences(refs[:0], objs.GetObject(cur), false) {
-			if _, ok := f.primary[dep]; !ok {
-				stack = append(stack, dep)
-			}
-			// Producers of a runtime-discovered substituteFrom CM
-			// must reconcile so the CM materializes, but they stay
-			// dependency-only — promoting them to primary would
-			// re-introduce the #204 keep cascade (an unchanged
-			// producer's render output for unrelated siblings is
-			// identical to baseline). See #418.
-			added = append(added, f.addDependencyOnlyRecursiveLocked(objs, f.producersFor(dep, objs)...)...)
-		}
-	}
-	return added
-}
-
-// addDependencyOnlyRecursiveLocked extends the keep set with ids
-// (and their transitive sourceRef/chartRef/valuesFrom deps AND any
-// producers of those deps) at runtime WITHOUT marking the entries
-// primary. The caller MUST hold f.mu.Lock().
-//
-// Used for runtime substituteFrom-producer promotion: a primary
-// consumer reaches a CM whose producing KS is unchanged. The
-// producer must reconcile so the CM materializes, but its render
-// output for unrelated siblings matches baseline — promoting it
-// to primary would re-introduce the #204 keep cascade.
-//
-// Chained producers are walked: a producer that itself has a
-// substituteFrom CM produced by another KS pulls that KS in too,
-// again ancestor-only. See #418.
-func (f *Filter) addDependencyOnlyRecursiveLocked(objs ObjectLister, ids ...manifest.NamedResource) []manifest.NamedResource {
-	var added []manifest.NamedResource
-	stack := slices.Clone(ids)
-	for len(stack) > 0 {
-		cur := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if _, alreadyKeep := f.keep[cur]; alreadyKeep {
-			continue
-		}
-		f.markKept(cur)
-		added = append(added, cur)
-		if objs == nil {
-			continue
-		}
-		var refs [8]manifest.NamedResource
-		for _, dep := range appendReferences(refs[:0], objs.GetObject(cur), false) {
-			stack = append(stack, dep)
-			for _, producer := range f.producersFor(dep, objs) {
-				if producer == cur {
-					continue
-				}
-				stack = append(stack, producer)
-			}
-		}
-	}
-	return added
-}
-
-func (f *Filter) resolve() {
-	const (
-		primaryAdmission uint8 = 1 << iota
-		changeAdmission
-		ownerAdmission
-	)
-	objs := f.objs
-	var records map[manifest.NamedResource]manifest.DiscoveryRecord
-	if f.index != nil {
-		records = f.index.Records
-	}
-	hint := len(records)
-	keep := make(map[manifest.NamedResource]struct{}, hint)
-	primary := make(map[manifest.NamedResource]uint8, hint)
-	queue := make([]manifest.NamedResource, 0, hint)
-	enqueuePrimary := func(id manifest.NamedResource, changed bool) {
-		state := primary[id] | primaryAdmission
-		if changed {
-			state |= changeAdmission
-		}
-		if state == primary[id] {
-			return
-		}
-		primary[id] = state
-		keep[id] = struct{}{}
-		queue = append(queue, id)
-	}
-	enqueueAncestor := func(id manifest.NamedResource) {
-		if _, seen := keep[id]; seen {
-			return
-		}
-		keep[id] = struct{}{}
-		queue = append(queue, id)
-	}
-
-	type fileOwnership struct{ owners, ancestors []manifest.NamedResource }
-	ownership := map[string]fileOwnership{}
-	ownersOf := func(file string) fileOwnership {
-		if cached, ok := ownership[file]; ok {
-			return cached
-		}
-		owners, ancestors := f.index.OwnersOfFile(file)
-		result := fileOwnership{owners, ancestors}
-		ownership[file] = result
-		return result
-	}
-	enqueueAncestorChain := func(file string, self manifest.NamedResource) {
-		for _, owner := range ownersOf(file).owners {
-			if owner != self {
-				enqueueAncestor(owner)
-			}
-		}
-		for _, ancestor := range ownersOf(file).ancestors {
-			enqueueAncestor(ancestor)
-		}
-	}
-	changed := func(record manifest.DiscoveryRecord) bool {
-		return f.changes.Contains(record.File) || slices.ContainsFunc(record.Inputs, f.changes.Contains)
-	}
-
-	for _, file := range f.changes.Paths() {
-		for _, owner := range ownersOf(file).owners {
-			if record, _ := f.index.Lookup(owner); record.Pinned {
+	for _, group := range groups {
+		if _, exact := group.changes.inputs[inputs[0]]; !exact {
+			if _, projected := group.changes.inputs[inputs[1]]; !projected {
 				continue
 			}
-			enqueuePrimary(owner, true)
-			primary[owner] |= ownerAdmission
 		}
-		for _, ancestor := range ownersOf(file).ancestors {
-			if record, _ := f.index.Lookup(ancestor); record.Pinned {
+		refs := group.refs
+		if len(refs) == 0 {
+			refs = []manifest.NamedResource{manifest.BootstrapSourceID}
+		}
+		for _, ref := range refs {
+			evidence := s.evidence(ref)
+			if evidence.input(s, ref, inputs[0]) {
+				return true
+			}
+			if !evidence.input(s, ref, inputs[1]) {
 				continue
 			}
-			enqueueAncestor(ancestor)
+			consumerSource := s.source(consumer)
+			if consumerSource == (manifest.NamedResource{}) {
+				continue
+			}
+			if consumerSource == ref {
+				return true
+			}
+			if ref == manifest.BootstrapSourceID {
+				local := s.evidence(consumerSource)
+				if !local.paired && local.input(s, consumerSource, inputs[1]) {
+					return true
+				}
+			}
 		}
 	}
-	for id := range f.changes.inputs {
-		if record, ok := f.index.Lookup(id); ok {
-			enqueuePrimary(id, true)
-			enqueueAncestorChain(record.File, id)
+	return false
+}
+
+func (s *selection) coordinates(p manifest.Production) (relative, indexed string) {
+	f := s.filter
+	relative, indexed = p.File, p.File
+	if filepath.IsAbs(p.Path) && s.objects != nil {
+		art, _ := s.objects.GetArtifact(p.Source).(*store.SourceArtifact)
+		root := f.root
+		if art != nil {
+			root = art.LocalPath
+		}
+		rel, err := filepath.Rel(root, p.Path)
+		if err != nil {
+			return "", ""
+		}
+		relative = filepath.ToSlash(rel)
+		rel, err = filepath.Rel(f.root, loader.OriginPath(art, p.Path))
+		if err != nil {
+			return "", ""
+		}
+		indexed = filepath.ToSlash(rel)
+	}
+	return relative, indexed
+}
+
+func (s *selection) changedProduction(p manifest.Production, relative, indexed string) bool {
+	if p.File == "" {
+		return false
+	}
+	if p.Owner == (manifest.NamedResource{}) && p.Source == manifest.BootstrapSourceID {
+		if record, _ := s.filter.index.Lookup(p.Authored); record.Path != "" && record.Path != p.Path {
+			return false
 		}
 	}
-	changedInputs := len(f.changes.inputs) != 0
-	for id, record := range f.index.Files() {
-		if changed(record) {
-			changedInputs = changedInputs || id.KindInfo().Data
-			enqueuePrimary(id, true)
+	evidence := s.evidence(p.Source)
+	if evidence.changes == nil {
+		return false
+	}
+	if evidence.paired {
+		return evidence.changes.Contains(relative)
+	}
+	return evidence.changes.Contains(indexed)
+}
+
+func (s *selection) source(id manifest.NamedResource) manifest.NamedResource {
+	obj := s.object(id)
+	if obj == nil {
+		return manifest.NamedResource{}
+	}
+	for r := range manifest.References(obj, manifest.ReferenceRelations) {
+		if r.Use == "source" {
+			return r.NamedResource
+		}
+	}
+	return manifest.BootstrapSourceID
+}
+
+func (s *selection) files() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		groups := s.filter.changes.groups
+		if len(groups) == 0 {
+			groups = []sourceGroup{{changes: s.filter.changes}}
+		}
+		for _, group := range groups {
+			refs := group.refs
+			if len(refs) == 0 {
+				refs = []manifest.NamedResource{manifest.BootstrapSourceID}
+			}
+			for _, ref := range refs {
+				for file := range s.sourceFiles(ref) {
+					if !yield(file) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+func (s *selection) sourceFiles(ref manifest.NamedResource) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		evidence := s.evidence(ref)
+		if evidence.changes == nil {
+			return
+		}
+		for file := range evidence.changes.paths {
+			if evidence.paired {
+				_, file = s.coordinates(manifest.Production{Source: ref, File: file, Path: filepath.Join(evidence.artifact.LocalPath, filepath.FromSlash(file))})
+			}
+			if !yield(file) {
+				return
+			}
+		}
+	}
+}
+
+func (s *selection) changedClaim(reader manifest.FileReader, file string) bool {
+	evidence := s.evidence(reader.Source)
+	if evidence.changes == nil {
+		return false
+	}
+	if evidence.paired {
+		origin := loader.OriginPath(evidence.artifact, evidence.artifact.LocalPath)
+		relative, err := filepath.Rel(origin, filepath.Join(s.filter.root, filepath.FromSlash(file)))
+		return err == nil && evidence.changes.Contains(filepath.ToSlash(relative))
+	}
+	record, _ := s.filter.index.Lookup(reader.Reader)
+	return !record.Pinned && evidence.changes.Contains(file)
+}
+
+func (s *selection) walk() {
+	for len(s.queue) > 0 {
+		id := s.queue[0]
+		s.queue = s.queue[1:]
+		state := s.states[id]
+		if state.walked >= state.role || s.child.Obj != nil && id != s.child.Obj.Named() && s.observed(id) >= state.role {
 			continue
 		}
-		for _, owner := range ownersOf(record.File).owners {
-			if primary[owner]&ownerAdmission != 0 {
-				enqueuePrimary(id, true)
-				break
+		state.walked = state.role
+		s.states[id] = state
+		record, _ := s.filter.index.Lookup(id)
+		s.add(record.Parent, kept)
+		for dep := range s.deps(s.object(id), id, false) {
+			s.add(dep, kept)
+		}
+		for _, p := range s.productions(id) {
+			owner := p.Materializer(id)
+			if state.role == primary {
+				owner = p.Owner
 			}
+			s.add(owner, kept)
+			s.add(p.Declaration, kept)
+			if owner != (manifest.NamedResource{}) && filepath.IsAbs(p.Path) {
+				_, file := s.coordinates(p)
+				for reader := range s.filter.index.ReadersOfFile(file) {
+					if producer, ok := s.object(reader.Reader).(interface {
+						EmissionPolicy() manifest.EmissionPolicy
+					}); ok && !producer.EmissionPolicy().MatchesNamespace(id) {
+						continue
+					}
+					if reader.Source != p.Source && !s.evidence(p.Source).local {
+						continue
+					}
+					s.add(reader.Reader, kept)
+				}
+			}
+		}
+		if state.role != primary {
+			continue
+		}
+		if s.objects != nil && id.KindInfo().Parent && s.observed(id) != primary {
+			_, _, output := s.objects.GetEmission(id)
+			for _, child := range output.Children {
+				s.add(child.Obj.Named(), primary)
+			}
+			output.Finish()
+		}
+		for _, target := range state.consumers {
+			s.add(target, primary)
 		}
 	}
+}
 
-	type reverseEdge struct{ source, consumer manifest.NamedResource }
-	var edgeBuffer [32]reverseEdge
-	edges := edgeBuffer[:0]
-	for consumer, record := range records {
-		var refs [8]manifest.NamedResource
-		sources := append(refs[:0], record.Refs...)
-		if changedInputs && objs != nil {
-			sources = appendReferences(sources, objs.GetObject(consumer), true)
+func (s *selection) affectedRoot(obj manifest.BaseManifest) bool {
+	if s.objects == nil {
+		return false
+	}
+	for base := range manifest.RenderRoots(obj) {
+		ref := s.source(obj.Named())
+		evidence := s.evidence(ref)
+		if evidence.changes == nil {
+			continue
 		}
-		for _, src := range sources {
-			sr, ok := f.index.Lookup(src)
-			_, oneSided := f.changes.inputs[src]
-			if changedInputs && !oneSided {
-				unnamespaced := src
-				unnamespaced.Namespace = ""
-				_, oneSided = f.changes.inputs[unnamespaced]
+		art := evidence.artifact
+		if art == nil {
+			art, _ = s.objects.GetArtifact(ref).(*store.SourceArtifact)
+		}
+		root := s.filter.root
+		if ref != manifest.BootstrapSourceID && art != nil {
+			root = art.LocalPath
+		}
+		if strings.Contains(base, "/../") || strings.HasSuffix(base, "/..") {
+			// Frozen readers resolve known symlink roots; unknown footprints remain conservative.
+			if record, known := s.filter.index.Lookup(obj.Named()); known && record.Path != "" {
+				for file := range s.sourceFiles(ref) {
+					for reader := range s.filter.index.ReadersOfFile(file) {
+						if reader.Reader == obj.Named() && s.changedClaim(reader, file) {
+							return true
+						}
+					}
+				}
+				continue
 			}
-			if ok && changed(sr) || oneSided {
-				enqueuePrimary(src, true)
-				edges = append(edges, reverseEdge{src, consumer})
-			}
-			for _, production := range sr.Productions {
-				if production.Declaration == (manifest.NamedResource{}) || !filepath.IsLocal(production.File) {
+			base = ""
+		}
+		physical := loader.OriginPath(art, filepath.Join(root, filepath.FromSlash(base)))
+		rel, err := filepath.Rel(s.filter.root, physical)
+		if err != nil {
+			continue
+		}
+		prefix := filepath.ToSlash(rel)
+		if prefix == "." {
+			prefix = ""
+		}
+		for file := range s.sourceFiles(ref) {
+			if file == prefix || strings.HasPrefix(file, prefix+"/") || prefix == "" && !path.IsAbs(file) {
+				if !s.changedClaim(manifest.FileReader{Reader: obj.Named(), Source: ref}, file) {
 					continue
 				}
-				if f.changes.Contains(production.File) {
-					enqueuePrimary(production.Declaration, true)
+				claim := prefix + "/"
+				if prefix == "" {
+					claim = ""
 				}
-				edges = append(edges, reverseEdge{production.Declaration, consumer})
+				if s.filter.index != nil && slices.Contains(s.filter.index.Claims[claim], obj.Named()) {
+					owners, _ := s.filter.index.OwnersOfFile(file)
+					if !slices.Contains(owners, obj.Named()) {
+						continue
+					}
+				}
+				return true
 			}
 		}
 	}
-	slices.SortFunc(edges, func(a, b reverseEdge) int { return a.source.Compare(b.source) })
-
-	// The queue grows when an admission gains primary or change-affecting strength.
-	for head := 0; head < len(queue); head++ { //nolint:intrange // queue grows during iteration
-		id := queue[head]
-		headPrimary := primary[id]&primaryAdmission != 0
-		headChanged := primary[id]&changeAdmission != 0
-		if headChanged {
-			start, _ := slices.BinarySearchFunc(edges, id, func(edge reverseEdge, id manifest.NamedResource) int {
-				return edge.source.Compare(id)
-			})
-			for _, edge := range edges[start:] {
-				if edge.source != id {
-					break
-				}
-				enqueuePrimary(edge.consumer, true)
-				record, _ := f.index.Lookup(edge.consumer)
-				enqueueAncestorChain(record.File, manifest.NamedResource{})
-			}
-		}
-		if headPrimary {
-			for _, child := range acceptedChildren(id, objs) {
-				enqueuePrimary(child.Obj.Named(), headChanged)
-			}
-		}
-		var refs [8]manifest.NamedResource
-		record, _ := f.index.Lookup(id)
-		deps := append(refs[:0], record.Refs...)
-		if objs != nil {
-			deps = appendReferences(deps, objs.GetObject(id), false)
-		}
-		for _, dep := range deps {
-			if headPrimary {
-				enqueuePrimary(dep, false)
-			} else {
-				enqueueAncestor(dep)
-			}
-			for _, producer := range f.producersFor(dep, objs) {
-				if producer != id {
-					enqueueAncestor(producer)
-				}
-			}
-		}
-		if record.File != "" && id.KindInfo().Parent {
-			enqueueAncestorChain(record.File, id)
-		}
-	}
-	f.keep = keep
-	f.primary = primary
-	f.keepByName = make(map[nameKey]struct{})
-	for id := range keep {
-		if id.Namespace == "" {
-			f.keepByName[keyOf(id)] = struct{}{}
-		}
-	}
+	return false
 }
 
 // LogValue snapshots the keep set only when the log handler needs it.
@@ -512,46 +714,4 @@ func (f *Filter) KeepNamespaces() map[string]struct{} {
 		return nil
 	}
 	return out
-}
-
-func acceptedChildren(id manifest.NamedResource, objs ObjectLister) []store.Child {
-	if objs != nil {
-		if current, ok := objs.GetArtifact(id).(*store.Emission); ok {
-			return current.Children
-		}
-	}
-	return nil
-}
-
-// ObjectLister is the Store surface filter resolution needs.
-type ObjectLister interface {
-	GetArtifact(manifest.NamedResource) store.Artifact
-	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
-	GetObject(manifest.NamedResource) manifest.BaseManifest
-	ListObjects(group, kind string) []manifest.BaseManifest
-}
-
-// Reverse admission retains discovery's scope; only named substitution inputs
-// extend it. Forward traversal also follows content dependencies.
-func appendReferences(dst []manifest.NamedResource, obj manifest.BaseManifest, reverse bool) []manifest.NamedResource {
-	include := func(ref manifest.Reference) bool {
-		return (!reverse && ref.Content) || (ref.Use == "substituteFrom" && ref.Name != "")
-	}
-	refs := manifest.References(obj, manifest.ReferenceRelations)
-	prefixLen := len(dst)
-	for ref := range refs {
-		if include(ref) {
-			if len(dst) == cap(dst) {
-				count := prefixLen
-				for next := range refs {
-					if include(next) {
-						count++
-					}
-				}
-				dst = slices.Grow(dst, count-len(dst))
-			}
-			dst = append(dst, ref.NamedResource)
-		}
-	}
-	return dst
 }

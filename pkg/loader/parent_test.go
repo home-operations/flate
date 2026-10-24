@@ -658,3 +658,62 @@ func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 		t.Errorf("parent = %v, want %v", parent, ks.Named())
 	}
 }
+
+func TestSourceView_InputOrigin(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		identity      bool
+		alias         bool
+		pinned        bool
+		external      bool
+		physicalInput string
+	}{
+		{name: "mutable_subtree_alias", alias: true, physicalInput: "subtree/apps"},
+		{name: "mutable_identity", identity: true, physicalInput: "apps"},
+		{name: "committed_at_same_mount", pinned: true, physicalInput: ".inputs/source/apps"},
+		{name: "external_at_same_mount", external: true, physicalInput: ".inputs/source/apps"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repoRoot := t.TempDir()
+			mount := filepath.Join(repoRoot, ".inputs", "source")
+			art := &store.SourceArtifact{LocalPath: mount, LocalRoot: repoRoot, Key: "derived", InputAlias: tc.alias, FS: fstest.MapFS{}}
+			if tc.identity {
+				mount, art.LocalPath, art.Key = repoRoot, repoRoot, ""
+			}
+			if tc.alias {
+				art.LocalRoot = filepath.Join(repoRoot, "subtree")
+			}
+			if tc.external {
+				art.LocalRoot = t.TempDir()
+			}
+			st := store.New()
+			source := &manifest.GitRepository{Name: "source", Namespace: "flux-system"}
+			st.AddObject(source)
+			st.SetArtifact(source.Named(), art)
+			root, pinned, external := SourceView(st, source.Named(), repoRoot)
+			wantRoot := mount
+			if tc.external {
+				wantRoot = repoRoot
+			}
+			if root != wantRoot || pinned != tc.pinned || external != tc.external {
+				t.Fatalf("source view = (%q, %t, %t), want (%q, %t, %t)", root, pinned, external, wantRoot, tc.pinned, tc.external)
+			}
+			file := filepath.Join(mount, "apps")
+			origin := filepath.Join(repoRoot, filepath.FromSlash(tc.physicalInput))
+			assert.Equal(t, OriginPath(art, file), origin)
+			if tc.identity {
+				assert.Equal(t, OriginPath(art, mount+string(filepath.Separator)+filepath.FromSlash("discard/../apps")), origin)
+			}
+			reader := documentReader{}
+			reader.mountSources(st)
+			assert.Equal(t, reader.localPath(file), origin)
+			base := "."
+			if tc.alias {
+				base = "subtree"
+			}
+			assert.Equal(t, reader.localBase(mount, repoRoot), base)
+		})
+	}
+}

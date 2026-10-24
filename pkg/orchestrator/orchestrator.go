@@ -130,10 +130,10 @@ type Config struct {
 	Cache *sourcecache.Cache
 	// Network shares compatible HTTP transports and connection-timeout facts for this invocation.
 	Network *source.Network
-	// ExternalChanges, when non-nil, supplies the file-level diff so
-	// the orchestrator skips its built-in change.Detect step. The
-	// filter is still built from this set and the discovery index
-	// during Bootstrap.
+	// ExternalChanges supplies bootstrap-coordinate changes instead of detecting
+	// them. RenderTrees qualifies available selected source pairs; direct callers
+	// can supply a set prepared by change.Qualify without rediscovering a peer.
+	// A non-nil empty set enables filtering even for identical direct inputs.
 	ExternalChanges *change.Set
 
 	// Concurrency caps the number of active reconcile bodies running
@@ -432,37 +432,22 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 			err = o.bootstrapErr
 		}
 	}()
-	if err := o.discover(ctx); err != nil {
+	res, err := o.prepareBootstrap(ctx)
+	if err != nil {
 		return err
 	}
-
-	o.freezeSubstitutions()
-	o.failDependsOnCycles()
-	if err := o.buildChangeFilter(ctx, o.repoRoot); err != nil {
-		return err
-	}
-
-	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
-	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
-		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
-	for kind, f := range map[string]source.Fetcher{
-		manifest.KindBucket: source.Wrap(manifest.KindBucket,
-			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, ForceGeneric: o.cfg.ForceGenericProvider}),
-		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
-		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
-	} {
-		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
-			o.src.Fetchers[kind] = f
+	changes := o.cfg.ExternalChanges
+	if changes == nil && (o.cfg.PathOrig != "" || o.cfg.BaseInput != nil) {
+		changes, err = o.computeChangeSet(ctx, res.RepoRoot)
+		if err != nil {
+			return err
 		}
 	}
-	o.bootstrapped = true
+	o.completeBootstrap(res, changes)
 	return nil
 }
 
-func (o *Orchestrator) discover(ctx context.Context) error {
-	if o.index != nil {
-		return nil
-	}
+func (o *Orchestrator) prepareBootstrap(ctx context.Context) (*discovery.Result, error) {
 	gitFetcher := &git.Fetcher{
 		Cache: o.cache, Depth: o.cfg.GitDepth,
 		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
@@ -476,6 +461,9 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		}
 		return artifact, err
 	})
+	if current, exists := o.src.Fetchers[manifest.KindGitRepository]; exists && current == nil {
+		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
+	}
 	admitFromDisk := o.cfg.Input == nil && o.store.GetArtifact(manifest.BootstrapSourceID) == nil
 	res, err := discovery.Run(ctx, discovery.Config{
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
@@ -483,14 +471,14 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 	o.cfg.RepoRoot = res.RepoRoot
-	if admitFromDisk && o.cfg.BaseInput == nil && o.cfg.PathOrig != "" && o.cfg.ExternalChanges == nil {
+	if admitFromDisk && o.cfg.BaseInput == nil && o.cfg.PathOrig != "" {
 		baseInput, _, err := baseline.AdmitDirectory(ctx, o.cfg.PathOrig, o.cfg.PathOrig)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if baseInput.LocalPath == o.cfg.Input.LocalPath {
 			baseInput = o.cfg.Input
@@ -508,10 +496,27 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	}
 	o.dependencySubstitutions = res.DependencySubstitutions
 
-	if current, exists := o.src.Fetchers[manifest.KindGitRepository]; exists && current == nil {
-		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
+	return res, nil
+}
+
+func (o *Orchestrator) completeBootstrap(res *discovery.Result, changes *change.Set) {
+	o.freezeSubstitutions()
+	o.failDependsOnCycles()
+	o.buildChangeFilter(res.RepoRoot, changes)
+	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
+	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
+		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
+	for kind, f := range map[string]source.Fetcher{
+		manifest.KindBucket: source.Wrap(manifest.KindBucket,
+			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, ForceGeneric: o.cfg.ForceGenericProvider}),
+		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
+		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
+	} {
+		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
+			o.src.Fetchers[kind] = f
+		}
 	}
-	return nil
+	o.bootstrapped = true
 }
 
 // replacePreflightFailures replaces the current preflight-failure map

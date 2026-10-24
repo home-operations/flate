@@ -91,26 +91,26 @@ func (c *Controller) Configure(opts Options) {
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 }
 
-// KeepEmitted extends the change filter's keep set so render-emitted
-// children pass the changed-only filter. Without this, a
-// parent whose render emits a child that wasn't on disk at filter-build
-// time (kustomize component+replacement KSes, charts that render source
-// CRs) would silently drop that child from the diff comparison. Routed
-// through Filter.AddEmitted so an ancestor-only parent doesn't cascade
-// unrelated file-loaded children into keep (#204/#260/#308).
-//
-// MUST be called BEFORE Store.AddObject so the listener that fires
-// synchronously during AddObject sees the extended keep set.
-func (c *Controller) KeepEmitted(parent manifest.NamedResource, child manifest.BaseManifest, reads *store.ReadSet) {
+// KeepEmitted admits the incoming child and reports whether it is selected.
+// Admission MUST precede publication so Store listeners observe the selected identity.
+func (c *Controller) KeepEmitted(parent manifest.NamedResource, child store.Child, reads *store.ReadSet) bool {
 	if f := c.filter; f != nil {
-		var objects change.ObjectLister = c.Store
+		var objects interface {
+			GetObject(manifest.NamedResource) manifest.BaseManifest
+			GetArtifact(manifest.NamedResource) store.Artifact
+			GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission)
+			Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
+			IncomingProductions(store.Child, *manifest.DiscoveryIndex) []manifest.Production
+		} = c.Store
 		if reads != nil {
 			objects = reads
 		}
 		for _, id := range f.AddEmitted(parent, child, objects) {
 			c.Store.SetIncluded(id, true)
 		}
+		return f.ShouldReconcile(child.Obj.Named())
 	}
+	return true
 }
 
 // SetPendingUnlessReady initializes progress without changing an existing condition.

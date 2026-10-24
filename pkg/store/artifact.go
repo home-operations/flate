@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"io/fs"
 	"reflect"
 	"slices"
@@ -52,6 +53,9 @@ type SourceArtifact struct {
 	FS fs.FS
 	// Warnings is immutable acquisition evidence, excluded from content identity.
 	Warnings []manifest.Warning
+	// ContentFingerprint lazily identifies selected bytes at their source owner.
+	// Nil or an empty result supplies no equality evidence; acquisition identity stays separate.
+	ContentFingerprint func(context.Context, fs.FS) (string, error) `json:"-"`
 }
 
 func (*SourceArtifact) artifact() {}
@@ -145,6 +149,7 @@ func sameArtifact(prev, next Artifact) bool {
 	ac.FS, bc.FS = nil, nil
 	ac.Reads, bc.Reads = nil, nil
 	ac.Warnings, bc.Warnings = nil, nil
+	ac.ContentFingerprint, bc.ContentFingerprint = nil, nil
 	return reflect.DeepEqual(ac, bc)
 }
 

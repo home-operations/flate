@@ -544,7 +544,7 @@ spec:
 				}
 				r, _ := l.Index.Lookup(testutil.HelmReleaseID("apps", "app"))
 				readers := l.Index.Readers[r.File]
-				if len(readers) != 1 || readers[0] != (testutil.KustomizationID("flux-system", "pinned")) {
+				if len(readers) != 1 || readers[0].Reader != (testutil.KustomizationID("flux-system", "pinned")) {
 					t.Fatalf("committed source file %q readers = %v", r.File, readers)
 				}
 			}
@@ -678,7 +678,7 @@ spec:
 			if !ok || record.Parent != owner.Named() || record.File != "kubernetes/apps/"+name+".yaml" || record.Path != raw[name].Path {
 				t.Fatalf("finalized %s record=%+v", id, record)
 			}
-			if readers := slices.Collect(l.Index.ReadersOfFile(record.File)); !slices.Contains(readers, owner.Named()) {
+			if readers := slices.Collect(l.Index.ReadersOfFile(record.File)); !slices.ContainsFunc(readers, func(r manifest.FileReader) bool { return r.Reader == owner.Named() }) {
 				t.Fatalf("subtree readers = %v", readers)
 			}
 		}

@@ -73,7 +73,7 @@ func TestEmit_OwnershipPrecedesArrivals(t *testing.T) {
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	s.AddObject(parent)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
 	c.Configure(Options{Filter: filter, Index: index})
 	docs := []map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}, "data": map[string]any{"VALUE": "value"}},
@@ -459,7 +459,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			child := &manifest.ConfigMap{Name: "output", Namespace: "apps"}
 			s.AddObject(obj)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{obj.Named(): {File: "reader.yaml"}}}
-			c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, s), Index: index})
+			c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, s, ""), Index: index})
 			first := newExecution(c, obj.Named())
 			first.Reads.GetObject(obj.Named())
 			warning := manifest.Warning{Resource: obj.Named(), Category: manifest.WarnStaleValues, Message: "unused value"}
@@ -640,7 +640,7 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 			foreignSettings: {Productions: []manifest.Production{{Owner: foreignProducer.Named(), Authored: foreignSettings, Path: "/fixtures/foreign-settings.yaml", File: "foreign-settings.yaml", Source: manifest.BootstrapSourceID}}},
 		},
 	}
-	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s), Index: index})
+	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, ""), Index: index})
 
 	captured := make(map[manifest.NamedResource]*Execution)
 	for _, obj := range []manifest.BaseManifest{producer, chart, foreignProducer} {
@@ -653,8 +653,8 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		captured[obj.Named()] = execution
 	}
 
-	c.KeepEmitted(parent, consumer, nil)
-	c.KeepEmitted(parent, release, nil)
+	c.KeepEmitted(parent, store.Child{Obj: consumer}, nil)
+	c.KeepEmitted(parent, store.Child{Obj: release}, nil)
 
 	for _, tc := range []struct {
 		obj      manifest.BaseManifest
@@ -697,14 +697,14 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 			index := &manifest.DiscoveryIndex{
 				Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}},
 			}
-			c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s), Index: index})
+			c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, ""), Index: index})
 			s.SetIncluded(obj.Named(), false)
 			execution := newExecution(c, obj.Named())
 			t.Cleanup(execution.Close)
 			if execution.Reads.Admitted() {
 				t.Fatal("child admitted before publication")
 			}
-			c.KeepEmitted(parent, obj, nil)
+			c.KeepEmitted(parent, store.Child{Obj: obj}, nil)
 			assert.Equal(t, execution.Reads.Valid(), false)
 			next := newExecution(c, obj.Named())
 			t.Cleanup(next.Close)
@@ -862,7 +862,7 @@ func TestEmit_InvalidReads(t *testing.T) {
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "A"}
 	s.AddObject(parent)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
 	c.Configure(Options{Filter: filter, Index: index})
 	run := newExecution(c, parent.Named())
 	t.Cleanup(run.Close)
@@ -896,7 +896,7 @@ func TestEmit_InputReplacementSelection(t *testing.T) {
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "A"}
 	s.AddObject(parent)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
 	c.Configure(Options{Filter: filter, Index: index})
 	run := newExecution(c, parent.Named())
 	_, _, captured := run.Reads.GetEmission(parent.Named())

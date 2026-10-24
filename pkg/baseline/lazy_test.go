@@ -286,7 +286,9 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					app: {File: "flux/app.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}}},
 				}}
-				filter := change.NewFilter(res.Changes, index, nil)
+				objects := store.New()
+				objects.SetArtifact(manifest.BootstrapSourceID, input)
+				filter := change.NewFilter(res.Changes, index, objects, input.LocalPath)
 				if !filter.ShouldReconcile(app) {
 					t.Errorf("side %d ignore %s did not select optional input consumer", side, behavior)
 				}
@@ -308,7 +310,7 @@ func TestAutoResolve_TwoSidedInput(t *testing.T) {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		app: {File: "flux/app.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}}},
 	}}
-	filter := change.NewFilter(res.Changes, index, nil)
+	filter := change.NewFilter(res.Changes, index, nil, "")
 	if filter.ShouldReconcile(app) {
 		t.Fatal("two-sided input supplied an absent input identity")
 	}

@@ -3,30 +3,157 @@ package change
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"io/fs"
 	"maps"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Set contains changed relative paths and exact one-sided input identities for selection.
+// Set carries immutable bootstrap-path changes and qualified source evidence.
 // Completed sets are immutable and safe to share; CollectInputs is construction-only.
 type Set struct {
-	paths    map[string]struct{}
-	inputs   map[manifest.NamedResource]struct{}
 	oneSided [2]map[string]struct{}
+	origins  [2]*store.SourceArtifact
+	inputs   map[manifest.NamedResource]string
+	paths    map[string]struct{}
+	sources  map[manifest.NamedResource]sourceDelta
+	groups   []sourceGroup
+}
+
+type sourceDelta struct {
+	changes      *Set
+	artifacts    [2]*store.SourceArtifact
+	declarations [2]manifest.BaseManifest
+}
+
+type sourceGroup struct {
+	changes *Set
+	refs    []manifest.NamedResource
+}
+
+// Qualify compares available admitted source pairs before reconciliation.
+// Supplied changes retain their bootstrap coordinates and are never mutated.
+func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Set, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	stores := [2]*store.Store{before, after}
+	ids := map[manifest.NamedResource]struct{}{manifest.BootstrapSourceID: {}}
+	for _, st := range stores {
+		for _, obj := range st.Objects() {
+			if _, ok := st.GetArtifact(obj.Named()).(*store.SourceArtifact); ok {
+				ids[obj.Named()] = struct{}{}
+			}
+		}
+	}
+	out := &Set{sources: make(map[manifest.NamedResource]sourceDelta, len(ids))}
+	type readerPair struct {
+		before, after any
+		exclusions    [2]string
+	}
+	compared := map[readerPair]*Set{}
+	for _, id := range slices.SortedFunc(maps.Keys(ids), manifest.NamedResource.Compare) {
+		evidence := sourceDelta{}
+		for i, st := range stores {
+			evidence.artifacts[i], _ = st.GetArtifact(id).(*store.SourceArtifact)
+			evidence.declarations[i] = st.GetObject(id)
+		}
+		a, b := evidence.artifacts[0], evidence.artifacts[1]
+		if a == nil || b == nil || a.FS == nil || b.FS == nil {
+			if id == manifest.BootstrapSourceID && changes == nil {
+				return nil, fmt.Errorf("%w: both admitted inputs required", manifest.ErrInput)
+			}
+			continue
+		}
+		delta := changes
+		if id != manifest.BootstrapSourceID || delta == nil {
+			pair := readerPair{before: a, after: b}
+			for i, input := range evidence.artifacts {
+				exclusion, err := filepath.Rel(input.LocalPath, evidence.artifacts[1-i].LocalPath)
+				exclusion = filepath.ToSlash(exclusion)
+				if err == nil && fs.ValidPath(exclusion) && exclusion != "." {
+					pair.exclusions[i] = exclusion
+				}
+			}
+			if reflect.ValueOf(a.FS).Comparable() && reflect.ValueOf(b.FS).Comparable() {
+				pair.before, pair.after = a.FS, b.FS
+			}
+			delta = compared[pair]
+			if delta == nil {
+				selected := id != manifest.BootstrapSourceID
+				equal := selected && a.Key != "" && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest
+				if selected && !equal && a.ContentFingerprint != nil && b.ContentFingerprint != nil {
+					var fingerprints [2]string
+					for i, input := range evidence.artifacts {
+						var err error
+						fingerprints[i], err = input.ContentFingerprint(ctx, input.FS)
+						if err != nil {
+							if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+								return nil, err
+							}
+							return nil, fmt.Errorf("%w: fingerprint source %s: %w", manifest.ErrInput, id, err)
+						}
+					}
+					equal = fingerprints[0] != "" && fingerprints[0] == fingerprints[1]
+				}
+				if equal {
+					delta = &Set{}
+				} else {
+					var err error
+					delta, err = Detect(ctx, a, b)
+					if err != nil {
+						return nil, fmt.Errorf("compare source %s: %w", id, err)
+					}
+				}
+				compared[pair] = delta
+			}
+		}
+		evidence.changes = delta
+		out.sources[id] = evidence
+		if id == manifest.BootstrapSourceID {
+			out.paths, out.inputs, out.origins, out.oneSided = delta.paths, delta.inputs, evidence.artifacts, delta.oneSided
+		}
+	}
+	if out.paths == nil && changes != nil {
+		out.paths = changes.paths
+	}
+	out.groupSources()
+	return out, nil
+}
+
+func (s *Set) groupSources() {
+	s.groups = nil
+	groups := make(map[*Set]int)
+	add := func(ref manifest.NamedResource, changes *Set) {
+		i, known := groups[changes]
+		if !known {
+			i = len(s.groups)
+			groups[changes] = i
+			s.groups = append(s.groups, sourceGroup{changes: changes})
+		}
+		s.groups[i].refs = append(s.groups[i].refs, ref)
+	}
+	if _, known := s.sources[manifest.BootstrapSourceID]; !known {
+		add(manifest.BootstrapSourceID, s)
+	}
+	for _, ref := range slices.SortedFunc(maps.Keys(s.sources), manifest.NamedResource.Compare) {
+		add(ref, s.sources[ref].changes)
+	}
 }
 
 // NewSet constructs a path-only Set without Detect's one-sided input identities.
@@ -70,16 +197,25 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	if before == nil || after == nil || before.FS == nil || after.FS == nil {
 		return nil, fmt.Errorf("%w: both admitted inputs required", manifest.ErrInput)
 	}
+	var digests [2]map[string]string
+	for i, input := range [2]*store.SourceArtifact{before, after} {
+		if source, ok := input.FS.(*gittree.FS); ok {
+			digests[i] = source.FileDigests()
+		}
+	}
+	if digests[0] == nil || digests[1] == nil {
+		digests = [2]map[string]string{}
+	}
 	var bef, aft map[string]fileMeta
 	eg, scanCtx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		var err error
-		bef, err = scanTree(scanCtx, before, after)
+		bef, err = scanTree(scanCtx, before, after, digests[0])
 		return err
 	})
 	eg.Go(func() error {
 		var err error
-		aft, err = scanTree(scanCtx, after, before)
+		aft, err = scanTree(scanCtx, after, before, digests[1])
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -94,14 +230,16 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	var oneSided []string
 	for name, right := range aft {
 		left, ok := bef[name]
-		if !ok || left.size != right.size {
+		if !ok || left.size != right.size || digests[0] != nil && digests[0][name] != digests[1][name] {
 			paths[name] = struct{}{}
 			if !ok {
 				oneSided = append(oneSided, name)
 			}
 			continue
 		}
-		jobs = append(jobs, hashJob{name: name})
+		if digests[0] == nil {
+			jobs = append(jobs, hashJob{name: name})
+		}
 	}
 	for name := range bef {
 		if _, ok := aft[name]; !ok {
@@ -139,7 +277,7 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 			paths[job.name] = struct{}{}
 		}
 	}
-	out := &Set{paths: paths}
+	out := &Set{paths: paths, origins: [2]*store.SourceArtifact{before, after}}
 	slices.Sort(oneSided)
 	for _, name := range oneSided {
 		_, onAfter := aft[name]
@@ -231,9 +369,9 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 		manifest.ReleaseDoc(doc)
 		if eligible {
 			if s.inputs == nil {
-				s.inputs = make(map[manifest.NamedResource]struct{})
+				s.inputs = make(map[manifest.NamedResource]string)
 			}
-			s.inputs[id] = struct{}{}
+			s.inputs[id] = name
 		}
 	}
 	return ctx.Err()
@@ -242,26 +380,64 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 // WithReaders returns a set including consumers of one-sided files in their admitting index.
 // The receiver and both discovery indexes remain immutable.
 func (s *Set) WithReaders(before, after *manifest.DiscoveryIndex) *Set {
-	if s == nil || len(s.oneSided[0])+len(s.oneSided[1]) == 0 {
+	if s == nil {
+		return nil
+	}
+	indexes := [2]*manifest.DiscoveryIndex{before, after}
+	roots := [2]string{}
+	origins := s.origins
+	if bootstrap, ok := s.sources[manifest.BootstrapSourceID]; ok {
+		origins = bootstrap.artifacts
+	}
+	for side, input := range origins {
+		if input != nil {
+			roots[side] = input.LocalPath
+		}
+	}
+	if len(s.sources) == 0 {
+		return s.withReaders(indexes, manifest.BootstrapSourceID, origins, roots)
+	}
+	out := *s
+	out.sources = maps.Clone(s.sources)
+	for ref, evidence := range s.sources {
+		evidence.changes = evidence.changes.withReaders(indexes, ref, evidence.artifacts, roots)
+		out.sources[ref] = evidence
+		if ref == manifest.BootstrapSourceID {
+			out.inputs = evidence.changes.inputs
+		}
+	}
+	out.groupSources()
+	return &out
+}
+
+func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, source manifest.NamedResource, artifacts [2]*store.SourceArtifact, roots [2]string) *Set {
+	if len(s.oneSided[0])+len(s.oneSided[1]) == 0 {
 		return s
 	}
 	out := *s
 	out.inputs = maps.Clone(s.inputs)
-	for side, index := range [2]*manifest.DiscoveryIndex{before, after} {
-		if index == nil || len(s.oneSided[side]) == 0 {
+	for side, index := range indexes {
+		if index == nil {
 			continue
 		}
-		for id, record := range index.Records {
-			if !slices.ContainsFunc(record.Inputs, func(name string) bool {
-				_, changed := s.oneSided[side][name]
-				return changed
-			}) {
-				continue
+		for name := range s.oneSided[side] {
+			file := name
+			if input := artifacts[side]; input != nil && roots[side] != "" {
+				relative, err := filepath.Rel(roots[side], loader.OriginPath(input, filepath.Join(input.LocalPath, filepath.FromSlash(name))))
+				if err != nil {
+					continue
+				}
+				file = filepath.ToSlash(relative)
 			}
-			if out.inputs == nil {
-				out.inputs = make(map[manifest.NamedResource]struct{})
+			for reader := range index.ReadersOfFile(file) {
+				if reader.Source != source {
+					continue
+				}
+				if out.inputs == nil {
+					out.inputs = make(map[manifest.NamedResource]string)
+				}
+				out.inputs[reader.Reader] = name
 			}
-			out.inputs[id] = struct{}{}
 		}
 	}
 	return &out
@@ -273,12 +449,22 @@ type fileMeta struct {
 
 // Excluded directories MUST still be traversed so deeper .sourceignore re-includes
 // survive, matching github.com/fluxcd/pkg/sourceignore v0.19.0 LoadIgnorePatterns.
-func scanTree(ctx context.Context, input, opposite *store.SourceArtifact) (map[string]fileMeta, error) {
+func scanTree(ctx context.Context, input, opposite *store.SourceArtifact, digests map[string]string) (map[string]fileMeta, error) {
 	out := make(map[string]fileMeta)
 	scoped := input.FS
 	oppositeName, err := filepath.Rel(input.LocalPath, opposite.LocalPath)
 	if err == nil {
 		oppositeName = filepath.ToSlash(oppositeName)
+	}
+
+	if digests != nil {
+		oppositePrefix := oppositeName + "/"
+		for name := range digests {
+			if name != oppositeName && !strings.HasPrefix(name, oppositePrefix) {
+				out[name] = fileMeta{}
+			}
+		}
+		return out, nil
 	}
 
 	files := []string{}

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"io/fs"
 	"sync/atomic"
 	"testing"
@@ -25,7 +26,7 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 		ids = append(ids, eventID)
 	}, false)
 	mk := func(key string) *SourceArtifact {
-		return &SourceArtifact{LocalPath: "label", Key: key, FS: &hookFS{open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }}}
+		return &SourceArtifact{LocalPath: "label", Key: key, FS: &hookFS{open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }}, ContentFingerprint: func(context.Context, fs.FS) (string, error) { t.Fatal("dedup reads content"); return "", nil }}
 	}
 	s.SetArtifact(id, mk("pin"))
 	s.SetArtifact(id, mk("pin"))

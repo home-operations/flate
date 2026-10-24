@@ -18,7 +18,7 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)})
+	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st, "")})
 	b.ReportAllocs()
 	for b.Loop() {
 		c.dependencies(hr, manifest.GateInputs)
@@ -53,7 +53,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				changes = change.NewSet(files)
 			}
 			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}}}
-			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, store.New())
+			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, store.New(), "")
 			st := store.New()
 			c := gateExecution(New(st, task.NewBounded(2)), manifest.NamedResource{})
 			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}})

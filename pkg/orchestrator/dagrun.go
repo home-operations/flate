@@ -63,6 +63,7 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 		}
 		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
 			if o.schedulable(obj) {
+				o.store.SetIncluded(obj.Named(), o.filter.ShouldReconcile(obj.Named()))
 				ids = append(ids, obj.Named())
 			}
 		}

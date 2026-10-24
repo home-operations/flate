@@ -85,7 +85,7 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, paylo
 			}
 			next.Children[i].Obj = obj
 		}
-		c.KeepEmitted(id, obj, next.Reads)
+		c.KeepEmitted(id, next.Children[i], next.Reads)
 	}
 	c.Store.RecordEmitted(id, next, payloads)
 	if next != original {

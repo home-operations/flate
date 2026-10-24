@@ -24,6 +24,42 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
+	t.Parallel()
+	roots := testutil.CrossSourceOptionalInputs(t)
+	var stores [2]*store.Store
+	var indexes [2]*manifest.DiscoveryIndex
+	var selected [2]*store.SourceArtifact
+	supplier := (&manifest.GitRepository{Name: "supplier", Namespace: "flux-system"}).Named()
+	for side, root := range roots {
+		stores[side] = store.New()
+		result, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: stores[side]})
+		assert.NoError(t, err)
+		indexes[side] = result.Index
+		selected[side], _ = stores[side].GetArtifact(supplier).(*store.SourceArtifact)
+		if input := selected[side]; input == nil || input.FS == nil || input.LocalPath == root || input.InputAlias {
+			t.Fatalf("side %d did not prepare a distinct committed supplier: %+v", side, input)
+		}
+	}
+	bootstrap, err := change.Detect(t.Context(), stores[0].GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact), stores[1].GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact))
+	assert.NoError(t, err)
+	assert.Equal(t, bootstrap.Len(), 0)
+	delta, err := change.Detect(t.Context(), selected[0], selected[1])
+	assert.NoError(t, err)
+	assert.Diff(t, delta.Paths(), []string{"inputs/kustomization.yaml", "inputs/optional.yaml"})
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "optional", Namespace: "flux-system"}
+	probe := store.New()
+	probe.SetArtifact(manifest.BootstrapSourceID, selected[0])
+	assert.Equal(t, change.NewFilter(delta, nil, probe, selected[0].LocalPath).ShouldReconcile(input), true)
+	assert.Equal(t, change.NewFilter(bootstrap, nil, probe, selected[0].LocalPath).ShouldReconcile(input), false)
+	changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
+	assert.NoError(t, err)
+	for side, st := range stores {
+		filter := change.NewFilter(changes, indexes[side], st, roots[side])
+		assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), true)
+	}
+}
+
 func TestOptionalInput_AppearanceRoutes(t *testing.T) {
 	t.Parallel()
 	for _, route := range []string{"directory", "committed"} {
@@ -98,7 +134,7 @@ data: {VALUE: available}
 			}
 			empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source)
 			assert.NoError(t, err)
-			unchanged := change.NewFilter(empty, discovered.Index, st)
+			unchanged := change.NewFilter(empty, discovered.Index, st, "")
 			if unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster) {
 				t.Fatal("unchanged input selects app or cluster")
 			}
@@ -188,7 +224,7 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 				}
 			}
 			child := &manifest.Kustomization{Name: "emitted", Namespace: "flux-system"}
-			f.AddEmitted(app, child, nil)
+			f.AddEmitted(app, store.Child{Obj: child}, nil)
 			assert.Equal(t, f.ShouldReconcile(child.Named()), tc.want)
 		})
 	}
@@ -286,5 +322,5 @@ func optionalInputFilter(t *testing.T, input *store.SourceArtifact, changes *cha
 	st := store.New()
 	result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st, SelfURLs: []string{"https://example.test/cluster.git"}})
 	assert.NoError(t, err)
-	return change.NewFilter(changes, result.Index, st), result.Index
+	return change.NewFilter(changes, result.Index, st, ""), result.Index
 }

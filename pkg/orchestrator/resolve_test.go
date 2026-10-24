@@ -435,7 +435,7 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 						reader: {File: "reader.yaml", Refs: []manifest.NamedResource{target}},
 					}, Claims: map[string][]manifest.NamedResource{"reader/": {reader}}}
 					o.store.SetDiscoveryIndex(o.index)
-					o.filter = change.NewFilter(cfg.ExternalChanges, o.index, o.store)
+					o.filter = change.NewFilter(cfg.ExternalChanges, o.index, o.store, "")
 					location, locateErr := gitrepo.Locate(t.Context(), root, "")
 					assert.NoError(t, locateErr)
 					input, admitErr := gittree.AdmitDirectory(t.Context(), location)
@@ -593,7 +593,7 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 				f.o.index.Records[reader] = manifest.DiscoveryRecord{File: "reader.yaml", Refs: []manifest.NamedResource{f.target}}
 				f.o.index.Claims = map[string][]manifest.NamedResource{"reader/": {reader}}
 				f.o.store.SetDiscoveryIndex(f.o.index)
-				f.o.filter = change.NewFilter(change.NewSet([]string{"reader/output.yaml"}), f.o.index, f.o.store)
+				f.o.filter = change.NewFilter(change.NewSet([]string{"reader/output.yaml"}), f.o.index, f.o.store, "")
 				if !f.o.filter.ShouldReconcile(reader) || !f.o.filter.ShouldReconcile(f.supplier) {
 					t.Fatal("changed-only selection lost optional materializer")
 				}

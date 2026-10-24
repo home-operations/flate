@@ -38,7 +38,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	}
 	record := func(v graphVisit) {
 		if v.owner != (manifest.NamedResource{}) && v.coordinate != "" {
-			l.recordReader(v.coordinate, v.localCoordinate(), v.owner)
+			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: v.owner, Source: v.source})
 		}
 		if v.incomplete != "" {
 			if v.owner != (manifest.NamedResource{}) {
@@ -716,7 +716,7 @@ func (b *selfProduceBuilder) synthesizePlaceholderSecret(target manifest.NamedRe
 	b.secrets[target] = &manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: stringData}
 }
 
-func appendUniqueProducer(dst []manifest.NamedResource, v manifest.NamedResource) []manifest.NamedResource {
+func appendUniqueProducer[T comparable](dst []T, v T) []T {
 	if slices.Contains(dst, v) {
 		return dst
 	}

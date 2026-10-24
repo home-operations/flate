@@ -705,6 +705,47 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 			})
 		}
 	}
+	t.Run("same_input_override", func(t *testing.T) {
+		for _, empty := range []bool{false, true} {
+			t.Run(fmt.Sprintf("empty_%t", empty), func(t *testing.T) {
+				root := t.TempDir()
+				writeCluster(t, root, "same", "same")
+				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
+				assert.NoError(t, err)
+				paths := []string{"apps/app-a/cm.yaml"}
+				if empty {
+					paths = nil
+				}
+				cfg := orchestrator.Config{Input: input, BaseInput: input, ExternalChanges: change.NewSet(paths), CacheDir: t.TempDir(), Concurrency: 2}
+				var previous [2]map[manifest.NamedResource][]map[string]any
+				for run := range 2 {
+					base, head, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: root}, cfg)
+					assert.NoError(t, err)
+					for side, rendered := range []orchestrator.Rendered{base, head} {
+						if run == 0 && side == 0 {
+							directCfg := cfg
+							directCfg.Path = root
+							direct, err := orchestrator.New(t.Context(), directCfg)
+							assert.NoError(t, err)
+							result, err := direct.Render(t.Context())
+							assert.NoError(t, err)
+							assert.Diff(t, outputByParent(result.Manifests), outputByParent(rendered.Result.Manifests))
+						}
+						want := map[string]bool{}
+						if !empty {
+							want["cfg-a"] = true
+						}
+						assert.Diff(t, configMapNames(rendered.Result), want)
+						if run == 1 {
+							assert.Diff(t, outputByParent(rendered.Result.Manifests), previous[side])
+						}
+						previous[side] = outputByParent(rendered.Result.Manifests)
+					}
+				}
+			})
+		}
+	})
+
 }
 
 func TestRenderTrees_HeadOnly(t *testing.T) {

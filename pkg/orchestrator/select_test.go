@@ -135,7 +135,7 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	}
 	set := change.NewSet([]string{"a.yaml"})
 	run.index = indexForTest(map[manifest.NamedResource]string{a: "a.yaml", sibling: "sibling.yaml", other: "other.yaml"})
-	run.filter = change.NewFilter(set, run.index, run.store)
+	run.filter = change.NewFilter(set, run.index, run.store, "")
 	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 	if err != nil || selected[0].Counts[manifest.KindKustomization] != 2 {
 		t.Fatalf("inferred scope excluded healthy sibling or admitted foreign namespace: %+v %v", selected, err)
@@ -182,7 +182,7 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 				for i, active := range enabled {
 					runs[i] = Rendered{Orchestrator: &Orchestrator{store: run.store, index: run.index}, Result: run.Result}
 					if active {
-						runs[i].filter = change.NewFilter(change.NewSet(paths), run.index, run.store)
+						runs[i].filter = change.NewFilter(change.NewSet(paths), run.index, run.store, "")
 					}
 				}
 				root := testutil.KustomizationID(tc.namespace, tc.requested)
@@ -872,7 +872,7 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 				for invocation := range 2 {
 					for i, run := range runs {
 						if !tc.disabled {
-							run.filter = change.NewFilter(change.NewSet(tc.changes[(i+invocation)%2]), run.index, run.store)
+							run.filter = change.NewFilter(change.NewSet(tc.changes[(i+invocation)%2]), run.index, run.store, "")
 						}
 						runs[i] = run
 					}
@@ -1014,7 +1014,7 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 				kept := &manifest.Kustomization{Name: "kept", Namespace: "kept"}
 				run.store.AddObject(kept)
 				run.index = indexForTest(map[manifest.NamedResource]string{kept.Named(): "kept.yaml", obj.Named(): "external.yaml"})
-				run.filter = change.NewFilter(change.NewSet([]string{"kept.yaml"}), run.index, run.store)
+				run.filter = change.NewFilter(change.NewSet([]string{"kept.yaml"}), run.index, run.store, "")
 			}
 			var labels map[string]string
 			if tc.labels {
@@ -1245,15 +1245,17 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 	assert.Diff(t, current.Warnings, []manifest.Warning{status, raw})
 }
 
-func TestDiscoverOne_BootstrapWarningOnly(t *testing.T) {
+func TestOrchestrator_BootstrapWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	o, result, err := discoverOne(t.Context(), Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2})
-	if o != nil || result == nil || !errors.Is(err, manifest.ErrInput) || len(result.Manifests)+len(result.Failed) != 0 {
-		t.Fatalf("failed bootstrap exposed content: %v, %+v, %v", o, result, err)
+	o, err := New(t.Context(), Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2})
+	assert.NoError(t, err)
+	result, err := o.Render(t.Context())
+	if result != nil || !errors.Is(err, manifest.ErrInput) {
+		t.Fatalf("failed bootstrap exposed content: %+v, %v", result, err)
 	}
-	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
+	assert.Diff(t, o.store.Warnings(), []manifest.Warning{warning})
 }
 
 func TestSelect_OwnerlessDocuments(t *testing.T) {
@@ -1398,8 +1400,8 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 			unrelated := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unrelated", "namespace": "apps"}}
 			run.documents = []map[string]any{doc, unrelated}
 			id := manifest.DocIdentity(doc)
-			run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}}, Readers: map[string][]manifest.NamedResource{"kustomization.yaml": {id}}}
-			run.filter = change.NewFilter(change.NewSet([]string{"kustomization.yaml"}), run.index, run.store)
+			run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}}, Readers: map[string][]manifest.FileReader{"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}}}}
+			run.filter = change.NewFilter(change.NewSet([]string{"kustomization.yaml"}), run.index, run.store, "")
 			run.Result.Manifests = run.collectManifests()
 			runs = append(runs, run)
 		}

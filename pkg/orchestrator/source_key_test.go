@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -203,10 +204,10 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 					s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
 					o.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 						parent.Named(): {File: "changed.yaml"},
-						raw.Named():    {File: "unchanged.yaml", Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
+						raw.Named():    {File: "unchanged.yaml", Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID, Authored: raw.Named(), Path: filepath.Join(dir, "unchanged.yaml"), File: "unchanged.yaml"}}},
 					}}
 					if order == "excluded then refire" {
-						o.filter = change.NewFilter(change.NewSet([]string{"changed.yaml"}), o.index, s)
+						o.filter = change.NewFilter(change.NewSet([]string{"changed.yaml"}), o.index, s, "")
 						if o.filter.ShouldReconcile(raw.Named()) {
 							t.Fatal("fixture already selects covered source")
 						}
@@ -252,7 +253,7 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 									case <-ctx.Done():
 									}
 								})
-								o.ksc.KeepEmitted(id, &accepted, nil)
+								o.ksc.KeepEmitted(id, store.Child{Obj: &accepted}, nil)
 							} else {
 								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}), nil)
 							}

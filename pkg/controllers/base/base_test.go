@@ -52,7 +52,7 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	s.AddObject(parent)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
 	c := base.New(s, nil)
-	c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s), Index: index})
+	c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, ""), Index: index})
 
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())
@@ -428,7 +428,7 @@ func TestExecution_Dispatch(t *testing.T) {
 			if tc.filtered {
 				c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
-				}, st)})
+				}, st, "")})
 			}
 			if tc.preflight {
 				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
@@ -935,7 +935,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 				s.AddObject(parent)
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-				filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+				filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
 				c.Configure(base.Options{Filter: filter, Index: index})
 				fingerprint := manifest.Fingerprint("same")
 				_, _, next := s.GetEmission(parent.Named())

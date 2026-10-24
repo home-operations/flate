@@ -22,7 +22,9 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -464,11 +466,11 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 			assert.NoError(t, err)
 			assert.Diff(t, set.Paths(), []string{tc.file})
-			var want map[manifest.NamedResource]struct{}
+			var want map[manifest.NamedResource]string
 			if len(tc.want) > 0 {
-				want = make(map[manifest.NamedResource]struct{})
+				want = make(map[manifest.NamedResource]string)
 				for _, id := range tc.want {
-					want[id] = struct{}{}
+					want[id] = tc.file
 				}
 			}
 			assert.Diff(t, set.inputs, want)
@@ -500,24 +502,55 @@ func TestSet_WithReaders(t *testing.T) {
 			reader := testutil.KustomizationID("apps", "reader")
 			wrongSide := testutil.KustomizationID("apps", "opposite")
 			unrelated := testutil.KustomizationID("apps", "unrelated")
-			admitted := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				reader:    {File: "reader.yaml", Inputs: []string{tc.file}},
-				unrelated: {File: "unrelated.yaml", Inputs: []string{path.Dir(tc.file) + "/other"}},
+			admitted := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{
+				tc.file:                      {{Reader: reader, Source: manifest.BootstrapSourceID}},
+				path.Dir(tc.file) + "/other": {{Reader: unrelated, Source: manifest.BootstrapSourceID}},
 			}}
-			opposite := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				wrongSide: {File: "opposite.yaml", Inputs: []string{tc.file}},
+			opposite := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{
+				tc.file: {{Reader: wrongSide, Source: manifest.BootstrapSourceID}},
 			}}
 			indexes := [2]*manifest.DiscoveryIndex{opposite, admitted}
 			if tc.before {
 				indexes = [2]*manifest.DiscoveryIndex{admitted, opposite}
 			}
-			want := map[manifest.NamedResource]struct{}{reader: {}}
+			want := map[manifest.NamedResource]string{reader: tc.file}
 			maps.Copy(want, original)
 			resolved := set.WithReaders(indexes[0], indexes[1])
 			assert.Diff(t, resolved.inputs, want)
 			assert.Diff(t, set.inputs, original)
 			assert.Diff(t, set.WithReaders(indexes[0], indexes[1]).inputs, want)
 		})
+	}
+}
+
+func TestSet_WithReadersSelectedSource(t *testing.T) {
+	t.Parallel()
+	changes, stores, roots, source := optionalSupplierPair(t, "apps")
+	reader := testutil.HelmReleaseID("apps", "reader")
+	foreign := testutil.HelmReleaseID("apps", "foreign")
+	opposite := testutil.HelmReleaseID("apps", "opposite")
+	var indexes [2]*manifest.DiscoveryIndex
+	for side := range indexes {
+		indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}, Readers: map[string][]manifest.FileReader{}}
+		for _, id := range []manifest.NamedResource{reader, foreign, opposite} {
+			indexes[side].Records[id] = manifest.DiscoveryRecord{File: "flux/" + id.Name + ".yaml", Refs: []manifest.NamedResource{source.Named()}}
+		}
+	}
+	file := ".supplier/inputs/optional.yaml"
+	indexes[0].Readers[file] = []manifest.FileReader{{Reader: reader, Source: source.Named(), Exact: true}, {Reader: foreign, Source: manifest.BootstrapSourceID, Exact: true}}
+	indexes[1].Readers[file] = []manifest.FileReader{{Reader: opposite, Source: source.Named(), Exact: true}}
+	original := maps.Clone(changes.sources[source.Named()].changes.inputs)
+	resolved := changes.WithReaders(indexes[0], indexes[1])
+	assert.Equal(t, len(resolved.inputs), 0)
+	assert.Equal(t, resolved.sources[source.Named()].changes.inputs[reader], "inputs/optional.yaml")
+	assert.Equal(t, resolved.sources[source.Named()].changes.inputs[foreign], "")
+	assert.Equal(t, resolved.sources[source.Named()].changes.inputs[opposite], "")
+	assert.Diff(t, changes.sources[source.Named()].changes.inputs, original)
+	for side, st := range stores {
+		filter := NewFilter(resolved, indexes[side], st, roots[side])
+		assert.Equal(t, filter.ShouldReconcile(reader), true)
+		assert.Equal(t, filter.ShouldReconcile(foreign), false)
+		assert.Equal(t, filter.ShouldReconcile(opposite), side == 1)
 	}
 }
 
@@ -538,13 +571,13 @@ func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 			assert.NoError(t, err)
 			assert.Equal(t, set.Contains("input.yaml"), ignored != "both")
-			var want map[manifest.NamedResource]struct{}
+			var want map[manifest.NamedResource]string
 			if ignored != "both" {
 				name := "after"
 				if ignored == "after" {
 					name = "before"
 				}
-				want = map[manifest.NamedResource]struct{}{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}: {}}
+				want = map[manifest.NamedResource]string{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}: "input.yaml"}
 			}
 			assert.Diff(t, set.inputs, want)
 		})
@@ -626,7 +659,7 @@ func TestDetect_ExistingInputHasNoOneSidedEvidence(t *testing.T) {
 	set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), true)
-	assert.Diff(t, set.inputs, map[manifest.NamedResource]struct{}(nil))
+	assert.Diff(t, set.inputs, map[manifest.NamedResource]string(nil))
 }
 
 func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
@@ -723,7 +756,7 @@ func TestCollectInputs_ReadResults(t *testing.T) {
 			err := set.CollectInputs(checked, input, "input.yaml", false)
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
-				assert.Diff(t, set.inputs, map[manifest.NamedResource]struct{}{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {}})
+				assert.Diff(t, set.inputs, map[manifest.NamedResource]string{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: "input.yaml"})
 			} else {
 				if !errors.Is(err, tc.wantErr) || len(set.inputs) != 0 {
 					t.Fatalf("collected inputs=%v error=%v", set.inputs, err)
@@ -801,6 +834,90 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 			assert.Equal(t, len(set.inputs), 0)
 			assert.Equal(t, reads, 2)
 			assert.Equal(t, input.closed.Load(), int32(1))
+		})
+	}
+}
+
+type digestReadFS struct {
+	fs.FS
+	opens, lists atomic.Int64
+}
+
+func (f *digestReadFS) Open(name string) (fs.File, error) {
+	f.opens.Add(1)
+	return f.FS.Open(name)
+}
+
+func (f *digestReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	f.lists.Add(1)
+	return fs.ReadDir(f.FS, name)
+}
+
+func TestDetect_SelectedFileEvidence(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"both", "before", "after", "neither", "empty", "nested", "nested_file", "canceled"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			files := [2]fstest.MapFS{
+				{"same": {Data: []byte("same")}, "changed": {Data: []byte("old")}, "gone": {Data: []byte("gone")}, ".sourceignore": {Data: []byte("ignored\n")}, "ignored": {Data: []byte("old")}},
+				{"same": {Data: []byte("same")}, "changed": {Data: []byte("new")}, "added": {Data: []byte("new")}, ".sourceignore": {Data: []byte("ignored\n")}, "ignored": {Data: []byte("new")}},
+			}
+			want := []string{"added", "changed", "gone"}
+			roots := [2]string{"/before", "/after"}
+			if mode == "empty" {
+				files = [2]fstest.MapFS{{}, {"added": {Data: []byte("new")}}}
+				want = []string{"added"}
+			}
+			if mode == "nested" || mode == "nested_file" {
+				files = [2]fstest.MapFS{{"same": {Data: []byte("same")}, "peer/hidden": {Data: []byte("excluded")}}, {"same": {Data: []byte("same")}}}
+				if mode == "nested_file" {
+					files[0] = fstest.MapFS{"same": {Data: []byte("same")}, "peer": {Data: []byte("excluded")}}
+				}
+				roots[1] = roots[0] + "/peer"
+				want = nil
+			}
+			var inputs [2]*store.SourceArtifact
+			var readers [2]*digestReadFS
+			for i := range inputs {
+				readers[i] = &digestReadFS{FS: files[i]}
+				input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: readers[i]})
+				if err != nil {
+					t.Fatal(err)
+				}
+				inputs[i] = &store.SourceArtifact{FS: input, LocalPath: roots[i], ContentFingerprint: gittree.ContentFingerprint}
+				if mode != "neither" && (mode != "before" || i != 1) && (mode != "after" || i != 0) {
+					if _, err := gittree.ContentFingerprint(t.Context(), input); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			opens := readers[0].opens.Load() + readers[1].opens.Load()
+			lists := readers[0].lists.Load() + readers[1].lists.Load()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if mode == "canceled" {
+				cancel()
+			}
+			got, err := Detect(ctx, inputs[0], inputs[1])
+			if mode == "canceled" {
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("Detect error = %v, want canceled", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got.Paths(), want) {
+				t.Fatalf("paths = %v, want %v", got.Paths(), want)
+			}
+			if mode == "before" || mode == "after" || mode == "neither" {
+				if readers[0].opens.Load()+readers[1].opens.Load() == opens {
+					t.Fatal("missing pair evidence skipped byte comparison")
+				}
+			} else if readers[0].opens.Load()+readers[1].opens.Load() != opens || readers[0].lists.Load()+readers[1].lists.Load() != lists {
+				t.Fatal("completed evidence was read or walked again")
+			}
 		})
 	}
 }

@@ -687,6 +687,15 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 		return out
 	}
 
+	out := s.Objects()
+	slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
+		return a.Named().Compare(b.Named())
+	})
+	return out
+}
+
+// Objects snapshots visible objects in unspecified order without holding locks during use.
+func (s *Store) Objects() []manifest.BaseManifest {
 	s.rLockAll()
 	total := 0
 	for _, sh := range s.shards {
@@ -701,9 +710,6 @@ func (s *Store) ListObjects(group, kind string) []manifest.BaseManifest {
 		}
 	}
 	s.rUnlockAll()
-	slices.SortFunc(out, func(a, b manifest.BaseManifest) int {
-		return a.Named().Compare(b.Named())
-	})
 	return out
 }
 

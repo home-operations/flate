@@ -9,16 +9,14 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// BenchmarkFilterResolve_LargeRepo measures NewFilter (which runs
-// resolve) against a 1000-KS store plus a small file-change set —
-// this is the construction-time hot path the orchestrator pays once
-// per change-driven run.
+// BenchmarkFilterResolve_LargeRepo measures construction for 1000 Kustomizations.
 func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 	s, sourceFiles := seedKSStore(1000)
 	// Small change set: 3 files spread across distinct app subpaths.
@@ -32,7 +30,7 @@ func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = NewFilter(changeSet, index, s)
+		_ = NewFilter(changeSet, index, s, "/repo")
 	}
 }
 
@@ -52,14 +50,14 @@ func BenchmarkFilterResolve_ProducerChain(b *testing.B) {
 	}
 	consumer := testutil.KustomizationID("apps", "consumer")
 	index.Records[consumer] = manifest.DiscoveryRecord{File: "consumer.yaml", Refs: []manifest.NamedResource{previous}}
-	objects := make(mapLister)
+	objects := make(filtertest.MapLister)
 	for id := range index.Records {
 		objects[id] = refObj(id)
 	}
 	changes := NewSet([]string{"input.yaml"})
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = NewFilter(changes, index, objects)
+		_ = NewFilter(changes, index, objects, "")
 	}
 }
 
@@ -80,9 +78,7 @@ func BenchmarkBuildOwnership(b *testing.B) {
 	}
 }
 
-// BenchmarkTransitiveDeps measures selection references for a single
-// Kustomization with several substituteFrom CMs and a sourceRef —
-// the unit cost the resolve BFS pays per kept entry.
+// BenchmarkTransitiveDeps measures content-input projection for a kept Kustomization.
 func BenchmarkTransitiveDeps(b *testing.B) {
 	s := store.New()
 	id := testutil.KustomizationID("flux-system", "apps")
@@ -101,17 +97,152 @@ func BenchmarkTransitiveDeps(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		var refs [8]manifest.NamedResource
-		if deps := appendReferences(refs[:0], s.GetObject(id), false); len(deps) != 5 {
-			b.Fatalf("dependencies=%v", deps)
+		for range manifest.ContentInputs(s.GetObject(id), false) {
 		}
 	}
 }
 
-// seedKSStore creates a store with n Flux Kustomizations whose
-// spec.paths are well-distributed under apps/. Returns the store plus
-// a SourceFiles map keying each KS to its on-disk ks.yaml path so
-// Filter.resolve has the same shape it sees in the orchestrator.
+func BenchmarkAddEmitted_PrimaryFanOut(b *testing.B) {
+	const fanOut = 64
+	for _, unrelated := range []int{1000, 4000} {
+		b.Run(fmt.Sprintf("unrelated=%d/children=%d", unrelated, fanOut), func(b *testing.B) {
+			s, files := seedKSStore(unrelated + 1)
+			index := filterFixture{files: files, root: "/repo", objects: s}.index()
+			changes := NewSet([]string{"apps/app-0/ks.yaml"})
+			parent := testutil.KustomizationID("flux-system", "app-0")
+			children := make([]store.Child, fanOut)
+			for i := range children {
+				children[i] = store.Child{Obj: &manifest.ConfigMap{Name: fmt.Sprintf("child-%d", i), Namespace: "apps"}}
+			}
+			filter := NewFilter(changes, index, s, "/repo")
+			next := 0
+			b.ReportAllocs()
+			for b.Loop() {
+				if next == fanOut {
+					b.StopTimer()
+					for _, child := range children {
+						delete(filter.keep, child.Obj.Named())
+					}
+					next = 0
+					b.StartTimer()
+				}
+				filter.AddEmitted(parent, children[next], filter.objs)
+				next++
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N), "ns/child")
+			b.ReportMetric(1, "children/op")
+		})
+	}
+}
+
+func BenchmarkFilterResolve_OneSidedSuppliers(b *testing.B) {
+	for _, suppliers := range []int{1, 16} {
+		for _, match := range []bool{false, true} {
+			b.Run(fmt.Sprintf("suppliers=%d/match=%t", suppliers, match), func(b *testing.B) {
+				changes, st, index, root := oneSidedSuppliers(b, suppliers)
+				name := "unrelated"
+				if match {
+					name = "optional"
+				}
+				consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: name, Optional: true}}}}
+				st.AddObject(consumer)
+				index.Records[consumer.Named()] = manifest.DiscoveryRecord{File: "flux/consumer.yaml"}
+				selected := 0
+				b.ReportAllocs()
+				for b.Loop() {
+					filter := NewFilter(changes, index, st, root)
+					if filter.ShouldReconcile(consumer.Named()) {
+						selected++
+					}
+				}
+				if !match && selected != 0 {
+					b.Fatal("nonmatching supplier selected consumer")
+				}
+				b.ReportMetric(float64(selected)/float64(b.N), "selected/op")
+			})
+		}
+	}
+}
+
+func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
+	for _, suppliers := range []int{1, 16} {
+		for _, match := range []bool{false, true} {
+			b.Run(fmt.Sprintf("suppliers=%d/match=%t", suppliers, match), func(b *testing.B) {
+				changes, st, index, root := oneSidedSuppliers(b, suppliers)
+				emitter := &manifest.Kustomization{Name: "emitter", Namespace: "apps", Path: "unchanged"}
+				st.AddObject(emitter)
+				index.Records[emitter.Named()] = manifest.DiscoveryRecord{File: "flux/emitter.yaml"}
+				filter := NewFilter(changes, index, st, root)
+				name := "unrelated"
+				if match {
+					name = "optional"
+				}
+				var children [64]store.Child
+				for i := range children {
+					children[i] = store.Child{Obj: &manifest.Kustomization{Name: fmt.Sprintf("late-%d", i), Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: name, Optional: true}}}}}
+				}
+				setup := selection{filter: filter, objects: st, child: children[0]}
+				input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name, Namespace: "apps"}
+				if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) || filter.ShouldReconcile(children[0].Obj.Named()) || setup.affectedRoot(children[0].Obj) {
+					b.Fatal("supplier scan would be bypassed")
+				}
+				for _, production := range st.IncomingProductions(children[0], index) {
+					relative, indexed := setup.coordinates(production)
+					if setup.changedProduction(production, relative, indexed) {
+						b.Fatal("incoming production would bypass supplier scan")
+					}
+				}
+				selected, next := 0, 0
+				b.ReportAllocs()
+				for b.Loop() {
+					if next == len(children) {
+						b.StopTimer()
+						clear(filter.keep)
+						filter.revision = 0
+						next = 0
+						b.StartTimer()
+					}
+					child := children[next]
+					var reads store.ReadSet
+					reads.Init(st, child.Obj.Named(), nil)
+					filter.AddEmitted(emitter.Named(), child, &reads)
+					reads.Close()
+					if filter.ShouldReconcile(child.Obj.Named()) {
+						selected++
+					}
+					next++
+				}
+				if !match && selected != 0 {
+					b.Fatal("nonmatching supplier admitted child")
+				}
+				b.ReportMetric(float64(selected)/float64(b.N), "selected/op")
+			})
+		}
+	}
+}
+
+func oneSidedSuppliers(b *testing.B, count int) (*Set, *store.Store, *manifest.DiscoveryIndex, string) {
+	b.Helper()
+	_, stores, roots, source := optionalSupplierPair(b, "apps")
+	for i := 1; i < count; i++ {
+		supplier := *source
+		supplier.Name = fmt.Sprintf("supplier-%d", i)
+		for _, st := range stores {
+			st.AddObject(&supplier)
+			st.SetArtifact(supplier.Named(), st.GetArtifact(source.Named()))
+		}
+	}
+	changes, err := Qualify(b.Context(), nil, stores[0], stores[1])
+	if err != nil {
+		b.Fatal(err)
+	}
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+	if !NewFilter(changes, index, stores[1], roots[1]).hasInputs {
+		b.Fatal("supplier fixture has no one-sided inputs")
+	}
+	return changes, stores[1], index, roots[1]
+}
+
 func seedKSStore(n int) (*store.Store, map[manifest.NamedResource]string) {
 	s := store.New()
 	sourceFiles := make(map[manifest.NamedResource]string, n)

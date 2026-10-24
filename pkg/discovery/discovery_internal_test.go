@@ -328,7 +328,7 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 			}
 			if bare {
 				record, _ := result.Index.Lookup(admitted)
-				if !slices.Contains(record.Inputs, builder) || slices.Contains(result.Index.Readers[builder], admitted) != (ownership == "reader") {
+				if !slices.Contains(record.Inputs, builder) || slices.ContainsFunc(result.Index.Readers[builder], func(r manifest.FileReader) bool { return r.Reader == admitted }) != (ownership == "reader") {
 					t.Fatalf("built seed lost declaration input or acquired render ownership: %+v", record)
 				}
 				if ownership == "reader" {
@@ -338,7 +338,7 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 						}
 					}
 				}
-			} else if !slices.Contains(result.Index.Readers[builder], admitted) {
+			} else if !slices.ContainsFunc(result.Index.Readers[builder], func(r manifest.FileReader) bool { return r.Reader == admitted }) {
 				t.Fatalf("builder did not reach its source-qualified owner: %+v", result.Index.Readers)
 			}
 		})
@@ -674,15 +674,15 @@ func TestRun_BuiltPackages(t *testing.T) {
 			}
 			for _, file := range []string{"a/kustomization.yaml", "a/child/kustomization.yaml", "a/child/cm.yaml", "a/patch.yaml", "a/deleted.yaml"} {
 				record, _ := d.loader.Index.Lookup(cm.Named())
-				if !slices.Contains(record.Inputs, file) || slices.Contains(d.loader.Index.Readers[file], cm.Named()) {
+				if !slices.Contains(record.Inputs, file) || slices.ContainsFunc(d.loader.Index.Readers[file], func(r manifest.FileReader) bool { return r.Reader == cm.Named() }) {
 					t.Errorf("%s lost built declaration evidence or acquired render ownership", file)
 				}
-				filter := change.NewFilter(change.NewSet([]string{file}), d.loader.Index, st)
+				filter := change.NewFilter(change.NewSet([]string{file}), d.loader.Index, st, root)
 				if !filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
 					t.Errorf("%s does not reach substitution consumer", file)
 				}
 			}
-			if change.NewFilter(change.NewSet([]string{"a/unlisted/other.yaml"}), d.loader.Index, st).ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
+			if change.NewFilter(change.NewSet([]string{"a/unlisted/other.yaml"}), d.loader.Index, st, root).ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
 				t.Fatal("unlisted sibling selected substitution consumer")
 			}
 			if docs := d.loader.BuiltDocuments(id); len(docs) != 1 || docs[0].Obj != cm {

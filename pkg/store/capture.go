@@ -403,6 +403,13 @@ func (r *ReadSet) Productions(id manifest.NamedResource, index *manifest.Discove
 	return r.productions(input, index)
 }
 
+// IncomingProductions captures prospective source and contributor evidence without reading the target.
+func (r *ReadSet) IncomingProductions(child Child, index *manifest.DiscoveryIndex) []manifest.Production {
+	result := productionResult{reads: r, incoming: &child}
+	r.store.visitProductions(child.Obj.Named(), index, &result)
+	return result.out
+}
+
 func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []manifest.Production {
 	details := r.details(input)
 	if details.productions == nil {

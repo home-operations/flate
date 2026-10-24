@@ -3,6 +3,7 @@ package manifest
 import (
 	"iter"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -15,6 +16,17 @@ type Production struct {
 	Source      NamedResource
 	Path        string
 	File        string
+}
+
+// Materializer returns the owner that can supply the target through this contribution.
+func (p Production) Materializer(target NamedResource) NamedResource {
+	if p.Declaration != (NamedResource{}) && p.File != "" && !filepath.IsLocal(p.File) {
+		return NamedResource{}
+	}
+	if target.Group == SourceDomain && p.Declaration == (NamedResource{}) && (p.Path != "" || p.File != "") {
+		return NamedResource{}
+	}
+	return p.Owner
 }
 
 // DiscoveryRecord contains static facts about one authored or projected identity.
@@ -32,12 +44,18 @@ type DiscoveryRecord struct {
 	Pinned      bool            // The Kustomization reads a committed local source artifact.
 }
 
+// FileReader identifies a consumer and the source supplying its file input.
+type FileReader struct {
+	Reader, Source NamedResource
+	Exact          bool // Source-file reads exclude descendants and establish no render ownership.
+}
+
 // DiscoveryIndex owns immutable discovery records, canonical claims and file readers.
 // Construction writes these maps directly before publication; queries never mutate them.
 type DiscoveryIndex struct {
 	Records map[NamedResource]DiscoveryRecord // Authored and projected identities.
 	Claims  map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
-	Readers map[string][]NamedResource        // Graph ownership readers by file or missing resource directory.
+	Readers map[string][]FileReader           // Graph and declared source-input readers by file or missing directory.
 	Errors  map[string]error                  // File decode failures deferred until final source ownership is known.
 }
 
@@ -65,7 +83,7 @@ func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {
 	}
 }
 
-// OwnersOfFile returns deepest claimants plus file readers, and strict ancestors.
+// OwnersOfFile returns deepest claimants plus render graph readers, and strict ancestors.
 // Missing resource directories retain ownership of deleted descendant files.
 func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedResource) {
 	if i == nil || file == "" {
@@ -78,8 +96,10 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedRes
 			ancestors = append(ancestors, ids...)
 		}
 	}
-	for id := range i.ReadersOfFile(file) {
-		owners = appendUnique(owners, id)
+	for reader := range i.ReadersOfFile(file) {
+		if !reader.Exact {
+			owners = appendUnique(owners, reader.Reader)
+		}
 	}
 	slices.SortFunc(owners, NamedResource.Compare)
 	slices.SortFunc(ancestors, NamedResource.Compare)
@@ -88,11 +108,11 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedRes
 
 func (i *DiscoveryIndex) matchingPrefixes(file string) iter.Seq[[]NamedResource] {
 	return func(yield func([]NamedResource) bool) {
-		if file == ".." || strings.HasPrefix(file, "../") {
-			return
-		}
 		prefixed := file + "/"
 		for end := len(prefixed); ; {
+			if end == 0 && (file == ".." || strings.HasPrefix(file, "../")) {
+				return
+			}
 			if ids := i.Claims[prefixed[:end]]; len(ids) != 0 && !yield(ids) {
 				return
 			}
@@ -104,15 +124,18 @@ func (i *DiscoveryIndex) matchingPrefixes(file string) iter.Seq[[]NamedResource]
 	}
 }
 
-// ReadersOfFile yields readers of a file or any missing ancestor directory.
-// Callers deduplicate identities when combining them with other ownership relations.
-func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[NamedResource] {
-	return func(yield func(NamedResource) bool) {
+// ReadersOfFile yields source-qualified readers of a file or any missing ancestor directory.
+// Callers deduplicate pairs when combining them with other ownership relations.
+func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[FileReader] {
+	return func(yield func(FileReader) bool) {
 		if i == nil {
 			return
 		}
 		for current := file; current != "" && current != "." && current != "/"; current = path.Dir(current) {
 			for _, id := range i.Readers[current] {
+				if id.Exact && current != file {
+					continue
+				}
 				if !yield(id) {
 					return
 				}

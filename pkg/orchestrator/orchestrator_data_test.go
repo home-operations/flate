@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"testing"
@@ -323,7 +324,7 @@ func TestDAGSweep_DecodeFailureAttribution(t *testing.T) {
 	failure := fmt.Errorf("%w: invalid yaml", manifest.ErrInput)
 	index := indexForTest(map[manifest.NamedResource]string{producer.Named(): "root.yaml"})
 	index.Errors = map[string]error{"apps/invalid.yaml": failure}
-	index.Readers = map[string][]manifest.NamedResource{"apps/invalid.yaml": {producer.Named()}}
+	index.Readers = map[string][]manifest.FileReader{"apps/invalid.yaml": {{Reader: producer.Named(), Source: manifest.BootstrapSourceID}}}
 	o := &Orchestrator{store: st, index: index}
 	var reads store.ReadSet
 	reads.Init(st, consumer.Named(), nil)
@@ -363,13 +364,7 @@ func TestDecodeFailures_ExactInputs(t *testing.T) {
 					}
 					first, second := fmt.Errorf("%w: first", manifest.ErrInput), fmt.Errorf("%w: second", manifest.ErrInput)
 					index.Errors = map[string]error{files[0]: first, files[1]: second}
-					if relation == "graph" {
-						index.Readers = map[string][]manifest.NamedResource{files[0]: {reader.Named()}, files[1]: {reader.Named()}}
-					} else {
-						r := index.Records[reader.Named()]
-						r.Inputs = files
-						index.Records[reader.Named()] = r
-					}
+					index.Readers = map[string][]manifest.FileReader{files[0]: {{Reader: reader.Named(), Source: manifest.BootstrapSourceID, Exact: relation != "graph"}}, files[1]: {{Reader: reader.Named(), Source: manifest.BootstrapSourceID, Exact: relation != "graph"}}}
 					unownedErr := fmt.Errorf("%w: unowned", manifest.ErrInput)
 					if unowned {
 						index.Errors["charts/demo/not-read.yaml"] = unownedErr
@@ -378,7 +373,7 @@ func TestDecodeFailures_ExactInputs(t *testing.T) {
 					if selected {
 						changes = []string{"reader.yaml"}
 					}
-					o := &Orchestrator{store: st, index: index, filter: change.NewFilter(change.NewSet(changes), index, st), tasks: task.NewBounded(2)}
+					o := &Orchestrator{store: st, index: index, filter: change.NewFilter(change.NewSet(changes), index, st, ""), tasks: task.NewBounded(2)}
 					attributed, other := o.decodeFailures(nil)
 					assert.Equal(t, len(attributed) != 0, selected)
 					if selected {
@@ -411,7 +406,7 @@ func TestDAGSweep_OrphanDecodeAttributionStable(t *testing.T) {
 	st.UpdateFailure(orphan.Named(), failure)
 	index := indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", orphan.Named(): "apps/orphan/ks.yaml"})
 	index.Errors = map[string]error{"apps/orphan/invalid.yaml": failure}
-	index.Readers = map[string][]manifest.NamedResource{"apps/orphan/invalid.yaml": {orphan.Named()}}
+	index.Readers = map[string][]manifest.FileReader{"apps/orphan/invalid.yaml": {{Reader: orphan.Named(), Source: manifest.BootstrapSourceID}}}
 	o := &Orchestrator{store: st, index: index}
 	publications := 0
 	u := st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { publications++ }, false)
@@ -428,5 +423,105 @@ func TestDAGSweep_OrphanDecodeAttributionStable(t *testing.T) {
 	assert.Equal(t, reads.Valid(), true)
 	reads.Retire()
 	for range st.Sweep() {
+	}
+}
+
+func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"edit", "move", "delete", "target", "key", "optional", "unrelated"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			dirs := [2]string{t.TempDir(), t.TempDir()}
+			values := [2]string{"before", "after"}
+			if scenario == "move" || scenario == "delete" || scenario == "unrelated" {
+				values[1] = "before"
+			}
+			if scenario == "key" {
+				values[1] = "fallback"
+			}
+			for side, root := range dirs {
+				target, key, file := "settings", "VALUE", "generator.env"
+				if side == 1 {
+					switch scenario {
+					case "move":
+						file = "moved.env"
+					case "target":
+						target = "renamed-settings"
+					case "key":
+						key = "OTHER"
+					}
+				}
+				generator := "  envs: [" + file + "]\n"
+				if side == 1 && scenario == "delete" {
+					generator = "  literals: [VALUE=before]\n"
+				} else {
+					testutil.WriteFile(t, root, "producer/"+file, key+"="+values[side]+"\n")
+				}
+				testutil.WriteFile(t, root, "producer/kustomization.yaml", "namespace: flux-system\ngeneratorOptions: {disableNameSuffixHash: true}\nconfigMapGenerator:\n- name: "+target+"\n"+generator)
+				for _, name := range []string{"producer", "consumer", "sibling"} {
+					postBuild := ""
+					if name == "consumer" {
+						postBuild = fmt.Sprintf("  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: %s, optional: %t}]\n", target, scenario == "optional")
+					}
+					testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: flux-system}\n"+postBuild))
+				}
+				testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [result.yaml]\n")
+				testutil.WriteFile(t, root, "consumer/result.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${VALUE:=fallback}'}\n")
+				testutil.WriteFile(t, root, "sibling/kustomization.yaml", "resources: [result.yaml]\n")
+				testutil.WriteFile(t, root, "sibling/result.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: untouched}\n")
+				if scenario == "unrelated" {
+					testutil.WriteFile(t, root, "notes.txt", fmt.Sprintf("revision %d\n", side))
+				}
+			}
+			cache := t.TempDir()
+			var previous [2]string
+			for run, state := range []string{"cold", "warm"} {
+				cfg := Config{CacheDir: cache, Concurrency: 2}
+				base, head, err := RenderTrees(t.Context(), Tree{Path: dirs[0], RepoRoot: dirs[0]}, Tree{Path: dirs[1], RepoRoot: dirs[1]}, cfg)
+				assert.NoError(t, err)
+				for side, rendered := range []Rendered{base, head} {
+					producer := testutil.KustomizationID("flux-system", "producer")
+					consumer := testutil.KustomizationID("flux-system", "consumer")
+					sibling := testutil.KustomizationID("flux-system", "sibling")
+					want := []manifest.NamedResource{producer, consumer}
+					if scenario == "unrelated" {
+						want = nil
+					}
+					var got []manifest.NamedResource
+					for id, docs := range outputByParent(rendered.Result.Manifests) {
+						if len(docs) > 0 {
+							got = append(got, id)
+						}
+					}
+					slices.SortFunc(got, manifest.NamedResource.Compare)
+					slices.SortFunc(want, manifest.NamedResource.Compare)
+					assert.Diff(t, got, want)
+					assert.Equal(t, rendered.filter.ShouldReconcile(sibling), false)
+					if scenario == "unrelated" {
+						continue
+					}
+					body, err := json.Marshal(outputByParent(rendered.Result.Manifests)[consumer])
+					assert.NoError(t, err)
+					wantBody := fmt.Sprintf(`[{"apiVersion":"v1","data":{"value":%q},"kind":"ConfigMap","metadata":{"labels":{"kustomize.toolkit.fluxcd.io/name":"consumer","kustomize.toolkit.fluxcd.io/namespace":"flux-system"},"name":"result"}}]`, values[side])
+					assert.Equal(t, string(body), wantBody)
+					if run > 0 {
+						assert.Equal(t, string(body), previous[side])
+					}
+					previous[side] = string(body)
+					target, key := "settings", "VALUE"
+					if side == 1 && scenario == "target" {
+						target = "renamed-settings"
+					}
+					if side == 1 && scenario == "key" {
+						key = "OTHER"
+					}
+					producerBody, err := json.Marshal(outputByParent(rendered.Result.Manifests)[producer])
+					assert.NoError(t, err)
+					wantProducer := fmt.Sprintf(`[{"apiVersion":"v1","data":{%q:%q},"kind":"ConfigMap","metadata":{"annotations":{"config.kubernetes.io/origin":"configuredIn: kustomization.yaml\nconfiguredBy:\n  apiVersion: builtin\n  kind: ConfigMapGenerator\n"},"labels":{"kustomize.toolkit.fluxcd.io/name":"producer","kustomize.toolkit.fluxcd.io/namespace":"flux-system"},"name":%q,"namespace":"flux-system"}}]`, key, values[side], target)
+					assert.Equal(t, string(producerBody), wantProducer)
+					t.Logf("state=%s side=%d affected=%v producer=%s consumer=%s", state, side, want, producerBody, body)
+				}
+			}
+		})
 	}
 }

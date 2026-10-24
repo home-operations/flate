@@ -8,6 +8,8 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -49,7 +51,10 @@ spec: {}
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
-	e := &orchestratorExistence{store: idx.Store, index: idx.Index, wipeSecrets: true}
+	e := &orchestratorExistence{o: &Orchestrator{
+		store: idx.Store, index: idx.Index, cfg: Config{WipeSecrets: true},
+		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
+	}}
 	if !e.Promote(t.Context(), nil, id) || st.GetObject(id) == nil {
 		t.Fatal("selected data must be admitted")
 	}
@@ -100,7 +105,7 @@ spec: {url: https://example.test/excluded.git}
 	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}
 	excludedSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "excluded-source"}
 	files := map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", selected: "bundle.yaml", excluded: "bundle.yaml", chart: "bundle.yaml", excludedSource: "bundle.yaml"}
-	filter := change.NewFilter(change.NewSet([]string{"consumer.yaml"}), indexForTest(files), st)
+	filter := change.NewFilter(change.NewSet([]string{"consumer.yaml"}), indexForTest(files), st, "")
 	idx := loader.New(store.New())
 	for id := range files {
 		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
@@ -114,7 +119,12 @@ spec: {url: https://example.test/excluded.git}
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
-	e := &orchestratorExistence{store: idx.Store, index: idx.Index, wipeSecrets: true, filter: filter}
+	controller := base.New(st, nil)
+	controller.Configure(base.Options{Filter: filter, Index: idx.Index})
+	e := &orchestratorExistence{o: &Orchestrator{
+		store: idx.Store, index: idx.Index, cfg: Config{WipeSecrets: true}, filter: filter,
+		ksc: &kustomization.Controller{Controller: controller},
+	}}
 	size := len(filter.KeepNames())
 	if !e.Promote(t.Context(), nil, selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
 		t.Fatal("selected values and required chart source must be admitted")
@@ -134,6 +144,44 @@ spec: {url: https://example.test/excluded.git}
 	if e.Promote(t.Context(), nil, excluded) {
 		t.Error("availability must not bypass admission")
 	}
+}
+
+func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	file := "settings.yaml"
+	testutil.WriteFile(t, dir, file, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: selected}\n")
+	st := store.New()
+	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+	data := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"value": "selected"}}
+	st.AddObject(source)
+	st.AddObject(data)
+	id := data.Named()
+	index := indexForTest(map[manifest.NamedResource]string{id: file})
+	record := index.Records[id]
+	record.Path = filepath.Join(dir, file)
+	record.Productions = []manifest.Production{{Authored: id, Source: source.Named(), Path: record.Path, File: file}}
+	index.Records[id] = record
+	filter := change.NewFilter(change.NewSet([]string{file}), index, st, dir)
+	if filter.ShouldReconcile(id) {
+		t.Fatal("unavailable source evidence must not admit existing data")
+	}
+	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
+	assert.NoError(t, err)
+	st.SetArtifact(source.Named(), input)
+	controller := base.New(st, nil)
+	controller.Configure(base.Options{Filter: filter, Index: index})
+	e := &orchestratorExistence{o: &Orchestrator{
+		store: st, index: index, filter: filter,
+		ksc: &kustomization.Controller{Controller: controller},
+	}}
+	var reads store.ReadSet
+	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
+	defer reads.Close()
+	if !e.Promote(t.Context(), &reads, id) || !filter.ShouldReconcile(id) {
+		t.Fatal("new source evidence must admit the existing changed data")
+	}
+	assert.Equal(t, st.GetObject(id).(*manifest.ConfigMap).Data["value"], "selected")
 }
 
 func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
@@ -158,7 +206,7 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 			} else {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{File: "target.yaml"}
 			}
-			e := &orchestratorExistence{store: idx.Store, index: idx.Index}
+			e := &orchestratorExistence{o: &Orchestrator{store: idx.Store, index: idx.Index}}
 			id.Namespace = tc.requested
 			if got := e.IsFileIndexed(id); got != tc.want {
 				t.Errorf("IsFileIndexed(%s) = %v, want %v", id, got, tc.want)

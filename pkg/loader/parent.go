@@ -123,10 +123,14 @@ func (r documentReader) Readlink(file string) (string, error) {
 	return fs.ReadLink(input, name)
 }
 
-// SourceView classifies an admitted source coordinate, committed
-// pin and external ownership. Mutable aliases retain empty Key. Unavailable
-// sources MUST NOT borrow bootstrap bytes or claim unrelated working-tree files.
-func SourceView(s *store.Store, ref manifest.NamedResource, repoRoot string) (root string, pinned, external bool) {
+type sourceStore interface {
+	GetObject(manifest.NamedResource) manifest.BaseManifest
+	GetArtifact(manifest.NamedResource) store.Artifact
+}
+
+// SourceView classifies an admitted source coordinate, committed pin and external ownership.
+// Unavailable sources MUST NOT borrow bootstrap bytes or claim unrelated working-tree files.
+func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (root string, pinned, external bool) {
 	if ref.Name == "" || ref == manifest.BootstrapSourceID {
 		return repoRoot, false, false
 	}
@@ -151,17 +155,25 @@ func SourceView(s *store.Store, ref manifest.NamedResource, repoRoot string) (ro
 
 // Input aliases map source-relative readers and claims to their physical origin.
 func (r documentReader) localBase(root, repoRoot string) string {
-	if art := r.artifacts[root]; art != nil && art.InputAlias {
-		base, _ := filepath.Rel(repoRoot, r.localPath(root))
+	if origin := OriginPath(r.artifacts[root], root); origin != root {
+		base, _ := filepath.Rel(repoRoot, origin)
 		return filepath.ToSlash(base)
 	}
 	return "."
 }
 
 func (r documentReader) localPath(file string) string {
-	root := r.mountedRoot(file)
-	if art := r.artifacts[root]; art != nil && art.InputAlias {
-		rel, _ := filepath.Rel(root, file)
+	return OriginPath(r.artifacts[r.mountedRoot(file)], file)
+}
+
+// OriginPath projects mutable inputs and aliases onto their physical input origin.
+// file MUST be within the admitted artifact's LocalPath.
+func OriginPath(art *store.SourceArtifact, file string) string {
+	if art != nil && art.LocalRoot != "" && (art.InputAlias || art.Key == "") {
+		if art.LocalRoot == art.LocalPath {
+			return filepath.Clean(file)
+		}
+		rel, _ := filepath.Rel(art.LocalPath, file)
 		return filepath.Join(art.LocalRoot, rel)
 	}
 	return file

@@ -226,7 +226,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			child := &manifest.ExternalArtifact{Name: "child", Namespace: "apps"}
 			s.AddObject(parent)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-			filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s)
+			filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
 			var reject atomic.Bool
 			c := New(s, task.NewBounded(2))
 			c.Configure(Options{Filter: filter, Index: index, PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() }})

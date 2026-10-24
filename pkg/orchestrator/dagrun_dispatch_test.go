@@ -139,7 +139,7 @@ data: {key: fixed}
 				case "preflight failure":
 					opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
 				case "filter skip":
-					opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s)
+					opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s, "")
 				case "vanished":
 					s.DeleteObject(rs.Named())
 					s.SetArtifact(rs.Named(), before)

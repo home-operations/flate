@@ -193,6 +193,16 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 				t.Fatal("authored source replaced")
 			}
 			alias := st.GetArtifact(source.Named()).(*store.SourceArtifact)
+			if alias.ContentFingerprint == nil {
+				t.Fatal("alias content fingerprint is absent")
+			}
+			fingerprint, err := alias.ContentFingerprint(t.Context(), alias.FS)
+			if err != nil || fingerprint == "" {
+				t.Fatalf("alias callback did not identify admitted bytes: %q, %v", fingerprint, err)
+			}
+			if want != nil && want.ContentFingerprint != nil {
+				t.Fatal("SDK bootstrap must not supply the alias fingerprint")
+			}
 			body, err = fs.ReadFile(alias.FS, "file")
 			if err != nil || string(body) != scenario || alias.Key != "" {
 				t.Fatalf("alias bytes = %q, %v; key = %q", body, err, alias.Key)

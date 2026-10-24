@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"context"
 	"maps"
 	"path/filepath"
@@ -36,7 +37,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 		l.scopes.claims = claims
 	}
 	l.Index.Claims = make(map[string][]manifest.NamedResource, len(claims))
-	l.Index.Readers = map[string][]manifest.NamedResource{}
+	l.Index.Readers = map[string][]manifest.FileReader{}
 	own := map[manifest.NamedResource]map[string]struct{}{}
 	for _, c := range claims {
 		l.Index.Claims[c.Prefix] = appendUniqueProducer(l.Index.Claims[c.Prefix], c.ID)
@@ -86,8 +87,19 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
-	for _, ids := range l.Index.Readers {
-		slices.SortFunc(ids, manifest.NamedResource.Compare)
+	for _, readers := range l.Index.Readers {
+		slices.SortFunc(readers, func(a, b manifest.FileReader) int {
+			if order := cmp.Or(a.Reader.Compare(b.Reader), a.Source.Compare(b.Source)); order != 0 {
+				return order
+			}
+			if a.Exact == b.Exact {
+				return 0
+			}
+			if a.Exact {
+				return 1
+			}
+			return -1
+		})
 	}
 	return nil
 }

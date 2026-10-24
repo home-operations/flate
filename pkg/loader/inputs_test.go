@@ -10,7 +10,6 @@ import (
 	"testing"
 	"testing/fstest"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -18,63 +17,9 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
-	t.Parallel()
-	for _, overlay := range []string{"entry", "entry/nested", "entry/deep/nested"} {
-		t.Run(overlay, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			base, _ := filepath.Rel(overlay, "shared")
-			testutil.WriteFile(t, root, "entry/README.md", "not a manifest\n")
-			testutil.WriteFile(t, root, "entry/sibling.json", `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"sibling"}}`)
-			testutil.WriteFile(t, root, overlay+"/kustomization.yaml", "resources: ["+filepath.ToSlash(base)+"]\n")
-			testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [cm.yaml]\npatches: [{path: ../inputs/patch}]\nconfigMapGenerator: [{name: values, files: [key=../inputs/value], env: ../inputs/env}]\nreplacements: [{path: ../inputs/missing}]\n")
-			testutil.WriteFile(t, root, "shared/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm}\n")
-			testutil.WriteFile(t, root, "inputs/patch", "- op: add\n  path: /data\n  value: {key: changed}\n")
-			testutil.WriteFile(t, root, "inputs/value", testutil.KustomizationYAML("terminal", "apps", "  path: ./hidden\n"))
-			testutil.WriteFile(t, root, "inputs/env", "KEY=value\n")
-			s := store.New()
-			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry"}
-			s.AddObject(owner)
-			l := New(s)
-			l.SourceRoot = root
-			admitForTest(s, root)
-			if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry")); err != nil {
-				t.Fatal(err)
-			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
-				t.Fatal(err)
-			}
-			if overlay != "entry" {
-				assert.Diff(t, l.Index.Readers["entry/sibling.json"], []manifest.NamedResource{owner.Named()})
-				if len(l.Index.Readers["entry/README.md"]) != 0 {
-					t.Fatal("non-manifest implicit sibling became a reader")
-				}
-			}
-			for _, file := range []string{overlay + "/kustomization.yaml", "shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch", "inputs/value", "inputs/env", "inputs/missing"} {
-				assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource{owner.Named()})
-				if !slices.Contains(ownersForTest(l.Index, file), owner.Named()) {
-					t.Errorf("owner missing for %s", file)
-				}
-				filter := change.NewFilter(change.NewSet([]string{file}), l.Index, s)
-				if !filter.ShouldReconcile(owner.Named()) {
-					t.Errorf("changed %s did not select owner", file)
-				}
-			}
-			if id := testutil.KustomizationID("apps", "terminal"); s.GetObject(id) != nil || len(l.Index.Records[id].Productions) != 0 {
-				t.Fatal("terminal input became an object or producer")
-			}
-			if change.NewFilter(change.NewSet([]string{"inputs/unrelated"}), l.Index, s).ShouldReconcile(owner.Named()) {
-				t.Fatal("unrelated input selected owner")
-			}
-		})
-	}
-}
 
 func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 	t.Parallel()
@@ -98,13 +43,10 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, file := range []string{"shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch"} {
-		assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource{owner.Named()})
+		assert.Diff(t, l.Index.Readers[file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
 		if !slices.Contains(ownersForTest(l.Index, file), owner.Named()) {
 			t.Errorf("owner missing for %s", file)
 		}
-	}
-	if !change.NewFilter(change.NewSet([]string{"inputs/patch"}), l.Index, s).ShouldReconcile(owner.Named()) {
-		t.Error("changed terminal patch did not select owner")
 	}
 	doc, _ := l.documents.read(filepath.Join(root, "entry"))
 	if doc == nil {
@@ -234,10 +176,10 @@ func TestFinalizeIndex_ConfigurationInvokingLoader(t *testing.T) {
 	l := New(s)
 	idx := rendererFixture(t, l, root)
 	for _, name := range []string{"a", "b"} {
-		assert.Diff(t, idx.Readers[name+"/value.txt"], []manifest.NamedResource{testutil.KustomizationID("apps", name), combined.Named()})
-		assert.Diff(t, idx.Readers[name+"/extra.env"], []manifest.NamedResource{testutil.KustomizationID("apps", name), combined.Named()})
+		assert.Diff(t, idx.Readers[name+"/value.txt"], []manifest.FileReader{{Reader: testutil.KustomizationID("apps", name), Source: manifest.BootstrapSourceID}, {Reader: combined.Named(), Source: manifest.BootstrapSourceID}})
+		assert.Diff(t, idx.Readers[name+"/extra.env"], []manifest.FileReader{{Reader: testutil.KustomizationID("apps", name), Source: manifest.BootstrapSourceID}, {Reader: combined.Named(), Source: manifest.BootstrapSourceID}})
 	}
-	assert.Diff(t, idx.Readers["combined/dual.txt"], []manifest.NamedResource{combined.Named()})
+	assert.Diff(t, idx.Readers["combined/dual.txt"], []manifest.FileReader{{Reader: combined.Named(), Source: manifest.BootstrapSourceID}})
 	if len(idx.Readers["configs/value.txt"]) != 0 || len(idx.Readers["configs/nested/value.txt"]) != 0 || len(idx.Readers["ordinary/value.txt"]) != 0 || len(s.Warnings()) != 0 {
 		t.Fatalf("configuration used its own loader or lost namespace-wrapper proof: %+v", s.Warnings())
 	}
@@ -268,9 +210,9 @@ func TestFinalizeIndex_NestedConfigurationLoader(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "apps", Namespace: "apps", Path: "./apps"}
 			s.AddObject(owner)
 			idx := rendererFixture(t, New(s), root)
-			assert.Diff(t, idx.Readers["apps/value.txt"], []manifest.NamedResource{owner.Named()})
+			assert.Diff(t, idx.Readers["apps/value.txt"], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
 			if tc.warn {
-				assert.Diff(t, idx.Readers["config/operand-patch"], []manifest.NamedResource{owner.Named()})
+				assert.Diff(t, idx.Readers["config/operand-patch"], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
 				if len(s.Warnings()) != 1 {
 					t.Fatalf("nested operand rewrite must warn: %+v", s.Warnings())
 				}
@@ -323,7 +265,7 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 				}
 			}
 			for _, file := range []string{"apps/dual.yaml", tc.terminal, "apps/configuration.yaml", "apps/configuration/flux.yaml", "apps/configuration/external.yaml"} {
-				assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource{owner.Named()})
+				assert.Diff(t, l.Index.Readers[file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
 			}
 			terminal := testutil.KustomizationID("authored", "terminal")
 			if _, ok := l.Index.Lookup(terminal); ok || l.candidates[terminal].Obj != nil || len(l.documents.cache[filepath.Join(root, tc.terminal)].objects) != 0 {
@@ -354,10 +296,10 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 	s.AddObject(required)
 	l := New(s)
 	idx := rendererFixture(t, l, root)
-	assert.Diff(t, idx.Readers["apps/kustomization.yaml"], []manifest.NamedResource{a.Named(), b.Named(), required.Named()})
-	assert.Diff(t, idx.Readers["components/a/secret.yaml"], []manifest.NamedResource{a.Named()})
-	assert.Diff(t, idx.Readers["components/b/value.txt"], []manifest.NamedResource{b.Named()})
-	assert.Diff(t, idx.Readers["apps/missing"], []manifest.NamedResource{required.Named()})
+	assert.Diff(t, idx.Readers["apps/kustomization.yaml"], []manifest.FileReader{{Reader: a.Named(), Source: manifest.BootstrapSourceID}, {Reader: b.Named(), Source: manifest.BootstrapSourceID}, {Reader: required.Named(), Source: manifest.BootstrapSourceID}})
+	assert.Diff(t, idx.Readers["components/a/secret.yaml"], []manifest.FileReader{{Reader: a.Named(), Source: manifest.BootstrapSourceID}})
+	assert.Diff(t, idx.Readers["components/b/value.txt"], []manifest.FileReader{{Reader: b.Named(), Source: manifest.BootstrapSourceID}})
+	assert.Diff(t, idx.Readers["apps/missing"], []manifest.FileReader{{Reader: required.Named(), Source: manifest.BootstrapSourceID}})
 	if len(l.documents.cache[filepath.Join(root, "apps")].body.Components) != 0 {
 		t.Fatal("injected components mutated the cached document or retained ignored input")
 	}
@@ -417,7 +359,7 @@ func TestFinalizeIndex_ConfigurationCoverage(t *testing.T) {
 				t.Fatalf("safe namespace wrapper warned: %+v", first)
 			}
 			if !strings.HasPrefix(tc.name, "remote") {
-				assert.Diff(t, l.Index.Readers["apps/value.txt"], []manifest.NamedResource{owner.Named()})
+				assert.Diff(t, l.Index.Readers["apps/value.txt"], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
 			}
 			if tc.warn {
 				declaring := "config/kustomization.yaml"
@@ -476,10 +418,14 @@ func TestFinalizeIndex_FlatopsNamespaceWrappers(t *testing.T) {
 	l := New(s)
 	idx := rendererFixture(t, l, root)
 	for _, file := range []string{"kubernetes/transformers/kustomization.yaml", "kubernetes/transformers/namespace.yaml"} {
-		assert.Diff(t, idx.Readers[file], owners)
+		want := make([]manifest.FileReader, len(owners))
+		for i, owner := range owners {
+			want[i] = manifest.FileReader{Reader: owner, Source: manifest.BootstrapSourceID}
+		}
+		assert.Diff(t, idx.Readers[file], want)
 	}
 	for _, owner := range owners {
-		assert.Diff(t, idx.Readers["kubernetes/apps/"+owner.Name+"/transformers/kustomization.yaml"], []manifest.NamedResource{owner})
+		assert.Diff(t, idx.Readers["kubernetes/apps/"+owner.Name+"/transformers/kustomization.yaml"], []manifest.FileReader{{Reader: owner, Source: manifest.BootstrapSourceID}})
 	}
 	assert.Equal(t, len(s.Warnings()), 0)
 }
@@ -514,7 +460,7 @@ func TestFinalizeIndex_InputInventory(t *testing.T) {
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps"}
 			s.AddObject(owner)
 			idx := rendererFixture(t, New(s), root)
-			assert.Diff(t, idx.Readers[tc.file], []manifest.NamedResource{owner.Named()})
+			assert.Diff(t, idx.Readers[tc.file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
 			assert.Diff(t, ownersForTest(idx, tc.file), []manifest.NamedResource{owner.Named()})
 			if len(idx.Readers["inputs/unrelated"]) != 0 {
 				t.Fatal("unrelated sibling gained readers")
@@ -548,7 +494,7 @@ func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 				t.Fatal("file-role input counted as a listed structural resource")
 			}
 			for _, file := range []string{"apps/" + filename, "inputs/absolute.yaml", "inputs/escaped.yaml", "inputs/missing", "apps/patch.yaml"} {
-				assert.Diff(t, idx.Readers[file], []manifest.NamedResource{owner.Named()})
+				assert.Diff(t, idx.Readers[file], []manifest.FileReader{{Reader: owner.Named(), Source: manifest.BootstrapSourceID}})
 			}
 			for _, name := range []string{"absolute", "escaped", "outside"} {
 				if s.GetObject(testutil.KustomizationID("authored", name)) != nil || len(idx.Records[testutil.KustomizationID("authored", name)].Productions) != 0 {
@@ -557,58 +503,6 @@ func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 			}
 			if len(idx.Readers["../outside.yaml"]) != 0 {
 				t.Fatal("out-of-source resource gained a reader")
-			}
-		})
-	}
-}
-
-func TestFinalizeIndex_InputSourceViews(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{"mounted", "alias", "pinned"} {
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			local := filepath.Join(root, ".artifacts", mode)
-			input := fstest.MapFS{
-				"entry/nested/kustomization.yaml": {Data: []byte("resources: [../../shared]\n")},
-				"shared/kustomization.yaml":       {Data: []byte("patches: [{path: ../inputs/patch}]\n")},
-			}
-			testutil.WriteFile(t, local, "shared/kustomization.yaml", "patches: [{path: ../inputs/host-only}]\n")
-			s := store.New()
-			source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
-			s.AddObject(source)
-			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name, Namespace: source.Namespace}}
-			s.AddObject(owner)
-			art := &store.SourceArtifact{LocalRoot: root, LocalPath: local, FS: input}
-			if mode == "alias" {
-				art.InputAlias, art.LocalRoot = true, filepath.Join(root, "subtree")
-			}
-			if mode == "pinned" {
-				art.Key = "pinned"
-			}
-			s.SetArtifact(source.Named(), art)
-			l := New(s)
-			l.SourceRoot = root
-			admitForTest(s, root)
-			_, err := loadForTest(t.Context(), t, l, filepath.Join(local, "entry"))
-			assert.NoError(t, err)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
-				t.Fatal(err)
-			}
-			prefix := ".artifacts/" + mode + "/"
-			assert.Diff(t, l.Index.Readers[prefix+"inputs/patch"], []manifest.NamedResource{owner.Named()})
-			if len(l.Index.Readers[prefix+"inputs/host-only"]) != 0 {
-				t.Fatal("discovery read host files outside the mounted view")
-			}
-			file := "inputs/patch"
-			if mode == "alias" {
-				file = "subtree/inputs/patch"
-			}
-			filter := change.NewFilter(change.NewSet([]string{file}), l.Index, s)
-			assert.Equal(t, filter.ShouldReconcile(owner.Named()), mode != "pinned")
-			assert.Equal(t, filter.ShouldReconcile(source.Named()), mode != "pinned")
-			if mode == "pinned" {
-				assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource(nil))
 			}
 		})
 	}

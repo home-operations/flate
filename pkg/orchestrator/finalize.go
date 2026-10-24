@@ -78,17 +78,8 @@ func (o *Orchestrator) decodeFailures(prefixes []manifest.KSClaim) (map[manifest
 		_, owned := manifest.StrictParent(prefixes, file, manifest.NamedResource{}, nil)
 		for reader := range o.index.ReadersOfFile(file) {
 			owned = true
-			if o.filter.ShouldReconcile(reader) && attributed[reader] == nil {
-				attributed[reader] = o.index.Errors[file]
-			}
-		}
-		for reader, record := range o.index.Records {
-			if !slices.Contains(record.Inputs, file) {
-				continue
-			}
-			owned = true
-			if o.filter.ShouldReconcile(reader) && attributed[reader] == nil {
-				attributed[reader] = o.index.Errors[file]
+			if o.filter.ShouldReconcile(reader.Reader) && attributed[reader.Reader] == nil {
+				attributed[reader.Reader] = o.index.Errors[file]
 			}
 		}
 		if !owned {

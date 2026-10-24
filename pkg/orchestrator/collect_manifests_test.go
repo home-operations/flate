@@ -535,7 +535,7 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 			assert.Diff(t, outputByParent(batches), want)
 			assert.Diff(t, batches[len(batches)-1].Documents, []map[string]any{bare, unchanged})
 			assert.Equal(t, batches[len(batches)-1].Parent, manifest.BaseManifest(nil))
-			o.filter = change.NewFilter(change.NewSet([]string{"entry/bare.yaml"}), index, st)
+			o.filter = change.NewFilter(change.NewSet([]string{"entry/bare.yaml"}), index, st, "")
 			batches = o.collectManifests()
 			assert.Diff(t, outputByParent(batches), want)
 			assert.Diff(t, batches[len(batches)-1].Documents, []map[string]any{bare})

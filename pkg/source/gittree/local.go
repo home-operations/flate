@@ -31,7 +31,7 @@ func AdmitDirectory(ctx context.Context, location *gitrepo.Location) (*store.Sou
 	}
 	input := newLocal(root, false, &localPolicy{})
 	input.location = location
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + root, LocalPath: root, LocalRoot: root, FS: input}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + root, LocalPath: root, LocalRoot: root, FS: input, ContentFingerprint: ContentFingerprint}, nil
 }
 
 type localView struct {

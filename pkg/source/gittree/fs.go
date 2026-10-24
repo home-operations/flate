@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-billy/v5"
+	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/cache"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
@@ -25,6 +26,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/go-git/go-git/v5/storage/transactional"
+	merklefs "github.com/go-git/go-git/v5/utils/merkletrie/filesystem"
+	"github.com/go-git/go-git/v5/utils/merkletrie/noder"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -68,6 +71,194 @@ type FS struct {
 	location *gitrepo.Location
 	policy   *sourceignore.Matcher
 	snapshot *localPolicy
+	content  atomic.Pointer[contentFingerprint]
+}
+
+type contentFingerprint struct {
+	files atomic.Pointer[map[string]string]
+	once  sync.Once
+	key   string
+	err   error
+}
+
+// ContentFingerprint identifies selected bytes once per stable admitted view.
+// Immutable views retain their acquisition identity; mutable identities remain separate.
+func ContentFingerprint(ctx context.Context, input fs.FS) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	g, ok := input.(*FS)
+	if !ok {
+		return "", nil
+	}
+	for {
+		content := g.content.Load()
+		if content == nil {
+			content = &contentFingerprint{}
+			if !g.content.CompareAndSwap(nil, content) {
+				continue
+			}
+		}
+		run := false
+		content.once.Do(func() {
+			run = true
+			policy, err := g.SourcePolicy(ctx)
+			if err != nil {
+				content.err = err
+				return
+			}
+			v, native := g.view.(*gitView)
+			files := map[string]string{}
+			var ignores []string
+			visit := func(name string, entry fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if err := ctx.Err(); err != nil || entry.IsDir() {
+					return err
+				}
+				if entry.Name() == ".sourceignore" {
+					ignores = append(ignores, name)
+				}
+				files[name] = ""
+				return nil
+			}
+			if native {
+				files = make(map[string]string, len(v.nodes))
+				for name := range v.nodes {
+					if content.err = visit(name, gitEntry{v, name}, nil); content.err != nil {
+						break
+					}
+				}
+			} else {
+				content.err = fs.WalkDir(g, ".", visit)
+			}
+			if content.err == nil {
+				selectedPolicy := native && v.mode == Source
+				for _, file := range policy.Evidence() {
+					if _, admitted := files[file.Path]; !admitted {
+						selectedPolicy = false
+						break
+					}
+				}
+				if !selectedPolicy {
+					sourceignore.Select(policy, files, ignores)
+				}
+				if content.err = g.identifyFiles(ctx, files); content.err != nil {
+					return
+				}
+				content.key = manifest.Fingerprint(files)
+				if v, ok := g.view.(*gitView); ok && v.identity != "" {
+					content.key = v.identity
+				}
+				content.files.Store(&files)
+			}
+		})
+		if errors.Is(content.err, context.Canceled) || errors.Is(content.err, context.DeadlineExceeded) {
+			g.content.CompareAndSwap(content, nil)
+			if !run && ctx.Err() == nil {
+				continue
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return content.key, content.err
+	}
+}
+
+func (g *FS) identifyFiles(ctx context.Context, files map[string]string) error {
+	var v *gitView
+	subdir, origin := ".", "."
+	nodes := map[string]noder.Noder{}
+	prefix := "."
+	root := ""
+	for input := g; input != nil; {
+		switch current := input.view.(type) {
+		case *localView:
+			root = filepath.Join(current.root, filepath.FromSlash(subdir))
+			input = nil
+		case *scopedView:
+			subdir = path.Join(current.path, subdir)
+			input = current.parent
+		case *gitView:
+			if v == nil && current.commit != plumbing.ZeroHash {
+				v, origin = current, subdir
+			}
+			input, _ = current.current.(*FS)
+		default:
+			input = nil
+		}
+	}
+	if root != "" && g.location != nil && g.location.Repository != nil && (v == nil || v.identity == "") {
+		idx, err := g.location.Repository.Storer.Index()
+		if err != nil {
+			return err
+		}
+		prefix, err = filepath.Rel(g.location.RepositoryRoot, root)
+		if err != nil {
+			return err
+		}
+		prefix = filepath.ToSlash(prefix)
+		nodes["."] = merklefs.NewRootNodeWithOptions(osfs.New(g.location.RepositoryRoot, osfs.WithBoundOS()), nil, merklefs.Options{Index: idx})
+	}
+	var lookup func(string) (noder.Noder, error)
+	lookup = func(name string) (noder.Noder, error) {
+		if node := nodes[name]; node != nil || name == "." {
+			return node, nil
+		}
+		parent, err := lookup(path.Dir(name))
+		if parent == nil || err != nil {
+			return nil, err
+		}
+		children, err := parent.Children()
+		if err != nil {
+			return nil, err
+		}
+		for _, child := range children {
+			nodes[path.Join(path.Dir(name), child.Name())] = child
+		}
+		return nodes[name], nil
+	}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var identity plumbing.Hash
+		member := path.Join(origin, name)
+		if v != nil && (v.identity != "" || v.changes[member]) {
+			identity = v.nodes[member].hash
+		}
+		if identity == plumbing.ZeroHash {
+			node, err := lookup(path.Join(prefix, name))
+			if err != nil {
+				return err
+			}
+			if node != nil {
+				identity = plumbing.Hash(node.Hash()[:len(identity)])
+			}
+		}
+		if identity == plumbing.ZeroHash {
+			data, err := g.ReadFile(name)
+			if err != nil {
+				return err
+			}
+			identity = plumbing.ComputeHash(plumbing.BlobObject, data)
+		}
+		files[name] = manifest.Fingerprint(identity)
+	}
+	return nil
+}
+
+// FileDigests borrows completed selected-file evidence without reading content.
+// Returned maps MUST remain read-only.
+func (g *FS) FileDigests() map[string]string {
+	if content := g.content.Load(); content != nil {
+		if files := content.files.Load(); files != nil {
+			return *files
+		}
+	}
+	return nil
 }
 
 // Location returns the resolved disk identity retained by admission.

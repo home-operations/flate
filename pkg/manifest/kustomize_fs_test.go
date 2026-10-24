@@ -13,8 +13,8 @@ import (
 func TestBuildKSClaims_PathsAndComponents(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, path, source, component string
-		want                          []string
+		name, path, source, component, decoded string
+		want                                   []string
 	}{
 		{name: "stub"},
 		{name: "source_root", source: "flux-system", want: []string{""}},

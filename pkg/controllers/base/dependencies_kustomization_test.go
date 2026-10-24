@@ -25,7 +25,7 @@ func BenchmarkCollectDeps(b *testing.B) {
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)})
+	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st, "")})
 	b.ReportAllocs()
 	for b.Loop() {
 
@@ -137,7 +137,7 @@ func TestCollectDeps_Allocations(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st)})
+	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st, "")})
 	allocs := testing.AllocsPerRun(100, func() { c.dependencies(ks, manifest.GateInputs) })
 	if allocs > 3 {
 		t.Fatalf("dependency collection allocated %g times, want at most 3", allocs)
@@ -229,7 +229,7 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 	fixture := store.New()
 	fixture.AddObjects([]manifest.BaseManifest{consumerObj, producerObj, cmObj})
 	fixture.SetDiscoveryIndex(index)
-	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), index, fixture)
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/apps/changed.yaml"}), index, fixture, "")
 
 	c := New(store.New(), nil)
 	c.Configure(Options{Filter: f, Index: index})
@@ -261,7 +261,7 @@ func TestCollectDeps_SkipsSelfProducer(t *testing.T) {
 	fixture := store.New()
 	fixture.AddObjects([]manifest.BaseManifest{selfObj, cmObj})
 	fixture.SetDiscoveryIndex(index)
-	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), index, fixture)
+	f := change.NewFilter(change.NewSet([]string{"kubernetes/foo/app/changed.yaml"}), index, fixture, "")
 
 	c := New(store.New(), nil)
 	c.Configure(Options{Filter: f, Index: index})
@@ -391,7 +391,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			if tc.noData {
 				consumer.PostBuild = nil
 			}
-			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, st)
+			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, st, "")
 			parent := testutil.KustomizationID("apps", "parent")
 			producers := []manifest.NamedResource{testutil.KustomizationID("apps", "second"), testutil.KustomizationID("apps", "first")}
 			slices.SortFunc(producers, manifest.NamedResource.Compare)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/internal/filtertest"
 	"io/fs"
 	"maps"
 	"slices"
@@ -119,15 +120,21 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 
 func TestSource_DeclarationContributorsReuse(t *testing.T) {
 	t.Parallel()
-	for _, complete := range []bool{false, true} {
+	for _, tc := range []struct{ complete, filtered bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		complete := tc.complete
 		for _, timing := range []string{"accepted", "in_flight", "changed_in_flight"} {
-			t.Run(fmt.Sprintf("complete=%t/%s", complete, timing), func(t *testing.T) {
+			t.Run(fmt.Sprintf("complete=%t/filtered=%t/%s", complete, tc.filtered, timing), func(t *testing.T) {
 				t.Parallel()
 				f := &fakeFetcher{artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
-				c, st := newController(t, map[string]src.Fetcher{manifest.KindHelmChart: f})
 				chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
 				first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
 				second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
+				var filter *change.Filter
+				if tc.filtered {
+					index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{chart.Named(): {File: "chart.yaml"}}}
+					filter = change.NewFilter(change.NewSet([]string{"chart.yaml"}), index, filtertest.MapLister{chart.Named(): chart, first.Named(): first, second.Named(): second}, "/repo")
+				}
+				c, st := newConfiguredController(t, map[string]src.Fetcher{manifest.KindHelmChart: f}, FetchOptions{Filter: filter})
 				st.AddObjects([]manifest.BaseManifest{first, second})
 				publish := func(value string) {
 					c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete}, nil)
@@ -427,7 +434,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		c := New(st, tasks)
 		f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 		c.Fetchers[manifest.KindGitRepository] = f
-		filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, controllertest.MapLister{})
+		filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, filtertest.MapLister{}, "")
 		c.Configure(FetchOptions{Filter: filter}, sourcecache.RetryConfig{})
 		t.Cleanup(func() { tasks.BlockTillDone() })
 		repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}

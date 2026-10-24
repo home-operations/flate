@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/internal/filtertest"
 	"os"
 	"slices"
 	"sync"
@@ -70,7 +71,7 @@ func TestMaterializeHelmChartSource_RepointsAndRegisters(t *testing.T) {
 
 	filter := change.NewFilter(change.NewSet([]string{"release.yaml"}), &manifest.DiscoveryIndex{
 		Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "release.yaml"}},
-	}, controllertest.MapLister{})
+	}, filtertest.MapLister{}, "")
 	c, st := newTestController(t, filter)
 	st.AddObject(&manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
@@ -442,7 +443,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 			t.Parallel()
 			var filter *change.Filter
 			if !tc.suspend {
-				filter = change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, controllertest.MapLister{})
+				filter = change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, filtertest.MapLister{}, "")
 			}
 			c, st := newTestController(t, filter)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}

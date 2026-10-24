@@ -178,7 +178,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			check := func(count int, status store.Status) *store.Emission {
 				t.Helper()
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}}}
-				filter := change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, st)
+				filter := change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, st, "")
 				_, _, before := st.GetEmission(rs.Named())
 				for _, child := range before.Children {
 					if !filter.ShouldReconcile(child.Obj.Named()) {

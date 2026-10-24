@@ -56,9 +56,9 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				if err := l.FinalizeIndex(t.Context(), root); err != nil {
 					t.Fatal(err)
 				}
-				record, _ := l.Index.Lookup(release.Named())
-				if !slices.Contains(record.Inputs, path.Join(tc.chartPath, "a.yaml")) {
-					t.Fatalf("chart did not read independent declarations: %+v", record.Inputs)
+				readers := l.Index.Readers[path.Join(tc.chartPath, "a.yaml")]
+				if !slices.Contains(readers, manifest.FileReader{Reader: release.Named(), Source: source.Named(), Exact: true}) {
+					t.Fatalf("chart did not read independent declarations: %+v", readers)
 				}
 			}
 			for _, id := range []manifest.NamedResource{x, shared, sibling} {

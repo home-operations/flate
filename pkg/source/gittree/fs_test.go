@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/go-git/go-billy/v5"
 	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -160,6 +162,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		assert.Equal(t, artifact.ContentFingerprint != nil, true)
 		input := artifact.FS
 		view, pin, err := operation(t, input, Direct)
 		assert.Equal(t, pin, "")
@@ -696,6 +699,9 @@ func TestNew_EntryPolicy(t *testing.T) {
 		if identity == "" {
 			t.Fatal("committed baseline with current routing has no identity")
 		}
+		fingerprint, err := ContentFingerprint(t.Context(), input)
+		assert.NoError(t, err)
+		assert.Equal(t, fingerprint, identity)
 		assert.Equal(t, input.Location() == location, true)
 		refreshed, _, err := operation(t, input, Direct)
 		assert.NoError(t, err)
@@ -1240,6 +1246,498 @@ func TestNew_WarningsSurviveFailure(t *testing.T) {
 			if failure == "traversal" && !errors.Is(err, plumbing.ErrObjectNotFound) {
 				t.Fatalf("original error lost: %v", err)
 			}
+		})
+	}
+}
+
+type contentReadFS struct {
+	fs.FS
+	reads      atomic.Int64
+	fail       string
+	err        error
+	cancel     context.CancelFunc
+	readCancel context.CancelFunc
+	entered    chan struct{}
+	release    chan struct{}
+	gate       atomic.Bool
+}
+
+func (f *contentReadFS) Open(name string) (fs.File, error) {
+	if name == f.fail {
+		if f.err != nil {
+			return nil, f.err
+		}
+		return nil, fs.ErrPermission
+	}
+	if name == "file" {
+		f.reads.Add(1)
+		if f.entered != nil && f.gate.CompareAndSwap(false, true) {
+			close(f.entered)
+			<-f.release
+		}
+		if f.readCancel != nil {
+			f.readCancel()
+		}
+	}
+	return f.FS.Open(name)
+}
+
+func waitForOnceWaiter(t *testing.T, id string) {
+	t.Helper()
+	for {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		stack := string(buf[:n])
+		for record := range strings.SplitSeq(stack, "\n\n") {
+			if strings.HasPrefix(record, "goroutine "+id+" ") && strings.Contains(record, "sync.(*Once).doSlow") {
+				return
+			}
+		}
+		runtime.Gosched()
+	}
+}
+
+func (f *contentReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	if f.cancel != nil {
+		f.cancel()
+	}
+	return fs.ReadDir(f.FS, name)
+}
+
+type fingerprintJoinerContext struct {
+	context.Context
+	input      *FS
+	recomputed atomic.Bool
+}
+
+func (c *fingerprintJoinerContext) Err() error {
+	err := c.Context.Err()
+	if err != nil && c.input.content.Load() != nil {
+		c.recomputed.Store(true)
+	}
+	return err
+}
+
+func TestFS_ContentFingerprint(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"equal", "payload", "name", "ignored", "canceled", "error", "read_error", "walk_error", "scan_canceled", "scan_deadline"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			var keys [2]string
+			for i := range keys {
+				files := fstest.MapFS{"file": {Data: []byte("selected")}, ".sourceignore": {Data: []byte("ignored\n")}, "ignored": {Data: []byte("ignored")}}
+				if i == 1 {
+					switch mode {
+					case "payload":
+						files["file"].Data = []byte("different")
+					case "name":
+						files["other"] = files["file"]
+						delete(files, "file")
+					case "ignored":
+						files["ignored"].Data = []byte("different")
+					}
+				}
+				reader := &contentReadFS{FS: files}
+				input, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: reader})
+				assert.NoError(t, err)
+				assert.Equal(t, key, "")
+				assert.Equal(t, reader.reads.Load(), int64(0))
+				assert.Equal(t, input.FileDigests() == nil, true)
+				ctx, cancel := context.WithCancel(t.Context())
+				if mode == "read_error" || mode == "walk_error" || mode == "scan_canceled" || mode == "scan_deadline" {
+					_, err := input.SourcePolicy(t.Context())
+					assert.NoError(t, err)
+					want := fs.ErrPermission
+					reader.fail = "file"
+					if mode == "walk_error" {
+						reader.fail = "."
+					}
+					if mode == "scan_canceled" {
+						reader.fail, reader.cancel, want = "", cancel, context.Canceled
+					}
+					if mode == "scan_deadline" {
+						reader.fail, reader.err, want = ".", context.DeadlineExceeded, context.DeadlineExceeded
+					}
+					_, err = ContentFingerprint(ctx, input)
+					cancel()
+					assert.Equal(t, input.FileDigests() == nil, true)
+					if !errors.Is(err, want) {
+						t.Fatalf("fingerprint error = %v, want %v", err, want)
+					}
+					reader.fail, reader.cancel, reader.err = "", nil, nil
+					if mode == "read_error" || mode == "walk_error" {
+						_, err = ContentFingerprint(t.Context(), input)
+						assert.Equal(t, errors.Is(err, want), true)
+						assert.Equal(t, input.FileDigests() == nil, true)
+						continue
+					}
+				}
+				if mode == "canceled" {
+					cancel()
+					_, err := ContentFingerprint(ctx, input)
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("fingerprint error = %v", err)
+					}
+				}
+				cancel()
+				if mode == "error" {
+					input.view = &directView{FS: admissionErrorFS{err: fs.ErrPermission}}
+					_, err := ContentFingerprint(t.Context(), input)
+					assert.Equal(t, input.FileDigests() == nil, true)
+					if !errors.Is(err, fs.ErrPermission) {
+						t.Fatalf("fingerprint error = %v", err)
+					}
+					continue
+				}
+				var wg sync.WaitGroup
+				for range 2 {
+					wg.Go(func() {
+						fingerprint, err := ContentFingerprint(t.Context(), input)
+						assert.NoError(t, err)
+						if fingerprint == "" {
+							t.Error("mutable fingerprint is unknown")
+						}
+					})
+				}
+				wg.Wait()
+				reads := reader.reads.Load()
+				if mode != "name" || i == 0 {
+					assert.Equal(t, reads, int64(1))
+				}
+				for name, file := range files {
+					if name != "ignored" {
+						assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, file.Data)))
+					}
+				}
+				_, ignored := input.FileDigests()["ignored"]
+				assert.Equal(t, ignored, false)
+				keys[i], err = ContentFingerprint(t.Context(), input)
+				assert.NoError(t, err)
+				assert.Equal(t, reader.reads.Load(), reads)
+				if mode == "canceled" {
+					_, err := ContentFingerprint(ctx, input)
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("cached fingerprint error = %v", err)
+					}
+				}
+			}
+			if mode != "error" && mode != "read_error" && mode != "walk_error" {
+				assert.Equal(t, keys[0] == keys[1], mode != "payload" && mode != "name")
+			}
+		})
+	}
+	t.Run("native_membership", func(t *testing.T) {
+		t.Parallel()
+		files := fstest.MapFS{
+			".sourceignore": {Data: []byte("ignored\n")},
+			"file":          {Data: []byte("selected")},
+			"nested/other":  {Data: []byte("included")},
+			"ignored":       {Data: []byte("ignored")},
+		}
+		reader := &contentReadFS{FS: files}
+		input, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: reader})
+		assert.NoError(t, err)
+		reader.fail = "."
+		key, err := ContentFingerprint(t.Context(), input)
+		assert.NoError(t, err)
+		assert.Equal(t, key != "", true)
+		assert.Equal(t, len(input.FileDigests()), 3)
+		for _, name := range []string{".sourceignore", "file", "nested/other"} {
+			assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, files[name].Data)))
+		}
+	})
+
+	t.Run("fresh_admission", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "file", "before")
+		first, err := admitLocal(t, root)
+		assert.NoError(t, err)
+		before, err := first.ContentFingerprint(t.Context(), first.FS)
+		assert.NoError(t, err)
+		testutil.WriteFile(t, root, "file", "after")
+		second, err := admitLocal(t, root)
+		assert.NoError(t, err)
+		operation := first.FS.(*FS).OperationView()
+		assert.Equal(t, operation.FileDigests() == nil, true)
+		operationKey, err := ContentFingerprint(t.Context(), operation)
+		assert.NoError(t, err)
+		assert.Equal(t, operationKey != before, true)
+
+		assert.Equal(t, second.FS.(*FS).FileDigests() == nil, true)
+		after, err := second.ContentFingerprint(t.Context(), second.FS)
+		assert.NoError(t, err)
+		assert.Equal(t, first.Key, "")
+		assert.Equal(t, second.Key, "")
+		assert.Equal(t, before != after, true)
+		assert.Equal(t, second.FS.(*FS).FileDigests()["file"], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("after"))))
+		retained, err := first.ContentFingerprint(t.Context(), first.FS)
+		assert.NoError(t, err)
+		assert.Equal(t, retained, before)
+	})
+
+	t.Run("excluded_policy_file", func(t *testing.T) {
+		t.Parallel()
+		input, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: fstest.MapFS{
+			".sourceignore":     {Data: []byte("*.png\nsub/.sourceignore\n")},
+			"sub/.sourceignore": {Data: []byte("!*.png\n")},
+			"sub/keep.png":      {Data: []byte("selected")},
+			"file":              {Data: []byte("retained")},
+		}})
+		assert.NoError(t, err)
+		_, err = fs.Stat(input, "sub/keep.png")
+		assert.NoError(t, err)
+		_, err = ContentFingerprint(t.Context(), input)
+		assert.NoError(t, err)
+		_, included := input.FileDigests()["sub/keep.png"]
+		assert.Equal(t, included, false)
+		assert.Equal(t, input.FileDigests()["file"] != "", true)
+	})
+	t.Run("content_canceled", func(t *testing.T) {
+		t.Parallel()
+		reader := &contentReadFS{FS: fstest.MapFS{"file": {Data: []byte("first")}, "later": {Data: []byte("later")}}}
+		input, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: reader})
+		assert.NoError(t, err)
+		_, err = input.SourcePolicy(t.Context())
+		assert.NoError(t, err)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		reader.readCancel = cancel
+		_, err = ContentFingerprint(ctx, input)
+		assert.Equal(t, errors.Is(err, context.Canceled), true)
+		assert.Equal(t, input.FileDigests() == nil, true)
+		reader.readCancel = nil
+		failedReads := reader.reads.Load()
+		var keys [2]string
+		var wg sync.WaitGroup
+		for i := range keys {
+			wg.Go(func() {
+				key, err := ContentFingerprint(t.Context(), input)
+				assert.NoError(t, err)
+				assert.Equal(t, key != "", true)
+				keys[i] = key
+			})
+		}
+		wg.Wait()
+		assert.Equal(t, keys[0], keys[1])
+		assert.Equal(t, reader.reads.Load(), failedReads+1)
+		for name, data := range map[string]string{"file": "first", "later": "later"} {
+			assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))))
+		}
+		reads := reader.reads.Load()
+		key, err := ContentFingerprint(t.Context(), input)
+		assert.NoError(t, err)
+		assert.Equal(t, key, keys[0])
+		assert.Equal(t, reader.reads.Load(), reads)
+	})
+	for _, name := range []string{"live_joiner_retries", "canceled_joiner", "canceled_joiner_live_executor"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reader := &contentReadFS{
+				FS:      fstest.MapFS{"file": {Data: []byte("first")}, "later": {Data: []byte("later")}},
+				entered: make(chan struct{}),
+				release: make(chan struct{}),
+			}
+			input, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: reader})
+			assert.NoError(t, err)
+			_, err = input.SourcePolicy(t.Context())
+			assert.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			joinerCtx, cancelJoiner := context.WithCancel(t.Context())
+			defer cancelJoiner()
+			joiner := &fingerprintJoinerContext{Context: joinerCtx, input: input}
+			first := make(chan error, 1)
+			var firstKey string
+			go func() {
+				var err error
+				firstKey, err = ContentFingerprint(ctx, input)
+				first <- err
+			}()
+			<-reader.entered
+			assert.Equal(t, input.FileDigests() == nil, true)
+			second := make(chan struct {
+				key string
+				err error
+			}, 1)
+			waiterID := make(chan string, 1)
+			go func() {
+				buf := make([]byte, 64)
+				n := runtime.Stack(buf, false)
+				_, header, _ := strings.Cut(string(buf[:n]), " ")
+				id, _, _ := strings.Cut(header, " ")
+				waiterID <- id
+				key, err := ContentFingerprint(joiner, input)
+				second <- struct {
+					key string
+					err error
+				}{key, err}
+			}()
+			waitForOnceWaiter(t, <-waiterID)
+			if name != "canceled_joiner_live_executor" {
+				cancel()
+			}
+			if name != "live_joiner_retries" {
+				cancelJoiner()
+			}
+			close(reader.release)
+			if name == "canceled_joiner_live_executor" {
+				assert.NoError(t, <-first)
+				assert.Equal(t, firstKey != "", true)
+				result := <-second
+				assert.Equal(t, errors.Is(result.err, context.Canceled), true)
+				assert.Equal(t, result.key, "")
+				assert.Equal(t, len(input.FileDigests()), 2)
+				reads := reader.reads.Load()
+				key, err := ContentFingerprint(t.Context(), input)
+				assert.NoError(t, err)
+				assert.Equal(t, key, firstKey)
+				assert.Equal(t, reader.reads.Load(), reads)
+				return
+			}
+			assert.Equal(t, errors.Is(<-first, context.Canceled), true)
+			result := <-second
+			assert.Equal(t, joiner.recomputed.Load(), false)
+			if name == "canceled_joiner" {
+				assert.Equal(t, errors.Is(result.err, context.Canceled), true)
+				assert.Equal(t, result.key, "")
+				assert.Equal(t, input.FileDigests() == nil, true)
+				assert.Equal(t, reader.reads.Load(), int64(1))
+				return
+			}
+			assert.NoError(t, result.err)
+			assert.Equal(t, result.key != "", true)
+			assert.Equal(t, len(input.FileDigests()), 2)
+			for name, data := range map[string]string{"file": "first", "later": "later"} {
+				assert.Equal(t, input.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(data))))
+			}
+			assert.Equal(t, reader.reads.Load(), int64(2))
+			key, err := ContentFingerprint(t.Context(), input)
+			assert.NoError(t, err)
+			assert.Equal(t, key, result.key)
+			assert.Equal(t, reader.reads.Load(), int64(2))
+		})
+	}
+}
+
+type contentReadBilly struct {
+	billy.Filesystem
+	reads atomic.Int64
+	all   bool
+}
+
+func (f *contentReadBilly) Open(name string) (billy.File, error) {
+	if f.all || strings.HasPrefix(filepath.ToSlash(name), "dir/") {
+		f.reads.Add(1)
+	}
+	return f.Filesystem.Open(name)
+}
+
+func TestFS_GitContentEvidence(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"clean", "dirty", "staged", "untracked", "racy", "subtree", "immutable", "sdk", "unreadable_clean", "source_unreadable", "unlocated", "routed", "scoped_local", "scoped_immutable", "direct_immutable"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			repo := testutil.GitInit(t, root)
+			testutil.WriteFile(t, root, "dir/file", "alpha")
+			testutil.WriteFile(t, root, "dir/ignored", "ignored")
+			testutil.WriteFile(t, root, ".sourceignore", "dir/ignored\n")
+			old := time.Unix(946684800, 0)
+			assert.NoError(t, os.Chtimes(filepath.Join(root, "dir/file"), old, old))
+			commit := testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: old}})
+			want := "alpha"
+			if mode == "dirty" || mode == "staged" || mode == "racy" || mode == "routed" {
+				want = "bravo"
+				testutil.WriteFile(t, root, "dir/file", want)
+			}
+			if mode == "staged" {
+				assert.NoError(t, os.Chtimes(filepath.Join(root, "dir/file"), old, old))
+				wt, err := repo.Worktree()
+				assert.NoError(t, err)
+				_, err = wt.Add("dir/file")
+				assert.NoError(t, err)
+			}
+			if mode == "racy" {
+				assert.NoError(t, os.Chtimes(filepath.Join(root, "dir/file"), old, old))
+				assert.NoError(t, os.Chtimes(filepath.Join(root, ".git/index"), old, old))
+			}
+			if mode == "untracked" {
+				testutil.WriteFile(t, root, "dir/new", "untracked")
+			}
+			contentRoot, name := root, "dir/file"
+			if mode == "subtree" {
+				contentRoot, name = filepath.Join(root, "dir"), "file"
+			}
+			location, err := gitrepo.Locate(t.Context(), contentRoot, contentRoot)
+			assert.NoError(t, err)
+			reader := &contentReadBilly{Filesystem: osfs.New(root)}
+			location.Repository, err = git.Open(repo.Storer, reader)
+			assert.NoError(t, err)
+			input, err := AdmitDirectory(t.Context(), location)
+			assert.NoError(t, err)
+			objects := &contentReadBilly{Filesystem: repo.Storer.(*filesystem.Storage).Filesystem(), all: true}
+			if mode == "immutable" || mode == "scoped_immutable" || mode == "direct_immutable" {
+				viewMode := Source
+				if mode == "direct_immutable" {
+					viewMode = Direct
+				}
+				input.FS, _, err = New(t.Context(), objects, commit, ViewOptions{Mode: viewMode})
+				assert.NoError(t, err)
+			}
+			if mode == "sdk" {
+				want = "sdkdata"
+				input.FS, _, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Location: location, Current: fstest.MapFS{"dir/file": {Data: []byte(want)}}})
+				assert.NoError(t, err)
+			}
+			if mode == "scoped_local" || mode == "scoped_immutable" {
+				current, err := Sub(input.FS, "dir")
+				assert.NoError(t, err)
+				input.FS, _, err = New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: current})
+				assert.NoError(t, err)
+				name = "file"
+			}
+			if mode == "source_unreadable" || mode == "routed" {
+				opts := ViewOptions{Mode: Source, Current: input.FS}
+				ref := plumbing.ZeroHash
+				if mode == "routed" {
+					want, ref = "alpha", commit
+					opts.Worktree, opts.Changes = reader, []string{"dir/file"}
+				}
+				input.FS, _, err = New(t.Context(), objects, ref, opts)
+				assert.NoError(t, err)
+			}
+			selected := input.FS.(*FS)
+			if mode == "unlocated" {
+				selected.location = nil
+			}
+			_, err = selected.SourcePolicy(t.Context())
+			assert.NoError(t, err)
+			objects.reads.Store(0)
+			if mode == "unreadable_clean" || mode == "source_unreadable" || mode == "subtree" || mode == "scoped_local" {
+				file := filepath.Join(root, "dir/file")
+				assert.NoError(t, os.Chmod(file, 0))
+				t.Cleanup(func() { assert.NoError(t, os.Chmod(file, 0o644)) })
+				if _, err := os.ReadFile(file); !errors.Is(err, fs.ErrPermission) {
+					t.Skipf("filesystem cannot enforce unreadable file: %v", err)
+				}
+			}
+			assert.Equal(t, selected.FileDigests() == nil, true)
+			_, err = ContentFingerprint(t.Context(), selected)
+			assert.NoError(t, err)
+			assert.Equal(t, selected.FileDigests()[name], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte(want))))
+			if mode == "untracked" {
+				assert.Equal(t, selected.FileDigests()["dir/new"], manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, []byte("untracked"))))
+			}
+			if mode != "subtree" {
+				_, ignored := selected.FileDigests()["dir/ignored"]
+				assert.Equal(t, ignored, false)
+			}
+			reads := reader.reads.Load()
+			assert.Equal(t, objects.reads.Load(), int64(0))
+			_, err = ContentFingerprint(t.Context(), selected)
+			assert.NoError(t, err)
+			assert.Equal(t, reader.reads.Load(), reads)
 		})
 	}
 }

@@ -15,6 +15,63 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
+	roots := testutil.CrossSourceOptionalInputs(t)
+	flags := []string{"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", "debug"}
+	var rendered [2]string
+	for side, root := range roots {
+		full, _ := harness.RequireCLIOK(t, append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
+		want := []string{"available", "fallback"}[side]
+		if !strings.Contains(full, "value: "+want) || !strings.Contains(full, "sentinel: active") || strings.Contains(full, "name: optional") != (side == 0) {
+			t.Fatalf("side %d full render lost consumer substitution or supplying input: %s", side, full)
+		}
+		rendered[side] = t.TempDir()
+		testutil.GitInit(t, rendered[side])
+		for _, name := range []string{"app", "inputs"} {
+			directory := name
+			if name == "app" {
+				directory = "apps/app"
+			}
+			testutil.WriteFile(t, rendered[side], "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: ./"+directory+"\n"))
+			output := ""
+			for doc := range strings.SplitSeq(full, "---\n") {
+				if strings.Contains(doc, "kustomize.toolkit.fluxcd.io/name: "+name+"\n") {
+					output += "---\n" + doc
+				}
+			}
+			resources := "resources: []\n"
+			if output != "" {
+				resources = "resources: [output.yaml]\n"
+				testutil.WriteFile(t, rendered[side], directory+"/output.yaml", output)
+			}
+			testutil.WriteFile(t, rendered[side], directory+"/kustomization.yaml", resources)
+		}
+	}
+	oracleArgs := append([]string{"diff", "all", "--path", filepath.Join(rendered[1], "flux"), "--path-orig", filepath.Join(rendered[0], "flux"), "-o", "diff"}, flags...)
+	oracle, _ := harness.RequireCLIOK(t, oracleArgs...)
+	args := append([]string{"diff", "all", "--path", filepath.Join(roots[1], "flux"), "--path-orig", filepath.Join(roots[0], "flux"), "-o", "diff"}, flags...)
+	var previous string
+	for run := range 2 {
+		scoped, stderr := harness.RequireCLIOK(t, args...)
+		if scoped != oracle || !strings.Contains(scoped, "-  value: available") || !strings.Contains(scoped, "+  value: fallback") || !strings.Contains(scoped, "name: optional") {
+			t.Fatalf("cross-source removal differs from full-render oracle: scoped=%s\nfull=%s\nstderr=%s", scoped, oracle, stderr)
+		}
+		selected := 0
+		for line := range strings.SplitSeq(stderr, "\n") {
+			if strings.Contains(line, "changed-only keep set") && strings.Contains(line, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/app") {
+				selected++
+			}
+		}
+		if selected != 2 {
+			t.Fatalf("consumer must be selected on both sides, got %d: %s", selected, stderr)
+		}
+		if run == 1 && scoped != previous {
+			t.Fatalf("cross-source removal output changed between runs: %s\n%s", previous, scoped)
+		}
+		previous = scoped
+	}
+}
+
 func TestE2E_OptionalInputChangedOnly(t *testing.T) {
 	for _, route := range []string{"directory", "committed"} {
 		t.Run(route, func(t *testing.T) {

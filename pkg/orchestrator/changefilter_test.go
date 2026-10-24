@@ -22,7 +22,9 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := &Orchestrator{cfg: Config{PathOrig: before, Input: input}, store: store.New()}
-	assert.NoError(t, o.buildChangeFilter(t.Context(), after))
+	changes, err := o.computeChangeSet(t.Context(), after)
+	assert.NoError(t, err)
+	o.buildChangeFilter(after, changes)
 	assert.Equal(t, o.filter.Enabled(), true)
 	warnings := o.store.Warnings()
 	if len(warnings) != 1 {

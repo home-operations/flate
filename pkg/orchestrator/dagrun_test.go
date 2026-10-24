@@ -105,7 +105,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						children, retained := parseChildrenForTest(gate, docs, manifest.ParseDocOptions{DefaultNamespace: gate.Namespace})
 						for _, emitted := range children {
 							if o.filter != nil {
-								o.filter.AddEmitted(gate, emitted.Obj, o.store)
+								o.filter.AddEmitted(gate, emitted, o.store)
 							}
 						}
 						_, _, next := o.store.GetEmission(gate)
@@ -138,7 +138,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if owners := testutil.Owners(o.store.Productions(child, nil)); !slices.Contains(owners, gate) {
 						t.Fatalf("missing independent contributor: %v", owners)
 					}
-					if !slices.Contains(slices.Collect(o.index.ReadersOfFile("child/cm.yaml")), child) {
+					if !slices.ContainsFunc(slices.Collect(o.index.ReadersOfFile("child/cm.yaml")), func(r manifest.FileReader) bool { return r.Reader == child }) {
 						t.Fatal("suspension lost the child's file read tracking")
 					}
 					_, _, inventory := o.store.GetEmission(child)
@@ -465,5 +465,41 @@ spec:
 			t.Fatal("repeated render bytes differ")
 		}
 		previous = output
+	}
+}
+
+func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := o.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	source := &manifest.GitRepository{Name: "ignored", Namespace: "flux-system"}
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}
+	o.store.AddObjects([]manifest.BaseManifest{source, consumer})
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}}}
+	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), index, o.store, root)
+	o.configureControllers()
+	o.seedNodes()
+	var reads store.ReadSet
+	reads.Init(o.store, consumer.Named(), nil)
+	defer reads.Close()
+	if reads.GetObject(source.Named()) != source {
+		t.Fatal("source metadata is unavailable")
+	}
+	var execution base.Execution
+	execution.Init(o.src.Controller, source.Named())
+	defer execution.Close()
+	if execution.Reads.Admitted() {
+		t.Fatal("unchanged source was admitted")
+	}
+	if !reads.Valid() {
+		t.Fatal("initial source admission invalidated a consumer that already captured its metadata")
 	}
 }

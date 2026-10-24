@@ -225,6 +225,9 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 		}
 	}()
 	obj, ok := e.Reads.Get[T](id)
+	if ok && e.filterActive() {
+		e.KeepEmitted(manifest.NamedResource{}, store.Child{Obj: obj, Productions: e.Reads.Promotions(id, nil)}, &e.Reads)
+	}
 
 	if ok && e.preGate(obj) {
 		e.withdrawInvalid()
@@ -232,6 +235,11 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 		return
 	}
 	if !e.Reads.Admitted() {
+		if ok {
+			for dep := range manifest.ContentInputs(obj, false) {
+				e.Reads.GetObject(dep)
+			}
+		}
 		e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
 		e.withdrawInvalid()
 		e.Reads.Accept()
@@ -364,7 +372,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 		attempt.Children = output.Children
 		e.Reads.Bind(&attempt)
 		for _, child := range output.Children {
-			e.KeepEmitted(id, child.Obj, &e.Reads)
+			e.KeepEmitted(id, child, &e.Reads)
 		}
 		return fp, true, nil
 	}

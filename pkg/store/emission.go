@@ -280,6 +280,13 @@ func (s *Store) Productions(id manifest.NamedResource, index *manifest.Discovery
 	return result.out
 }
 
+// IncomingProductions projects prospective evidence without the stored target's state.
+func (s *Store) IncomingProductions(child Child, index *manifest.DiscoveryIndex) []manifest.Production {
+	result := productionResult{incoming: &child}
+	s.visitProductions(child.Obj.Named(), index, &result)
+	return result.out
+}
+
 // ReferenceFacts selects visible data and source-qualified production evidence.
 func (s *Store) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
 	result := productionResult{facts: true}
@@ -307,6 +314,7 @@ type productionResult struct {
 	parentOnly    bool
 	reads         *ReadSet
 	captureTarget bool
+	incoming      *Child
 }
 
 func (r *productionResult) reset(evidence []manifest.Production) {
@@ -358,6 +366,21 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 			}
 		}
 	}
+	if result.incoming != nil {
+		evidence = result.incoming.Productions
+		if len(evidence) == 0 || slices.ContainsFunc(evidence, func(p manifest.Production) bool {
+			return p.Path != "" && manifest.Resolve(p.Authored, id.Namespace, "") == id
+		}) {
+			bare = nil
+		}
+		if reads != nil {
+			for _, productions := range [2][]manifest.Production{evidence, bare} {
+				for _, p := range productions {
+					reads.GetArtifact(p.Source)
+				}
+			}
+		}
+	}
 	result.out = evidence
 	sh := s.shardFor(id)
 	sh.mu.RLock()
@@ -374,14 +397,18 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		result.add(p)
 	}
 	for i := range evidence {
-		visible(&evidence[i])
+		if result.incoming == nil {
+			visible(&evidence[i])
+		} else {
+			result.add(&evidence[i])
+		}
 	}
 	sameFamily := func(a, b manifest.Production) bool {
-		return a.Source == b.Source && (a.Path == "" || a.File == b.File && a.Authored == b.Authored)
+		return a.Source == b.Source && (result.incoming != nil || a.Path == "" || a.File == b.File && a.Authored == b.Authored)
 	}
 	var first *manifest.Production
 	for i, p := range bare {
-		if p.Path == "" || p.Authored.Namespace != "" {
+		if p.Path == "" || p.Authored.Namespace != "" || p.Authored != (manifest.NamedResource{}) && manifest.Resolve(p.Authored, id.Namespace, "") != id {
 			continue
 		}
 		matches := slices.ContainsFunc(evidence, func(e manifest.Production) bool {
@@ -411,33 +438,35 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		result.data, _ = view.child.Obj.(manifest.Data)
 		result.accepted = view.accepted || view.owner != nil
 	}
-	cell := sh.cells[id]
-	if cell.hidden {
-		result.reset(nil)
-	} else {
-		if cell.static != nil && cell.retired && provisional {
+	if result.incoming == nil {
+		cell := sh.cells[id]
+		if cell.hidden {
 			result.reset(nil)
-		}
-		for _, m := range sh.members[id] {
-			e := m.slot.current.Load()
-			if reads != nil {
-				reads.sample(id, m.slot, e)
+		} else {
+			if cell.static != nil && cell.retired && provisional {
+				result.reset(nil)
 			}
-			if !m.slot.visible.Load() {
-				continue
-			}
-			entry := &e.entries[m.position]
-			if m.declaration {
-				p := manifest.Production{Owner: m.slot.id, Declaration: entry.child.Obj.Named(), Source: entry.binding.source}
-				result.add(&p)
-				continue
-			}
-			if !slices.ContainsFunc(entry.child.Productions, func(p manifest.Production) bool { return p.Owner == m.slot.id }) {
-				p := manifest.Production{Owner: m.slot.id, Source: entry.binding.source}
-				result.add(&p)
-			}
-			for i := range entry.child.Productions {
-				result.add(&entry.child.Productions[i])
+			for _, m := range sh.members[id] {
+				e := m.slot.current.Load()
+				if reads != nil {
+					reads.sample(id, m.slot, e)
+				}
+				if !m.slot.visible.Load() {
+					continue
+				}
+				entry := &e.entries[m.position]
+				if m.declaration {
+					p := manifest.Production{Owner: m.slot.id, Declaration: entry.child.Obj.Named(), Source: entry.binding.source}
+					result.add(&p)
+					continue
+				}
+				if !slices.ContainsFunc(entry.child.Productions, func(p manifest.Production) bool { return p.Owner == m.slot.id }) {
+					p := manifest.Production{Owner: m.slot.id, Source: entry.binding.source}
+					result.add(&p)
+				}
+				for i := range entry.child.Productions {
+					result.add(&entry.child.Productions[i])
+				}
 			}
 		}
 	}

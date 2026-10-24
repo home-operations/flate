@@ -121,7 +121,7 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 	}{
 		{name: "bookkeeping", wantAssessments: 1},
 		{name: "lazy self", expression: `dep.metadata.name == "dependency"`, wantAssessments: 1},
-		{name: "self metadata", expression: `self.metadata.namespace == dep.metadata.namespace`, wantAssessments: 2},
+		{name: "self metadata", expression: `self.metadata.namespace == dep.metadata.namespace`, wantAssessments: 1},
 		{name: "self conditions", expression: `self.status.conditions.size() >= 0`, wantAssessments: 2},
 		{name: "feedback", expression: `self.status.conditions.size() >= 0`, feedback: true},
 	} {

@@ -102,16 +102,20 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Reasons: make(map[manifest.NamedResource]string)}
 			}
 			failed.Failed = append(failed.Failed, dep.NamedResource)
-			failed.Reasons[dep.NamedResource] = cl.Message
+			if prior, exists := failed.Reasons[dep.NamedResource]; !exists || cl.Message < prior {
+				failed.Reasons[dep.NamedResource] = cl.Message
+			}
 		case schedule.Blocked:
 			blocked = append(blocked, dep.NamedResource)
 		}
 	}
 	if len(blocked) > 0 {
-		return &depwait.ErrBlocked{Deps: blocked}
+		slices.SortFunc(blocked, manifest.NamedResource.Compare)
+		return &depwait.ErrBlocked{Deps: slices.Compact(blocked)}
 	}
 	if failed != nil {
 		slices.SortFunc(failed.Failed, manifest.NamedResource.Compare)
+		failed.Failed = slices.Compact(failed.Failed)
 		return failed
 	}
 	return nil
@@ -157,6 +161,7 @@ func (e *Execution) finish(err error) {
 		}
 		_, next := e.Reads.GetEmission(id)
 		if e.Store.HasInventory(id) {
+			next.Complete = !next.OutputReads.Valid()
 			e.Emit(id, &next)
 		}
 		next.Finish()
@@ -206,7 +211,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest](ctx context.Context, level
 		return
 	}
 	if message := e.Reads.Preflight(); message != "" {
-		e.Store.UpdateStatus(id, store.StatusFailed, "", message)
+		e.finish(fmt.Errorf("%w: %s", manifest.ErrInput, message))
 		return
 	}
 	e.initial, _ = e.Store.GetStatus(id)

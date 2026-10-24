@@ -211,3 +211,93 @@ func TestRequire_ReadyAllocation(t *testing.T) {
 		t.Fatalf("ready classification allocations=%v, want 0", allocations)
 	}
 }
+
+func TestRequire_MultiplePredicates(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		expressions []string
+		status      store.Status
+		level       manifest.DrainLevel
+		want        schedule.Kind
+	}{
+		{name: "authored then builtin", expressions: []string{"false", ""}, status: store.StatusReady, level: manifest.DrainCascade, want: schedule.DependencyFailed},
+		{name: "builtin then authored", expressions: []string{"", "false"}, status: store.StatusReady, level: manifest.DrainCascade, want: schedule.DependencyFailed},
+		{name: "true then false", expressions: []string{"true", "false"}, status: store.StatusReady, level: manifest.DrainCascade, want: schedule.DependencyFailed},
+		{name: "false then true", expressions: []string{"false", "true"}, status: store.StatusReady, level: manifest.DrainCascade, want: schedule.DependencyFailed},
+		{name: "multiple failed", expressions: []string{"false", "1 == 2", "not valid CEL"}, status: store.StatusReady, level: manifest.DrainCascade, want: schedule.DependencyFailed},
+		{name: "multiple blocked", expressions: []string{"false", "1 == 2"}, status: store.StatusReady, want: schedule.Blocked},
+		{name: "expression replaces own builtin", expressions: []string{"true"}, status: store.StatusPending, want: schedule.Terminal},
+		{name: "separate builtin still required", expressions: []string{"true", ""}, status: store.StatusPending, want: schedule.Blocked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			obj := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
+			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			st.AddObjects([]manifest.BaseManifest{obj, consumer})
+			st.UpdateStatus(obj.Named(), tc.status, "", "")
+			var deps []manifest.DependencyRef
+			for _, expr := range tc.expressions {
+				deps = append(deps, manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: expr})
+			}
+			var reason string
+			for range 2 {
+				execution := controllertest.NewExecution(base.New(st, nil, "test"), consumer.Named())
+				defer execution.Close()
+				err := execution.Require(t.Context(), deps, tc.level)
+				switch tc.want {
+				case schedule.DependencyFailed:
+					failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+					if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{obj.Named()}) || len(failed.Reasons) != 1 {
+						t.Fatalf("failed identities were lost or duplicated: %v", err)
+					}
+					if reason != "" && reason != failed.Reasons[obj.Named()] {
+						t.Fatalf("registration order changed diagnostic: %q vs %q", reason, failed.Reasons[obj.Named()])
+					}
+					reason = failed.Reasons[obj.Named()]
+				case schedule.Blocked:
+					blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
+					if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{obj.Named()}) {
+						t.Fatalf("blocked identities were lost or duplicated: %v", err)
+					}
+				default:
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				_ = execution.Require(t.Context(), deps, tc.level)
+				if got := slices.Collect(execution.Reads.Gates()); len(got) != len(tc.expressions) {
+					t.Fatalf("repeated registration changed predicates: %v", got)
+				}
+				slices.Reverse(deps)
+			}
+		})
+	}
+}
+
+func TestExecution_ResumedPredicates(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+	dependency := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
+	st.AddObjects([]manifest.BaseManifest{consumer, dependency})
+	st.UpdateStatus(dependency.Named(), store.StatusReady, "", "")
+	execution := controllertest.NewExecution(base.New(st, nil, "test"), consumer.Named())
+	defer execution.Close()
+	deps := []manifest.DependencyRef{{NamedResource: dependency.Named(), ReadyExpr: "false"}, {NamedResource: dependency.Named()}}
+	execution.Dispatch(t.Context(), manifest.DrainNone, func(ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+		return execution.Require(ctx, deps, level)
+	})
+	if execution.Outcome() != schedule.Blocked || !slices.Equal(execution.Blocked, []manifest.NamedResource{dependency.Named()}) {
+		t.Fatal("false predicate did not park the execution")
+	}
+	execution.Settle(t.Context(), manifest.DrainForce)
+	info, _ := st.GetStatus(consumer.Named())
+	if execution.Outcome() != schedule.DependencyFailed || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{dependency.Named()}) {
+		t.Fatalf("resumed execution lost its false predicate: %+v", info)
+	}
+	if got := slices.Collect(execution.Reads.Gates()); !slices.Equal(got, deps) {
+		t.Fatalf("resumption duplicated or lost predicates: %v", got)
+	}
+}

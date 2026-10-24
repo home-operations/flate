@@ -27,13 +27,14 @@ type ReadSet struct {
 // Its reference MUST remain immutable until retirement is swept.
 type Input struct {
 	Ref         manifest.DependencyRef
-	gate        bool
-	required    bool
+	gates       *readinessGate
 	next        *Input
 	cells       [5]registration
 	view        capture
 	producer    uint64
 	settled     bool
+	gate        bool
+	required    bool
 	productions []manifest.Production
 	objects     []manifest.BaseManifest
 	artifact    Artifact
@@ -41,6 +42,11 @@ type Input struct {
 	status      StatusInfo
 	hasStatus   bool
 	derived     uint8
+}
+
+type readinessGate struct {
+	expr string
+	next *readinessGate
 }
 
 // Init starts an execution using caller-owned dependency storage.
@@ -327,18 +333,42 @@ func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest,
 // ID identifies the execution that owns these inputs.
 func (r *ReadSet) ID() manifest.NamedResource { return r.id }
 
-// Require retains an authored readiness gate in the execution footprint.
+// Require retains each distinct readiness gate in the execution footprint.
 func (r *ReadSet) Require(ref manifest.DependencyRef) {
 	input := r.input(ref.NamedResource)
-	input.Ref.ReadyExpr, input.gate, input.required = ref.ReadyExpr, true, true
+	input.required = true
+	if !input.gate {
+		input.Ref.ReadyExpr, input.gate = ref.ReadyExpr, true
+		return
+	}
+	if input.Ref.ReadyExpr == ref.ReadyExpr {
+		return
+	}
+	for gate := &input.gates; ; gate = &(*gate).next {
+		if *gate == nil {
+			*gate = &readinessGate{expr: ref.ReadyExpr}
+			return
+		}
+		if (*gate).expr == ref.ReadyExpr {
+			return
+		}
+	}
 }
 
 // Gates enumerates the retained readiness assessments.
 func (r *ReadSet) Gates() iter.Seq[manifest.DependencyRef] {
 	return func(yield func(manifest.DependencyRef) bool) {
 		for input := r.inputs; input != nil; input = input.next {
-			if input.gate && !yield(input.Ref) {
+			if !input.gate {
+				continue
+			}
+			if !yield(input.Ref) {
 				return
+			}
+			for gate := input.gates; gate != nil; gate = gate.next {
+				if !yield(manifest.DependencyRef{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr}) {
+					return
+				}
 			}
 		}
 	}

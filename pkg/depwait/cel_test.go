@@ -261,3 +261,130 @@ func evaluateReadyExpr(expr string, s *store.Store, self, dep manifest.NamedReso
 	w := Waiter{Store: s, Parent: self}
 	return w.evaluateReadyExpr(expr, dep, obj, conds)
 }
+
+func TestReadyExpr_SelfCapture(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		expr       string
+		status     bool
+		same       bool
+		errorMatch string
+	}{
+		{name: "dot metadata", expr: `self.metadata.labels.tier == 'data'`},
+		{name: "literal index", expr: `self['metadata']['labels']['tier'] == 'data'`},
+		{name: "presence", expr: `has(self.metadata.labels)`},
+		{name: "spec presence", expr: `!has(self.spec)`},
+		{name: "spec value", expr: `self.spec.path == './apps'`, errorMatch: "no such key: spec"},
+		{name: "status dot", expr: `self.status.conditions.exists(c, c.status == 'True')`, status: true},
+		{name: "status index", expr: `self['status'].conditions.exists(c, c.status == 'True')`, status: true},
+		{name: "status presence", expr: `has(self.status)`, status: true},
+		{name: "whole object", expr: `self == self`, status: true},
+		{name: "alias", expr: `[self].all(s, s.status.conditions.exists(c, c.status == 'True'))`, status: true},
+		{name: "dynamic index", expr: `self[dep.metadata.labels.field].labels.tier == 'data'`, status: true},
+		{name: "computed index", expr: `self[['metadata'][0]].labels.tier == 'data'`, status: true},
+		{name: "macro range", expr: `self.metadata.labels.all(self, self != '')`},
+		{name: "shadowed status", expr: `[{'status': true}].all(self, self.status) && self.metadata.labels.tier == 'data'`},
+		{name: "nested shadow", expr: `[1].all(self, [self].all(x, x == 1)) && self.metadata.labels.tier == 'data'`},
+		{name: "outer self in range", expr: `[self.status].all(self, self.conditions.exists(c, c.status == 'True'))`, status: true},
+		{name: "global after shadow", expr: `[1].all(self, self == 1) && self.status.conditions.exists(c, c.status == 'True')`, status: true},
+		{name: "status text", expr: `'self.status' == 'self.status' && self.metadata.labels.tier == 'data'`},
+		{name: "constant", expr: `true`},
+		{name: "lazy branch", expr: `true || self.status.conditions.size() > 0`},
+		{name: "same identity", expr: `self.metadata.labels.tier == 'data'`, status: true, same: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			self := &manifest.Kustomization{Name: "parent", Namespace: "ns", Labels: map[string]string{"tier": "data"}}
+			dep := &manifest.Kustomization{Name: "dep", Namespace: "ns", Labels: map[string]string{"field": "metadata"}}
+			if tc.same {
+				dep = self
+			}
+			s.AddObject(self)
+			s.AddObject(dep)
+			s.UpdateStatus(self.Named(), store.StatusReady, "", "")
+			s.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+			var reads store.ReadSet
+			reads.Init(s, self.Named(), nil)
+			defer reads.Retire()
+			obj, info := reads.Snapshot(dep.Named(), true)
+			w := Waiter{Store: &reads, Parent: self.Named()}
+			ok, err := w.evaluateReadyExpr(tc.expr, dep.Named(), obj, info.Conditions)
+			if tc.errorMatch == "" {
+				if err != nil || !ok {
+					t.Fatalf("evaluation: ok=%v err=%v, want true/nil", ok, err)
+				}
+			} else if ok || err == nil || !strings.Contains(err.Error(), tc.errorMatch) {
+				t.Fatalf("evaluation: ok=%v err=%v, want false/error containing %q", ok, err, tc.errorMatch)
+			}
+			if !reads.Valid() {
+				t.Fatal("fresh read set invalid")
+			}
+			s.UpdateStatus(self.Named(), store.StatusPending, "", "rendering")
+			if got := reads.Valid(); got == tc.status {
+				t.Fatalf("valid after self status change = %v, want %v", got, !tc.status)
+			}
+		})
+	}
+}
+
+func TestReadyExpr_DeclarationChanges(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"label", "spec", "constant"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			self := &manifest.Kustomization{Name: "parent", Namespace: "ns", Labels: map[string]string{"tier": "data"}, Path: "./apps"}
+			dep := &manifest.Kustomization{Name: "dep", Namespace: "ns"}
+			s.AddObject(self)
+			s.AddObject(dep)
+			s.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+			var reads store.ReadSet
+			reads.Init(s, self.Named(), nil)
+			defer reads.Retire()
+			obj, info := reads.Snapshot(dep.Named(), true)
+			w := Waiter{Store: &reads, Parent: self.Named()}
+			expr := `self.metadata.labels.tier == 'data'`
+			switch field {
+			case "spec":
+				expr = `!has(self.spec)`
+			case "constant":
+				expr = `true`
+			}
+			if ok, err := w.evaluateReadyExpr(expr, dep.Named(), obj, info.Conditions); err != nil || !ok {
+				t.Fatalf("evaluation: ok=%v err=%v, want true/nil", ok, err)
+			}
+			changed := self.Clone()
+			if field == "spec" {
+				changed.Path = "./changed"
+			} else {
+				changed.Labels = map[string]string{"tier": "changed"}
+			}
+			s.AddObject(changed)
+			if got, want := reads.Valid(), field == "constant"; got != want {
+				t.Fatalf("valid after declaration replacement = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestReadyExpr_DependencyConditions(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	dep := &manifest.Kustomization{Name: "dep", Namespace: "ns"}
+	s.AddObject(dep)
+	s.UpdateStatus(dep.Named(), store.StatusReady, "", "")
+	var reads store.ReadSet
+	reads.Init(s, testutil.KustomizationID("ns", "parent"), nil)
+	defer reads.Retire()
+	w := Waiter{Store: &reads, Parent: testutil.KustomizationID("ns", "parent")}
+	ref := manifest.DependencyRef{NamedResource: dep.Named(), ReadyExpr: `dep.status.conditions.exists(c, c.status == 'True')`}
+	if got := w.Classify(t.Context(), ref, manifest.DrainNone); got.Kind != schedule.Terminal {
+		t.Fatalf("dependency: %+v", got)
+	}
+	s.UpdateStatus(dep.Named(), store.StatusPending, "", "rendering")
+	if reads.Valid() {
+		t.Fatal("dependency conditions did not invalidate reads")
+	}
+}

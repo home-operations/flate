@@ -7,32 +7,20 @@ import (
 	"sync"
 
 	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/operators"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// celCache memoizes compileReadyExpr results keyed by source text.
-// dependsOn typically references the same expression many times (one
-// per consumer), so compiling once per process saves the parse + check
-// pass that cel-go does internally. The cache also memoizes *errors*
-// so a malformed expression doesn't recompile on every fire of
-// watchReadyExpr — every re-evaluation against a known-bad expression
-// reuses the cached error.
-//
-// sync.Map (rather than map+Mutex) was chosen because the cache is
-// read-heavy and rarely-mutated: thousands of evaluations against a
-// stable corpus of a few dozen expressions. sync.Map's read path is
-// lock-free for hits, which removes the per-evaluation Mutex
-// contention multiple parallel waiters previously paid.
 var celCache sync.Map // map[string]celCacheEntry
 
-// celCacheEntry caches one of (program, error). Exactly one field is
-// non-nil; readers branch on err first.
 type celCacheEntry struct {
-	prog cel.Program
-	err  error
+	prog       cel.Program
+	err        error
+	selfStatus bool
 }
 
 // celEnv is the singleton CEL environment used by all ReadyExpr
@@ -57,7 +45,7 @@ func mustCELEnv() *cel.Env {
 }
 
 func (w *Waiter) evaluateReadyExpr(expr string, dep manifest.NamedResource, obj manifest.BaseManifest, conds []store.Condition) (bool, error) {
-	prog, err := compileReadyExpr(expr)
+	compiled, err := compileReadyExpr(expr)
 	if err != nil {
 		return false, &celCompileErr{err}
 	}
@@ -74,12 +62,16 @@ func (w *Waiter) evaluateReadyExpr(expr string, dep manifest.NamedResource, obj 
 		self = dependency
 	} else {
 		dependency = func() any { return projectObject(dep, obj, conds) }
-		self = func() any {
-			obj, info := st.Snapshot(parent, true)
-			return projectObject(parent, obj, info.Conditions)
+		if compiled.selfStatus {
+			self = func() any {
+				obj, info := st.Snapshot(parent, true)
+				return projectObject(parent, obj, info.Conditions)
+			}
+		} else {
+			self = func() any { return projectObject(parent, st.GetObject(parent), nil) }
 		}
 	}
-	val, _, err := prog.Eval(map[string]any{"self": self, "dep": dependency})
+	val, _, err := compiled.prog.Eval(map[string]any{"self": self, "dep": dependency})
 	if err != nil {
 		return false, fmt.Errorf("eval: %w", err)
 	}
@@ -101,20 +93,15 @@ type celCompileErr struct{ err error }
 func (e *celCompileErr) Error() string { return e.err.Error() }
 func (e *celCompileErr) Unwrap() error { return e.err }
 
-func compileReadyExpr(expr string) (cel.Program, error) {
+func compileReadyExpr(expr string) (celCacheEntry, error) {
 	v, ok := celCache.Load(expr)
 	if !ok {
-		// LoadOrStore: concurrent compiles of the same expr both race; the
-		// loser's entry is discarded and we return the winner's. cel-go's
-		// compilation is deterministic so the two results are equivalent.
 		v, _ = celCache.LoadOrStore(expr, buildCacheEntry(expr))
 	}
 	e := v.(celCacheEntry)
-	return e.prog, e.err
+	return e, e.err
 }
 
-// buildCacheEntry compiles expr into the program (or terminal error)
-// that compileReadyExpr memoizes.
 func buildCacheEntry(expr string) celCacheEntry {
 	ast, issues := celEnv.Compile(expr)
 	if issues != nil && issues.Err() != nil {
@@ -124,7 +111,54 @@ func buildCacheEntry(expr string) celCacheEntry {
 	if err != nil {
 		return celCacheEntry{err: fmt.Errorf("program: %w", err)}
 	}
-	return celCacheEntry{prog: prog}
+	return celCacheEntry{prog: prog, selfStatus: readsSelfStatus(ast)}
+}
+
+func readsSelfStatus(checked *cel.Ast) bool {
+	for _, ident := range ast.MatchDescendants(ast.NavigateAST(checked.NativeRep()), ast.KindMatcher(ast.IdentKind)) {
+		if ident.AsIdent() != "self" || shadowsSelf(ident) {
+			continue
+		}
+		parent, ok := ident.Parent()
+		if ok {
+			switch parent.Kind() {
+			case ast.SelectKind:
+				if parent.AsSelect().FieldName() != "status" {
+					continue
+				}
+			case ast.CallKind:
+				call := parent.AsCall()
+				args := call.Args()
+				if call.FunctionName() == operators.Index && len(args) == 2 && args[0].ID() == ident.ID() && args[1].Kind() == ast.LiteralKind {
+					if key, ok := args[1].AsLiteral().Value().(string); ok && key != "status" {
+						continue
+					}
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func shadowsSelf(ident ast.NavigableExpr) bool {
+	for child := ident; ; {
+		parent, ok := child.Parent()
+		if !ok {
+			return false
+		}
+		if parent.Kind() == ast.ComprehensionKind {
+			comp := parent.AsComprehension()
+			inLoop := child.ID() == comp.LoopCondition().ID() || child.ID() == comp.LoopStep().ID()
+			if inLoop && (comp.IterVar() == "self" || comp.IterVar2() == "self") {
+				return true
+			}
+			if comp.AccuVar() == "self" && (inLoop || child.ID() == comp.Result().ID()) {
+				return true
+			}
+		}
+		child = parent
+	}
 }
 
 // projectObject keeps metadata and conditions from the same observation.

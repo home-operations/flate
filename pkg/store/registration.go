@@ -211,6 +211,7 @@ func (r *ReadSet) Retire() {
 		return
 	}
 	for input := r.inputs; input != nil; input = input.next {
+		input.gates = nil
 		for i := range input.cells {
 			cell := &input.cells[i]
 			if cell.head == nil {

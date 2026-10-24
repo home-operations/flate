@@ -3,6 +3,7 @@ package store
 import (
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -703,5 +704,75 @@ func TestReadSet_UnsettledProducerSnapshot(t *testing.T) {
 				t.Fatalf("availability query changed within one captured execution: before=%v after=%v", before, after)
 			}
 		})
+	}
+}
+
+func TestRequire_RetainsPredicates(t *testing.T) {
+	t.Parallel()
+	for _, expressions := range [][]string{
+		{"false", ""}, {"", "false"}, {"true", "false"},
+		{"false", "true", "false", "", "true", "1 == 2", "1 == 2", ""},
+	} {
+		t.Run(strings.Join(expressions, "/"), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			obj := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
+			s.AddObject(obj)
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Retire()
+			var want []manifest.DependencyRef
+			for _, expr := range expressions {
+				ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: expr}
+				reads.Require(ref)
+				if !slices.Contains(want, ref) {
+					want = append(want, ref)
+				}
+			}
+			assert.Diff(t, slices.Collect(reads.Gates()), want)
+			assert.Diff(t, slices.Collect(reads.Required()), []manifest.NamedResource{obj.Named()})
+			assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(obj))
+			if reads.inputs != &reads.local || reads.inputs.next != nil {
+				t.Fatal("predicates created multiple captured authorities for one identity")
+			}
+			for range reads.Gates() {
+				break
+			}
+			got := 0
+			for range reads.Gates() {
+				got++
+				if got == 2 {
+					break
+				}
+			}
+			assert.Equal(t, got, 2)
+		})
+	}
+}
+
+func TestRequire_ReleasesPredicates(t *testing.T) {
+	t.Parallel()
+	s := New()
+	var reads ReadSet
+	inputs := make([]Input, 1)
+	for _, retirement := range []bool{false, true} {
+		reads.Init(s, ownerID("reader"), inputs)
+		for _, id := range []manifest.NamedResource{ownerID("first"), ownerID("second")} {
+			reads.Require(manifest.DependencyRef{NamedResource: id, ReadyExpr: "true"})
+			reads.Require(manifest.DependencyRef{NamedResource: id, ReadyExpr: "false"})
+		}
+		if retirement {
+			reads.Retire()
+			for input := reads.inputs; input != nil; input = input.next {
+				if input.gates != nil {
+					t.Fatal("retirement retained overflow predicates")
+				}
+			}
+		}
+	}
+	reads.Init(s, ownerID("reader"), inputs)
+	assert.Equal(t, len(slices.Collect(reads.Gates())), 0)
+	if reads.local.gates != nil || inputs[0].gates != nil {
+		t.Fatal("reset retained overflow predicates")
 	}
 }

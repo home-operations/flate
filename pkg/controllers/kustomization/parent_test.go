@@ -282,3 +282,31 @@ func TestReconcile_OptionalMaterializerAbsence(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
+	t.Parallel()
+	for _, expr := range []string{"false", "true"} {
+		t.Run(expr, func(t *testing.T) {
+			t.Parallel()
+			c, s, _ := newControllerWithFixture(t)
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system"}
+			child := &manifest.Kustomization{
+				Name: "child", Namespace: owner.Namespace, Path: "./apps",
+				DependsOn: []kustomizev1.DependencyReference{{Name: owner.Name, ReadyExpr: expr}},
+			}
+			s.AddObject(owner)
+			c.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
+			s.UpdateStatus(owner.Named(), store.StatusReady, "", "")
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: child.Named(), ReconcileNode: c.ReconcileNode})
+			output, _ := s.GetArtifact(child.Named()).(*store.Emission)
+			rendered := s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "hello"})
+			if expr == "false" {
+				if info.Status != store.StatusFailed || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) || output != nil && len(output.Manifests) != 0 || rendered != nil {
+					t.Fatalf("false owner gate permitted output: status=%+v artifact=%+v rendered=%v", info, output, rendered)
+				}
+			} else if info.Status != store.StatusReady || output == nil || len(output.Manifests) != 1 || rendered == nil {
+				t.Fatalf("true owner gate prevented output: status=%+v artifact=%+v rendered=%v", info, output, rendered)
+			}
+		})
+	}
+}

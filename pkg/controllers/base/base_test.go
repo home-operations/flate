@@ -79,6 +79,83 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	}
 }
 
+func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
+	t.Parallel()
+	for _, source := range []bool{false, true} {
+		t.Run(fmt.Sprintf("source=%t", source), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			tasks := task.NewBounded(2)
+			c := base.New(st, tasks, "test")
+			defer c.Close()
+			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			if source {
+				obj = &manifest.GitRepository{Name: "producer", Namespace: "apps"}
+			}
+			id := obj.Named()
+			child := &manifest.ConfigMap{Name: "output", Namespace: "apps", Data: map[string]any{"value": "rendered"}}
+			st.AddObject(obj)
+			var attempts, renders atomic.Int64
+			var latest *base.Execution
+			d := controllertest.Dispatch{Tasks: tasks, Store: st, ID: id, ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+				attempts.Add(1)
+				execution := controllertest.NewExecution(c, id)
+				latest = execution
+				execution.Dispatch(ctx, level, func(_ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {
+					renders.Add(1)
+					if source {
+						st.SetArtifact(id, &store.SourceArtifact{Reads: &execution.Reads, Key: "content", LocalPath: "source"})
+					} else {
+						_, next := execution.Reads.GetEmission(id)
+						defer next.Finish()
+						next.Children = []store.Child{{Obj: child}}
+						next.Complete = true
+						execution.Emit(id, &next)
+					}
+					return nil
+				})
+				return execution
+			}}
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, d); info.Status != store.StatusReady || attempts.Load() != 1 || renders.Load() != 1 {
+				t.Fatalf("initial status=%+v attempts=%d renders=%d", info, attempts.Load(), renders.Load())
+			}
+			if st.GetArtifact(id) == nil || !source && st.GetObject(child.Named()) == nil {
+				t.Fatal("initial output was not published")
+			}
+			const cycle = "dependency cycle detected"
+			st.SetPreflight(id, cycle)
+			attempts.Store(0)
+			info := controllertest.DispatchToFixpoint(t.Context(), t, d)
+			if info.Status != store.StatusFailed || manifest.TrimSentinelPrefix(info.Message) != cycle || !latest.Valid() || latest.Outcome() != schedule.Terminal || attempts.Load() != 1 || renders.Load() != 1 {
+				t.Errorf("cycle status=%+v valid=%t outcome=%v attempts=%d renders=%d, want terminal failure in one attempt without rendering", info, latest.Valid(), latest.Outcome(), attempts.Load(), renders.Load())
+			}
+			if source {
+				if artifact := st.GetArtifact(id); artifact != nil {
+					t.Errorf("stale source artifact remained visible: %+v", artifact)
+				}
+			} else {
+				if st.GetObject(child.Named()) != nil {
+					t.Error("stale emitted child remained visible")
+				}
+				output, ok := st.GetArtifact(id).(*store.Emission)
+				if !ok || !output.Complete || output.OutputReads != &latest.Reads || !output.OutputReads.Valid() || len(output.Children) != 0 {
+					t.Errorf("withdrawal did not publish a complete current inventory: %+v", output)
+				}
+			}
+			st.SetPreflight(id, "")
+			attempts.Store(0)
+			info = controllertest.DispatchToFixpoint(t.Context(), t, d)
+			if info.Status != store.StatusReady || info.Message != "" || !latest.Valid() || attempts.Load() != 1 || renders.Load() != 2 {
+				t.Fatalf("recovered status=%+v valid=%t attempts=%d renders=%d", info, latest.Valid(), attempts.Load(), renders.Load())
+			}
+			if st.GetArtifact(id) == nil || !source && st.GetObject(child.Named()) == nil {
+				t.Fatal("recovery did not republish output")
+			}
+			t.Logf("recovery attempts=%d renders=%d", attempts.Load(), renders.Load())
+		})
+	}
+}
+
 func TestExecution_Failure(t *testing.T) {
 	t.Parallel()
 	s := store.New()

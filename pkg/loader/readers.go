@@ -41,6 +41,12 @@ func (l *Loader) finalizeRecords(repoRoot string, emittedFiles map[string][]mani
 		visited[id] = struct{}{}
 		obj := object(id)
 		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+			if ref.Content {
+				record, _ := l.Index.Lookup(ref.NamedResource)
+				for _, file := range record.Inputs {
+					l.recordReader(file, "", consumer)
+				}
+			}
 			if ref.Use == "chart" {
 				collect(ref.NamedResource, consumer)
 				continue

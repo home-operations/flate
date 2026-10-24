@@ -49,7 +49,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
 		}
-		if v.role != kustomizeinput.Resource || v.owner == (manifest.NamedResource{}) && l.documents.cache[v.file].selected {
+		if v.role != kustomizeinput.Resource || l.documents.cache[v.file].selected {
 			return
 		}
 		if v.document != nil {
@@ -65,17 +65,17 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 			declarations = b.recordProduced(v, l.documents.cache[v.file].objects, declarations)
 		}
 	}
+	var builtDirs []string
 	for dir, doc := range l.documents.cache {
-		if doc.built == nil {
-			continue
+		if doc.built != nil {
+			builtDirs = append(builtDirs, dir)
 		}
+	}
+	slices.Sort(builtDirs)
+	for _, dir := range builtDirs {
+		doc := l.documents.cache[dir]
 		rel, _ := filepath.Rel(repoRoot, dir)
 		root := graphVisit{root: repoRoot, dir: filepath.ToSlash(rel)}
-		for _, visit := range l.scopeWalk(root) {
-			for _, obj := range doc.built {
-				l.recordReader(visit.coordinate, visit.localCoordinate(), obj.Named())
-			}
-		}
 		var candidates []manifest.NamedResource
 		for _, obj := range doc.built {
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
@@ -88,7 +88,9 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		_, builder := l.documents.read(dir)
 		root.coordinate = l.fileCoordinate(builder)
 		for _, obj := range doc.built {
-			b.recordProducer(producerDeclaration{obj: obj, authored: obj.Named(), visit: root}, candidates)
+			if record, ok := l.Index.Lookup(obj.Named()); ok && record.Builder == root.coordinate {
+				b.recordProducer(producerDeclaration{obj: obj, authored: obj.Named(), visit: root}, candidates)
+			}
 		}
 	}
 	for _, contribution := range l.scopes.contributions {
@@ -225,29 +227,93 @@ func (v graphVisit) localCoordinate() string {
 	return path.Join(v.localBase, local)
 }
 
-func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization) []string {
+// StandaloneRoots returns sorted, unbuilt bootstrap packages outside Flux ownership.
+// Coordinates are borrowed until the next loader admission.
+func (l *Loader) StandaloneRoots(repoRoot string) []string {
+	l.Admit(repoRoot)
+	l.scopes.roots = slices.DeleteFunc(l.scopes.roots, func(dir string) bool {
+		root := filepath.Join(repoRoot, filepath.FromSlash(dir))
+		doc := l.documents.cache[root]
+		if doc.buildExcluded || doc.selected || doc.built != nil || isKustomizeComponent(doc.body) && root != l.entryPath {
+			return true
+		}
+		if root == l.entryPath {
+			for _, claim := range l.scopes.claims {
+				if strings.HasPrefix(dir+"/", claim.Prefix) {
+					return true
+				}
+			}
+			return false
+		}
+		for _, visit := range l.scopeWalk(graphVisit{root: repoRoot, dir: dir}) {
+			if visit.role == kustomizeinput.Resource && len(l.rootAdmission(visit.file, visit.coordinate, false).owners) != 0 {
+				return true
+			}
+		}
+		return false
+	})
+	return l.scopes.roots
+}
+
+func (l *Loader) packageRoots(repoRoot string, kss []*manifest.Kustomization) []string {
+	l.ensureScopes()
 	roots := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
-		if doc.body != nil && doc.traversed {
+		if (doc.traversed || dir == l.entryPath) && doc.file != "" {
 			roots[dir] = struct{}{}
+			if doc.buildExcluded {
+				doc.buildExcluded = false
+				l.documents.cache[dir] = doc
+			}
 		}
 	}
 	for _, ks := range kss {
-		root, pinned, _ := SourceView(l.Store, ks.SourceID(), repoRoot)
+		root, pinned, external := SourceView(l.Store, ks.SourceID(), repoRoot)
+		if ks.IsFragment() {
+			continue
+		}
 		base := l.documents.claimBase(root, ks.Path)
-		delete(roots, filepath.Join(root, base))
+		local := filepath.Join(root, base)
 		if pinned {
-			local := filepath.Join(repoRoot, base)
-			prefix := strings.TrimSuffix(local, string(filepath.Separator)) + string(filepath.Separator)
+			local = filepath.Join(repoRoot, base)
+		} else if !external {
+			physical := l.documents.localPath(local)
+			if doc, exists := l.documents.cache[physical]; exists && physical != local {
+				doc.buildExcluded = true
+				l.documents.cache[physical] = doc
+			}
+		}
+		prefix := ""
+		if external || pinned {
+			prefix = strings.TrimSuffix(local, string(filepath.Separator)) + string(filepath.Separator)
+		}
+		if external {
 			for dir := range roots {
-				if dir == local || strings.HasPrefix(dir, prefix) {
+				doc := l.documents.cache[dir]
+				if !doc.buildExcluded && dir != l.entryPath && (dir == local || strings.HasPrefix(dir, prefix)) {
+					doc.buildExcluded = true
+					l.documents.cache[dir] = doc
+				}
+			}
+			if local != l.entryPath {
+				delete(roots, local)
+			}
+			continue
+		}
+		delete(roots, local)
+		if pinned {
+			for dir := range roots {
+				if strings.HasPrefix(dir, prefix) {
 					delete(roots, dir)
 				}
 			}
 		}
 	}
+	if len(roots) == 0 {
+		return nil
+	}
 	for dir, doc := range l.documents.cache {
-		if doc.body == nil {
+		if !doc.traversed || doc.body == nil || l.documents.mountedRoot(dir) != l.documents.mountedRoot(repoRoot) {
 			continue
 		}
 		for ref := range kustomizeinput.Kustomization(doc.body) {
@@ -261,8 +327,7 @@ func (l *Loader) standaloneRoots(repoRoot string, kss []*manifest.Kustomization)
 	}
 	var dirs []string
 	for dir := range roots {
-		rel, err := filepath.Rel(repoRoot, dir)
-		if err == nil && !safepath.Escaped(rel) {
+		if rel, err := filepath.Rel(repoRoot, dir); err == nil && !safepath.Escaped(rel) && l.documents.mountedRoot(dir) == l.documents.mountedRoot(repoRoot) {
 			dirs = append(dirs, filepath.ToSlash(rel))
 		}
 	}

@@ -26,6 +26,7 @@ type scopeConstruction struct {
 	visits        map[string][]graphVisit
 	contributions []scopeContribution
 	claims        []manifest.KSClaim
+	roots         []string
 }
 
 type scopeInput struct {
@@ -93,9 +94,6 @@ func (l *Loader) admit(repoRoot string) {
 			l.scopes.visits[file] = visits[:0]
 		}
 		l.scopes.contributions = l.scopes.contributions[:0]
-		for _, dir := range l.standaloneRoots(repoRoot, kss) {
-			l.visitScope(graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID})
-		}
 		var local []*manifest.Kustomization
 		for _, ks := range kss {
 			ref := ks.SourceID()
@@ -126,6 +124,10 @@ func (l *Loader) admit(repoRoot string) {
 				}
 			}
 			l.visitScope(v)
+		}
+		l.scopes.roots = l.packageRoots(repoRoot, kss)
+		for _, dir := range l.scopes.roots {
+			l.visitScope(graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID})
 		}
 		l.scopes.claims = buildClaims(l.Store, repoRoot, l.documents, local)
 		l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
@@ -240,6 +242,13 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 			end++
 		}
 		file := indexed[start].Path
+		if l.terminalInput(file) {
+			doc := l.documents.cache[file]
+			doc.objects, doc.lookup, doc.loaded = nil, nil, false
+			l.documents.cache[file] = doc
+			start = end
+			continue
+		}
 		var scope rootAdmission
 		doc := l.documents.cache[file]
 		if doc.bootstrap || l.entry == entryKustomize || !doc.loaded {
@@ -272,7 +281,7 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 	}
 	for id, obj := range l.candidates {
 		if r, ok := l.Index.Lookup(id); ok && r.Path == "" && r.Authored == (manifest.NamedResource{}) {
-			objects[id] = obj
+			objects[id], next[id], allowed[id] = obj, r, true
 		}
 	}
 	l.candidates = objects
@@ -376,7 +385,7 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
 		if _, survives := next[id]; !survives || !allowed[id] {
-			if l.Store.GetObject(id) == l.admitted[id] {
+			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id) == nil {
 				l.Store.DeleteObject(id)
 				changed = true
 			}
@@ -460,4 +469,17 @@ func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []s
 func (l *Loader) selfClaim(id, authored manifest.NamedResource) bool {
 	owner, _ := l.Index.Lookup(id)
 	return id == authored || owner.Authored == authored
+}
+
+func (l *Loader) terminalInput(file string) bool {
+	terminal := false
+	if l.scopes != nil {
+		for _, v := range l.scopes.visits[file] {
+			if v.role == kustomizeinput.Resource && v.readable {
+				return false
+			}
+			terminal = terminal || v.role != kustomizeinput.Resource
+		}
+	}
+	return terminal
 }

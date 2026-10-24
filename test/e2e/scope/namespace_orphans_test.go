@@ -182,16 +182,6 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 	for _, scenario := range []string{"sibling", "explicit", "standalone", "shared"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, cache, namespaces := namespaceOrphanFixture(t, scenario)
-			if scenario == "shared" || scenario == "standalone" {
-				st := store.New()
-				if _, err := discovery.Run(t.Context(), discovery.Config{Path: root, RepoRoot: root, Store: st, WipeSecrets: true}); err != nil {
-					t.Fatal(err)
-				}
-				repos := st.ListAs[*manifest.HelmRepository](manifest.SourceDomain, manifest.KindHelmRepository)
-				if len(repos) != 1 || repos[0].Name != "demo" || repos[0].Namespace != namespaceOrphanSourceNamespace(scenario, "demo") {
-					t.Errorf("standalone source collection = %+v", repos)
-				}
-			}
 			flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
 			getArgs := append([]string{"get", "hr", "-o", "json"}, flags...)
 			hr, _ := harness.RequireCLIOK(t, getArgs...)
@@ -231,8 +221,19 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 				repos = append(repos, ns)
 			}
 			slices.Sort(repos)
-			if scenario != "standalone" && scenario != "shared" && !slices.Equal(repos, namespaces) {
-				t.Errorf("repository namespaces = %v, want %v; full output: %s", repos, namespaces, build)
+			wantRepos := namespaces
+			if scenario == "standalone" {
+				wantRepos = nil
+				if len(docs) != 1 {
+					t.Fatalf("standalone seed leaked into rendered output: %s", build)
+				}
+				name, namespace := manifest.DocMetadata(docs[0])
+				if manifest.DocKind(docs[0]) != manifest.KindConfigMap || name != "demo-chart" || namespace != "demo" {
+					t.Fatalf("standalone release lost its rendered namespace: %s", build)
+				}
+			}
+			if scenario != "shared" && !slices.Equal(repos, wantRepos) {
+				t.Errorf("repository namespaces = %v, want %v; full output: %s", repos, wantRepos, build)
 			}
 			out, _ := harness.RequireCLIOK(t, append([]string{"test", "all"}, flags...)...)
 			if strings.Contains(out, "failed") || strings.Contains(out, "blocked") {

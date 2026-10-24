@@ -53,6 +53,7 @@ type Loader struct {
 	documents  documentReader
 	scopes     *scopeConstruction
 	entry      entryKind
+	entryPath  string
 	candidates map[manifest.NamedResource]manifest.BaseManifest
 	admitted   map[manifest.NamedResource]manifest.BaseManifest
 
@@ -89,12 +90,6 @@ func New(s *store.Store) *Loader {
 	}
 }
 
-// KustomizeRoot reports recognized builder presence in a previously loaded directory.
-func (l *Loader) KustomizeRoot(root string) bool {
-	_, file := l.documents.read(root)
-	return file != ""
-}
-
 // Sources yields immutable source-artifact evidence in unspecified order.
 func (l *Loader) Sources() iter.Seq[manifest.BaseManifest] {
 	return func(yield func(manifest.BaseManifest) bool) {
@@ -113,7 +108,7 @@ func (l *Loader) Sources() iter.Seq[manifest.BaseManifest] {
 // AdmitsRoot applies the source-qualified scope boundary to every indexed document.
 func (l *Loader) AdmitsRoot(id manifest.NamedResource, file string) bool {
 	r, ok := l.Index.Lookup(id)
-	if !ok || r.Path != file {
+	if !ok || r.Path != file || file != "" && l.terminalInput(file) {
 		return false
 	}
 	if r.Path == "" {
@@ -248,6 +243,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	l.ensureScopes()
 	_, builder := l.documents.read(abs)
 	if l.entry == entryUnset {
+		l.entryPath = abs
 		l.entry = entryPlain
 		if builder != "" {
 			l.entry = entryKustomize
@@ -372,6 +368,9 @@ func (w *walker) descend(ctx context.Context, dir string) (int, error) {
 
 	k, kpath := w.loader.documents.read(dir)
 	if kpath != "" && k == nil {
+		cached := w.loader.documents.cache[dir]
+		cached.traversed = true
+		w.loader.documents.cache[dir] = cached
 		return 0, nil
 	}
 	if k != nil {

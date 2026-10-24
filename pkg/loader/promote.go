@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -81,13 +82,23 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 	return obj != nil && opts.Admit(obj)
 }
 
-// RegisterBuilt replaces selected bootstrap resource evidence with authoritative built documents.
+// RegisterBuilt replaces package resource evidence with authoritative built documents.
 // The root MUST be loaded and docs MUST be sanitized immutable build output.
 func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 	l.ensureScopes()
 	sourceRoot := cmp.Or(l.SourceRoot, l.documents.mountedRoot(root), root)
 	rel, _ := filepath.Rel(sourceRoot, root)
+	var inputs, shared []string
 	for _, visit := range l.scopeWalk(graphVisit{root: sourceRoot, dir: filepath.ToSlash(rel), source: manifest.BootstrapSourceID}) {
+		for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
+			if file == "" {
+				continue
+			}
+			inputs = append(inputs, file)
+			if visit.role != kustomizeinput.Resource || visit.document != nil {
+				shared = append(shared, file)
+			}
+		}
 		if visit.role != kustomizeinput.Resource {
 			continue
 		}
@@ -104,6 +115,26 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 			l.documents.cache[dir] = cached
 		}
 	}
+	slices.Sort(inputs)
+	inputs = slices.Compact(inputs)
+	slices.Sort(shared)
+	shared = slices.Compact(shared)
+	_, builder := l.documents.read(root)
+	builder = l.fileCoordinate(builder)
+	records := make([]manifest.DiscoveryRecord, len(docs))
+	for i, obj := range docs {
+		id := obj.Named()
+		record := manifest.DiscoveryRecord{File: builder, Builder: builder, Inputs: inputs}
+		if raw, ok := l.Index.Lookup(id); ok && manifest.KindOf(obj).DiscoverySeed() && manifest.Equal(obj, l.indexedObject(id, raw)) {
+			record.File, record.Inputs = raw.File, shared
+		}
+		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+			if discoveryReference(ref) {
+				record.Refs = append(record.Refs, ref.NamedResource)
+			}
+		}
+		records[i] = record
+	}
 	for id, record := range l.Index.Files() {
 		if record.Path == "" || !l.documents.cache[record.Path].selected {
 			continue
@@ -116,22 +147,28 @@ func (l *Loader) RegisterBuilt(root string, docs []manifest.BaseManifest) {
 		delete(l.admitted, id)
 	}
 	cached := l.documents.cache[root]
-	cached.built = docs
+	cached.built = append([]manifest.BaseManifest{}, docs...)
 	l.documents.cache[root] = cached
-	_, builder := l.documents.read(root)
 	if l.candidates == nil {
 		l.candidates = map[manifest.NamedResource]manifest.BaseManifest{}
 	}
-	for _, obj := range docs {
+	for i, obj := range docs {
 		id := obj.Named()
-		record := manifest.DiscoveryRecord{File: l.fileCoordinate(builder)}
-		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-			if discoveryReference(ref) {
-				record.Refs = append(record.Refs, ref.NamedResource)
-			}
+		if existing := l.Store.GetObject(id); existing != nil && (existing == l.candidates[id] || existing == l.admitted[id]) {
+			l.Store.DeleteObject(id)
 		}
-		l.Index.Records[id] = record
+		delete(l.admitted, id)
+		l.Index.Records[id] = records[i]
 		l.candidates[id] = obj
 	}
 	l.scopes.complete = false
+}
+
+// BuiltDocuments returns the authoritative package batch for an indexed built object.
+func (l *Loader) BuiltDocuments(id manifest.NamedResource) []manifest.BaseManifest {
+	r, ok := l.Index.Lookup(id)
+	if !ok || r.Builder == "" {
+		return nil
+	}
+	return l.documents.cache[filepath.Dir(filepath.Join(l.SourceRoot, filepath.FromSlash(r.Builder)))].built
 }

@@ -20,18 +20,19 @@ import (
 // document caches a directory document or parsed file objects by source-view path.
 // Consumers MUST never mutate its objects.
 type document struct {
-	body      *types.Kustomization
-	file      string
-	objects   []manifest.BaseManifest
-	built     []manifest.BaseManifest
-	selected  bool
-	lookup    map[manifest.NamedResource]manifest.BaseManifest
-	plugins   *[]pluginInputs
-	loaded    bool
-	bootstrap bool
-	traversed bool
-	pathState pathState
-	searched  bool
+	body          *types.Kustomization
+	file          string
+	objects       []manifest.BaseManifest
+	built         []manifest.BaseManifest
+	selected      bool
+	lookup        map[manifest.NamedResource]manifest.BaseManifest
+	plugins       *[]pluginInputs
+	loaded        bool
+	bootstrap     bool
+	traversed     bool
+	buildExcluded bool
+	pathState     pathState
+	searched      bool
 }
 
 type pathState uint8

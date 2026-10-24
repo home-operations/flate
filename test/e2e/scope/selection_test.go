@@ -928,25 +928,27 @@ spec: {url: https://must-not-run.invalid/charts}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(docs) != 3 || len(ownedDocs) != len(docs) {
+	if len(docs) != 3 || len(ownedDocs) != 3 {
 		t.Fatalf("direct/owned document counts: %d/%d", len(docs), len(ownedDocs))
 	}
-	for i, doc := range docs {
-		other := ownedDocs[i]
-		md := other["metadata"].(map[string]any)
+	for _, doc := range docs {
+		name, namespace := manifest.DocMetadata(doc)
+		if namespace != "apps" || name != "podinfo-dev" && name != "child-dev" {
+			t.Fatalf("selected entry lost a transformed identity: %v", doc)
+		}
+	}
+	for _, doc := range ownedDocs {
+		name, namespace := manifest.DocMetadata(doc)
+		if namespace != "apps" || name != "podinfo-dev" && name != "child-dev" {
+			t.Fatalf("actual Flux owner lost a transformed identity: %v", doc)
+		}
+		md := doc["metadata"].(map[string]any)
 		labels := md["labels"].(map[string]any)
 		if labels[manifest.FluxKustomizeDomain+"/name"] != "owner" || labels[manifest.FluxKustomizeDomain+"/namespace"] != "flux-system" {
 			t.Fatalf("actual Flux owner labels missing: %v", labels)
 		}
-		delete(labels, manifest.FluxKustomizeDomain+"/name")
-		delete(labels, manifest.FluxKustomizeDomain+"/namespace")
-		if len(labels) == 0 {
-			delete(md, "labels")
-		}
-		if difference := cmp.Diff(doc, other); difference != "" {
-			t.Fatalf("direct/owned differ beyond real owner labels (-direct +owned):\n%s", difference)
-		}
 	}
+
 	tested, _ := harness.RequireCLIOK(t, append([]string{"test", "hr"}, flags...)...)
 	if !strings.Contains(tested, "podinfo-dev") || strings.Contains(tested, "flate-bootstrap") {
 		t.Fatalf("test did not use real transformed identity: %s", tested)
@@ -995,6 +997,45 @@ spec: {url: https://must-not-run.invalid/charts}
 		}
 	})
 
+}
+
+func TestE2E_SelectedKustomizeRootNestedOwner(t *testing.T) {
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "nameSuffix: -dev\nresources: [child.yaml, cm.yaml, nested]\n")
+	testutil.WriteFile(t, root, "app/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./app/nested\n"))
+	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: outer, namespace: apps}\n")
+	testutil.WriteFile(t, root, "app/nested/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "app/nested/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: inner, namespace: apps}\n")
+	flags := []string{"build", "all", "--path", filepath.Join(root, "app"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+	out, _ := harness.RequireCLIOK(t, flags...)
+	second, _ := harness.RequireCLIOK(t, flags...)
+	if out != second {
+		t.Fatal("selected entry output changed between runs")
+	}
+	t.Logf("full selected entry output:\n%s", out)
+	docs, err := manifest.SplitDocs([]byte(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities := map[string]bool{}
+	for _, doc := range docs {
+		name, namespace := manifest.DocMetadata(doc)
+		identities[manifest.DocKind(doc)+"/"+name] = true
+		if name == "inner" {
+			labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+			if namespace != "apps" || labels[manifest.FluxKustomizeDomain+"/name"] != "child-dev" || labels[manifest.FluxKustomizeDomain+"/namespace"] != "apps" {
+				t.Fatalf("nested child reconciliation lost ownership: %v", doc)
+			}
+		}
+	}
+	want := map[string]bool{"ConfigMap/inner": true, "ConfigMap/inner-dev": true, "ConfigMap/outer-dev": true, "Kustomization/child-dev": true}
+	if difference := cmp.Diff(want, identities); difference != "" {
+		t.Fatalf("selected entry documents (-want +got):\n%s", difference)
+	}
+	if len(docs) != len(want) {
+		t.Fatalf("selected entry document count = %d, want %d", len(docs), len(want))
+	}
 }
 
 func TestE2E_SelectedKustomizeClassification(t *testing.T) {
@@ -1049,14 +1090,16 @@ func TestE2E_SelectedKustomizeClassification(t *testing.T) {
 
 func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 	for _, tc := range []struct {
-		name                  string
-		before, after         string
-		patch, sibling, plain bool
-		want                  map[string]string
+		name                               string
+		before, after                      string
+		patch, sibling, plain, declaration bool
+		want                               map[string]string
 	}{
 		{name: "referenced patch", before: "resources: [deployment.yaml, cm.yaml]\npatches: [{path: patch.yaml}]\n", patch: true, want: map[string]string{"web": "changed"}},
 		{name: "resource removed", before: "resources: [deployment.yaml, cm.yaml]\n", after: "resources: [deployment.yaml]\n", want: map[string]string{"config": "removed"}},
 		{name: "resource added", before: "resources: [deployment.yaml]\n", after: "resources: [deployment.yaml, cm.yaml]\n", want: map[string]string{"config": "added"}},
+		{name: "declaration removed", before: "resources: [deployment.yaml, child.yaml]\nnameSuffix: -dev\n", after: "resources: [deployment.yaml]\nnameSuffix: -dev\n", declaration: true, want: map[string]string{"child-dev": "removed"}},
+		{name: "declaration added", before: "resources: [deployment.yaml]\nnameSuffix: -dev\n", after: "resources: [deployment.yaml, child.yaml]\nnameSuffix: -dev\n", declaration: true, want: map[string]string{"child-dev": "added"}},
 		{name: "excluded sibling", before: "resources: [deployment.yaml, cm.yaml]\n", sibling: true},
 		{name: "plain dependency", plain: true, sibling: true},
 	} {
@@ -1070,6 +1113,10 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 				testutil.WriteFile(t, root, "app/deployment.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec: {template: {spec: {containers: [{name: web, image: 'example.test/web:1'}]}}}\n")
 				testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: config}\ndata: {value: selected}\n")
 				testutil.WriteFile(t, root, "app/unlisted.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\ndata: {value: before}\n")
+				if tc.declaration {
+					testutil.WriteFile(t, root, "app/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"))
+					testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: []\n")
+				}
 				if tc.patch {
 					testutil.WriteFile(t, root, "app/patch.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec: {template: {spec: {containers: [{name: web, image: 'example.test/web:1'}]}}}\n")
 				}
@@ -1085,6 +1132,9 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 			}
 			flags := []string{"--path", filepath.Join(current, "app"), "--path-orig", filepath.Join(orig, "app"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
 			out, _ := harness.RequireCLIOK(t, append([]string{"diff", "all", "-o", "json"}, flags...)...)
+			if tc.declaration {
+				t.Logf("paired declaration diff: %s", out)
+			}
 			var result struct {
 				Changes []struct {
 					Name, Status string

@@ -24,6 +24,8 @@ type DiscoveryRecord struct {
 	Authored    NamedResource   // Proven raw identity; zero for generated records.
 	Path        string          // Absolute raw resource path; empty for generated or projected records.
 	File        string          // Diff coordinate; generator records use the declaration file.
+	Builder     string          // Authoritative package coordinate; empty for file-seeded objects.
+	Inputs      []string        // Additional declaration inputs; these do not establish render ownership.
 	Refs        []NamedResource // Authored chart/source references under the discovery identity.
 	Parent      NamedResource   // Strict structural parent, excluding peers with the same claimed path.
 	Productions []Production    // Immutable source-qualified contributor evidence.

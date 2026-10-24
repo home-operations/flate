@@ -986,8 +986,8 @@ func TestLoader_DotDotPaths(t *testing.T) {
 				}
 				wantRoots = []string{tc.path}
 			}
-			if got := l.standaloneRoots(root, nil); !slices.Equal(got, wantRoots) {
-				t.Errorf("standaloneRoots = %v, want %v", got, wantRoots)
+			if got := l.packageRoots(root, nil); !slices.Equal(got, wantRoots) {
+				t.Errorf("packageRoots = %v, want %v", got, wantRoots)
 			}
 
 			w := graphWalker{documents: documents, visited: map[graphContext]struct{}{}}

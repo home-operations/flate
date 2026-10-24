@@ -357,6 +357,9 @@ func (f *Filter) resolve() {
 		}
 	}
 	ownersHit := make(map[manifest.NamedResource]struct{})
+	changed := func(record manifest.DiscoveryRecord) bool {
+		return f.changes.Contains(record.File) || slices.ContainsFunc(record.Inputs, f.changes.Contains)
+	}
 
 	for _, file := range f.changes.Paths() {
 		for _, owner := range ownersOf(file).owners {
@@ -385,7 +388,7 @@ func (f *Filter) resolve() {
 	changedInputs := len(f.changes.inputs) != 0
 	for id, record := range f.index.Files() {
 		src := record.File
-		if f.changes.Contains(src) {
+		if changed(record) {
 			changedInputs = changedInputs || id.KindInfo().Data
 			enqueuePrimary(id)
 			continue
@@ -412,7 +415,7 @@ func (f *Filter) resolve() {
 				src.Namespace = ""
 				_, oneSided = f.changes.inputs[src]
 			}
-			if (!ok || !f.changes.Contains(sr.File)) && !oneSided {
+			if (!ok || !changed(sr)) && !oneSided {
 				continue
 			}
 			enqueuePrimary(consumer)

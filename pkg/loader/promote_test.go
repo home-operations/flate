@@ -204,8 +204,11 @@ spec:
 			t.Errorf("built identity %s did not survive admission and source mounts", id)
 		}
 		for _, file := range []string{"entry/kustomization.yaml", "entry/bundle.yaml", "entry/version.yaml", "entry/value.txt", selectedFile} {
-			if !slices.Contains(l.Index.Readers[file], id) {
-				t.Errorf("%s does not retain built reader %s", file, id)
+			if !slices.Contains(record.Inputs, file) {
+				t.Errorf("%s does not retain built input %s", id, file)
+			}
+			if slices.Contains(l.Index.Readers[file], id) {
+				t.Errorf("package input %s made %s a render owner", file, id)
 			}
 		}
 		if strings.HasPrefix(id.Name, "generated-dev-") {
@@ -259,7 +262,9 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	if _, exists := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "remote"}); exists {
 		t.Fatal("raw remote generator declaration was indexed")
 	}
-	assert.Diff(t, l.Index.Readers["kustomization.yaml"], []manifest.NamedResource{docs[0].Named()})
+	record, _ := l.Index.Lookup(docs[0].Named())
+	assert.Diff(t, record.Inputs, []string{"kustomization.yaml"})
+	assert.Equal(t, len(l.Index.Readers), 0)
 }
 
 func TestRegisterBuilt_DeletedInvalidResource(t *testing.T) {
@@ -329,5 +334,102 @@ spec:
 	}
 	if _, exists := l.Index.Lookup(selected); exists || st.GetObject(selected) != nil {
 		t.Fatal("deleted raw resource resurrected")
+	}
+}
+
+func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for file, body := range map[string]string{
+		"kustomization.yaml":                   "resources: [entry]\n",
+		"entry/kustomization.yaml":             "resources: [../shared]\ngenerators: [../configuration]\n",
+		"entry/independent/kustomization.yaml": "resources: []\n",
+		"shared/kustomization.yaml":            "resources: [cm.yaml]\n",
+		"shared/cm.yaml":                       "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\n",
+		"configuration/kustomization.yaml":     "resources: []\n",
+		"component/kustomization.yaml":         "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n",
+	} {
+		testutil.WriteFile(t, root, file, body)
+	}
+	st := store.New()
+	admitForTest(st, root)
+	l := New(st)
+	l.SourceRoot = root
+	entry := filepath.Join(root, "entry")
+	if _, err := l.Load(t.Context(), entry); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"entry/independent", "component", "configuration"} {
+		if _, err := l.Load(t.Context(), filepath.Join(root, dir)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assert.Diff(t, l.StandaloneRoots(root), []string{"entry", "entry/independent"})
+	l.RegisterBuilt(entry, nil)
+	assert.Diff(t, l.StandaloneRoots(root), []string{"entry/independent"})
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "shared"}
+	if _, ok := l.Index.Lookup(id); ok || l.BuiltDocuments(id) != nil {
+		t.Fatal("empty output retained raw resource evidence")
+	}
+	l.RegisterBuilt(filepath.Join(root, "entry/independent"), nil)
+	if roots := l.StandaloneRoots(root); len(roots) != 0 {
+		t.Fatalf("empty build was not complete: %v", roots)
+	}
+	for _, tc := range []struct {
+		name, ownerPath string
+		reader, scanned bool
+		eligible        bool
+	}{
+		{name: "nested owner", ownerPath: "./entry/nested", eligible: true},
+		{name: "nested reader", ownerPath: "./entry/nested", reader: true, eligible: true},
+		{name: "same root owner", ownerPath: "./entry"},
+		{name: "ancestor owner", ownerPath: "."},
+		{name: "scanned nested owner", ownerPath: "./entry/nested", scanned: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [cm.yaml, nested]\n")
+			testutil.WriteFile(t, root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: outer}\n")
+			nested := "resources: []\n"
+			if tc.reader {
+				nested += "configMapGenerator: [{name: read, files: [../kustomization.yaml]}]\n"
+			}
+			testutil.WriteFile(t, root, "entry/nested/kustomization.yaml", nested)
+			st := store.New()
+			admitForTest(st, root)
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: tc.ownerPath}
+			st.AddObject(owner)
+			l := New(st)
+			l.SourceRoot = root
+			entry := filepath.Join(root, "entry")
+			if tc.scanned {
+				entry = root
+			}
+			if _, err := l.Load(t.Context(), entry); err != nil {
+				t.Fatal(err)
+			}
+			var want []string
+			if tc.eligible {
+				want = []string{"entry"}
+			}
+			if roots := l.StandaloneRoots(root); !slices.Equal(roots, want) {
+				t.Fatalf("standalone roots = %v, want %v", roots, want)
+			}
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			if tc.reader {
+				if !slices.Contains(l.Index.Readers["entry/kustomization.yaml"], owner.Named()) {
+					t.Fatalf("nested generator lost its read edge: %v", l.Index.Readers)
+				}
+				for prefix, owners := range l.Index.Claims {
+					if strings.HasPrefix("entry/", prefix) && slices.Contains(owners, owner.Named()) {
+						t.Fatalf("nested reader acquired a parent claim: %s", prefix)
+					}
+				}
+				assert.Diff(t, l.StandaloneRoots(root), want)
+			}
+		})
 	}
 }

@@ -286,36 +286,50 @@ func TestFinalizeIndex_NestedConfigurationLoader(t *testing.T) {
 
 func TestLoader_InputRolesAndAdmission(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: projected\nresources: [dual.yaml]\nconfigMapGenerator: [{name: data, files: [dual.yaml]}]\npatches: [{path: terminal.yaml}]\ngenerators: [configuration.yaml, configuration]\n")
-	testutil.WriteFile(t, root, "apps/dual.yaml", testutil.KustomizationYAML("dual", "authored", "  path: ./child\n"))
-	testutil.WriteFile(t, root, "apps/terminal.yaml", testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n"))
-	testutil.WriteFile(t, root, "apps/configuration.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: hidden-config, namespace: authored}\nspec: {path: ./hidden}\n---\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: config}\nspec: {target: {name: hidden}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
-	testutil.WriteFile(t, root, "apps/configuration/kustomization.yaml", "namespace: configuration-only\nresources: [flux.yaml, external.yaml]\n")
-	testutil.WriteFile(t, root, "apps/configuration/flux.yaml", testutil.KustomizationYAML("directory-config", "authored", "  path: ./hidden\n"))
-	testutil.WriteFile(t, root, "apps/configuration/external.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: directory-config}\nspec: {target: {name: directory-secret}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
-	s := store.New()
-	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps"}
-	s.AddObject(owner)
-	l := New(s)
-	l.SourceRoot = root
-	admitForTest(s, root)
-	if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "apps")); err != nil {
-		t.Fatal(err)
-	}
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
-		t.Fatal(err)
-	}
-	if candidateForTest(t, l, testutil.KustomizationID("projected", "dual")) == nil || s.GetObject(testutil.KustomizationID("projected", "dual")) != nil {
-		t.Fatal("generator data role suppressed the declared resource")
-	}
-	for _, id := range []manifest.NamedResource{testutil.KustomizationID("authored", "terminal"), testutil.KustomizationID("projected", "terminal"), secretID("projected", "hidden"), secretID("authored", "hidden"), testutil.KustomizationID("authored", "hidden-config"), testutil.KustomizationID("projected", "hidden-config"), testutil.KustomizationID("authored", "directory-config"), testutil.KustomizationID("configuration-only", "directory-config"), testutil.KustomizationID("projected", "directory-config"), secretID("configuration-only", "directory-secret"), secretID("projected", "directory-secret")} {
-		if s.GetObject(id) != nil || len(l.Index.Records[id].Productions) != 0 {
-			t.Fatalf("terminal/configuration input was admitted, projected or registered as producer: %v", id)
-		}
-	}
-	for _, file := range []string{"apps/dual.yaml", "apps/terminal.yaml", "apps/configuration.yaml", "apps/configuration/flux.yaml", "apps/configuration/external.yaml"} {
-		assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource{owner.Named()})
+	for _, tc := range []struct{ name, patch, terminal string }{
+		{"modern", "patches: [{path: terminal.yaml}]", "apps/terminal.yaml"},
+		{"strategic", "patchesStrategicMerge: [terminal.yaml]", "apps/terminal.yaml"},
+		{"modern outside", "patches: [{path: ../inputs/terminal.yaml}]", "inputs/terminal.yaml"},
+		{"strategic outside", "patchesStrategicMerge: [../inputs/terminal.yaml]", "inputs/terminal.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: projected\nresources: [dual.yaml]\nconfigMapGenerator: [{name: data, files: [dual.yaml]}]\n"+tc.patch+"\ngenerators: [configuration.yaml, configuration]\n")
+			testutil.WriteFile(t, root, "apps/dual.yaml", testutil.KustomizationYAML("dual", "authored", "  path: ./child\n"))
+			testutil.WriteFile(t, root, tc.terminal, testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n"))
+			testutil.WriteFile(t, root, "apps/configuration.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: hidden-config, namespace: authored}\nspec: {path: ./hidden}\n---\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: config}\nspec: {target: {name: hidden}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
+			testutil.WriteFile(t, root, "apps/configuration/kustomization.yaml", "namespace: configuration-only\nresources: [flux.yaml, external.yaml]\n")
+			testutil.WriteFile(t, root, "apps/configuration/flux.yaml", testutil.KustomizationYAML("directory-config", "authored", "  path: ./hidden\n"))
+			testutil.WriteFile(t, root, "apps/configuration/external.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: directory-config}\nspec: {target: {name: directory-secret}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
+			s := store.New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps"}
+			s.AddObject(owner)
+			l := New(s)
+			l.SourceRoot = root
+			admitForTest(s, root)
+			if _, err := loadForTest(t.Context(), t, l, root); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			if candidateForTest(t, l, testutil.KustomizationID("projected", "dual")) == nil {
+				t.Fatal("generator data role suppressed the declared resource")
+			}
+			for _, id := range []manifest.NamedResource{testutil.KustomizationID("authored", "terminal"), testutil.KustomizationID("projected", "terminal"), secretID("projected", "hidden"), secretID("authored", "hidden"), testutil.KustomizationID("authored", "hidden-config"), testutil.KustomizationID("projected", "hidden-config"), testutil.KustomizationID("authored", "directory-config"), testutil.KustomizationID("configuration-only", "directory-config"), testutil.KustomizationID("projected", "directory-config"), secretID("configuration-only", "directory-secret"), secretID("projected", "directory-secret")} {
+				if s.GetObject(id) != nil || len(l.Index.Records[id].Productions) != 0 {
+					t.Fatalf("terminal/configuration input was admitted, projected or registered as producer: %v", id)
+				}
+			}
+			for _, file := range []string{"apps/dual.yaml", tc.terminal, "apps/configuration.yaml", "apps/configuration/flux.yaml", "apps/configuration/external.yaml"} {
+				assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource{owner.Named()})
+			}
+			terminal := testutil.KustomizationID("authored", "terminal")
+			if _, ok := l.Index.Lookup(terminal); ok || l.candidates[terminal] != nil || len(l.documents.cache[filepath.Join(root, tc.terminal)].objects) != 0 {
+				t.Fatal("terminal-only patch retained raw admission evidence")
+			}
+		})
 	}
 }
 
@@ -597,5 +611,25 @@ func TestFinalizeIndex_InputSourceViews(t *testing.T) {
 				assert.Diff(t, l.Index.Readers[file], []manifest.NamedResource(nil))
 			}
 		})
+	}
+}
+
+func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\npatches: [{path: ../inputs/dual.yaml}]\n")
+	testutil.WriteFile(t, root, "inputs/kustomization.yaml", "resources: [dual.yaml]\n")
+	testutil.WriteFile(t, root, "inputs/dual.yaml", testutil.KustomizationYAML("dual", "authored", "  path: ./hidden\n"))
+	st := store.New()
+	admitForTest(st, root)
+	l := New(st)
+	l.SourceRoot = root
+	if _, err := l.Load(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	l.Admit(root)
+	id := testutil.KustomizationID("authored", "dual")
+	if _, ok := l.Index.Lookup(id); !ok || l.candidates[id] == nil || st.GetObject(id) == nil || len(l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects) != 1 {
+		t.Fatal("terminal role suppressed a separately declared resource")
 	}
 }

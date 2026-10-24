@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"slices"
@@ -25,10 +26,13 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 		if d.cfg.Store.GetObject(id) != nil || !d.loader.AdmitsRoot(id, record.Path) {
 			continue
 		}
-		admit := func(obj manifest.BaseManifest) bool { return d.loader.AdmitsRoot(obj.Named(), record.Path) }
+		admit := func(obj manifest.BaseManifest) bool {
+			sibling, ok := index.Lookup(obj.Named())
+			return ok && cmp.Or(sibling.Builder, sibling.File) == cmp.Or(record.Builder, record.File) && d.loader.AdmitsRoot(obj.Named(), record.Path)
+		}
 		opts := loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, WipeSecrets: d.cfg.WipeSecrets, Admit: admit}
 		if record.Path == "" {
-			opts.Documents = d.built
+			opts.Documents = d.loader.BuiltDocuments(id)
 		}
 		if !loader.Promote(ctx, d.cfg.Store, id, opts) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())

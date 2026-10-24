@@ -28,6 +28,9 @@ type KindInfo struct {
 	apiVersion      string
 }
 
+// DiscoverySeed reports whether a declaration supplies discovery rather than rendered output.
+func (k KindInfo) DiscoverySeed() bool { return k.Tracked && !k.Data }
+
 var (
 	kustomizeAPIVersion = kustomizev1.GroupVersion.String()
 	helmAPIVersion      = helmv2.GroupVersion.String()

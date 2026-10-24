@@ -81,7 +81,8 @@ func TestRun_BuiltRemoteGenerator(t *testing.T) {
 		t.Fatal("raw generator declaration resurrected")
 	}
 	assert.Equal(t, requests.Load(), int32(1))
-	if !slices.Contains(result.Index.Readers["kustomization.yaml"], id) {
-		t.Fatalf("remote generator lost root provenance: %v", result.Index.Readers)
+	record, _ := result.Index.Lookup(id)
+	if !slices.Contains(record.Inputs, "kustomization.yaml") || len(result.Index.Readers) != 0 {
+		t.Fatalf("remote generator lost declaration input or acquired render ownership: %+v", record)
 	}
 }

@@ -898,7 +898,7 @@ stringData: {HOST: fixture-value}
 
 func TestRun_GraphOwnershipSourceClassification(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"bootstrap", "self", "self_unavailable", "external", "missing_oci", "missing_bucket", "declared_oci", "declared_bucket"} {
+	for _, scenario := range []string{"bootstrap", "self", "self_unavailable", "external", "external_ancestor", "missing_oci", "missing_bucket", "declared_oci", "declared_bucket"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
@@ -909,8 +909,8 @@ func TestRun_GraphOwnershipSourceClassification(t *testing.T) {
 			} else if strings.HasSuffix(scenario, "bucket") {
 				kind = manifest.KindBucket
 			}
-			external := scenario == "external" || scenario == "self_unavailable" || strings.HasPrefix(scenario, "declared_")
-			if strings.HasPrefix(scenario, "self") || scenario == "external" {
+			external := strings.HasPrefix(scenario, "external") || scenario == "self_unavailable" || strings.HasPrefix(scenario, "declared_")
+			if strings.HasPrefix(scenario, "self") || strings.HasPrefix(scenario, "external") {
 				sourceName = "source"
 				testutil.WriteFile(t, dir, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -918,8 +918,15 @@ metadata: {name: source, namespace: flux-system}
 spec: {url: "https://example.invalid/cluster.git"}
 `)
 			}
-			testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, sourceRef: {kind: "+kind+", name: "+sourceName+"}}\n"))
-			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [cm.yaml, child.yaml, hr.yaml]\n")
+			ownerPath := "./apps"
+			if scenario == "external_ancestor" {
+				ownerPath = "."
+			}
+			testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("owner", "flux-system", "  {path: "+ownerPath+", sourceRef: {kind: "+kind+", name: "+sourceName+"}}\n"))
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [cm.yaml, child.yaml, hr.yaml, repositories]\n")
+			testutil.WriteFile(t, dir, "apps/repositories/kustomization.yaml", "namespace: repositories\nresources: [repository.yaml]\n")
+			testutil.WriteFile(t, dir, "apps/repositories/repository.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: additional}\nspec: {url: https://fixture.invalid/charts}\n")
+
 			testutil.WriteFile(t, dir, "apps/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  {path: ./apps/leaf, sourceRef: {kind: "+kind+", name: "+sourceName+"}}\n"))
 			testutil.WriteFile(t, dir, "apps/leaf/kustomization.yaml", "resources: []\n")
 			testutil.WriteFile(t, dir, "apps/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -971,6 +978,11 @@ spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
 			if _, indexed := res.Index.Lookup(foreignOwner.Named()); indexed {
 				t.Fatal("foreign owner borrowed a real claim")
 			}
+			repository := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "repositories", Name: "additional"}
+			if _, indexed := res.Index.Lookup(repository); scenario == "external_ancestor" && !indexed {
+				t.Fatal("source-qualified graph lost the nested repository namespace")
+			}
+
 			child := testutil.KustomizationID("flux-system", "child")
 			if cfg.Store.GetObject(child) == nil {
 				t.Fatal("entry path did not discover its child Kustomization")

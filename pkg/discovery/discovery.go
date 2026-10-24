@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"path/filepath"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
@@ -24,7 +25,7 @@ import (
 
 // Result summarizes what discovery hydrated into the store.
 type Result struct {
-	// Documents contains sanitized output of a built entry without a Flux owner.
+	// Documents contains sanitized built resources, including discovery seeds only from the selected entry.
 	Documents []map[string]any
 	// RepoRoot is the bootstrap input's ownership coordinate. Admitted
 	// inputs may use a synthetic label with no corresponding directory.
@@ -69,7 +70,7 @@ type Config struct {
 	// scan scopes (e.g. .krmignore.staging / .krmignore.production) and
 	// pick one per run.
 	KRMIgnoreFile string
-	// Trees is required when the selected entry needs a bare Kustomize build.
+	// Trees is required when discovered packages need a bare Kustomize build.
 	Trees        *kustomize.TreeCache
 	Store        *store.Store
 	WipeSecrets  bool
@@ -95,7 +96,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.loadManifests(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	d.loader.Admit(repoRoot)
 	kustomizations := d.loader.Kustomizations()
 	substitutions := values.NewDependencySubstitutions(kustomizations)
 	for _, ks := range kustomizations {
@@ -117,13 +117,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	cfg.Store.SetDiscoveryIndex(l.Index)
 	d.promoteOrphans(ctx, standaloneSecrets)
 	documents := d.documents[:0]
-	for i, obj := range d.built {
-		current := cfg.Store.GetObject(obj.Named())
-		if current == nil {
+	for i, doc := range d.documents {
+		id := manifest.DocIdentity(doc)
+		record, ok := l.Index.Lookup(id)
+		current := cfg.Store.GetObject(id)
+		if !ok || record.Builder != d.documentFiles[i] || current == nil {
 			continue
 		}
-		doc := d.documents[i]
-		if secret, ok := current.(*manifest.Secret); ok && current != obj {
+		if secret, ok := current.(*manifest.Secret); ok && !slices.Contains(l.BuiltDocuments(id), current) {
 			doc = maps.Clone(doc)
 			snapshot := secret.Snapshot()
 			for _, key := range []string{"data", "stringData", "type"} {
@@ -148,7 +149,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 type discoverer struct {
 	documents       []map[string]any
-	built           []manifest.BaseManifest
+	documentFiles   []string
 	cfg             Config
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]entryResolution
@@ -177,11 +178,8 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 		return err
 	}
 	l.IgnoreFile = ""
-	if err := d.admitEntry(ctx, repoRoot); err != nil {
-		return err
-	}
 	// Projection may introduce a new effective source reference. Resolve it
-	// before Load admits the selected spec.path edge to scope construction.
+	// before Load admits its spec.path edge to scope construction.
 	l.PreferExisting = true
 	type expansion struct {
 		ks     *manifest.Kustomization
@@ -190,7 +188,9 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 	}
 	ksExpanded := map[expansion]struct{}{}
 	var pending []expansion
+	rounds := 0
 	for {
+		rounds++
 		l.Admit(repoRoot)
 		_, err := d.resolveEntrySources(ctx, false)
 		if err != nil {
@@ -242,61 +242,55 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
 			if err != nil {
 				return err
 			}
-			if missing == 0 {
+			if missing != 0 {
+				continue
+			}
+			roots := l.StandaloneRoots(repoRoot)
+			if len(roots) == 0 {
 				break
+			}
+			for _, root := range roots {
+				if err := d.buildPackage(ctx, repoRoot, root); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	l.PreferExisting = false
 	d.warnBootstrapAliases(repoRoot)
-	slog.Debug("discovery: loaded objects", "count", total, "scan_root", d.cfg.Path, "source_root", repoRoot)
+	slog.Debug("discovery: loaded objects", "count", total, "rounds", rounds, "scan_root", d.cfg.Path, "source_root", repoRoot)
 	return nil
 }
 
-func (d *discoverer) admitEntry(ctx context.Context, repoRoot string) error {
-	if !d.loader.KustomizeRoot(d.cfg.Path) {
-		return nil
-	}
-	if _, err := d.resolveEntrySources(ctx, true); err != nil {
-		return err
-	}
-	for _, ks := range d.loader.Kustomizations() {
-		if ks.IsFragment() {
-			continue
-		}
-		ref := ks.SourceID()
-		root, _, external := loader.SourceView(d.cfg.Store, ref, repoRoot)
-
-		if art, ok := d.cfg.Store.GetArtifact(ref).(*store.SourceArtifact); ok && art.LocalRoot != "" {
-			root = art.LocalRoot
-		}
-		if !external && safepath.Contains(filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)), d.cfg.Path) {
-			d.cfg.Store.AddObject(ks)
-			_, err := d.resolveEntrySources(ctx, true)
-			return err
-		}
-	}
+func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) error {
 	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
-	path, err := filepath.Rel(input.LocalPath, d.cfg.Path)
+	docs, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: root}, d.cfg.RemoteRetry)
 	if err != nil {
-		return err
+		return fmt.Errorf("discovery package %q build: %w", root, err)
 	}
-	docs, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: filepath.ToSlash(path)}, d.cfg.RemoteRetry)
-	if err != nil {
-		return fmt.Errorf("discovery entry build: %w", err)
-	}
+	built := []manifest.BaseManifest{}
+	var documents []map[string]any
 	for _, doc := range manifest.FlattenLists(docs) {
 		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets})
 		if err != nil {
-			return fmt.Errorf("discovery entry document: %w", err)
+			return fmt.Errorf("discovery package %q document: %w", root, err)
 		}
 		if obj != nil {
-			d.built = append(d.built, obj)
-			d.documents = append(d.documents, authoritative)
+			built = append(built, obj)
+			documents = append(documents, authoritative)
 		}
 	}
-	d.loader.RegisterBuilt(d.cfg.Path, d.built)
-	d.promoteOrphans(ctx, nil)
+	packageRoot := filepath.Join(repoRoot, filepath.FromSlash(root))
+	selected := packageRoot == d.cfg.Path
+	d.loader.RegisterBuilt(packageRoot, built)
+	for i, obj := range built {
+		if !selected && manifest.KindOf(obj).DiscoverySeed() {
+			continue
+		}
+		record, _ := d.loader.Index.Lookup(obj.Named())
+		d.documentFiles = append(d.documentFiles, record.Builder)
+		d.documents = append(d.documents, documents[i])
+	}
 	return nil
 }
 

@@ -119,3 +119,85 @@ func TestE2E_SubstitutionPrecedence(t *testing.T) {
 		})
 	}
 }
+
+func TestE2E_UnappliedPackagePatches(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unapplied", true: "applied"}[applied], func(t *testing.T) {
+			root := t.TempDir()
+			testutil.GitInit(t, root)
+			for _, file := range []struct{ path, body string }{
+				{"cluster/app/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-cm
+data:
+  a: ${VAR_A}
+  b: ${VAR_B}
+`},
+				{"cluster/app/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - cm.yaml
+`},
+				{"cluster/ks.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./cluster/app
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
+`},
+				{"cluster/vars/base.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+  namespace: flux-system
+data:
+  VAR_A: base-value
+`},
+				{"cluster/vars/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base.yaml
+patches:
+  - path: patch.yaml
+`},
+				{"cluster/vars/patch.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+  namespace: flux-system
+data:
+  VAR_B: patch-value
+`},
+			} {
+				testutil.WriteFile(t, root, file.path, file.body)
+			}
+			if applied {
+				testutil.WriteFile(t, root, "cluster/vars-ks.yaml", testutil.KustomizationYAML("vars", "flux-system", "  path: ./cluster/vars\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			}
+			var previous string
+			for range 2 {
+				out := harness.RunCLIStdout(t, "build", "ks", "app", "--path", filepath.Join(root, "cluster"), "--concurrency", "2", "--no-progress")
+				for _, want := range []string{"a: base-value", "b: patch-value"} {
+					if !strings.Contains(out, want) {
+						t.Fatalf("missing %q in app output:\n%s", want, out)
+					}
+				}
+				if previous != "" && out != previous {
+					t.Fatal("equivalent renders differ")
+				}
+				previous = out
+			}
+		})
+	}
+}

@@ -201,6 +201,127 @@ func TestStore_AddObject_NestedContent(t *testing.T) {
 	}
 }
 
+func TestObjectEqual_ConcurrentProjection(t *testing.T) {
+	t.Parallel()
+	parse := func() *manifest.Kustomization {
+		t.Helper()
+		obj, _, _, err := manifest.ParseDoc(map[string]any{
+			"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization,
+			"metadata": map[string]any{"name": "app", "namespace": "ns"},
+			"spec":     map[string]any{"path": "./app", "sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"}},
+		}, manifest.ParseDocOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return obj.(*manifest.Kustomization)
+	}
+	first, second := parse(), parse()
+	s := New()
+	s.AddObject(first)
+	start := make(chan struct{})
+	var ready, workers sync.WaitGroup
+	ready.Add(2)
+	workers.Go(func() {
+		ready.Done()
+		<-start
+		if _, err := first.RenderDocument(); err != nil {
+			t.Error(err)
+		}
+	})
+	workers.Go(func() {
+		ready.Done()
+		<-start
+		s.AddObject(second)
+	})
+	ready.Wait()
+	close(start)
+	workers.Wait()
+	got := s.GetObject(first.Named()).(*manifest.Kustomization)
+	assert.Equal(t, got.Named(), first.Named())
+	assert.Equal(t, got.Path, "./app")
+	assert.Equal(t, got.SourceRef, second.SourceRef)
+}
+
+func TestObjectEqual_KustomizationContent(t *testing.T) {
+	t.Parallel()
+	parse := func(t *testing.T) *manifest.Kustomization {
+		t.Helper()
+		obj, _, _, err := manifest.ParseDoc(map[string]any{
+			"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization,
+			"metadata": map[string]any{"name": "app", "namespace": "ns"},
+			"spec": map[string]any{
+				"path": "./app", "sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"},
+				"postBuild": map[string]any{"substitute": map[string]any{"KEY": "same"}},
+			},
+		}, manifest.ParseDocOptions{})
+		assert.NoError(t, err)
+		return obj.(*manifest.Kustomization)
+	}
+	populate := func(t *testing.T, k *manifest.Kustomization) {
+		t.Helper()
+		_, err := k.RenderDocument()
+		assert.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		name    string
+		prepare func(*testing.T, *manifest.Kustomization, *manifest.Kustomization) *manifest.Kustomization
+		change  func(*manifest.Kustomization)
+		equal   bool
+	}{
+		{name: "cold caches", equal: true},
+		{name: "one populated cache", equal: true, prepare: func(t *testing.T, a, b *manifest.Kustomization) *manifest.Kustomization {
+			t.Helper()
+			populate(t, a)
+			return b
+		}},
+		{name: "independent populated caches", equal: true, prepare: func(t *testing.T, a, b *manifest.Kustomization) *manifest.Kustomization {
+			t.Helper()
+			populate(t, a)
+			populate(t, b)
+			return b
+		}},
+		{name: "absent cache", equal: true, prepare: func(t *testing.T, a, b *manifest.Kustomization) *manifest.Kustomization {
+			t.Helper()
+			populate(t, a)
+			return &manifest.Kustomization{Name: b.Name, Namespace: b.Namespace, KustomizationSpec: b.KustomizationSpec}
+		}},
+		{name: "name", change: func(k *manifest.Kustomization) { k.Name = "other" }},
+		{name: "namespace", change: func(k *manifest.Kustomization) { k.Namespace = "other" }},
+		{name: "source", change: func(k *manifest.Kustomization) { k.SourceRef.Name = "other" }},
+		{name: "path", change: func(k *manifest.Kustomization) { k.Path = "./other" }},
+		{name: "labels", change: func(k *manifest.Kustomization) { k.Labels = map[string]string{"app": "other"} }},
+		{name: "annotations", change: func(k *manifest.Kustomization) { k.Annotations = map[string]string{"note": "other"} }},
+		{name: "nil and empty labels", change: func(k *manifest.Kustomization) { k.Labels = map[string]string{} }},
+		{name: "nil and empty annotations", change: func(k *manifest.Kustomization) { k.Annotations = map[string]string{} }},
+		{name: "nil and empty spec slice", change: func(k *manifest.Kustomization) { k.Components = []string{} }},
+		{name: "nested spec", change: func(k *manifest.Kustomization) { k.PostBuild.Substitute["KEY"] = "other" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			first, second := parse(t), parse(t)
+			if tc.prepare != nil {
+				second = tc.prepare(t, first, second)
+			}
+			if tc.change != nil {
+				second = second.Clone()
+				tc.change(second)
+			}
+			assert.Equal(t, objectEqual(first, second), tc.equal)
+			assert.Equal(t, objectEqual(second, first), tc.equal)
+			s := New()
+			seen := 0
+			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen++ }, false)
+			s.AddObject(first)
+			s.AddObject(second)
+			want := 2
+			if tc.equal {
+				want = 1
+			}
+			assert.Equal(t, seen, want)
+		})
+	}
+}
+
 func TestObjectEqual_RawObjectFields(t *testing.T) {
 	t.Parallel()
 	rawType := reflect.TypeFor[manifest.RawObject]()

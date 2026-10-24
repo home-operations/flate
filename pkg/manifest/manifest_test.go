@@ -101,6 +101,86 @@ func TestNamedResource(t *testing.T) {
 		(&RawObject{Kind: KindKustomization, APIVersion: "foreign.example/v2"}).Named())
 }
 
+func TestEqual_Operands(t *testing.T) {
+	t.Parallel()
+	ks := &Kustomization{Name: "app"}
+	for _, tc := range []struct {
+		name  string
+		a, b  BaseManifest
+		equal bool
+	}{
+		{"nil interfaces", nil, nil, true},
+		{"nil and typed nil", nil, (*Kustomization)(nil), false},
+		{"matching typed nil", (*Kustomization)(nil), (*Kustomization)(nil), true},
+		{"different typed nil", (*Kustomization)(nil), (*GitRepository)(nil), false},
+		{"nil and present", (*Kustomization)(nil), ks, false},
+		{"same pointer", ks, ks, true},
+		{"different concrete types", ks, &ConfigMap{Name: "app"}, false},
+		{"equal typed content", &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, true},
+		{"changed typed content", &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, &ConfigMap{Name: "app", Data: map[string]any{"key": "other"}}, false},
+		{"typed nil and empty", &ConfigMap{Name: "app"}, &ConfigMap{Name: "app", Data: map[string]any{}}, false},
+		{"equal raw content", &RawObject{Kind: "Widget", Spec: map[string]any{"items": []any{int64(1)}}}, &RawObject{Kind: "Widget", Spec: map[string]any{"items": []any{int64(1)}}}, true},
+		{"raw nil and empty", &RawObject{Kind: "Widget"}, &RawObject{Kind: "Widget", Spec: map[string]any{}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, Equal(tc.a, tc.b), tc.equal)
+			assert.Equal(t, Equal(tc.b, tc.a), tc.equal)
+		})
+	}
+}
+
+func TestEqual_KustomizationContent(t *testing.T) {
+	t.Parallel()
+	parse := func(t *testing.T) *Kustomization {
+		t.Helper()
+		ks, err := parseKustomization(mustYAML(t, `
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: app, namespace: ns}
+spec:
+  path: ./app
+  sourceRef: {kind: GitRepository, name: repo}
+  postBuild: {substitute: {KEY: same}}
+`))
+		assert.NoError(t, err)
+		return ks
+	}
+	for _, tc := range []struct {
+		name     string
+		populate bool
+		change   func(*Kustomization)
+		equal    bool
+	}{
+		{name: "cold cache", equal: true},
+		{name: "populated cache", equal: true, populate: true},
+		{name: "absent cache", equal: true, change: func(k *Kustomization) { k.projection = nil }},
+		{name: "name", change: func(k *Kustomization) { k.Name = "other" }},
+		{name: "namespace", change: func(k *Kustomization) { k.Namespace = "other" }},
+		{name: "spec", change: func(k *Kustomization) { k.SourceRef.Name = "other" }},
+		{name: "nested spec", change: func(k *Kustomization) { k.PostBuild.Substitute["KEY"] = "other" }},
+		{name: "labels", change: func(k *Kustomization) { k.Labels = map[string]string{"app": "other"} }},
+		{name: "annotations", change: func(k *Kustomization) { k.Annotations = map[string]string{"note": "other"} }},
+		{name: "nil and empty labels", change: func(k *Kustomization) { k.Labels = map[string]string{} }},
+		{name: "nil and empty annotations", change: func(k *Kustomization) { k.Annotations = map[string]string{} }},
+		{name: "nil and empty spec slice", change: func(k *Kustomization) { k.Components = []string{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			first, second := parse(t), parse(t)
+			if tc.populate {
+				_, err := second.RenderDocument()
+				assert.NoError(t, err)
+			}
+			if tc.change != nil {
+				tc.change(second)
+			}
+			assert.Equal(t, Equal(first, second), tc.equal)
+			assert.Equal(t, Equal(second, first), tc.equal)
+		})
+	}
+}
+
 func TestParseDoc_Suspended(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

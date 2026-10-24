@@ -3,6 +3,7 @@ package manifest
 import (
 	"cmp"
 	"iter"
+	"reflect"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
@@ -94,6 +95,18 @@ type BaseManifest interface {
 	ReferenceCapacity() (int, int)
 	kind() KindInfo
 	producerTargets([]NamedResource) []ProducerTarget
+}
+
+// Equal compares manifest content without derived projection-cache state.
+func Equal(a, b BaseManifest) bool {
+	if a == b {
+		return true
+	}
+	if k, ok := a.(*Kustomization); ok {
+		other, ok := b.(*Kustomization)
+		return ok && k.equal(other)
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 // DependencyRef is a compact prerequisite identity and optional CEL gate.

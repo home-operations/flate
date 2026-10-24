@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"maps"
+	"reflect"
 	"sync"
 	"sync/atomic"
 
@@ -57,6 +58,15 @@ func (k *Kustomization) Clone() *Kustomization {
 	out.Labels = maps.Clone(k.Labels)
 	out.Annotations = maps.Clone(k.Annotations)
 	return &out
+}
+
+func (k *Kustomization) equal(other *Kustomization) bool {
+	if k == other {
+		return true
+	}
+	return k != nil && other != nil && k.Name == other.Name && k.Namespace == other.Namespace &&
+		reflect.DeepEqual(&k.KustomizationSpec, &other.KustomizationSpec) &&
+		reflect.DeepEqual(k.Labels, other.Labels) && reflect.DeepEqual(k.Annotations, other.Annotations)
 }
 
 func parseKustomization(doc map[string]any) (*Kustomization, error) {

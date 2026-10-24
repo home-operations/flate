@@ -537,9 +537,8 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	return true
 }
 
-// objectEqual MUST compare every RawObject field: Kind, APIVersion, Name,
-// Namespace and Spec. The interface-identity shortcut assumes pointer
-// implementations of BaseManifest. Reflection handles other typed manifests.
+// objectEqual MUST compare manifest content only, excluding derived cache state.
+// The RawObject fast path MUST cover every field and preserve nil/empty distinctions.
 func objectEqual(a, b manifest.BaseManifest) bool {
 	if a == b {
 		return true
@@ -549,7 +548,7 @@ func objectEqual(a, b manifest.BaseManifest) bool {
 		return ok && prev.Kind == cur.Kind && prev.APIVersion == cur.APIVersion &&
 			prev.Name == cur.Name && prev.Namespace == cur.Namespace && specValueEqual(prev.Spec, cur.Spec)
 	}
-	return reflect.DeepEqual(a, b)
+	return manifest.Equal(a, b)
 }
 
 // Raw rendered specs contain JSON-shaped maps and slices. Comparing those

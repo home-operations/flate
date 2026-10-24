@@ -433,8 +433,7 @@ func TestRenderFlux_NamespaceIdentity(t *testing.T) {
 				Source: localSource(t, root), SubPath: ".", Spec: ks,
 			}, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
-			docs, err := manifest.SplitDocs(out)
-			assert.NoError(t, err)
+			docs := out
 			assert.Equal(t, len(docs), 3)
 			namespaces := make(map[string]string, len(docs))
 			for _, doc := range docs {

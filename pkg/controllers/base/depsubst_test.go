@@ -68,7 +68,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 					{},
 					{Obj: parent, Doc: parentDoc},
 				},
-				Manifests: docs, Complete: true, Fingerprint: manifest.Fingerprint("inputs"), Render: []byte("retained"),
+				Manifests: docs, Complete: true, Fingerprint: manifest.Fingerprint("inputs"),
 			}
 			arrivals := 0
 			st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
@@ -96,7 +96,6 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			if diff := cmp.Diff(docs, accepted.Manifests); diff != "" {
 				t.Fatalf("authoritative documents changed (-want +got):\n%s", diff)
 			}
-			assert.Equal(t, string(accepted.Render), "retained")
 			assert.Equal(t, accepted.Children[0].Obj, manifest.BaseManifest(literal))
 			if diff := cmp.Diff(childDoc, accepted.Children[1].Doc); diff != "" {
 				t.Fatalf("child document changed (-want +got):\n%s", diff)
@@ -106,6 +105,10 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			}
 			replayed, _ := st.Get[*manifest.Kustomization](child.Named())
 			assert.Equal(t, replayed.DependsOn[0].Name, tt.want)
+			output, matched := st.GetArtifact(parent.Named()).(*store.Emission).Replay(manifest.Fingerprint("inputs"))
+			assert.Equal(t, matched, true)
+			assert.Diff(t, output.Manifests, docs)
+			assert.Diff(t, output.Children[1].Doc, childDoc)
 			if st.GetObject(parent.Named()) != parent {
 				t.Fatal("self child replaced parent")
 			}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
+	"reflect"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -89,11 +89,11 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 			}
 			originals := []*manifest.HelmRelease{hr.Clone(), hrB.Clone()}
 			ts := task.NewBounded(2)
-			var expected [2]string
+			var expected [2][]map[string]any
 			for round := range 3 {
 				entered := make(chan struct{}, 2)
 				start := make(chan struct{})
-				var output [2]string
+				var output [2][]map[string]any
 				var errs [2]error
 				for i, release := range []*manifest.HelmRelease{hr, hrB} {
 					ts.Go(t.Context(), release.Name, func(ctx context.Context) {
@@ -119,10 +119,10 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 					if mode.disable {
 						version = "6.15.0"
 					}
-					if errs[i] != nil || !strings.Contains(output[i], version) {
+					if errs[i] != nil || !hasRenderField(output[i], "version", version) {
 						t.Fatalf("parallel render %d = %q, err = %v", i, output[i], errs[i])
 					}
-					if round > 0 && output[i] != expected[i] {
+					if round > 0 && !reflect.DeepEqual(output[i], expected[i]) {
 						t.Fatalf("parallel render %d changed bytes", i)
 					}
 				}

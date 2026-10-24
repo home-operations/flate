@@ -13,7 +13,6 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
-	"unicode/utf8"
 
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -61,11 +60,11 @@ func TestDescriptionProjection(t *testing.T) {
 	assert.Equal(t, requiresChartLoader(ch), false)
 	analysis := &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}
 	assert.Diff(t, analysis.Allowed, map[string]struct{}{"child": {}, "childAlias": {}, "feature": {}, "global": {}, "tags": {}})
-	data, err := json.Marshal(renderRecord{Output: "rendered", Analysis: analysis})
+	data, err := json.Marshal(renderRecord{Output: []byte("rendered"), Analysis: analysis})
 	assert.NoError(t, err)
 	var restored renderRecord
 	assert.NoError(t, json.Unmarshal(data, &restored))
-	assert.Equal(t, restored.Output, "rendered")
+	assert.Diff(t, restored.Output, []byte("rendered"))
 	assert.Diff(t, restored.Analysis, analysis)
 	values := map[string]any{"used": 1, "nested": 1, "child": 1, "childAlias": 1, "feature": 1, "global": 1, "tags": 1, "unused": 1}
 	assert.Diff(t, analysis.unreferencedValuePaths(values), []string{"unused"})
@@ -86,7 +85,7 @@ func TestDescriptionProjection(t *testing.T) {
 				t.Fatal("opaque chart retained unused template analysis")
 			}
 			assert.Diff(t, analysis.unreferencedValuePaths(values), []string(nil))
-			data, err := json.Marshal(renderRecord{Output: "rendered", Analysis: analysis})
+			data, err := json.Marshal(renderRecord{Output: []byte("rendered"), Analysis: analysis})
 			assert.NoError(t, err)
 			if len(data) > 1024 {
 				t.Fatalf("opaque analysis payload is %d bytes", len(data))
@@ -118,7 +117,7 @@ func TestDescription_SourceObservation(t *testing.T) {
 	out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	assert.Equal(t, reads, 1)
-	if !strings.Contains(out, `marker: "first"`) {
+	if !hasRenderField(out, "marker", "first") {
 		t.Fatalf("key and merge observed different input: %s", out)
 	}
 }
@@ -136,7 +135,7 @@ func TestDescription_HitHydration(t *testing.T) {
 			if persistent {
 				root = t.TempDir()
 			}
-			var want string
+			var want []map[string]any
 			for i := range 2 {
 				cli, err := NewClient(cachetest.New(t, root, cache.New))
 				assert.NoError(t, err)
@@ -146,7 +145,7 @@ func TestDescription_HitHydration(t *testing.T) {
 				if i == 0 {
 					want = out
 				}
-				assert.Equal(t, out, want)
+				assert.Diff(t, out, want)
 				d, err := cli.describeChart(t.Context(), hr, cliSources)
 				assert.NoError(t, err)
 				assert.Equal(t, d.chart == nil, persistent && i == 1)
@@ -205,7 +204,7 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			assert.NoError(t, err)
 			ch, err := d.captured.load()
 			assert.NoError(t, err)
-			fresh := &renderRecord{Output: "hit", Analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
+			fresh := &renderRecord{Output: []byte("hit"), Analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
 			start := make(chan struct{})
 			var wg sync.WaitGroup
 			decoded := d
@@ -218,7 +217,7 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			if decoded.captured.files != nil || decoded.captured.archive != nil {
 				t.Fatal("decode retained captured input")
 			}
-			late := &renderRecord{Output: "late", Analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
+			late := &renderRecord{Output: []byte("late"), Analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
 			cli.rememberDescription(d, late)
 			cli.rememberDescription(d, nil)
 			current, err := cli.describeChart(t.Context(), hr, cliSources)
@@ -276,19 +275,22 @@ func TestReview_TemplateBytesIneligible(t *testing.T) {
 func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.HelmRelease, validOutput bool) {
 	t.Helper()
 	root := t.TempDir()
-	var want string
+	var want []map[string]any
 	for i := range 2 {
 		owner := cachetest.New(t, root, cache.New)
 		cli, err := NewClient(owner)
 		assert.NoError(t, err)
 		cliSources := NewSources(st)
 		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
-		assert.NoError(t, err)
+		if validOutput {
+			assert.NoError(t, err)
+		} else if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || len(out) != 0 {
+			t.Fatalf("invalid UTF-8 render: %v, %v", out, err)
+		}
 		if i == 0 {
 			want = out
 		}
-		assert.Equal(t, out, want)
-		assert.Equal(t, utf8.ValidString(out), validOutput)
+		assert.Diff(t, out, want)
 		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
 		if d.chart == nil {

@@ -1,11 +1,11 @@
 package orchestrator
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 
@@ -65,8 +65,8 @@ generatorOptions:
 	assert.NoError(t, err)
 	second, err := kustomize.RenderFlux(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry)
 	assert.NoError(t, err)
-	if len(first) == 0 || !bytes.Equal(first, second) {
-		t.Fatalf("rendered bytes differ: first=%s second=%s", first, second)
+	if len(first) == 0 || !reflect.DeepEqual(first, second) {
+		t.Fatalf("rendered documents differ: first=%v second=%v", first, second)
 	}
 	assert.Equal(t, requests.Load(), int32(1))
 }

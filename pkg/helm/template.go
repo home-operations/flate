@@ -33,15 +33,14 @@ const sourceHeader = "# Source: "
 
 var envSettings = sync.OnceValue(cli.New)
 
-// Template renders a HelmRelease and returns the rendered manifest as a
-// single YAML string (multiple documents separated by "---" lines).
+// Template renders a HelmRelease and returns independently owned documents.
 // Completed output is persisted through the borrowed cache owner. A hit skips
 // chart cloning and Helm action construction; the key includes all render inputs.
-func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) (string, error) {
+func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) ([]map[string]any, error) {
 	opts := input.Options
 	loaded, err := c.describeChart(ctx, hr, input.Sources)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if hr.UsesDirectOCIRepository() {
 		loaded.oci = &ociChartContent{Digest: loaded.artifact.Digest, Revision: loaded.artifact.Revision, DisableTracking: opts.DisableChartDigestTracking}
@@ -56,7 +55,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	key := computeTemplateKey(loaded, hrValues, opts, hr)
 	if input.Admit != nil {
 		if handled, err := input.Admit(key); handled || err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	blobKey := cache.BlobKey{Content: key, PersistOnly: true}
@@ -84,16 +83,19 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 					}
 				}
 				if cacheErr == nil {
-					if record.Analysis.RequiresLoader {
-						err = c.decodeChart(ctx, &loaded)
-						if err != nil {
-							return "", err
+					docs, decodeErr := manifest.DecodeRender(record.Output)
+					if decodeErr == nil {
+						if record.Analysis.RequiresLoader {
+							err = c.decodeChart(ctx, &loaded)
+							if err != nil {
+								return nil, err
+							}
 						}
+						if loadRecord {
+							c.rememberDescription(loaded, record)
+						}
+						return docs, nil
 					}
-					if loadRecord {
-						c.rememberDescription(loaded, record)
-					}
-					return record.Output, nil
 				}
 			}
 		} else if !errors.Is(lookupErr, errdef.ErrNotFound) {
@@ -102,31 +104,31 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	}
 	err = c.decodeChart(ctx, &loaded)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var trackedVersion string
 	if hr.UsesDirectOCIRepository() {
 		version, err := ociChartVersion(loaded.chart.Metadata.Version, loaded.artifact.Revision)
 		if err != nil {
-			return "", fmt.Errorf("track oci chart version: %w", err)
+			return nil, fmt.Errorf("track oci chart version: %w", err)
 		}
 		if !opts.DisableChartDigestTracking {
 			trackedVersion = version
 		}
 	}
 	if capabilityErr != nil {
-		return "", capabilityErr
+		return nil, capabilityErr
 	}
 	finalValues := hrValues
 	if len(hr.ChartValuesFiles) > 0 {
 		base, err := c.mergeChartValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		if err != nil {
-			return "", fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
+			return nil, fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
 		}
 		finalValues = values.DeepMergeInto(base, hrValues)
 	}
 	if cacheErr != nil {
-		return "", cacheErr
+		return nil, cacheErr
 	}
 
 	ch := cloneChartForRender(loaded.chart)
@@ -136,7 +138,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 	cfg := new(action.Configuration)
 	if err := cfg.Init(envSettings().RESTClientGetter(), hr.ReleaseNamespace(), ""); err != nil {
-		return "", fmt.Errorf("helm init: %w", err)
+		return nil, fmt.Errorf("helm init: %w", err)
 	}
 	cfg.Capabilities = caps
 	// Helm applies CustomTemplateFuncs last. Each render needs its own stateful
@@ -150,37 +152,45 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 	rel, err := inst.RunWithContext(ctx, ch, finalValues)
 	if err != nil {
-		return "", fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
+		return nil, fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
 	}
 	relV1, ok := rel.(*release.Release)
 	if !ok {
-		return "", fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
+		return nil, fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
 	}
 
 	// Disabled dependencies must be pruned before validating their CRDs.
 	if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
 		if err := validateCRDs(ch); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 
 	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 	out := releaseManifest(relV1, opts, disableHooks, skipTests)
+	docs, err := manifest.SplitDocs([]byte(out))
+	if err != nil {
+		return nil, err
+	}
 	if key != "" && utf8.ValidString(out) && validChartTemplates(loaded.chart) {
 		canonical, analysis := loaded.chart, loaded.analysis
 		reader, _, _, err := c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			payload, err := manifest.EncodeRender(docs)
+			if err != nil {
+				return cache.ProducerResult{}, err
+			}
 			description := chartDescription{chart: canonical, analysis: analysis}
-			err := json.NewEncoder(w).Encode(renderRecord{Output: out, Analysis: description.analyze()})
+			err = json.NewEncoder(w).Encode(renderRecord{Output: payload, Analysis: description.analyze()})
 			return cache.ProducerResult{}, err
 		})
 		if err != nil {
-			return "", fmt.Errorf("publish helm render cache: %w", err)
+			return nil, fmt.Errorf("publish helm render cache: %w", err)
 		}
 		if err := reader.Close(); err != nil {
-			return "", fmt.Errorf("%w: close helm render cache: %w", manifest.ErrFlux, err)
+			return nil, fmt.Errorf("%w: close helm render cache: %w", manifest.ErrFlux, err)
 		}
 	}
-	return out, nil
+	return docs, nil
 }
 
 func validChartTemplates(ch *chart.Chart) bool {

@@ -280,7 +280,6 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any) (st
 	attempt.Manifests = output.Manifests
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
-	attempt.Render = output.Render
 	attempt.Complete = true
 	for _, child := range output.Children {
 		e.KeepEmitted(id, child.Obj, &e.Reads)

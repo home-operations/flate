@@ -149,7 +149,7 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 			assert.Equal(t, loaded.chart == canonical, true)
 			out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 			assert.NoError(t, err)
-			if !strings.Contains(out, `marker: "`+marker+`"`) {
+			if !hasRenderField(out, "marker", marker) {
 				t.Fatal(out)
 			}
 		}

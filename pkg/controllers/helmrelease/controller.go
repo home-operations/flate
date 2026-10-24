@@ -199,13 +199,9 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		}
 		return false, nil
 	}
-	raw, err := c.Helm.Template(ctx, hr, hr.Values, input)
+	docs, err := c.Helm.Template(ctx, hr, hr.Values, input)
 	if handled {
 		return err
-	}
-	var docs []map[string]any
-	if err == nil {
-		docs, err = manifest.SplitDocs([]byte(raw))
 	}
 	if err != nil {
 		// Best-effort rescue: if this HR's parent Kustomization couldn't read a
@@ -287,11 +283,7 @@ func (c *execution) renderBestEffort(ctx context.Context, id manifest.NamedResou
 	if len(paths) == 0 {
 		return nil, nil, false
 	}
-	raw, err := c.Helm.Template(ctx, hr, filled, input)
-	if err != nil {
-		return nil, nil, false
-	}
-	docs, err := manifest.SplitDocs([]byte(raw))
+	docs, err := c.Helm.Template(ctx, hr, filled, input)
 	if err != nil {
 		return nil, nil, false
 	}

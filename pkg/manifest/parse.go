@@ -7,14 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
-// decodeInto re-marshals a parsed YAML document into a typed Flux CR
-// via a JSON round-trip. The Flux API types use the same JSON tags
-// k8s uses to serialize their CRDs, so this matches `kubectl apply`'s
-// decoding fidelity without keeping the raw YAML bytes around.
-//
-// Per-document cost is ~one marshal + one unmarshal; documents are
-// small (a single CR) and this only runs during the load phase, not on
-// the render hot path.
+// Flux API JSON tags govern typed admission of loaded and rendered documents.
 func decodeInto(doc map[string]any, out any) error {
 	raw, err := json.Marshal(doc)
 	if err != nil {

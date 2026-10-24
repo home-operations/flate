@@ -31,7 +31,6 @@ type Emission struct {
 	Fingerprint string
 	Unreadable  []manifest.NamedResource
 	Complete    bool
-	Render      []byte
 
 	input     manifest.BaseManifest
 	inputDoc  map[string]any
@@ -55,7 +54,6 @@ type RenderedOutput struct {
 	Manifests   []map[string]any
 	Fingerprint string
 	Unreadable  []manifest.NamedResource
-	Render      []byte
 	warnings    []manifest.Warning
 }
 
@@ -83,7 +81,7 @@ func (e *Emission) renderedOutput() RenderedOutput {
 	}
 	return RenderedOutput{
 		Children: e.Children, Manifests: e.Manifests, Fingerprint: e.Fingerprint,
-		Unreadable: e.Unreadable, Render: e.Render, warnings: warnings,
+		Unreadable: e.Unreadable, warnings: warnings,
 	}
 }
 
@@ -219,7 +217,6 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 			e.Children = slices.Clone(prev.Children)
 			e.Manifests = slices.Clone(prev.Manifests)
 			e.Unreadable = slices.Clone(prev.Unreadable)
-			e.Render = prev.Render
 		}
 	}
 	return obj, e
@@ -639,7 +636,7 @@ func (e *Emission) sameOutput(other *Emission) bool {
 		other.Fingerprint == e.Fingerprint &&
 		slices.Equal(other.documentOwners, e.documentOwners) &&
 		other.binding == e.binding &&
-		slices.Equal(other.Unreadable, e.Unreadable) && slices.Equal(other.Render, e.Render) &&
+		slices.Equal(other.Unreadable, e.Unreadable) &&
 		slices.Equal(other.shadowed, e.shadowed) &&
 		slices.EqualFunc(other.coverage, e.coverage, func(a, b footprint) bool {
 			return a.id == b.id && slices.Equal(a.record.Productions, b.record.Productions)
@@ -843,7 +840,6 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 	e.entries = make([]admission, 0, capacity)
 	e.Children = nil
 	e.Manifests = slices.Clone(next.Manifests)
-	e.Render = slices.Clone(next.Render)
 	e.Unreadable = slices.Clone(next.Unreadable)
 	clear(byID)
 	for i, a := range prepared {

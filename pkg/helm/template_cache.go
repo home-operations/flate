@@ -20,7 +20,7 @@ type chartAnalysis struct {
 type renderRecord struct {
 	key      string
 	identity string
-	Output   string
+	Output   []byte
 	Analysis *chartAnalysis
 }
 

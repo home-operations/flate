@@ -11,7 +11,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"sigs.k8s.io/yaml"
 )
 
 // TestRenderFlux_RespectsCanceledContext asserts the renderer bails
@@ -139,11 +138,10 @@ func TestRenderFlux_Metadata(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Diff(t, borrowed, snapshot)
 			repeated, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
-			assert.Equal(t, string(repeated), string(out))
+			assert.Diff(t, repeated, out)
 			assert.NoError(t, err)
 			assert.Diff(t, borrowed, snapshot)
-			var got map[string]any
-			assert.NoError(t, yaml.Unmarshal(out, &got))
+			got := out[0]
 			md := got["metadata"].(map[string]any)
 			labels, _ := md["labels"].(map[string]any)
 			annotations, _ := md["annotations"].(map[string]any)
@@ -205,13 +203,12 @@ patches:
 			assert.NoError(t, err)
 			repeated, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
-			assert.Equal(t, string(repeated), string(out))
+			assert.Diff(t, repeated, out)
 			req.Spec = parsedKS(t, ksDoc(nil))
 			absent, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
-			assert.Equal(t, string(out), string(absent))
-			var got map[string]any
-			assert.NoError(t, yaml.Unmarshal(out, &got))
+			assert.Diff(t, out, absent)
+			got := out[0]
 			md := got["metadata"].(map[string]any)
 			assert.Equal(t, md["name"], any("pre-demo-post"))
 			assert.Equal(t, md["namespace"], any("existing"))

@@ -1,11 +1,11 @@
 package kustomize
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -108,7 +108,7 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 				exercise.Store(true)
 				ready, begin := make(chan struct{}, 2), make(chan struct{})
 				type result struct {
-					out []byte
+					out []map[string]any
 					err error
 				}
 				results := make(chan result, 2)
@@ -165,11 +165,11 @@ func TestRenderFlux_RemoteValidationSlots(t *testing.T) {
 				assert.NoError(t, x.err)
 				assert.NoError(t, y.err)
 				if mode != "validation" {
-					if !bytes.Equal(x.out, y.out) || len(x.out) == 0 {
+					if !reflect.DeepEqual(x.out, y.out) || len(x.out) == 0 {
 						t.Fatal("two deterministic renders differ or are empty")
 					}
 					for _, name := range []string{"input", "shared", "git"} {
-						if !bytes.Contains(x.out, []byte("name: "+name)) {
+						if !hasRenderField(x.out, "name", name) {
 							t.Errorf("render omitted %s", name)
 						}
 					}

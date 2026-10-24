@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"sigs.k8s.io/yaml"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -156,7 +156,7 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
-		if !strings.Contains(string(out), "name: ok") {
+		if !hasRenderField(out, "name", "ok") {
 			t.Fatalf("expected rendered ConfigMap, got:\n%s", out)
 		}
 	})
@@ -167,7 +167,7 @@ func TestRenderFlux_SourceignoreAllowlist(t *testing.T) {
 		if err != nil {
 			t.Fatalf("render: %v", err)
 		}
-		if !strings.Contains(string(out), "name: common") {
+		if !hasRenderField(out, "name", "common") {
 			t.Fatalf("expected rendered ConfigMap, got:\n%s", out)
 		}
 	})
@@ -214,7 +214,7 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 			if err != nil {
 				t.Fatalf("first render: %v", err)
 			}
-			if strings.Contains(string(out1), "name: b") {
+			if hasRenderField(out1, "name", "b") {
 				t.Fatalf("b.yaml should be excluded; got %s", out1)
 			}
 			req := RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}
@@ -229,16 +229,16 @@ func TestRenderFlux_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 				t.Fatalf("persisted render = %v, want %v", ok, eligible)
 			}
 			if eligible {
-				publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, []byte("SENTINEL\n")))
+				publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
 			}
 			out2, err := RenderFlux(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil {
 				t.Fatalf("second render: %v", err)
 			}
-			if eligible && string(out2) != "SENTINEL\n" {
+			if eligible && !hasRenderField(out2, "witness", "SENTINEL") {
 				t.Errorf("expected a cache hit against the filtered view; got a re-render:\n%s", out2)
 			}
-			if !eligible && string(out2) != string(out1) {
+			if !eligible && !reflect.DeepEqual(out2, out1) {
 				t.Errorf("ineligible owner changed filtered output: %s", out2)
 			}
 		})
@@ -296,15 +296,8 @@ configMapGenerator:
 			if err != nil {
 				t.Fatalf("render: %v", err)
 			}
-			var cm struct {
-				Kind       string            `json:"kind"`
-				BinaryData map[string]string `json:"binaryData"`
-			}
-			if err := yaml.Unmarshal(out, &cm); err != nil {
-				t.Fatalf("decode ConfigMap: %v", err)
-			}
-			if cm.Kind != "ConfigMap" || cm.BinaryData["logo.png"] != base64.StdEncoding.EncodeToString([]byte(image)) {
-				t.Fatalf("expected image bytes in generated ConfigMap, got:\n%s", out)
+			if !hasRenderField(out, "kind", "ConfigMap") || !hasRenderField(out, "logo.png", base64.StdEncoding.EncodeToString([]byte(image))) {
+				t.Fatalf("expected image bytes in generated ConfigMap, got: %v", out)
 			}
 		})
 	}

@@ -1,7 +1,6 @@
 package kustomize
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -10,8 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -205,7 +204,7 @@ func TestRenderFlux_NoConsumerDiskReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, Label: label, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-	if err != nil || !strings.Contains(string(out), "name: tree") {
+	if err != nil || !hasRenderField(out, "name", "tree") {
 		t.Fatalf("virtual render = %s, %v", out, err)
 	}
 }
@@ -242,7 +241,7 @@ func TestRenderFlux_AutoGenerateEscape(t *testing.T) {
 
 func TestRenderFlux_ExoticNames(t *testing.T) {
 	t.Parallel()
-	var want []byte
+	var want []map[string]any
 	for _, name := range []string{"plain.yaml", "a b+c.yaml", "@x.yaml", "é.yaml"} {
 		files := map[string]string{"base/" + name: cmYAML("same"), "base/kustomization.yaml": existingKustomization("./" + name), "app/kustomization.yaml": existingKustomization("../base")}
 		lower := memoryTree(t, files)
@@ -251,7 +250,7 @@ func TestRenderFlux_ExoticNames(t *testing.T) {
 		if want == nil {
 			want = out
 		}
-		if !bytes.Equal(out, want) {
+		if !reflect.DeepEqual(out, want) {
 			t.Fatalf("%s changed output:\n%s", name, out)
 		}
 	}
@@ -284,7 +283,7 @@ func TestRenderFlux_SubPathResolvesLinksBeforeParents(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("subpath = %v, want %v", err, tc.want)
 			}
-			if err == nil && !strings.Contains(string(out), "name: correct") {
+			if err == nil && !hasRenderField(out, "name", "correct") {
 				t.Fatalf("resolved output = %s", out)
 			}
 		})
@@ -341,9 +340,9 @@ func TestRenderFlux_ConcurrentPrivateOverlays(t *testing.T) {
 						activeRenders.Add(1)
 						defer activeRenders.Add(-1)
 						out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: artifact, Label: "/absent", SubPath: ".", Spec: spec}, sourcecache.RetryConfig{})
-						if err != nil || !strings.Contains(string(out), fmt.Sprintf("name: render%d-shared", n)) ||
-							!strings.Contains(string(out), "marker: patched") || !strings.Contains(string(out), "payload: remote") ||
-							!strings.Contains(string(out), fmt.Sprintf("namespace: namespace%d", n)) || spec.PostBuild.Substitute["SLOT"] != fmt.Sprint(n) ||
+						if err != nil || !hasRenderField(out, "name", fmt.Sprintf("render%d-shared", n)) ||
+							!hasRenderField(out, "marker", "patched") || !hasRenderField(out, "payload", "remote") ||
+							!hasRenderField(out, "namespace", fmt.Sprintf("namespace%d", n)) || spec.PostBuild.Substitute["SLOT"] != fmt.Sprint(n) ||
 							original.TargetNamespace != "" || len(original.PostBuild.Substitute) != 0 {
 							t.Errorf("private output = %s, %v", out, err)
 						}
@@ -434,7 +433,7 @@ func TestRenderFlux_InputOrigins(t *testing.T) {
 					}
 				}
 				got, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, SubPath: sub, Spec: parsedKS(t, spec)}, sourcecache.RetryConfig{})
-				if err != nil || !bytes.Equal(got, want) {
+				if err != nil || !reflect.DeepEqual(got, want) {
 					t.Fatalf("%s memory output differs: %s, %v", state, got, err)
 				}
 			}
@@ -460,7 +459,7 @@ func TestRenderFlux_ArtifactIdentity(t *testing.T) {
 	} {
 		source := &store.SourceArtifact{Key: pin.key, Revision: pin.revision, Digest: pin.digest, LocalPath: "/missing-label", FS: memoryTree(t, map[string]string{"cm.yaml": cmYAML(pin.name)})}
 		out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: source, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-		if err != nil || !strings.Contains(string(out), "name: "+pin.name) {
+		if err != nil || !hasRenderField(out, "name", pin.name) {
 			t.Fatalf("artifact identity reused stale render: %s %v", out, err)
 		}
 	}
@@ -478,12 +477,12 @@ func TestRenderFlux_SubPathLeadingSlash(t *testing.T) {
 		t.Run(subPath, func(t *testing.T) {
 			t.Parallel()
 			got, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: subPath, Spec: demoSpec}, sourcecache.RetryConfig{})
-			if err != nil || string(got) != string(want) {
+			if err != nil || !reflect.DeepEqual(got, want) {
 				t.Fatalf("disk render = %q, %v", got, err)
 			}
 			source := treeRef(memoryTree(t, files), "pin")
 			got, err = RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: source, Label: "/virtual", SubPath: subPath, Spec: demoSpec}, sourcecache.RetryConfig{})
-			if err != nil || string(got) != string(want) {
+			if err != nil || !reflect.DeepEqual(got, want) {
 				t.Fatalf("memory render = %q, %v", got, err)
 			}
 		})
@@ -512,7 +511,7 @@ func TestRenderFlux_ReleasedPinRejectsHostContent(t *testing.T) {
 	label := testutil.WriteTree(t, map[string]string{"cm.yaml": cmYAML("host")})
 	artifact := &store.SourceArtifact{LocalPath: label, Key: "pin"}
 	out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: artifact, Label: label, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-	if !errors.Is(err, manifest.ErrInput) || strings.Contains(string(out), "name: host") {
+	if !errors.Is(err, manifest.ErrInput) || hasRenderField(out, "name", "host") {
 		t.Fatalf("released content used host resource: %q, %v", out, err)
 	}
 }
@@ -523,12 +522,12 @@ func TestRenderFlux_CacheMissesOnDirectoryMembership(t *testing.T) {
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoSpec}
 	first, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
-	if err != nil || !strings.Contains(string(first), "name: a") {
+	if err != nil || !hasRenderField(first, "name", "a") {
 		t.Fatalf("first = %q, %v", first, err)
 	}
 	testutil.WriteFile(t, root, "app/b.yaml", cmYAML("b"))
 	second, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
-	if err != nil || !strings.Contains(string(second), "name: b") {
+	if err != nil || !hasRenderField(second, "name", "b") {
 		t.Fatalf("a file added to an auto-generated directory replayed a stale render: %q, %v", second, err)
 	}
 }
@@ -625,7 +624,7 @@ func TestRenderFlux_CacheMissingComponentAppearance(t *testing.T) {
 	testutil.WriteFile(t, root, "missing/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "missing/cm.yaml", cmYAML("arrived"))
 	out, err := RenderFlux(t.Context(), cache, req, sourcecache.RetryConfig{})
-	if err != nil || !strings.Contains(string(out), "name: arrived") {
+	if err != nil || !hasRenderField(out, "name", "arrived") {
 		t.Fatalf("missing component arrival replayed stale output: %s, %v", out, err)
 	}
 }
@@ -638,7 +637,7 @@ func TestRenderFlux_ArtifactWithoutPayloadRejected(t *testing.T) {
 			t.Parallel()
 			source := &store.SourceArtifact{LocalPath: label, Key: key}
 			out, err := RenderFlux(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: source, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-			if !errors.Is(err, manifest.ErrInput) || strings.Contains(string(out), "host") {
+			if !errors.Is(err, manifest.ErrInput) || hasRenderField(out, "name", "host") {
 				t.Fatalf("render = %q, %v", out, err)
 			}
 		})

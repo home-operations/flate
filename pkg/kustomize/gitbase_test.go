@@ -235,7 +235,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderFlux: %v", err)
 	}
-	if !strings.Contains(string(out), "from-parent-ref") {
+	if !hasRenderField(out, "name", "from-parent-ref") {
 		t.Fatalf("in-repo ../ reference inside the base did not resolve:\n%s", out)
 	}
 }
@@ -449,7 +449,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
 			})
 			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
-			render := func(interval string) ([]byte, error) {
+			render := func(interval string) ([]map[string]any, error) {
 				duration, err := time.ParseDuration(interval)
 				if err != nil {
 					return nil, err
@@ -465,7 +465,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 				}
 				testutil.GitCommitAll(t, r, name, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example.invalid"}})
 			}
-			if output, err := render("1h"); err != nil || !strings.Contains(string(output), fixture.marker+"first") {
+			if output, err := render("1h"); err != nil || !hasRenderField(output, strings.TrimSuffix(fixture.marker, ": "), "first") && (fixture.name != "generators" || !strings.HasPrefix(output[0]["metadata"].(map[string]any)["name"].(string), "first-")) {
 				t.Fatalf("nested base: %s, %v", output, err)
 			}
 			update("cm.yaml", strings.ReplaceAll(fixture.resource, "first", "second"))
@@ -477,7 +477,7 @@ func TestRenderFlux_NestedGitBasesAndIntervals(t *testing.T) {
 			} {
 				requests = nil
 				output, err := render(tc.interval)
-				if err != nil || !strings.Contains(string(output), fixture.marker+tc.want) {
+				if err != nil || !hasRenderField(output, strings.TrimSuffix(fixture.marker, ": "), tc.want) && (fixture.name != "generators" || !strings.HasPrefix(output[0]["metadata"].(map[string]any)["name"].(string), tc.want+"-")) {
 					t.Fatalf("interval %s: %s, %v", tc.interval, output, err)
 				}
 				if len(requests) != 2 {
@@ -539,7 +539,7 @@ func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
 				})
 				type result struct {
 					attempts int
-					body     []byte
+					body     []map[string]any
 					err      error
 				}
 				done := make(chan result, concurrency)
@@ -586,7 +586,7 @@ func TestRenderFlux_RemoteRetryPolicies(t *testing.T) {
 						if !ok || !terminal.Attempted {
 							t.Fatalf("one-attempt result=%v", got.err)
 						}
-					} else if got.err != nil || !strings.Contains(string(got.body), "name: retried") {
+					} else if got.err != nil || !hasRenderField(got.body, "name", "retried") {
 						t.Fatalf("three-attempt result=%s, %v", got.body, got.err)
 					}
 				}

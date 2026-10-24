@@ -117,3 +117,28 @@ func TestDecodeDocs_AdvancesPastSkippedSeq(t *testing.T) {
 		t.Errorf("wrong docs survived: %v", docs)
 	}
 }
+
+func TestDecodeDocs_CumulativeSkippedAliasBudget(t *testing.T) {
+	t.Parallel()
+	mapping := "a: &a [" + strings.Repeat("x,", 99) + "x]\nb: [" + strings.Repeat("*a,", 8) + "*a]\n"
+	skipped := mapping + "? [bad, key]\n: ignored\n"
+	prefix := strings.Repeat(skipped+"---\n", 650)
+	tail := strings.Repeat(mapping+"---\n", 150)
+	for _, tc := range []struct {
+		name, input string
+		want        int
+	}{
+		{"recoverable budget", prefix, 0}, {"independent tail", tail, 150},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			docs, err := SplitDocs([]byte(tc.input))
+			assert.NoError(t, err)
+			assert.Equal(t, len(docs), tc.want)
+		})
+	}
+	docs, err := SplitDocs([]byte(prefix + tail))
+	if len(docs) != 0 || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+		t.Fatalf("skipped documents reset stream budget: %d documents, %v", len(docs), err)
+	}
+}

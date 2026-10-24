@@ -541,7 +541,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(out, "name: arrived") != exists {
+			if slices.ContainsFunc(out, func(doc map[string]any) bool { name, _ := manifest.DocMetadata(doc); return name == "arrived" }) != exists {
 				t.Fatalf("alias membership stale: %s", out)
 			}
 			if st.GetArtifact(alias.Named()) != art {

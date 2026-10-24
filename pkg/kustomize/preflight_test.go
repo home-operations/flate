@@ -343,7 +343,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			http.DefaultTransport = srv.Client().Transport
 			t.Cleanup(func() { http.DefaultTransport = original })
 			out, err := RenderFlux(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-			if err != nil || !strings.Contains(string(out), "name: remote") {
+			if err != nil || !hasRenderField(out, "name", "remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
 			if _, err := cache.remoteInputs.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil); err != nil {
@@ -408,8 +408,8 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 		{name: "plugin-strategic", control: base + "transformers: [p.yaml]\n", files: map[string]string{"p.yaml": "apiVersion: builtin\nkind: PatchStrategicMergeTransformer\nmetadata: {name: patch}\npaths: [$URL/patch.yaml]\n"}, replies: map[string]string{"/patch.yaml": patch}, want: "marker: patched"},
 		{name: "plugin-replacement-validator", control: base + "validators: [p.yaml]\n", files: map[string]string{"p.yaml": "apiVersion: builtin\nkind: ReplacementTransformer\nmetadata: {name: replace}\nreplacements: [{path: $URL/replacement.yaml}]\n"}, replies: map[string]string{"/replacement.yaml": strings.ReplaceAll(replacement, "metadata.name", "data.marker")}, want: "marker: initial"},
 		{name: "plugin-valueadd", control: base + "transformers: [p.yaml]\n", files: map[string]string{"p.yaml": "apiVersion: builtin\nkind: ValueAddTransformer\nmetadata: {name: add}\nvalue: injected\ntargetFilePath: $URL/targets.yaml\n"}, replies: map[string]string{"/targets.yaml": "targets: [{fieldPath: metadata/namespace}]\n"}, want: "namespace: injected"},
-		{name: "directory-resource-and-plugin-role", control: "resources: [plugins]\ngenerators: [plugins]\n", files: map[string]string{"plugins/kustomization.yaml": "resources: [g.yaml]\n", "plugins/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "$URL/file.txt"},
-		{name: "resource-and-plugin-role", control: "resources: [conf/g.yaml]\ngenerators: [conf/g.yaml]\n", files: map[string]string{"conf/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "$URL/file.txt"},
+		{name: "directory-resource-and-plugin-role", control: "resources: [plugins]\ngenerators: [plugins]\n", files: map[string]string{"plugins/kustomization.yaml": "resources: [g.yaml]\n", "plugins/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "files: $URL/file.txt"},
+		{name: "resource-and-plugin-role", control: "resources: [conf/g.yaml]\ngenerators: [conf/g.yaml]\n", files: map[string]string{"conf/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "files: $URL/file.txt"},
 		{name: "two-plugin-owners", control: "resources: [a, b]\n", files: map[string]string{"a/kustomization.yaml": "namePrefix: a-\ngenerators: [../g.yaml]\n", "b/kustomization.yaml": "namePrefix: b-\ngenerators: [../g.yaml]\n", "g.yaml": plugin, "a/local.txt": "owner-a", "b/local.txt": "owner-b"}, replies: map[string]string{"/file.txt": "contents"}, want: "local.txt: owner-b"},
 		{name: "inline-plugin-strategic-data", control: base + "transformers: [p.yaml]\n", files: map[string]string{"p.yaml": "apiVersion: builtin\nkind: PatchStrategicMergeTransformer\nmetadata: {name: patch}\npaths:\n- |\n  " + strings.ReplaceAll(strings.ReplaceAll(patch, "patched", "$URL/data"), "\n", "\n  ")}, want: "marker: $URL/data"},
 		{name: "replacement-field-data", control: base + "replacements: [{source: {kind: ConfigMap, name: demo, fieldPath: metadata.name}, targets: [{select: {kind: ConfigMap}, fieldPaths: ['data.[$URL/data]'], options: {create: true}}]}]\n", want: "$URL/data: demo"},
@@ -473,10 +473,10 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				if tc.name == "plugin-directory-cycle" && !strings.Contains(err.Error(), remoteResourcePrefix) {
 					t.Fatalf("cycle diagnostic lost private view: %v", err)
 				}
-			} else if err != nil || !strings.Contains(string(out), strings.ReplaceAll(tc.want, "$URL", url)) {
+			} else if err != nil || !hasRenderField(out, strings.SplitN(strings.ReplaceAll(tc.want, "$URL", url), ": ", 2)[0], strings.SplitN(strings.ReplaceAll(tc.want, "$URL", url), ": ", 2)[1]) {
 				t.Fatalf("render: %s, %v; want %q", out, err, tc.want)
 			}
-			if strings.Contains(tc.name, "two-owners") && !strings.Contains(string(out), "local.txt: owner-a") {
+			if strings.Contains(tc.name, "two-owners") && !hasRenderField(out, "local.txt", "owner-a") {
 				t.Fatalf("first owner's relative operand was lost: %s", out)
 			}
 			if marked.Load() != int32(len(tc.replies)) {
@@ -494,7 +494,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				if err := preflightRemoteResources(t.Context(), cache, view, root); err != nil {
 					t.Fatal(err)
 				}
-				snap, _, err := decodeFrame(testRenderFrame(t, rec.snapshot(), out))
+				snap, _, err := decodeFrame(testRenderFrame(t, rec.snapshot(), testRenderEncoding(t, out)))
 				if err != nil || len(snap.Remotes) != 1 || snap.Remotes[0].Input.Operation != remoteHTTP {
 					t.Fatalf("admitted file operation: %+v, %v", snap, err)
 				}

@@ -48,7 +48,7 @@ type RenderRequest struct {
 // RenderFlux consumes admitted sources through one filesystem and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
-func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]byte, error) {
+func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]map[string]any, error) {
 	if cache == nil || req.Spec == nil {
 		return nil, fmt.Errorf("%w: incomplete render request", manifest.ErrInput)
 	}
@@ -93,7 +93,9 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 				return nil, err
 			}
 			if valid {
-				return output, nil
+				if docs, err := manifest.DecodeRender(output); err == nil {
+					return docs, nil
+				}
 			}
 		}
 	}
@@ -166,8 +168,16 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	if err != nil {
 		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
+	docs, err := manifest.SplitDocs(out)
+	if err != nil {
+		return nil, err
+	}
 	reader, _, _, err = cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		frame, err := encodeFrame(rec.snapshot(), out)
+		payload, err := manifest.EncodeRender(docs)
+		if err != nil {
+			return sourcecache.ProducerResult{}, err
+		}
+		frame, err := encodeFrame(rec.snapshot(), payload)
 		if err != nil {
 			return sourcecache.ProducerResult{}, fmt.Errorf("encode kustomize render frame: %w", err)
 		}
@@ -180,7 +190,7 @@ func RenderFlux(ctx context.Context, cache *TreeCache, req RenderRequest, retry 
 	if err := reader.Close(); err != nil {
 		return nil, fmt.Errorf("%w: close kustomize render frame: %w", manifest.ErrFlux, err)
 	}
-	return out, nil
+	return docs, nil
 }
 
 // Mutable files are validated by the read set; immutable generations are part

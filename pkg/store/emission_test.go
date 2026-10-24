@@ -86,7 +86,6 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 		name string
 		edit func(*Emission)
 	}{
-		{"render", func(e *Emission) { e.Render = []byte("new") }},
 		{"unreadable", func(e *Emission) { e.Unreadable[0] = b.Obj.Named() }},
 		{"child", func(e *Emission) { e.Children[0] = b }},
 		{"documents", func(e *Emission) { e.Manifests[0] = b.Doc }},
@@ -103,7 +102,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 			_, initial := s.GetEmission(p)
 			initial.Children, initial.Manifests = []Child{a}, []map[string]any{a.Doc}
-			initial.Unreadable, initial.Render, initial.Fingerprint = []manifest.NamedResource{a.Obj.Named()}, []byte("old"), "same"
+			initial.Unreadable, initial.Fingerprint = []manifest.NamedResource{a.Obj.Named()}, "same"
 			initial.Complete = tc.name != "complete"
 			s.RecordEmitted(p, &initial)
 			predecessor := s.GetArtifact(p).(*Emission)
@@ -129,7 +128,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			if events != 1 || accepted == predecessor || accepted.Fingerprint != "same" {
 				t.Fatal("equal fingerprint discarded changed emission")
 			}
-			if string(accepted.Render) != string(attempt.Render) || !slices.Equal(accepted.Unreadable, attempt.Unreadable) || accepted.Complete != attempt.Complete || accepted.binding != attempt.binding {
+			if !slices.Equal(accepted.Unreadable, attempt.Unreadable) || accepted.Complete != attempt.Complete || accepted.binding != attempt.binding {
 				t.Fatal("changed emission lost output or completion context")
 			}
 			if !slices.EqualFunc(accepted.Children, attempt.Children, func(a, b Child) bool { return a.Obj == b.Obj }) || !slices.EqualFunc(accepted.Manifests, attempt.Manifests, func(a, b map[string]any) bool { return specValueEqual(a, b) }) {
@@ -532,7 +531,6 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 		t.Fatal("partial update lost new source context")
 	}
 	_, attempt := s.GetEmission(p)
-	attempt.Render = []byte("receipt")
 	attempt.Unreadable = []manifest.NamedResource{fresh.Obj.Named()}
 	var notifications int
 	unsub := s.AddListener(EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
@@ -543,7 +541,7 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 	accept(t, s, p, &attempt)
 	unsub()
 	_, accepted := s.GetEmission(p)
-	if notifications != 1 || string(accepted.Render) != "receipt" || !slices.Equal(accepted.Unreadable, attempt.Unreadable) {
+	if notifications != 1 || !slices.Equal(accepted.Unreadable, attempt.Unreadable) {
 		t.Fatal("context-only refresh was discarded")
 	}
 	for _, workers := range []int{2, 4} {

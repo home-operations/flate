@@ -191,3 +191,7 @@ func BenchmarkRenderFlux_MultiKSPerRoot(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkRenderFlux_CacheHitConstructed(b *testing.B) {
+	BenchmarkRenderFlux_CacheHit(b)
+}

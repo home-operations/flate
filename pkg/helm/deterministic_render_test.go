@@ -1,14 +1,12 @@
 package helm
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -64,10 +62,8 @@ data:
 	assert.NoError(t, err)
 	second, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	assert.NoError(t, err)
-	assert.Equal(t, second, first)
-	for _, rendered := range []string{first, second} {
-		docs, err := manifest.SplitDocs([]byte(rendered))
-		assert.NoError(t, err)
+	assert.Diff(t, second, first)
+	for _, docs := range [][]map[string]any{first, second} {
 		if len(docs) != 1 {
 			t.Fatalf("rendered %d documents, want 1", len(docs))
 		}
@@ -101,7 +97,7 @@ data:
 	if err == nil {
 		t.Error("invalid mustToDate rendered successfully")
 	}
-	assert.Equal(t, out, "")
+	assert.Diff(t, out, []map[string]any(nil))
 }
 
 func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
@@ -122,7 +118,7 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(out, fmt.Sprintf("cleartext: %q", plaintext)) {
+			if !hasRenderField(out, "cleartext", plaintext) {
 				t.Fatalf("decryptAES round trip differs: %s", out)
 			}
 		})

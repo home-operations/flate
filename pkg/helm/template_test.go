@@ -62,7 +62,7 @@ data:
 	}
 	skipHR := newHR()
 	skipHR.CRDsPolicy = "Skip"
-	wantRaw, err := cli.Template(t.Context(), skipHR, nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	_, err = cli.Template(t.Context(), skipHR, nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,16 +94,12 @@ data:
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantOutput := wantRaw
+			wantOutput := wantAll[1:]
 			if tc.wantInclude {
-				wantOutput = "---\n# Source: mychart/crds/widgets.yaml\n" + crd + "\n" + wantRaw
+				wantOutput = wantAll
 			}
-			assert.Equal(t, raw, wantOutput)
-			docsRaw, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-			var docs []map[string]any
-			if err == nil {
-				docs, err = manifest.SplitDocs([]byte(docsRaw))
-			}
+			assert.Diff(t, raw, wantOutput)
+			docs, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -137,10 +133,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-	if wantErr == nil {
-		_, wantErr = manifest.SplitDocs([]byte(raw))
-	}
+	_, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
@@ -162,11 +155,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 			t.Parallel()
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
-			docsRaw, err := cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-			var docs []map[string]any
-			if err == nil {
-				docs, err = manifest.SplitDocs([]byte(docsRaw))
-			}
+			docs, err := cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			if tc.policy != "Skip" {
 				if !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("got %v, want malformed CRD input error", err)
@@ -195,19 +184,12 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	raw, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-	if wantErr == nil {
-		_, wantErr = manifest.SplitDocs([]byte(raw))
-	}
+	_, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
 	for range 2 {
-		raw, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-		if err == nil {
-			_, err = manifest.SplitDocs([]byte(raw))
-		}
+		_, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 		if !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("got %v, want malformed CRD input error", err)
 		}
@@ -255,16 +237,8 @@ dependencies:
 			hr := newHR()
 			hr.CRDsPolicy = tc.policy
 			values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
-			includedRaw, wantErr := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-			var included []map[string]any
-			if wantErr == nil {
-				included, wantErr = manifest.SplitDocs([]byte(includedRaw))
-			}
-			docsRaw, err := cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-			var docs []map[string]any
-			if err == nil {
-				docs, err = manifest.SplitDocs([]byte(docsRaw))
-			}
+			included, wantErr := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+			docs, err := cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			if tc.enabled {
 				if !errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput) {
 					t.Fatalf("included: %v, omitted: %v; want malformed CRD input errors", wantErr, err)
@@ -553,17 +527,13 @@ data:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			raw, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{KubeVersion: tc.version, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+			docs, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{KubeVersion: tc.version, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 			if tc.fail {
 				if err == nil {
 					t.Fatal("invalid override accepted")
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			docs, err := manifest.SplitDocs([]byte(raw))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -661,18 +631,20 @@ func TestTemplate_ShowOnlyFraming(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var first string
+			var first []map[string]any
 			for i := range 2 {
 				hr := newHR()
 				hr.Chart.Name = "demo"
 				out, err := cli.Template(t.Context(), hr, nil, RenderOptions{ShowOnly: tc.paths, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
 				assert.NoError(t, err)
-				assert.Equal(t, out, tc.want)
+				want, err := manifest.SplitDocs([]byte(tc.want))
+				assert.NoError(t, err)
+				assert.Diff(t, out, want)
 				assert.Diff(t, templateResources(t, out), tc.names)
 				if i == 0 {
 					first = out
 				} else {
-					assert.Equal(t, out, first)
+					assert.Diff(t, out, first)
 				}
 			}
 		})

@@ -2,7 +2,6 @@ package helm
 
 import (
 	"math"
-	"strings"
 	"testing"
 
 	"helm.sh/helm/v4/pkg/chart/common"
@@ -81,7 +80,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "kind: ConfigMap") {
+	if !hasRenderField(out, "kind", "ConfigMap") {
 		t.Fatalf("unmarshalable values prevented the render: %s", out)
 	}
 }

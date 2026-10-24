@@ -896,28 +896,6 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 	return out
 }
 
-// TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer is the
-// end-to-end regression fence for issue #418. A leaf HelmRelease
-// change under cluster-apps must NOT cause cluster-apps's reconcile
-// to fail with "ConfigMap/flux-system/cluster-settings: dependency
-// not found" because the producer Kustomization (cluster-vars) that
-// renders the substituteFrom ConfigMap was skipped from the keep set.
-//
-// Wiring under test:
-//   - cluster-apps (KS, flux-system) consumes ConfigMap/cluster-settings
-//     via spec.postBuild.substituteFrom.
-//   - cluster-vars (KS, flux-system) renders that CM through a kustomize
-//     Component subtree at kubernetes/components/cluster-settings.
-//   - cluster-apps's spec.path covers an ntfy subtree whose HR file is
-//     the only changed file. The HR is suspended so no chart pull is
-//     needed for this offline fixture.
-//
-// Expectations:
-//  1. cluster-vars is in the filter keep set (ancestor-only — the
-//     producer must reconcile but doesn't promote its other children).
-//  2. Run does NOT fail with "dependency not found" for the CM.
-//  3. The producer's artifact is materialized in the store.
-//  4. The rendered ConfigMap is materialized in the store.
 func TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer(t *testing.T) {
 	dir := t.TempDir()
 
@@ -942,6 +920,7 @@ components:
 kind: Component
 resources:
   - cluster-settings.yaml
+  - retained.yaml
 `)
 	testutil.WriteFile(t, dir, "kubernetes/components/cluster-settings/cluster-settings.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -950,8 +929,11 @@ metadata:
 data:
   CLUSTER_DOMAIN: example.test
 `)
+	testutil.WriteFile(t, dir, "kubernetes/components/cluster-settings/retained.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: retained}\ndata: {value: kept}\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/consumed.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumed, namespace: flux-system}\ndata: {domain: '${CLUSTER_DOMAIN}'}\n")
 	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml", `resources:
   - communication/ntfy/ks.yaml
+  - consumed.yaml
 `)
 	testutil.WriteFile(t, dir, "kubernetes/apps/communication/ntfy/ks.yaml", testutil.KustomizationYAML("ntfy", "communication", `  interval: 10m
   path: ./kubernetes/apps/communication/ntfy/app
@@ -978,8 +960,18 @@ spec:
     namespace: flux-system
 `)
 
+	input := &countedProducerFS{FS: os.DirFS(dir)}
+	artifact := &store.SourceArtifact{FS: input, LocalPath: dir, Key: "fixture-pin"}
+	cacheDir := t.TempDir()
+	prime, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, Input: artifact, CacheDir: cacheDir, Concurrency: 2, WipeSecrets: true})
+	assert.NoError(t, err)
+	assert.NoError(t, prime.Bootstrap(t.Context()))
+	assert.NoError(t, prime.Run(t.Context()))
+	assert.NoError(t, prime.Stop())
+	coldReads := input.reads.Swap(0)
+
 	o, err := New(t.Context(), Config{
-		Path:        dir,
+		Path: dir, RepoRoot: dir, Input: artifact, CacheDir: cacheDir, Concurrency: 2,
 		WipeSecrets: true,
 		ExternalChanges: change.NewSet([]string{
 			"kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
@@ -988,6 +980,7 @@ spec:
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -1015,6 +1008,36 @@ spec:
 	if got := o.Store().GetObject(cmID); got == nil {
 		t.Errorf("rendered %s missing after Run; producer reconcile did not materialize the substituteFrom CM", cmID)
 	}
+	consumedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "consumed"}
+	consumed, ok := o.Store().GetObject(consumedID).(*manifest.ConfigMap)
+	if !ok || consumed.Data["domain"] != "example.test" {
+		t.Fatalf("producer data did not reach changed-only consumer: %#v", consumed)
+	}
+	retainedID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "retained"}
+	if o.Store().GetObject(retainedID) == nil {
+		t.Fatal("persisted producer lost its retained child")
+	}
+	if reason := sourcecache.RenderPersistenceDisabledReason(); reason == "" {
+		if warmReads := input.reads.Load(); warmReads >= coldReads {
+			t.Fatalf("persisted producer rebuilt: cold reads=%d, warm reads=%d", coldReads, warmReads)
+		}
+		t.Logf("persisted producer skipped source reads: cold=%d warm=%d", coldReads, input.reads.Load())
+	} else {
+		t.Logf("persisted publication proof ineligible: %s", reason)
+	}
+
+}
+
+type countedProducerFS struct {
+	fs.FS
+	reads atomic.Int32
+}
+
+func (f *countedProducerFS) Open(name string) (fs.File, error) {
+	if name == "kubernetes/components/cluster-settings/cluster-settings.yaml" {
+		f.reads.Add(1)
+	}
+	return f.FS.Open(name)
 }
 
 // TestOrchestrator_ChangedOnlyKeepsResourcesEscapeOwner reproduces #833

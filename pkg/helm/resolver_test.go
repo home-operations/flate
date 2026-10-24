@@ -4,7 +4,6 @@ import (
 	"context"
 	"io/fs"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 
@@ -94,10 +93,10 @@ data:
 	if err != nil {
 		t.Fatalf("Template via resolver: %v", err)
 	}
-	if !strings.Contains(out, "name: demo-cm") {
+	if len(out) != 1 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
 		t.Errorf("expected rendered ConfigMap; got: %s", out)
 	}
-	if !strings.Contains(out, "greeting: hello") {
+	if len(out) != 1 || out[0]["data"].(map[string]any)["greeting"] != "hello" {
 		t.Errorf("expected values applied; got: %s", out)
 	}
 }
@@ -112,7 +111,7 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	entered, release := make(chan struct{}, 2), make(chan struct{})
 	var reads [2]store.ReadSet
 	var releases [2]*manifest.HelmRelease
-	var outputs [2]string
+	var outputs [2][]map[string]any
 	var failures [2]error
 	for i, name := range []string{"first", "second"} {
 		root := t.TempDir()
@@ -148,7 +147,7 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	close(release)
 	workers.Wait()
 	for i, name := range []string{"first", "second"} {
-		if failures[i] != nil || !strings.Contains(outputs[i], "name: "+name) || !strings.Contains(outputs[i], "greeting: "+name) {
+		if failures[i] != nil || len(outputs[i]) != 1 || outputs[i][0]["metadata"].(map[string]any)["name"] != name || outputs[i][0]["data"].(map[string]any)["greeting"] != name {
 			t.Fatalf("operation %s: err=%v output=%s", name, failures[i], outputs[i])
 		}
 	}
@@ -159,7 +158,7 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	successor.Init(st, releases[0].Named(), nil)
 	defer successor.Retire()
 	output, err := client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)})
-	if err != nil || !strings.Contains(output, "name: replacement") || !strings.Contains(output, "greeting: replacement") || !successor.Valid() {
+	if err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" || output[0]["data"].(map[string]any)["greeting"] != "replacement" || !successor.Valid() {
 		t.Fatalf("successor: err=%v output=%s", err, output)
 	}
 }

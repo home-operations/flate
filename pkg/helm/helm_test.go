@@ -52,10 +52,10 @@ data:
 	if err != nil {
 		t.Fatalf("Template: %v", err)
 	}
-	if !strings.Contains(out, "name: demo-cm") {
+	if !hasRenderField(out, "name", "demo-cm") {
 		t.Errorf("rendered output missing expected name: %s", out)
 	}
-	if !strings.Contains(out, "greeting: hello") {
+	if !hasRenderField(out, "greeting", "hello") {
 		t.Errorf("values not applied: %s", out)
 	}
 }
@@ -93,7 +93,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	chartSnapshot := manifest.DeepCopyMap(canonical.chart.Values)
 	start := make(chan struct{})
 	var ready, done sync.WaitGroup
-	outputs := make([]string, 2)
+	outputs := make([][]map[string]any, 2)
 	ready.Add(2)
 	for i := range 2 {
 		done.Go(func() {
@@ -112,9 +112,10 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	assert.Diff(t, canonical.chart.Values, chartSnapshot)
 	assert.Diff(t, vals, snapshot)
 	assert.Diff(t, hr, hrBefore)
-	assert.Equal(t, outputs[1], outputs[0])
+	assert.Diff(t, outputs[1], outputs[0])
 	for _, want := range []string{"tag: v1", "repository: nginx", "pullPolicy: Always"} {
-		if !strings.Contains(outputs[0], want) {
+		key, value, _ := strings.Cut(want, ": ")
+		if !hasRenderField(outputs[0], key, value) {
 			t.Errorf("missing %q in render: %s", want, outputs[0])
 		}
 	}
@@ -124,7 +125,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	}
 	repeated, err := cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
-	assert.Equal(t, repeated, outputs[0])
+	assert.Diff(t, repeated, outputs[0])
 	assert.Equal(t, len(cli.chartValuesCache), len(cachedBefore))
 	for key, before := range cachedBefore {
 		assert.Diff(t, cli.chartValuesCache[key].merged, before)
@@ -186,18 +187,16 @@ func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
 	}
 	// pre-install hook should render; test hook should not when
 	// spec.test.enable is unset (default behavior matches helm-controller).
-	if !strings.Contains(out, "demo-pre") {
+	if !hasRenderField(out, "name", "demo-pre") {
 		t.Errorf("expected pre-install hook in output: %s", out)
 	}
-	if strings.Contains(out, "demo-test") {
+	if hasRenderField(out, "name", "demo-test") {
 		t.Errorf("test hook should be skipped by default: %s", out)
 	}
 }
 
-func templateResources(t *testing.T, raw string) []string {
+func templateResources(t *testing.T, docs []map[string]any) []string {
 	t.Helper()
-	docs, err := manifest.SplitDocs([]byte(raw))
-	assert.NoError(t, err)
 	resources := make([]string, 0, len(docs))
 	for _, doc := range docs {
 		name, _ := manifest.DocMetadata(doc)
@@ -280,12 +279,14 @@ func TestTemplate_ActionHookPolicy(t *testing.T) {
 		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 		assert.NoError(t, err)
 		const want = "---\n# Source: mychart/templates/pre-install-hook.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-pre\n  annotations:\n    \"helm.sh/hook\": pre-install\ndata:\n  k: v\n"
-		assert.Equal(t, out, want)
+		wantDocs, err := manifest.SplitDocs([]byte(want))
+		assert.NoError(t, err)
+		assert.Diff(t, out, wantDocs)
 		assert.Diff(t, templateResources(t, out), []string{"ConfigMap/demo-pre"})
 		opts.NoHooks = true
 		out, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 		assert.NoError(t, err)
-		assert.Equal(t, out, "")
+		assert.Diff(t, out, []map[string]any(nil))
 	})
 }
 
@@ -451,15 +452,13 @@ metadata:
 			t.Parallel()
 			hr := newHR()
 			hr.CommonMetadata = tc.common
-			raw := tc.docs
+			docs, err := manifest.SplitDocs([]byte(tc.docs))
+			assert.NoError(t, err)
 			if tc.renderedChart {
-				var err error
 				cli, cliSources := helmChartFixture(t)
-				raw, err = cli.Template(t.Context(), hr, nil, RenderOptions{NoHooks: true, Sources: cliSources})
+				docs, err = cli.Template(t.Context(), hr, nil, RenderOptions{NoHooks: true, Sources: cliSources})
 				assert.NoError(t, err)
 			}
-			docs, err := manifest.SplitDocs([]byte(raw))
-			assert.NoError(t, err)
 			want, err := manifest.SplitDocs([]byte(tc.want))
 			assert.NoError(t, err)
 			ApplyHRCommonMetadata(docs, hr.CommonMetadata)

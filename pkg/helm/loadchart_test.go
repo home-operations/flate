@@ -192,8 +192,8 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			assert.Equal(t, strings.Contains(out, "kind: ConfigMap"), enabled)
-			assert.Equal(t, strings.Contains(out, fmt.Sprintf("value: %q", value)), enabled)
+			assert.Equal(t, hasRenderField(out, "kind", "ConfigMap"), enabled)
+			assert.Equal(t, hasRenderField(out, "value", value), enabled)
 		})
 	}
 	close(start)
@@ -269,7 +269,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				rendererSources := NewSources(sources)
 				first, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
 				assert.NoError(t, err)
-				if !strings.Contains(first, `marker: "acquired"`) {
+				if !hasRenderField(first, "marker", "acquired") {
 					t.Fatal(first)
 				}
 				reads := backing.opens.Load()
@@ -278,7 +278,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				}
 				second, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
 				assert.NoError(t, err)
-				assert.Equal(t, second, first)
+				assert.Diff(t, second, first)
 				assert.Equal(t, backing.opens.Load(), reads)
 				if !persistent {
 					return
@@ -288,9 +288,11 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				d.values, err = renderer.observeValuesFiles(t.Context(), d, selected.ChartValuesFiles, false)
 				assert.NoError(t, err)
 				key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, selected), PersistOnly: true}
-				witness := first + "# pinned persistent hit witness\n"
+				witness := manifest.DeepCopyMap(first[0])
+				witness["cacheWitness"] = "pinned persistent hit witness"
+				output := encodedRender(t, []map[string]any{witness})
 				r, _, _, err := outputOwner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-					err := json.NewEncoder(w).Encode(renderRecord{Output: witness, Analysis: d.analyze()})
+					err := json.NewEncoder(w).Encode(renderRecord{Output: output, Analysis: d.analyze()})
 					return cache.ProducerResult{}, err
 				})
 				assert.NoError(t, err)
@@ -301,7 +303,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				before := backing.opens.Load()
 				hit, err := fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 				assert.NoError(t, err)
-				assert.Equal(t, hit, witness)
+				assert.Diff(t, hit, []map[string]any{witness})
 				reads = backing.opens.Load()
 				if reads <= before || len(fresh.chartValuesCache) != 1 {
 					t.Fatal("fresh persisted hit did not observe its values")
@@ -313,7 +315,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				}
 				hit, err = fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 				assert.NoError(t, err)
-				assert.Equal(t, hit, witness)
+				assert.Diff(t, hit, []map[string]any{witness})
 				assert.Equal(t, backing.opens.Load(), reads)
 				t.Log("verified pinned persisted hits and observation-only reuse")
 			})

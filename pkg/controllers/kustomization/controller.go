@@ -183,13 +183,9 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err := c.run.PreflightError(id); err != nil {
 		return err
 	}
-	data, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
+	docs, err := kustomize.RenderFlux(ctx, c.Trees, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
 	}, c.retry)
-	if err != nil {
-		return err
-	}
-	docs, err := manifest.SplitDocs(data)
 	if err != nil {
 		return err
 	}
@@ -221,7 +217,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 		return err
 	}
 	attempt.Children, attempt.Manifests = base.ParseChildren(id, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ks.TargetNamespace})
-	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, data
+	attempt.Fingerprint, attempt.Complete = fp, true
 	c.run.Emit(id, &attempt)
 	return nil
 }

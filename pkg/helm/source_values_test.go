@@ -107,12 +107,12 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
-						if !strings.Contains(first, `marker: "`+tc.want+`"`) || !strings.Contains(first, `kept: "default"`) {
+						if !hasRenderField(first, "marker", tc.want) || !hasRenderField(first, "kept", "default") {
 							t.Fatal(first)
 						}
 						second, err := cli.Template(t.Context(), selected, tc.overrides, RenderOptions{Options: Options{}, Sources: cliSources})
 						assert.NoError(t, err)
-						assert.Equal(t, second, first)
+						assert.Diff(t, second, first)
 					})
 				}
 			})
@@ -160,7 +160,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 					selected.ChartValuesFiles = tc.files
 					out, err := cli.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					assert.NoError(t, err)
-					if !strings.Contains(out, `marker: "`+tc.want+`"`) {
+					if !hasRenderField(out, "marker", tc.want) {
 						t.Fatal(out)
 					}
 				})
@@ -554,7 +554,7 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 		if want == "" {
 			want = "default"
 		}
-		if !strings.Contains(first, `marker: "`+want+`"`) {
+		if !hasRenderField(first, "marker", want) {
 			t.Fatal(first)
 		}
 	}

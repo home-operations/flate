@@ -1,8 +1,5 @@
 package kustomize
 
-// Completed render frames pair YAML with the read-set snapshot of the inputs
-// that produced it. RenderFlux validates candidates against the source view.
-
 import (
 	"encoding/binary"
 	"encoding/json"
@@ -10,8 +7,7 @@ import (
 	"math"
 )
 
-// encodeFrame frames the entry as uint32(len(snapshotJSON)) | snapshotJSON |
-// rawOutput. A valid frame can contain empty rendered output.
+// The read-set header must be validated before decoding the document payload.
 func encodeFrame(snap readSetSnapshot, output []byte) ([]byte, error) {
 	js, err := json.Marshal(snap)
 	if err != nil {

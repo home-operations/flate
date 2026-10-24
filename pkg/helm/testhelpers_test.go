@@ -93,3 +93,39 @@ func chartArchive(tb testing.TB, input fs.FS) []byte {
 	}
 	return testutil.TarGz(tb, files, 0o600, gzip.NoCompression)
 }
+
+func hasRenderField(value any, key, want string) bool {
+	switch value := value.(type) {
+	case []map[string]any:
+		for _, doc := range value {
+			if hasRenderField(doc, key, want) {
+				return true
+			}
+		}
+	case map[string]any:
+		if value[key] == want {
+			return true
+		}
+		for _, item := range value {
+			if hasRenderField(item, key, want) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range value {
+			if hasRenderField(item, key, want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func encodedRender(tb testing.TB, docs []map[string]any) []byte {
+	tb.Helper()
+	data, err := manifest.EncodeRender(docs)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return data
+}

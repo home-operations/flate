@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -68,7 +68,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
-		if !strings.Contains(out, "demo-cm") {
+		if len(out) == 0 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
 			b.Fatalf("missing rendered name")
 		}
 	}
@@ -98,7 +98,7 @@ func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
-		if !strings.Contains(out, "demo-cm") {
+		if len(out) == 0 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
 			b.Fatalf("missing rendered name")
 		}
 	}
@@ -135,13 +135,14 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			if !strings.Contains(first, `greeting: "pinned"`) || !strings.Contains(first, `replicas: "3"`) {
+			if !hasRenderField(first, "greeting", "pinned") || !hasRenderField(first, "replicas", "3") {
 				b.Fatal(first)
 			}
 			second, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
-			if err != nil || second != first {
+			if err != nil {
 				b.Fatalf("warm render differs: %v", err)
 			}
+			assert.Diff(b, second, first)
 			loaded, err := cli.describeChart(b.Context(), hr, cliSources)
 			if err != nil || loaded.valuesPin == "" {
 				b.Fatalf("source values are not pinned: %v", err)
@@ -150,9 +151,11 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 				if loaded.record == nil {
 					b.Fatal("warm render did not use persisted output")
 				}
-				witness := first + "# selected source values persisted hit\n"
+				witness := manifest.DeepCopyMap(first[0])
+				witness["cacheWitness"] = "selected source values persisted hit"
+				output := encodedRender(b, []map[string]any{witness})
 				reader, _, _, err := owner.Blob(b.Context(), sourcecache.BlobKey{Content: loaded.record.key, PersistOnly: true}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-					err := json.NewEncoder(w).Encode(renderRecord{Output: witness, Analysis: loaded.record.Analysis})
+					err := json.NewEncoder(w).Encode(renderRecord{Output: output, Analysis: loaded.record.Analysis})
 					return sourcecache.ProducerResult{}, err
 				})
 				if err != nil {
@@ -162,7 +165,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 					b.Fatal(err)
 				}
 				out, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
-				if err != nil || out != witness {
+				if err != nil || len(out) != 1 || out[0]["cacheWitness"] != witness["cacheWitness"] {
 					b.Fatalf("persisted output witness missing: %v", err)
 				}
 				b.Log("verified selected source values persisted hit")
@@ -266,7 +269,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
-		if !strings.Contains(out, "demo-cm") {
+		if len(out) == 0 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
 			b.Fatalf("missing rendered name")
 		}
 	}
@@ -377,4 +380,24 @@ func benchChartResolver(b *testing.B, dir string, input fs.FS) Sources {
 		Kind: manifest.KindGitRepository, URL: "file://" + dir, FS: input, LocalPath: dir,
 	})
 	return NewSources(st)
+}
+
+func BenchmarkTemplate_AppTemplateChartConstructed(b *testing.B) {
+	benchmarkTemplateAppTemplateChart(b, false)
+}
+
+func BenchmarkTemplate_AppTemplateChartConstructed_Acquired(b *testing.B) {
+	benchmarkTemplateAppTemplateChart(b, true)
+}
+
+func BenchmarkTemplate_AppTemplateChartUncachedConstructed(b *testing.B) {
+	BenchmarkTemplate_AppTemplateChartUncached(b)
+}
+
+func BenchmarkTemplate_CommonMetadataVariantsConstructed(b *testing.B) {
+	benchmarkTemplateCommonMetadataVariants(b, false)
+}
+
+func BenchmarkTemplate_CommonMetadataVariantsConstructed_Acquired(b *testing.B) {
+	benchmarkTemplateCommonMetadataVariants(b, true)
 }

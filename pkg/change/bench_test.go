@@ -141,7 +141,7 @@ func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		var set Set
-		if err := set.collectInputs(b.Context(), input, "input.yaml"); err != nil {
+		if err := set.CollectInputs(b.Context(), input, "input.yaml"); err != nil {
 			b.Fatal(err)
 		}
 		if _, ok := set.inputs[id]; !ok || len(set.inputs) != 1 {

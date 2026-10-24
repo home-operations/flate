@@ -21,8 +21,8 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Set is the immutable result of Detect, containing changed relative paths
-// and exact one-sided data identities for selection.
+// Set contains changed relative paths and exact one-sided data identities for selection.
+// Completed sets are immutable and safe to share; CollectInputs is construction-only.
 type Set struct {
 	paths  map[string]struct{}
 	inputs map[manifest.NamedResource]struct{}
@@ -145,7 +145,7 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 		if _, ok := aft[name]; ok {
 			input = after.FS
 		}
-		if err := out.collectInputs(ctx, input, name); err != nil {
+		if err := out.CollectInputs(ctx, input, name); err != nil {
 			return nil, err
 		}
 	}
@@ -159,7 +159,11 @@ type inputReader func([]byte) (int, error)
 
 func (r inputReader) Read(p []byte) (int, error) { return r(p) }
 
-func (s *Set) collectInputs(ctx context.Context, input fs.FS, name string) error {
+// CollectInputs adds data identities from a path admitted on exactly one side.
+// Call only while constructing an unpublished Set, never concurrently, and discard
+// the set on error. Completed sets returned by Detect or baseline resolution MUST
+// remain immutable.
+func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

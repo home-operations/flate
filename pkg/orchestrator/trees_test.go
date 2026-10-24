@@ -18,10 +18,13 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
@@ -191,6 +194,115 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 			c := changes[0]
 			if c.Name != "cfg-a" || c.Kind != "ConfigMap" || c.Status != diff.StatusChanged {
 				t.Errorf("change = %+v; want ConfigMap cfg-a changed", c)
+			}
+		})
+	}
+}
+
+func TestRenderTrees_OptionalInputRoutes(t *testing.T) {
+	t.Parallel()
+	for _, route := range []string{"directory_0300", "committed_0301"} {
+		t.Run(route, func(t *testing.T) {
+			t.Parallel()
+			before, after := t.TempDir(), t.TempDir()
+			for _, root := range []string{before, after} {
+				testutil.WriteFile(t, root, "flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: flux-system}
+spec: {url: https://example.test/cluster.git}
+`)
+				testutil.WriteFile(t, root, "flux/app.yaml", testutil.KustomizationYAML("app", "flux-system", "  path: ./apps/app\n  sourceRef: {kind: GitRepository, name: cluster}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n"))
+				testutil.WriteFile(t, root, "flux/stable.yaml", testutil.KustomizationYAML("stable", "flux-system", "  path: ./apps/stable\n  sourceRef: {kind: GitRepository, name: cluster}\n  dependsOn: [{name: app}]\n"))
+				for _, name := range []string{"app", "stable"} {
+					testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [output.yaml]\n")
+					testutil.WriteFile(t, root, "apps/"+name+"/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: flux-system}\ndata: {value: '${VALUE:=old}'}\n")
+				}
+			}
+			owner := cachetest.New(t, "", sourcecache.New)
+			var base string
+			var repo *git.Repository
+			options := &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}}
+			if route == "committed_0301" {
+				repo = testutil.GitInit(t, after)
+				base = testutil.GitCommitAll(t, repo, "base", options).String()
+			}
+			testutil.WriteFile(t, after, "flux/optional.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: new}\n")
+			var inputs *baseline.Result
+			var err error
+			if repo != nil {
+				testutil.GitCommitAll(t, repo, "optional input appears", options)
+				inputs, err = baseline.AutoResolve(t.Context(), after, base, owner)
+			} else {
+				inputs, err = baseline.ResolvePaths(t.Context(), after, before)
+			}
+			assert.NoError(t, err)
+			if repo != nil && inputs.Changes == nil {
+				t.Fatal("committed resolver returned no change set")
+			}
+			app := testutil.KustomizationID("flux-system", "app")
+			stable := testutil.KustomizationID("flux-system", "stable")
+			cluster := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			fullApp := make([][]map[string]any, 2)
+			for side, input := range []*store.SourceArtifact{inputs.BaseInput, inputs.Source} {
+				o, err := orchestrator.New(t.Context(), orchestrator.Config{
+					Path: input.LocalPath, RepoRoot: input.LocalPath, Input: input, Cache: owner, Concurrency: 2,
+					SelfURLs: []string{"https://example.test/cluster.git"},
+				})
+				assert.NoError(t, err)
+				result, err := o.Render(t.Context())
+				assert.NoError(t, err)
+				fullApp[side] = outputByParent(result.Manifests)[app]
+				if len(fullApp[side]) != 1 {
+					t.Fatalf("side %d full app documents = %d", side, len(fullApp[side]))
+				}
+				want := "${VALUE:=old}"
+				if side == 1 {
+					want = "new"
+				}
+				assert.Diff(t, fullApp[side][0]["data"], map[string]any{"value": want})
+			}
+			cfg := orchestrator.Config{BaseInput: inputs.BaseInput, Input: inputs.Source, ExternalChanges: inputs.Changes, Cache: owner, Concurrency: 2}
+			baseTree := orchestrator.Tree{RepoRoot: inputs.BaseInput.LocalPath, Path: inputs.BaseScanPath, SelfURLs: []string{"https://example.test/cluster.git"}}
+			headTree := orchestrator.Tree{RepoRoot: inputs.Source.LocalPath, Path: inputs.ScanPath, SelfURLs: []string{"https://example.test/cluster.git"}}
+			var first [2][]byte
+			for run := range 2 {
+				base, head, err := orchestrator.RenderTrees(t.Context(), baseTree, headTree, cfg)
+				assert.NoError(t, err)
+				for side, rendered := range []orchestrator.Rendered{base, head} {
+					if rendered.Result == nil || rendered.Orchestrator == nil {
+						t.Fatalf("side %d missing render result", side)
+					}
+					for _, id := range []manifest.NamedResource{app, cluster} {
+						info, _ := rendered.Store().GetStatus(id)
+						if info.Outcome() != store.OutcomePassed {
+							t.Errorf("side %d required %s was not reconciled: %+v", side, id, info)
+						}
+					}
+					info, _ := rendered.Store().GetStatus(stable)
+					assert.Equal(t, info.Outcome(), store.OutcomeUnchanged)
+					byParent := outputByParent(rendered.Result.Manifests)
+					assert.Equal(t, len(byParent[stable]), 0)
+					assert.Diff(t, byParent[app], fullApp[side])
+					type producerBatch struct {
+						Parent    manifest.NamedResource
+						Documents []map[string]any
+					}
+					var batches []producerBatch
+					for _, batch := range rendered.Result.Manifests {
+						var parent manifest.NamedResource
+						if batch.Parent != nil {
+							parent = batch.Parent.Named()
+						}
+						batches = append(batches, producerBatch{parent, batch.Documents})
+					}
+					body, err := json.Marshal(batches)
+					assert.NoError(t, err)
+					if run == 0 {
+						first[side] = body
+					} else {
+						assert.Equal(t, string(body), string(first[side]))
+					}
+				}
 			}
 		})
 	}

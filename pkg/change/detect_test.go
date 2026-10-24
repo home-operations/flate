@@ -588,7 +588,7 @@ func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
 	cancel()
 	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
 	var set Set
-	err := set.collectInputs(ctx, input, "input.yaml")
+	err := set.CollectInputs(ctx, input, "input.yaml")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error=%v", err)
 	}
@@ -619,7 +619,7 @@ func TestCollectInputs_CancelAfterOpen(t *testing.T) {
 		return ctx
 	})
 	var set Set
-	err := set.collectInputs(checked, input, "input.yaml")
+	err := set.CollectInputs(checked, input, "input.yaml")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error=%v", err)
 	}
@@ -673,7 +673,7 @@ func TestCollectInputs_ReadResults(t *testing.T) {
 				return copy(p, body), tc.readErr
 			}
 			var set Set
-			err := set.collectInputs(checked, input, "input.yaml")
+			err := set.CollectInputs(checked, input, "input.yaml")
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
 				assert.Diff(t, set.inputs, map[manifest.NamedResource]struct{}{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {}})
@@ -743,7 +743,7 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 				return copy(p, "later content"), tc.readErr
 			}
 			var set Set
-			err := set.collectInputs(ctx, input, "input.yaml")
+			err := set.CollectInputs(ctx, input, "input.yaml")
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
 			} else if !errors.Is(err, tc.wantErr) {

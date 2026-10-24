@@ -333,7 +333,25 @@ func (s selection) filterChanges(ctx context.Context, baseline *gittree.FS, rout
 			selected = append(selected, name)
 		}
 	}
-	return change.NewSet(selected), nil
+	slices.Sort(selected)
+	selected = slices.Compact(selected)
+	changes := change.NewSet(selected)
+	for _, name := range selected {
+		if before[name] == after[name] {
+			continue
+		}
+		var input fs.FS = s.current
+		if before[name] {
+			input = baseline
+		}
+		if err := changes.CollectInputs(ctx, input, name); err != nil {
+			return nil, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return changes, nil
 }
 
 func (s selection) acquireBase(ctx context.Context) error {

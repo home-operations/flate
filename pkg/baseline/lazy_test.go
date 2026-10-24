@@ -1,7 +1,10 @@
 package baseline
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -9,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -19,6 +23,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -260,7 +265,7 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			initRepoWithFile(t, root, "apps/a.yaml", "bystander")
-			pin := writeAndCommit(t, root, "apps/b.yaml", "unchanged")
+			pin := writeAndCommit(t, root, "apps/b.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\ndata: {VALUE: unchanged}\n")
 			if behavior == "reinclude" {
 				pin = writeAndCommit(t, root, ".sourceignore", "apps/b.yaml\n")
 				assert.NoError(t, os.Remove(filepath.Join(root, ".sourceignore")))
@@ -277,9 +282,111 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 				_, err = fs.Stat(view, "apps/b.yaml")
 				wantVisible := behavior == "exclude" && side == 0 || behavior == "reinclude" && side == 1
 				assert.Equal(t, err == nil, wantVisible)
+				app := testutil.KustomizationID("flux-system", "app")
+				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					app: {File: "flux/app.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}}},
+				}}
+				filter := change.NewFilter(res.Changes, index, nil)
+				if !filter.ShouldReconcile(app) {
+					t.Errorf("side %d ignore %s did not select optional input consumer", side, behavior)
+				}
 			}
 		})
 	}
+}
+
+func TestAutoResolve_TwoSidedInput(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	const body = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: flux-system}\n"
+	pin := initRepoWithFile(t, root, "input.yaml", body+"data: {VALUE: before}\n")
+	writeAndCommit(t, root, "input.yaml", body+"data: {VALUE: after}\n")
+	res, err := AutoResolve(t.Context(), root, pin.String(), cachetest.New(t, "", sourcecache.New))
+	assert.NoError(t, err)
+	assert.Diff(t, res.Changes.Paths(), []string{"input.yaml"})
+	app := testutil.KustomizationID("flux-system", "app")
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		app: {File: "flux/app.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}}},
+	}}
+	filter := change.NewFilter(res.Changes, index, nil)
+	if filter.ShouldReconcile(app) {
+		t.Fatal("two-sided input supplied an absent input identity")
+	}
+}
+
+func TestSelection_OneSidedInputOrder(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		routing []string
+		want    []string
+		readErr error
+	}{
+		{name: "duplicates", routing: []string{".sourceignore", "input.yaml", "z.yaml"}, want: []string{"input.yaml", "z.yaml"}, readErr: io.EOF},
+		{name: "first_error", routing: []string{".sourceignore", "z.yaml"}, want: []string{"input.yaml"}, readErr: fs.ErrPermission},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			before, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+				".sourceignore": {Data: []byte("*.yaml\n")}, "input.yaml": {}, "z.yaml": {},
+			}})
+			assert.NoError(t, err)
+			after, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+				".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
+			}})
+			assert.NoError(t, err)
+			var reads []string
+			input := &inputFailureFS{FS: after, fail: func(name string) error {
+				reads = append(reads, name)
+				return tc.readErr
+			}}
+			current, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input})
+			assert.NoError(t, err)
+			changes, err := (selection{current: current}).filterChanges(t.Context(), before, tc.routing, map[string]object.TreeEntry{
+				".sourceignore": {}, "input.yaml": {}, "z.yaml": {},
+			})
+			assert.Diff(t, reads, tc.want)
+			if errors.Is(tc.readErr, io.EOF) {
+				assert.NoError(t, err)
+				assert.Diff(t, changes.Paths(), []string{".sourceignore", "input.yaml", "z.yaml"})
+			} else if !errors.Is(err, tc.readErr) || changes != nil || !strings.Contains(err.Error(), "read input input.yaml:") {
+				t.Fatalf("first input failure: changes=%v err=%v", changes, err)
+			}
+		})
+	}
+}
+
+func TestSelection_NoOneSidedInputCancellation(t *testing.T) {
+	t.Parallel()
+	before, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+		"input.yaml": {Data: []byte("before")},
+	}})
+	assert.NoError(t, err)
+	after, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
+		"input.yaml": {Data: []byte("after")},
+	}})
+	assert.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	input := &inputCancelFS{FS: after, cancel: cancel}
+	current, _, err := gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input})
+	assert.NoError(t, err)
+	changes, err := (selection{current: current}).filterChanges(ctx, before, []string{"input.yaml"}, map[string]object.TreeEntry{"input.yaml": {}})
+	assert.Equal(t, ctx.Err(), context.Canceled)
+	if changes != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled two-sided selection published changes: changes=%v err=%v", changes, err)
+	}
+}
+
+type inputCancelFS struct {
+	*gittree.FS
+	cancel context.CancelFunc
+}
+
+func (f *inputCancelFS) Lstat(name string) (fs.FileInfo, error) {
+	info, err := f.FS.Lstat(name)
+	f.cancel()
+	return info, err
 }
 
 func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
@@ -323,6 +430,69 @@ func TestAutoResolve_StatusWarningSurvivesFailure(t *testing.T) {
 	if result == nil || result.Source == nil || result.Source.FS != nil || result.BaseInput != nil || len(result.Source.Warnings) != 1 || result.Source.Warnings[0].Category != manifest.WarnBaselineStatusUnavailable || result.Source.Warnings[0].Resource != (manifest.NamedResource{}) {
 		t.Fatalf("warning-only baseline = %+v", result)
 	}
+}
+
+func TestCollectInputs_BaselineFailure(t *testing.T) {
+	t.Parallel()
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled_%t", canceled), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			pin := initRepoWithFile(t, root, "unchanged", "base")
+			testutil.WriteFile(t, root, "input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional}\n")
+			testutil.WriteFile(t, root, ".git/index", "invalid index")
+			location, err := gitrepo.Locate(t.Context(), root, "")
+			assert.NoError(t, err)
+			input, err := admitLocation(t.Context(), location)
+			assert.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			failing := &inputFailureFS{FS: input.FS.(*gittree.FS), fail: func(string) error {
+				if canceled {
+					cancel()
+				}
+				return fs.ErrPermission
+			}}
+			current, _, err := gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: failing, Location: location})
+			assert.NoError(t, err)
+			repo := openHelper(t, root)
+			base, changes, identity, warnings, err := selectChanges(ctx, selection{
+				repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: current, owner: cachetest.New(t, "", sourcecache.New),
+			})
+			want := fs.ErrPermission
+			if canceled {
+				want = context.Canceled
+			}
+			if !errors.Is(err, want) || changes != nil || identity != "" {
+				t.Fatalf("input failure published a change set or lost its cause: changes=%v identity=%q err=%v", changes, identity, err)
+			}
+			if base == nil || len(warnings) != 1 || warnings[0].Category != manifest.WarnBaselineStatusUnavailable {
+				t.Fatalf("input failure lost baseline warnings: base=%v warnings=%v", base, warnings)
+			}
+		})
+	}
+}
+
+type inputFailureFS struct {
+	*gittree.FS
+	fail func(string) error
+}
+
+func (f *inputFailureFS) Open(name string) (fs.File, error) {
+	file, err := f.FS.Open(name)
+	if err != nil || !strings.HasSuffix(name, ".yaml") {
+		return file, err
+	}
+	return &inputFailureFile{File: file, fail: func() error { return f.fail(name) }}, nil
+}
+
+type inputFailureFile struct {
+	fs.File
+	fail func() error
+}
+
+func (f *inputFailureFile) Read([]byte) (int, error) {
+	return 0, f.fail()
 }
 
 func TestAutoResolve_SubmoduleWarningAttribution(t *testing.T) {

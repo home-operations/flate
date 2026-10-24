@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -55,8 +56,14 @@ data: {VALUE: available}
 			if _, err := fs.ReadFile(inputs.BaseInput.FS, "flux/optional.yaml"); !errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("baseline optional input: got %v, want not found", err)
 			}
-			changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
-			assert.NoError(t, err)
+			changes := inputs.Changes
+			if route == "directory" {
+				changes, err = change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
+				assert.NoError(t, err)
+			}
+			if changes == nil {
+				t.Fatal("resolver returned no change set")
+			}
 			assert.Diff(t, changes.Paths(), []string{"flux/optional.yaml"})
 
 			st := store.New()
@@ -95,14 +102,17 @@ data: {VALUE: available}
 			if unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster) {
 				t.Fatal("unchanged input selects app or cluster")
 			}
-			filter := change.NewFilter(changes, discovered.Index, st)
-			if !filter.ShouldReconcile(input) {
-				t.Fatal("changed optional input was not selected")
-			}
-			for _, id := range []manifest.NamedResource{app, cluster} {
-				if !filter.ShouldReconcile(id) {
-					t.Errorf("optional input appearance did not select %s", id)
+			for side, source := range []*store.SourceArtifact{inputs.BaseInput, inputs.Source} {
+				filter, _ := optionalInputFilter(t, source, changes)
+				if side == 1 && !filter.ShouldReconcile(input) {
+					t.Error("changed optional input was not selected")
 				}
+				for _, id := range []manifest.NamedResource{app, cluster} {
+					if !filter.ShouldReconcile(id) {
+						t.Errorf("side %d optional input appearance did not select %s", side, id)
+					}
+				}
+				assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("flux-system", "stable")), false)
 			}
 		})
 	}
@@ -124,6 +134,7 @@ spec:
   postBuild:
     substituteFrom: [{kind: `+kind+`, name: optional, optional: true}]
 `)
+	testutil.WriteFile(t, root, "flux/stable.yaml", testutil.KustomizationYAML("stable", "flux-system", "  path: ./apps/stable\n  sourceRef: {kind: GitRepository, name: cluster}\n  dependsOn: [{name: app}]\n"))
 	testutil.WriteFile(t, root, "apps/app/kustomization.yaml", "resources: [output.yaml]\n")
 	testutil.WriteFile(t, root, "apps/app/output.yaml", `apiVersion: v1
 kind: ConfigMap
@@ -186,12 +197,14 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 func TestOptionalInput_PairedSides(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, inputName string
-		projected       bool
+		name, inputName      string
+		projected, committed bool
 	}{
-		{"optional", "optional", false},
-		{"unrelated", "unrelated", false},
-		{"projected namespace", "optional", true},
+		{"optional", "optional", false, false},
+		{"unrelated", "unrelated", false, false},
+		{"projected namespace", "optional", true, false},
+		{"committed optional", "optional", false, true},
+		{"committed unrelated", "unrelated", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -208,9 +221,33 @@ func TestOptionalInput_PairedSides(t *testing.T) {
 			testutil.WriteFile(t, after, inputPath, fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: %s, namespace: %q}\ndata: {VALUE: after}\n", tc.inputName, namespace))
 			inputs, err := baseline.ResolvePaths(t.Context(), after, before)
 			assert.NoError(t, err)
-			for _, pair := range [][2]*store.SourceArtifact{{inputs.BaseInput, inputs.Source}, {inputs.Source, inputs.BaseInput}} {
-				changes, err := change.Detect(t.Context(), pair[0], pair[1])
-				assert.NoError(t, err)
+			for direction, pair := range [][2]*store.SourceArtifact{{inputs.BaseInput, inputs.Source}, {inputs.Source, inputs.BaseInput}} {
+				var changes *change.Set
+				if tc.committed {
+					root := t.TempDir()
+					writeOptionalInputCluster(t, root, manifest.KindConfigMap)
+					testutil.WriteFile(t, root, "flux/other.yaml", testutil.KustomizationYAML("other", "other", "  path: ./apps/other\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]\n"))
+					body, err := fs.ReadFile(inputs.Source.FS, inputPath)
+					assert.NoError(t, err)
+					if direction == 1 {
+						testutil.WriteFile(t, root, inputPath, string(body))
+					}
+					repo := testutil.GitInit(t, root)
+					options := &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}}
+					base := testutil.GitCommitAll(t, repo, "base", options)
+					if direction == 0 {
+						testutil.WriteFile(t, root, inputPath, string(body))
+					} else {
+						assert.NoError(t, os.Remove(filepath.Join(root, inputPath)))
+					}
+					testutil.GitCommitAll(t, repo, "input change", options)
+					resolved, err := baseline.AutoResolve(t.Context(), root, base.String(), cachetest.New(t, "", sourcecache.New))
+					assert.NoError(t, err)
+					changes, pair = resolved.Changes, [2]*store.SourceArtifact{resolved.BaseInput, resolved.Source}
+				} else {
+					changes, err = change.Detect(t.Context(), pair[0], pair[1])
+					assert.NoError(t, err)
+				}
 				for _, side := range pair {
 					f, _ := optionalInputFilter(t, side, changes)
 					assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), tc.inputName == "optional")

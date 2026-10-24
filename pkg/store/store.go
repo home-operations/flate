@@ -69,12 +69,13 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 }
 
 type objectCell struct {
-	static    manifest.BaseManifest
-	document  map[string]any
-	binding   *Input
-	support   *Input
-	excluded  bool
-	preflight string
+	static      manifest.BaseManifest
+	document    map[string]any
+	binding     *Input
+	support     *Input
+	excluded    bool
+	independent bool
+	preflight   string
 	authority
 }
 
@@ -267,6 +268,7 @@ type objectUpdate struct {
 	staticEqual, effectiveEqual bool
 	membershipEqual             bool
 	needsRoot                   bool
+	independent                 bool
 }
 
 func (u *objectUpdate) compare() {
@@ -324,6 +326,7 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 		if u.staticEqual && u.effectiveEqual && (!u.explicit || specValueEqual(u.cell.document, u.document)) && !u.cell.hidden && !u.cell.retired && !u.needsRoot {
 			return
 		}
+		u.independent = declarationIndependent(s.index.Load(), id)
 		sh.mu.Lock()
 		if binding != nil && !binding.current() || support != nil && !support.productionCurrent() {
 			sh.mu.Unlock()
@@ -390,7 +393,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 		cell.static, cell.binding, cell.support = u.obj, u.binding, u.support
 	}
 	cell.document = u.document
-	cell.retired = false
+	cell.retired, cell.independent = false, u.independent
 	sh.cells[id] = cell
 	if !u.membershipEqual && bucket.update(nameID{id.Namespace, id.Name}, cell.static != nil, true, bucket.generation) {
 		bucket.authority = sh.enqueueLocked(bucket.authority)
@@ -409,7 +412,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 	var buckets [shardCount][]objectUpdate
 	for _, obj := range objs {
 		i := kindShardIndex(obj.Named().Kind)
-		buckets[i] = append(buckets[i], objectUpdate{obj: obj})
+		buckets[i] = append(buckets[i], objectUpdate{obj: obj, independent: declarationIndependent(s.index.Load(), obj.Named())})
 	}
 	var anchors []objectUpdate
 	dispatches := make([]eventDispatch, 0, len(objs))
@@ -468,7 +471,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		var storage [4]regionState
 		changed := newObjectRegion(len(anchors), storage[:])
 		for _, u := range anchors {
-			changed = changed.add(u.obj.Named(), true)
+			changed = changed.add(u.obj.Named(), true, u.independent)
 		}
 		s.lockAll()
 		current := true
@@ -643,7 +646,7 @@ func (s *Store) DeleteObject(id manifest.NamedResource) bool {
 	sh.mu.Unlock()
 	var storage [4]regionState
 	changed := newObjectRegion(1, storage[:])
-	changed = changed.add(id, true)
+	changed = changed.add(id, true, false)
 	s.lockAll()
 	if sh.cells[id].static == nil {
 		s.unlockAll()
@@ -709,7 +712,7 @@ func (s *Store) addAnchor(u objectUpdate) bool {
 	sh := s.shardFor(id)
 	var storage [4]regionState
 	changed := newObjectRegion(1, storage[:])
-	changed = changed.add(id, true)
+	changed = changed.add(id, true, u.independent)
 	s.lockAll()
 	if !u.currentLocked(sh) || u.binding != nil && !u.binding.current() || u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()

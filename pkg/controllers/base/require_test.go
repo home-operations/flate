@@ -375,13 +375,21 @@ func TestExecution_ResumedPredicates(t *testing.T) {
 	execution := controllertest.NewExecution(base.New(st, nil), consumer.Named())
 	defer execution.Close()
 	deps := []manifest.DependencyRef{{NamedResource: dependency.Named(), ReadyExpr: new("false")}, {NamedResource: dependency.Named()}}
-	execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
+	calls := 0
+	execution.Dispatch(t.Context(), manifest.DrainNone, execution, func(execution *base.Execution, ctx context.Context, obj *manifest.Kustomization, level manifest.DrainLevel) error {
+		calls++
+		if obj != consumer {
+			t.Fatal("resumption replaced the captured declaration")
+		}
 		return execution.Require(ctx, deps, level)
 	})
 	if execution.Outcome() != schedule.Blocked || !slices.Equal(execution.Blocked, []manifest.NamedResource{dependency.Named()}) {
 		t.Fatal("false predicate did not park the execution")
 	}
 	execution.Settle(t.Context(), manifest.DrainForce)
+	if calls != 2 {
+		t.Fatalf("reconcile calls=%d, want initial and retained callback", calls)
+	}
 	info, _ := st.GetStatus(consumer.Named())
 	if execution.Outcome() != schedule.DependencyFailed || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{dependency.Named()}) {
 		t.Fatalf("resumed execution lost its false predicate: %+v", info)

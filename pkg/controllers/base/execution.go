@@ -257,20 +257,27 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 
 	e.initial, _ = e.Store.GetStatus(id)
 	e.recovering = e.initial.IsDependencyFailure() || e.initial.Status == store.StatusFailed && e.Reads.ReplacesInvalid()
-	run := func(ctx context.Context, level manifest.DrainLevel) error {
-		if !e.Reads.Valid() {
-			return nil
-		}
-		if err := e.requireDeclaration(ctx, level); err != nil {
-			return err
-		}
+	err := e.reconcile(ctx, obj, level, func(ctx context.Context, obj T, level manifest.DrainLevel) error {
 		return reconcile(state, ctx, obj, level)
-	}
-	err := run(ctx, level)
+	})
 	if _, blocked := errors.AsType[*depwait.ErrBlocked](err); blocked {
-		e.resume = run
+		e.resume = func(ctx context.Context, level manifest.DrainLevel) error {
+			return e.reconcile(ctx, obj, level, func(ctx context.Context, obj T, level manifest.DrainLevel) error {
+				return reconcile(state, ctx, obj, level)
+			})
+		}
 	}
 	e.finish(err)
+}
+
+func (e *Execution) reconcile[T manifest.BaseManifest](ctx context.Context, obj T, level manifest.DrainLevel, reconcile func(context.Context, T, manifest.DrainLevel) error) error {
+	if !e.Reads.Valid() {
+		return nil
+	}
+	if err := e.requireDeclaration(ctx, level); err != nil {
+		return err
+	}
+	return reconcile(ctx, obj, level)
 }
 
 func (e *Execution) requireDeclaration(ctx context.Context, level manifest.DrainLevel) error {

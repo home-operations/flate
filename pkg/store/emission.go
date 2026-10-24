@@ -35,6 +35,8 @@ type Emission struct {
 	Fingerprint string
 	Unreadable  []manifest.NamedResource
 	Complete    bool
+	// Borrowed inventory MUST remain immutable during publication preparation.
+	entriesOwned bool
 
 	input     manifest.BaseManifest
 	inputDoc  map[string]any
@@ -109,8 +111,9 @@ type contributor struct {
 }
 
 type footprint struct {
-	id     manifest.NamedResource
-	record manifest.DiscoveryRecord
+	id          manifest.NamedResource
+	record      manifest.DiscoveryRecord
+	independent bool
 }
 type sourceBinding struct {
 	source    manifest.NamedResource
@@ -119,10 +122,11 @@ type sourceBinding struct {
 }
 
 type admission struct {
-	changed bool
-	child   Child
-	targets []manifest.ProducerTarget
-	binding sourceBinding
+	changed     bool
+	independent bool
+	child       Child
+	targets     []manifest.ProducerTarget
+	binding     sourceBinding
 }
 type inputStamp struct {
 	owner                *producerSlot
@@ -165,18 +169,19 @@ func (s *Store) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest 
 	var view capture
 	sh.captureLocked(id, sh.cells[id], &view)
 	sh.mu.RUnlock()
-	return s.declaration(id, view)
+	return view.declaration()
 }
 
-func (s *Store) declaration(id manifest.NamedResource, view capture) manifest.BaseManifest {
-	if view.child.Obj == nil || view.accepted || view.owner != nil {
-		return view.child.Obj
-	}
-	record, _ := s.index.Load().Lookup(id)
-	if len(record.Productions) == 0 || slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+func declarationIndependent(index *manifest.DiscoveryIndex, id manifest.NamedResource) bool {
+	record, _ := index.Lookup(id)
+	return len(record.Productions) == 0 || slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
 		return p.Owner == (manifest.NamedResource{}) || p.Owner == id
-	}) {
-		return view.child.Obj
+	})
+}
+
+func (c capture) declaration() manifest.BaseManifest {
+	if c.independent || c.accepted || c.owner != nil {
+		return c.child.Obj
 	}
 	return nil
 }
@@ -208,7 +213,7 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 	}
 	sh.mu.RUnlock()
 	if reads == nil {
-		obj = s.declaration(id, view)
+		obj = view.declaration()
 	}
 	e := Emission{Reads: reads, input: obj, inputDoc: view.child.Doc, previous: prev,
 		inputHead: inputStamp{owner: view.owner, generation: view.generation, binding: view.source}}
@@ -478,6 +483,10 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 	}
 	coverage := map[manifest.NamedResource]*contributor{}
 	for id, r := range index.Records {
+		if len(r.Productions) == 0 {
+			continue
+		}
+		independent := declarationIndependent(index, id)
 		for _, p := range r.Productions {
 			if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
 				continue
@@ -489,7 +498,7 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 			}
 			// Each identity is visited once, so repeated owner evidence can only match the tail.
 			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
-				c.records = append(c.records, footprint{id, r})
+				c.records = append(c.records, footprint{id: id, record: r, independent: independent})
 			}
 			if a, ok := s.GetArtifact(p.Source).(*SourceArtifact); ok {
 				c.binding.key, c.binding.root = a.Key, a.LocalPath
@@ -504,7 +513,15 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 	}
 	s.lockAll()
 	if s.index.Load() == nil {
+		// Every non-independent declaration MUST occur in a contributor footprint.
 		for owner, c := range coverage {
+			for _, record := range c.records {
+				sh := s.shardFor(record.id)
+				if cell, exists := sh.cells[record.id]; exists {
+					cell.independent = record.independent
+					sh.cells[record.id] = cell
+				}
+			}
 			sh := s.shardFor(owner)
 			slot := sh.slots[owner]
 			if slot == nil {
@@ -687,22 +704,54 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 	}
 }
 
+func entriesMatch(children []Child, entries []admission) bool {
+	if len(children) != len(entries) {
+		return false
+	}
+	for i, child := range children {
+		if !childEqual(child, entries[i].child) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Store) prepareChildren(children []Child) []admission {
+	prepared := make([]admission, 0, len(children))
+	index := s.index.Load()
+	for _, child := range children {
+		if child.Obj != nil {
+			prepared = append(prepared, admission{child: child, independent: declarationIndependent(index, child.Obj.Named())})
+		}
+	}
+	return prepared
+}
+
 func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emission, byID map[manifest.NamedResource]int) []admission {
 	var refs, superseded, retained []manifest.NamedResource
-	prepared := make([]admission, 0, len(next.Children))
+	prepared := next.entries
+	if !next.entriesOwned || !entriesMatch(next.Children, prepared) {
+		prepared = s.prepareChildren(next.Children)
+	}
 	dynamic := false
-	for _, child := range next.Children {
-		if child.Obj == nil {
-			continue
-		}
+	compacted := prepared[:0]
+	for i, entry := range prepared {
+		child := entry.child
 		if child.Obj.Named() == id {
+			if len(compacted) == i {
+				// ReadSet retains the unfiltered inventory for lazy captures.
+				compacted = make([]admission, i, len(prepared)-1)
+				copy(compacted, prepared[:i])
+			}
 			continue
 		}
 		child.Productions = slices.Clone(child.Productions)
-		byID[child.Obj.Named()] = len(prepared)
-		prepared = append(prepared, admission{child: child, binding: next.binding})
+		entry.child, entry.binding = child, next.binding
+		byID[child.Obj.Named()] = len(compacted)
+		compacted = append(compacted, entry)
 		dynamic = dynamic || manifest.ProducerNeedsCandidates(child.Obj)
 	}
+	prepared = compacted
 	if !dynamic {
 		for i := range prepared {
 			prepared[i].targets = manifest.ProducerTargets(prepared[i].child.Obj)
@@ -880,12 +929,13 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 		return publicationRejected
 	}
 	var storage [4]regionState
-	changed := changedTargets(prev, proposal, storage[:])
+	changed := s.changedTargets(prev, proposal, storage[:])
 	if proposal.shadows(s.contributionBinding(id)) {
 		for _, f := range proposal.coverage {
-			changed = changed.add(f.id, true)
+			changed = changed.add(f.id, true, f.independent)
 		}
 	}
+	independent := declarationIndependent(s.index.Load(), id)
 	ps := s.shardFor(id)
 	s.lockAll()
 	slot := ps.slots[id]
@@ -940,7 +990,7 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 				ps.admitAbsenceLocked(id, objectFacet)
 			}
 			cell.authority = ps.advanceLocked(cell.authority)
-			cell.hidden = true
+			cell.hidden, cell.independent = true, independent
 			ps.cells[id] = cell
 		}
 		slot.hidden.Store(true)
@@ -971,12 +1021,12 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 	return publicationAccepted
 }
 
-func changedTargets(prev, proposal *Emission, storage []regionState) objectRegion {
+func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) objectRegion {
 	changed := newObjectRegion(len(proposal.entries), storage)
 	add := func(entry admission, direct bool) {
-		changed = changed.add(entry.child.Obj.Named(), direct)
+		changed = changed.add(entry.child.Obj.Named(), direct, entry.independent)
 		for _, target := range entry.targets {
-			changed = changed.add(target.NamedResource, direct)
+			changed = changed.add(target.NamedResource, direct, declarationIndependent(s.index.Load(), target.NamedResource))
 		}
 	}
 	next := 0
@@ -1008,6 +1058,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 		prev = nil
 	}
 	e := *next
+	e.entriesOwned = false
 	e.validated = new(atomic.Pointer[manifest.BaseManifest])
 	e.shadowed = nil
 	if prev != nil {
@@ -1268,6 +1319,7 @@ func ownershipLabel(key string) bool {
 type capture struct {
 	excluded      bool
 	accepted      bool
+	independent   bool
 	binding       *Input
 	support       *Input
 	bound         bool
@@ -1291,7 +1343,7 @@ func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
 
 func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view *capture) manifest.BaseManifest {
 	if view != nil {
-		*view = capture{accepted: cell.rooted, generation: cell.generation, excluded: cell.excluded, preflight: cell.preflight, binding: cell.binding, support: cell.support}
+		*view = capture{independent: cell.independent, accepted: cell.rooted, generation: cell.generation, excluded: cell.excluded, preflight: cell.preflight, binding: cell.binding, support: cell.support}
 	}
 	if cell.hidden {
 		return nil
@@ -1347,6 +1399,7 @@ type regionState struct {
 	payload                             *SourceArtifact
 	cell                                objectCell
 	live, static, direct, visible, seed bool
+	independent                         bool
 	producerGeneration                  uint64
 	bucketGeneration                    uint64
 }
@@ -1380,7 +1433,7 @@ func (r objectRegion) position(id manifest.NamedResource) (int, bool) {
 	return 0, false
 }
 
-func (r objectRegion) add(id manifest.NamedResource, direct bool) objectRegion {
+func (r objectRegion) add(id manifest.NamedResource, direct, independent bool) objectRegion {
 	if i, seen := r.position(id); seen {
 		r.states[i].direct = r.states[i].direct || direct
 		return r
@@ -1396,7 +1449,7 @@ func (r objectRegion) add(id manifest.NamedResource, direct bool) objectRegion {
 	if r.positions != nil {
 		r.positions[id] = len(r.states)
 	}
-	r.states = append(r.states, regionState{id: id, direct: direct})
+	r.states = append(r.states, regionState{id: id, direct: direct, independent: independent})
 	return r
 }
 
@@ -1431,16 +1484,16 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 		if slot := s.shardFor(id).slots[id]; slot != nil {
 			if e := slot.current.Load(); e != nil {
 				for _, a := range e.entries {
-					region = region.add(a.child.Obj.Named(), false)
+					region = region.add(a.child.Obj.Named(), false, false)
 					for _, t := range a.targets {
-						region = region.add(t.NamedResource, false)
+						region = region.add(t.NamedResource, false, false)
 					}
 				}
 			}
 		}
 		if c := s.coverage[id]; c != nil {
 			for _, f := range c.records {
-				region = region.add(f.id, false)
+				region = region.add(f.id, false, f.independent)
 			}
 		}
 	}
@@ -1453,6 +1506,8 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 		id := state.id
 		sh := s.shardFor(id)
 		state.cell = sh.cells[id]
+		// Metadata-only cells may predate preparation; frozen facts cannot disagree.
+		state.independent = state.independent || state.cell.independent
 		if state.cell.generation == 0 {
 			admissions[kindShardIndex(id.Kind)]++
 		}
@@ -1598,7 +1653,7 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 		if cell.hidden && state.live {
 			sh.clearFacetsLocked(id)
 		}
-		cell.retired, cell.hidden = !state.static, !state.live
+		cell.retired, cell.hidden, cell.independent = !state.static, !state.live, state.independent
 		var view capture
 		sh.captureLocked(id, cell, &view)
 		after := view.child

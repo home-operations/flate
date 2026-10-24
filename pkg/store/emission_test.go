@@ -3871,3 +3871,228 @@ func TestRecordEmitted_BorrowedPayloadOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestGetDeclaration_IndependenceLifecycle(t *testing.T) {
+	t.Parallel()
+	for _, support := range []string{"uncovered", "independent", "covered"} {
+		for _, route := range []string{"pre_index", "post_index", "document", "batch", "included", "preflight", "readset", "readmit", "anchor", "batch_anchor"} {
+			t.Run(support+"/"+route, func(t *testing.T) {
+				t.Parallel()
+				st := New()
+				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+				raw := &manifest.OCIRepository{Name: "input", Namespace: "apps", URL: "oci://raw.example"}
+				st.AddObject(owner)
+				proofs := []manifest.Production{{Owner: owner.Named()}}
+				independent := support == "independent"
+				if independent {
+					proofs = append(proofs, manifest.Production{})
+				}
+				if support == "uncovered" {
+					proofs, independent = nil, true
+				}
+				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Named(): {Productions: proofs}}}
+				if route == "anchor" || route == "batch_anchor" {
+					index.Records[ownerID("descendant")] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: raw.Named()}}}
+				}
+				if route == "pre_index" {
+					st.AddObject(raw)
+					if st.GetDeclaration(raw.Named()) != raw {
+						t.Fatal("pre-index declaration lost independent support")
+					}
+				}
+				st.SetDiscoveryIndex(index)
+				switch route {
+				case "post_index":
+					st.AddObject(raw)
+				case "document":
+					st.AddObject(raw, map[string]any{"apiVersion": manifest.SourceDomain + "/v1"})
+				case "batch":
+					st.AddObjects([]manifest.BaseManifest{raw})
+				case "included", "preflight":
+					if route == "included" {
+						st.SetIncluded(raw.Named(), false)
+					} else {
+						st.SetPreflight(raw.Named(), "preflight")
+					}
+					st.AddObject(raw)
+				case "readset":
+					st.SetArtifact(manifest.BootstrapSourceID, &SourceArtifact{Key: "source"})
+					var reads ReadSet
+					reads.Init(st, owner.Named(), nil)
+					defer reads.Retire()
+					reads.Admit(raw, manifest.BootstrapSourceID, manifest.NamedResource{})
+				case "readmit":
+					st.AddObject(raw)
+					if !st.DeleteObject(raw.Named()) {
+						t.Fatal("fixture did not delete its first admission")
+					}
+					st.AddObject(raw)
+				case "anchor", "batch_anchor":
+					if route == "anchor" {
+						st.AddObject(raw)
+					} else {
+						st.AddObjects([]manifest.BaseManifest{raw})
+					}
+				}
+				var want manifest.BaseManifest
+				if independent || route == "anchor" || route == "batch_anchor" {
+					want = raw
+				}
+				assert.Equal(t, st.GetObject(raw.Named()), manifest.BaseManifest(raw))
+				assert.Equal(t, st.GetDeclaration(raw.Named()), want)
+				got, _, emission := st.GetEmission(raw.Named())
+				defer emission.Finish()
+				assert.Equal(t, got, want)
+				var reads ReadSet
+				reads.Init(st, ownerID("reader"), nil)
+				defer reads.Retire()
+				assert.Equal(t, reads.GetDeclaration(raw.Named()), want)
+				assert.Equal(t, reads.input(raw.Named()).view.independent, independent)
+				if route == "included" {
+					assert.Equal(t, reads.input(raw.Named()).view.excluded, true)
+				}
+				if route == "preflight" {
+					assert.Equal(t, reads.input(raw.Named()).view.preflight, "preflight")
+				}
+				if route == "document" {
+					added := 0
+					defer st.AddListener(EventObjectAdded, func(id manifest.NamedResource, _ any) {
+						if id == raw.Named() {
+							added++
+						}
+					}, false)()
+					doc := map[string]any{"apiVersion": manifest.SourceDomain + "/v1beta2"}
+					st.AddObject(raw, doc)
+					if reads.Valid() {
+						t.Fatal("document replacement retained the captured generation")
+					}
+					assert.Equal(t, reads.GetDeclaration(raw.Named()), want)
+					assert.Equal(t, reads.input(raw.Named()).view.independent, independent)
+					assert.Diff(t, reads.input(raw.Named()).view.child.Doc, map[string]any{"apiVersion": manifest.SourceDomain + "/v1"})
+					var current ReadSet
+					current.Init(st, ownerID("current"), nil)
+					defer current.Retire()
+					got, document, replacement := current.GetEmission(raw.Named())
+					defer replacement.Finish()
+					assert.Equal(t, got, want)
+					assert.Equal(t, st.GetDeclaration(raw.Named()), want)
+					assert.Diff(t, document, doc)
+					assert.Equal(t, current.input(raw.Named()).view.independent, independent)
+					if replacement.inputHead.generation <= reads.input(raw.Named()).view.generation {
+						t.Fatal("document replacement did not advance the generation")
+					}
+					st.AddObject(raw, manifest.DeepCopyMap(doc))
+					if !current.Valid() || added != 1 {
+						t.Fatalf("equal document admission: valid=%t events=%d, want true and 1", current.Valid(), added)
+					}
+					assert.Equal(t, st.GetDeclaration(raw.Named()), want)
+					assert.Equal(t, current.GetDeclaration(raw.Named()), want)
+					assert.Equal(t, current.input(raw.Named()).view.independent, independent)
+				}
+			})
+		}
+	}
+}
+
+func TestRecordEmitted_IndependencePublication(t *testing.T) {
+	t.Parallel()
+	for _, independent := range []bool{false, true} {
+		for _, route := range []string{"first", "stable", "replacement", "hidden_producer", "reachability", "target", "expanded_coverage", "expanded_inventory", "metadata"} {
+			t.Run(fmt.Sprintf("independent_%t/%s", independent, route), func(t *testing.T) {
+				t.Parallel()
+				st := New()
+				owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+				child := emissionChild("output", "first")
+				proofs := []manifest.Production{{Owner: owner.Named()}}
+				if route == "expanded_coverage" {
+					proofs[0].Owner = ownerID("nested")
+				}
+				if independent {
+					proofs = append(proofs, manifest.Production{})
+				}
+				id := child.Obj.Named()
+				if route == "hidden_producer" {
+					id = owner.Named()
+					proofs[0].Owner = ownerID("covering")
+				} else {
+					st.AddObject(owner)
+				}
+				records := map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: proofs}}
+				if route == "reachability" || route == "expanded_coverage" {
+					records[ownerID("descendant")] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: id}}}
+				}
+				if route == "target" {
+					child = Child{Obj: &manifest.RawObject{APIVersion: "objectbucket.io/v1alpha1", Kind: "ObjectBucketClaim", Name: id.Name, Namespace: id.Namespace}}
+				}
+				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: records})
+				sh := st.shardFor(id)
+				sh.mu.RLock()
+				_, present := sh.cells[id]
+				sh.mu.RUnlock()
+				if present {
+					t.Fatal("index manufactured an absent object cell")
+				}
+				if route == "metadata" {
+					st.SetIncluded(id, false)
+					st.SetPreflight(id, "preflight")
+				}
+				var absent ReadSet
+				absent.Init(st, ownerID("absent"), nil)
+				defer absent.Retire()
+				assert.Equal(t, absent.GetDeclaration(id), nil)
+				_, _, output := st.GetEmission(owner.Named())
+				defer output.Finish()
+				output.Complete = true
+				if route != "reachability" {
+					output.Children = []Child{child}
+				}
+				nested := &manifest.Kustomization{Name: "nested", Namespace: "apps"}
+				if route == "expanded_coverage" || route == "expanded_inventory" {
+					output.Children = []Child{{Obj: nested}}
+				}
+				st.RecordEmitted(owner.Named(), &output, nil)
+				if route == "expanded_inventory" {
+					st.RecordEmitted(nested.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
+					st.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil)
+				}
+				if !slices.Contains(slices.Collect(st.Sweep()), absent.ID()) || absent.Valid() {
+					t.Fatal("first publication missed the registered absence")
+				}
+				if route == "stable" || route == "replacement" {
+					child = emissionChild("output", "second")
+					children := []Child{child}
+					if route == "replacement" {
+						children = append(children, emissionChild("extra", "value"))
+					}
+					st.RecordEmitted(owner.Named(), &Emission{Children: children, Complete: true}, nil)
+				}
+				sh.mu.RLock()
+				cell := sh.cells[id]
+				fact := cell.independent
+				sh.mu.RUnlock()
+				if route == "metadata" {
+					assert.Equal(t, cell.excluded, true)
+					assert.Equal(t, cell.preflight, "preflight")
+				}
+				assert.Equal(t, fact, independent)
+				if route == "reachability" || route == "target" || route == "expanded_coverage" || route == "expanded_inventory" {
+					assert.Equal(t, st.GetDeclaration(id), nil)
+					assert.Equal(t, st.GetObject(id), nil)
+				} else if route != "hidden_producer" {
+					assert.Equal(t, st.GetDeclaration(id), child.Obj)
+					var reads ReadSet
+					reads.Init(st, owner.Named(), nil)
+					defer reads.Retire()
+					_, _, next := reads.GetEmission(owner.Named())
+					defer next.Finish()
+					reads.Bind(&next)
+					var want manifest.BaseManifest
+					if independent {
+						want = child.Obj
+					}
+					assert.Equal(t, reads.GetDeclaration(id), want)
+				}
+			})
+		}
+	}
+}

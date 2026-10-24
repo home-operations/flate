@@ -1141,3 +1141,130 @@ func TestProductions_SelfPublication(t *testing.T) {
 		t.Fatal("self-publication exemption ignored replacement of the declaration")
 	}
 }
+
+func TestReadSet_BoundDeclarationAuthority(t *testing.T) {
+	t.Parallel()
+	for _, support := range []string{"unindexed", "no_productions", "independent", "self", "covered"} {
+		t.Run(support, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			raw := emissionChild("input", "raw")
+			prospective := emissionChild("input", "prospective")
+			st.AddObjects([]manifest.BaseManifest{owner, raw.Obj})
+			proofs := []manifest.Production{{Owner: owner.Named()}}
+			switch support {
+			case "no_productions":
+				proofs = nil
+			case "independent":
+				proofs = append(proofs, manifest.Production{})
+			case "self":
+				proofs = append(proofs, manifest.Production{Owner: raw.Obj.Named()})
+			}
+			if support != "unindexed" {
+				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Obj.Named(): {Productions: proofs}}})
+			}
+			var reads ReadSet
+			reads.Init(st, owner.Named(), nil)
+			defer reads.Retire()
+			_, _, next := reads.GetEmission(owner.Named())
+			defer next.Finish()
+			next.Children = []Child{prospective}
+			reads.Bind(&next)
+			assert.Equal(t, reads.GetObject(raw.Obj.Named()), prospective.Obj)
+			assert.Diff(t, reads.input(raw.Obj.Named()).view.child.Doc, prospective.Doc)
+			var want manifest.BaseManifest
+			if support != "covered" {
+				want = prospective.Obj
+			}
+			assert.Equal(t, reads.GetDeclaration(raw.Obj.Named()), want)
+			assert.Equal(t, st.GetObject(raw.Obj.Named()), raw.Obj)
+			view := reads.input(raw.Obj.Named()).view
+			if view.accepted || view.owner != nil {
+				t.Fatal("prospective child manufactured accepted authority")
+			}
+			st.RecordEmitted(owner.Named(), &next, nil)
+			assert.Equal(t, st.GetDeclaration(raw.Obj.Named()), prospective.Obj)
+			assert.Equal(t, reads.GetDeclaration(raw.Obj.Named()), want)
+		})
+	}
+}
+
+func TestReadSet_BoundInventoryPublication(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"self_first", "self_last", "borrowed", "remapped"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			raw, prospective := emissionChild("input", "raw"), emissionChild("input", "prospective")
+			st.AddObjects([]manifest.BaseManifest{owner, raw.Obj})
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				raw.Obj.Named(): {Productions: []manifest.Production{{Owner: owner.Named()}}},
+			}})
+			if mode == "borrowed" {
+				st.RecordEmitted(owner.Named(), &Emission{Children: []Child{prospective}, Complete: true}, nil)
+			}
+			var reads ReadSet
+			reads.Init(st, owner.Named(), nil)
+			defer reads.Retire()
+			_, _, next := reads.GetEmission(owner.Named())
+			defer next.Finish()
+			children := []Child{{Obj: owner}, prospective}
+			if mode == "self_last" {
+				children[0], children[1] = children[1], children[0]
+			}
+			if mode != "borrowed" {
+				next.Children = children
+			}
+			reads.Bind(&next)
+			want := make([]manifest.NamedResource, len(reads.produced))
+			for i, entry := range reads.produced {
+				want[i] = entry.child.Obj.Named()
+			}
+			assert.Equal(t, next.entriesOwned, mode != "borrowed")
+			published := prospective
+			switch mode {
+			case "borrowed":
+				next.Children = children
+			case "remapped":
+				children = slices.Clone(children)
+				published = emissionChild("input", "remapped")
+				children[1] = published
+				next.Children = children
+			}
+			next.Complete = true
+			st.RecordEmitted(owner.Named(), &next, nil)
+			got := make([]manifest.NamedResource, len(reads.produced))
+			for i, entry := range reads.produced {
+				got[i] = entry.child.Obj.Named()
+			}
+			assert.Diff(t, got, want)
+			assert.Equal(t, reads.GetObject(raw.Obj.Named()), prospective.Obj)
+			assert.Equal(t, reads.GetDeclaration(raw.Obj.Named()), nil)
+			assert.Equal(t, st.GetDeclaration(raw.Obj.Named()), published.Obj)
+			assert.Equal(t, st.GetObject(owner.Named()), manifest.BaseManifest(owner))
+		})
+	}
+}
+
+func TestReadSet_DeclarationFreeze(t *testing.T) {
+	t.Parallel()
+	st := New()
+	raw := &manifest.OCIRepository{Name: "covered", Namespace: "apps"}
+	st.AddObject(raw)
+	var before, after ReadSet
+	before.Init(st, ownerID("before"), nil)
+	after.Init(st, ownerID("after"), nil)
+	defer before.Retire()
+	defer after.Retire()
+	assert.Equal(t, before.GetDeclaration(raw.Named()), manifest.BaseManifest(raw))
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{raw.Named(): {Productions: []manifest.Production{{Owner: ownerID("owner")}}}}})
+	if after.Matches(&before) {
+		t.Fatal("matching reclassified the immutable pre-index declaration")
+	}
+	assert.Equal(t, before.GetDeclaration(raw.Named()), manifest.BaseManifest(raw))
+	assert.Equal(t, after.GetDeclaration(raw.Named()), nil)
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{})
+	assert.Equal(t, st.GetDeclaration(raw.Named()), nil)
+}

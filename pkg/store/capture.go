@@ -12,7 +12,7 @@ import (
 // Its storage MUST remain owned by that execution until retirement is swept.
 type ReadSet struct {
 	warnings     []manifest.Warning
-	produced     []Child
+	produced     []admission
 	invalid      atomic.Bool
 	retired      atomic.Bool
 	store        *Store
@@ -230,7 +230,7 @@ func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifes
 	input := r.input(id)
 	r.Capture(input)
 	input.declaration = true
-	return r.store.declaration(id, input.view)
+	return input.view.declaration()
 }
 
 // Capture records a caller-owned named input without reconstructing its identity index.
@@ -250,8 +250,8 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 	id := input.Ref.NamedResource
 	if input.derived&1 == 0 {
 		for _, child := range r.produced {
-			if child.Obj.Named() == id {
-				input.view.child, input.derived = child, input.derived|1
+			if child.child.Obj.Named() == id {
+				input.view.child, input.view.independent, input.derived = child.child, child.independent, input.derived|1
 				break
 			}
 		}
@@ -445,7 +445,7 @@ func (r *ReadSet) Materializer(id manifest.NamedResource, production manifest.Pr
 func (r *ReadSet) UnsettledProducers(id manifest.NamedResource) []manifest.NamedResource {
 	input := r.input(id)
 	productions := r.productions(input, nil)
-	if r.store.declaration(id, input.view) != nil {
+	if input.view.declaration() != nil {
 		return nil
 	}
 	var pending []manifest.NamedResource
@@ -679,14 +679,26 @@ func (r *ReadSet) Promotions(id manifest.NamedResource, index *manifest.Discover
 
 // Bind attaches consumed provenance and retains prospective children before publication.
 func (r *ReadSet) Bind(emission *Emission) {
+	previous := emission.previous
 	if emission.Reads != r {
 		_, _, captured := r.GetEmission(r.id)
 		emission.input, emission.inputDoc, emission.inputHead = captured.input, captured.inputDoc, captured.inputHead
 		emission.binding, emission.coverage = captured.binding, captured.coverage
+		previous = captured.previous
 		captured.Finish()
 	}
 	emission.Reads = r
-	r.produced = emission.Children
+	emission.entriesOwned = true
+	if previous != nil {
+		shared := len(emission.Children) == len(previous.Children) && (len(emission.Children) == 0 || &emission.Children[0] == &previous.Children[0])
+		emission.entriesOwned = !shared && !entriesMatch(emission.Children, previous.entries)
+	}
+	if emission.entriesOwned {
+		emission.entries = r.store.prepareChildren(emission.Children)
+	} else {
+		emission.entries = previous.entries
+	}
+	r.produced = emission.entries
 }
 
 // Matches recaptures a predecessor's consumed projections in a fresh execution.
@@ -700,7 +712,7 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 		if input.derived&1 != 0 && !semanticEqual(Child{Obj: r.GetObject(id), Doc: r.input(id).view.child.Doc}, input.view.child) {
 			return false
 		}
-		if input.declaration && (r.GetDeclaration(id) == nil) != (r.store.declaration(id, input.view) == nil) {
+		if input.declaration && (r.GetDeclaration(id) == nil) != (input.view.declaration() == nil) {
 			return false
 		}
 		if input.derived&2 != 0 {

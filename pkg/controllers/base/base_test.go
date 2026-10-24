@@ -527,6 +527,79 @@ func TestExecution_Dispatch(t *testing.T) {
 		}
 	}
 
+	for _, emitted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("covered/emitted_%t", emitted), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			tasks := task.NewBounded(2)
+			parent := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			predicted := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			predicted.Chart.Name = "predicted"
+			accepted := predicted.Clone()
+			accepted.Chart.Name = "accepted"
+			st.AddObjects([]manifest.BaseManifest{parent, predicted})
+			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				predicted.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
+			}})
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Message: "materializing"})
+			c := base.New(st, tasks)
+			var bodies atomic.Int64
+			var seen atomic.Pointer[manifest.HelmRelease]
+			reconcile := func(_ *testing.T, _ context.Context, obj *manifest.HelmRelease, _ manifest.DrainLevel) error {
+				bodies.Add(1)
+				seen.Store(obj)
+				return nil
+			}
+			parked := make(chan struct{})
+			var first *base.Execution
+			tasks.Go(t.Context(), "dispatch", func(ctx context.Context) {
+				first = controllertest.NewExecution(c, predicted.Named())
+				first.Dispatch(ctx, manifest.DrainNone, t, reconcile)
+				if bodies.Load() != 0 || first.Outcome() != schedule.Blocked || !first.Valid() ||
+					len(first.Blocked) != 1 || first.Blocked[0] != parent.Named() {
+					t.Errorf("covered prediction: bodies=%d outcome=%v blocked=%v valid=%t", bodies.Load(), first.Outcome(), first.Blocked, first.Valid())
+				}
+				close(parked)
+			})
+			tasks.Go(t.Context(), "publish", func(context.Context) {
+				tasks.YieldSlot(func() { <-parked })
+				next := &store.Emission{Complete: true}
+				if emitted {
+					next.Children = []store.Child{{Obj: accepted}}
+				}
+				st.RecordEmitted(parent.Named(), next, nil)
+				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
+			})
+			tasks.BlockTillDone()
+			defer first.Close()
+			invalidated := false
+			for id := range st.Sweep() {
+				invalidated = invalidated || id == predicted.Named()
+			}
+			if tasks.Failures() != 0 || !invalidated || first.Valid() || bodies.Load() != 0 {
+				t.Fatalf("publication: failures=%d invalidated=%t valid=%t bodies=%d", tasks.Failures(), invalidated, first.Valid(), bodies.Load())
+			}
+			var fresh *base.Execution
+			tasks.Go(t.Context(), "redispatch", func(ctx context.Context) {
+				first.Settle(ctx, manifest.DrainNone)
+				fresh = controllertest.NewExecution(c, predicted.Named())
+				fresh.Dispatch(ctx, manifest.DrainNone, t, reconcile)
+			})
+			tasks.BlockTillDone()
+			defer fresh.Close()
+			info, _ := st.GetStatus(predicted.Named())
+			if tasks.Failures() != 0 || !fresh.Valid() {
+				t.Fatalf("fresh dispatch: failures=%d valid=%t", tasks.Failures(), fresh.Valid())
+			}
+			if emitted {
+				if bodies.Load() != 1 || seen.Load() != accepted || info.Outcome() != store.OutcomePassed {
+					t.Fatalf("accepted child: bodies=%d seen=%+v status=%+v", bodies.Load(), seen.Load(), info)
+				}
+			} else if bodies.Load() != 0 || st.GetDeclaration(predicted.Named()) != nil {
+				t.Fatalf("empty producer authorized prediction: bodies=%d status=%+v", bodies.Load(), info)
+			}
+		})
+	}
 }
 
 func TestFingerprintDedup(t *testing.T) {

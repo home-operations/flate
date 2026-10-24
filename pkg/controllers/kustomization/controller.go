@@ -118,7 +118,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	}
 	sourceContent := struct{ Path, Key, Revision, Digest string }{source.LocalPath, source.Key, source.Revision, source.Digest}
 	fp, handled, err := c.run.FingerprintDedup(id, ks.Content(sourceContent))
-	if handled {
+	if handled || err != nil {
 		return err
 	}
 

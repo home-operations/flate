@@ -787,6 +787,129 @@ func (s *guardedSourceFS) Open(name string) (fs.File, error) {
 	return s.FS.Open(name)
 }
 
+func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
+	t.Parallel()
+	c, s, _ := newControllerWithFixture(t)
+	initial := s.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	guard := &guardedSourceFS{FS: initial.FS}
+	counted := *initial
+	counted.FS = guard
+	s.SetArtifact(manifest.BootstrapSourceID, &counted)
+	ks := &manifest.Kustomization{
+		Name: "apps", Namespace: "flux-system", Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
+		},
+	}
+	s.AddObject(ks)
+	execution := c.newExecution(ks.Named())
+	captured := make(chan struct{})
+	resume := make(chan struct{})
+	release := sync.OnceFunc(func() { close(resume) })
+	defer func() {
+		release()
+		c.Tasks.BlockTillDone()
+		execution.run.Close()
+	}()
+	ks, ok := execution.run.Reads.Get[*manifest.Kustomization](ks.Named())
+	if !ok {
+		t.Fatal("Kustomization not captured")
+	}
+	source, applyIgnore, err := execution.resolveSource(ks)
+	assert.NoError(t, err)
+	if !execution.run.Reads.Valid() {
+		t.Fatal("initial capture is invalid")
+	}
+	before := guard.opened.Load()
+	type observation struct {
+		valid    bool
+		opens    int64
+		err      error
+		handled  bool
+		dedupErr error
+	}
+	result := make(chan observation, 1)
+	c.Tasks.Go(t.Context(), "render", func(ctx context.Context) {
+		close(captured)
+		c.Tasks.YieldSlot(func() { <-resume })
+		valid := execution.run.Reads.Valid()
+		err := execution.render(ctx, ks, source, applyIgnore)
+		opens := guard.opened.Load() - before
+		_, handled, dedupErr := execution.run.FingerprintDedup(ks.Named(), nil)
+		result <- observation{valid: valid, opens: opens, err: err, handled: handled, dedupErr: dedupErr}
+	})
+	c.Tasks.Go(t.Context(), "replace", func(context.Context) {
+		defer release()
+		c.Tasks.YieldSlot(func() { <-captured })
+		next := ks.Clone()
+		next.NamePrefix = "updated-"
+		s.AddObject(next)
+	})
+	got := <-result
+	if got.valid {
+		t.Fatal("replacement did not invalidate captured inputs before rendering")
+	}
+	if got.opens != 0 {
+		t.Fatalf("rejected render opened source %d times, want 0", got.opens)
+	}
+	if !got.handled || got.dedupErr == nil {
+		t.Fatalf("invalid capture dedup: handled=%t, err=%v", got.handled, got.dedupErr)
+	}
+	if got.err == nil || !errors.Is(got.err, got.dedupErr) {
+		t.Fatalf("render did not return the admission rejection: %v", got.err)
+	}
+}
+
+type admissionSuspension struct {
+	*manifest.Kustomization
+	checks int
+}
+
+func (s *admissionSuspension) Suspended() bool {
+	s.checks++
+	return s.checks == 3
+}
+
+func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
+	t.Parallel()
+	c, st, _ := newControllerWithFixture(t)
+	initial := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	guard := &guardedSourceFS{FS: initial.FS}
+	counted := *initial
+	counted.FS = guard
+	st.SetArtifact(manifest.BootstrapSourceID, &counted)
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{
+			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
+		},
+	}
+	declaration := &admissionSuspension{Kustomization: ks}
+	st.AddObject(declaration)
+	sourceContent := struct{ Path, Key, Revision, Digest string }{counted.LocalPath, counted.Key, counted.Revision, counted.Digest}
+	probe := c.newExecution(ks.Named())
+	fp, handled, want := probe.run.FingerprintDedup(ks.Named(), ks.Content(sourceContent))
+	probe.run.Close()
+	if fp == "" || handled || want == nil || declaration.checks != 3 {
+		t.Fatalf("admission contract: fingerprint=%q handled=%t err=%v checkpoints=%d", fp, handled, want, declaration.checks)
+	}
+	declaration.checks = 0
+	execution := c.newExecution(ks.Named())
+	defer execution.run.Close()
+	source, applyIgnore, err := execution.resolveSource(ks)
+	assert.NoError(t, err)
+	before := guard.opened.Load()
+	got := execution.render(t.Context(), ks, source, applyIgnore)
+	if !errors.Is(got, want) {
+		t.Errorf("render error = %v, want admission error %v", got, want)
+	}
+	if opens := guard.opened.Load() - before; opens != 0 {
+		t.Errorf("rejected render opened source %d times, want 0", opens)
+	}
+	if artifact := st.GetArtifact(ks.Named()); artifact != nil {
+		t.Errorf("rejected attempt published %T", artifact)
+	}
+}
+
 func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 	for _, swapDuringRender := range []bool{false, true} {
 		t.Run(fmt.Sprint(swapDuringRender), func(t *testing.T) {

@@ -36,7 +36,7 @@ type entryResolution struct {
 	subtree   string
 	synthetic bool
 	pinned    bool
-	refs      []*manifest.Kustomization
+	refs      []manifest.BaseManifest
 }
 
 // Admission supplies bytes and remote metadata; only publishEntrySource publishes identities.
@@ -98,7 +98,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 	if previous, ok := d.resolvedSources[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
 		d.aliasViews = nil
 	}
-	groups := map[manifest.NamedResource][]*manifest.Kustomization{manifest.BootstrapSourceID: nil}
+	groups := map[manifest.NamedResource][]manifest.BaseManifest{manifest.BootstrapSourceID: nil}
 	for kind := range manifest.Kinds() {
 		if kind.Group != manifest.SourceDomain {
 			continue
@@ -115,10 +115,9 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			evidence[child.Obj.Named()] = child
 		}
 		for _, child := range d.loader.Kustomizations() {
-			ks := child.Obj.(*manifest.Kustomization)
-			ref := ks.SourceID()
+			ref, _, _ := child.Obj.SourcePath()
 			if allowMissing || evidence[ref].Obj != nil || d.cfg.Store.GetObject(ref) != nil {
-				groups[ref] = append(groups[ref], ks)
+				groups[ref] = append(groups[ref], child.Obj)
 			}
 		}
 	}
@@ -128,13 +127,14 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 				continue
 			}
 			for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
+				_, _, hasPath := obj.SourcePath()
 				for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 					if ref.Group != manifest.SourceDomain || ref.Use != "source" && ref.Use != "artifact" {
 						continue
 					}
-					if ks, ok := obj.(*manifest.Kustomization); ok {
-						if !slices.Contains(groups[ref.NamedResource], ks) {
-							groups[ref.NamedResource] = append(groups[ref.NamedResource], ks)
+					if hasPath {
+						if !slices.Contains(groups[ref.NamedResource], obj) {
+							groups[ref.NamedResource] = append(groups[ref.NamedResource], obj)
 						}
 					} else if _, seen := groups[ref.NamedResource]; !seen {
 						groups[ref.NamedResource] = nil
@@ -150,8 +150,8 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		obj := d.cfg.Store.GetObject(id)
 		if obj == nil {
 			obj = evidence[id].Obj
-			if obj != nil && slices.ContainsFunc(groups[id], func(ks *manifest.Kustomization) bool {
-				return d.cfg.Store.GetObject(ks.Named()) != nil
+			if obj != nil && slices.ContainsFunc(groups[id], func(witness manifest.BaseManifest) bool {
+				return d.cfg.Store.GetObject(witness.Named()) != nil
 			}) {
 				previous, resolved := d.resolvedSources[id]
 				artifact, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
@@ -203,7 +203,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 					pinned = append(pinned, descriptor)
 				}
 			} else if descriptor == nil {
-				slices.SortFunc(groups[id], func(a, b *manifest.Kustomization) int { return a.Named().Compare(b.Named()) })
+				slices.SortFunc(groups[id], func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 				var err error
 				candidate.subtree, err = d.bootstrapArtifactRoot(ctx, groups[id])
 				if err != nil {
@@ -272,7 +272,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 	return published, nil
 }
 
-func (d *discoverer) bootstrapArtifactRoot(ctx context.Context, kss []*manifest.Kustomization) (string, error) {
+func (d *discoverer) bootstrapArtifactRoot(ctx context.Context, witnesses []manifest.BaseManifest) (string, error) {
 	bootstrap := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 	scan, err := filepath.Rel(bootstrap.LocalPath, d.cfg.Path)
 	if err != nil {
@@ -284,11 +284,12 @@ func (d *discoverer) bootstrapArtifactRoot(ctx context.Context, kss []*manifest.
 	var selected string
 	for candidate := filepath.ToSlash(scan); ; candidate = path.Dir(candidate) {
 		valid := true
-		for _, ks := range kss {
+		for _, witness := range witnesses {
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
-			name := path.Join(candidate, manifest.NormalizeClaimBase(ks.Path))
+			_, authoredPath, _ := witness.SourcePath()
+			name := path.Join(candidate, manifest.NormalizeClaimBase(authoredPath))
 			if !safepath.Contains(filepath.Join(bootstrap.LocalPath, candidate), filepath.Join(bootstrap.LocalPath, name)) {
 				valid = false
 				break

@@ -162,40 +162,59 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 
 func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 	t.Parallel()
-	left := selectedSnapshot(ksParent, []Doc{cmDoc(ksParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "")}, store.StatusInfo{})
-	moved := ksParent
-	moved.Path = "other/apps"
-	right := selectedSnapshot(moved, nil, store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
-	backing := []Suppression{{Parent: hrParent, Side: SideOrig, Count: 1, Reason: "supplied"}, {Reason: "untouched"}}
-	before := slices.Clone(backing)
-	original := manifest.DeepCopyMap(left.Manifests[0].Documents[0])
-	normalized := 0
-	out, warnings, suppressed, err := Compare(left, right, nil, Options{
-		Format: FormatJSON, Suppressed: backing[:1],
-		Normalize: func(doc map[string]any) { normalized++; doc["kind"] = "Changed" },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document struct {
-		Suppressed []Suppression `json:"suppressed"`
-	}
-	if err := json.Unmarshal(out, &document); err != nil {
-		t.Fatal(err)
-	}
-	want := Suppression{Parent: moved, Side: SideCurrent, Count: 1, Reason: "failed"}
-	if len(document.Suppressed) != 2 || document.Suppressed[0] != backing[0] || document.Suppressed[1] != want {
-		t.Errorf("supplied or moved producer notes differ: %+v", document.Suppressed)
-	}
-	if !slices.Equal(suppressed, document.Suppressed) || len(warnings) != 0 {
-		t.Errorf("structured suppressions = %+v; warnings = %+v", suppressed, warnings)
-	}
-	_, directWarnings := Changes(nil, nil, Options{Suppressed: backing[:1]})
-	if len(directWarnings) != 0 {
-		t.Errorf("structured changes constructed presentation warnings: %+v", directWarnings)
-	}
-	if !slices.Equal(backing, before) || !reflect.DeepEqual(left.Manifests[0].Documents[0], original) || len(left.Manifests) != 1 || normalized != 0 {
-		t.Error("comparison modified caller data or normalized withheld documents")
+	for _, side := range []Side{SideOrig, SideCurrent} {
+		t.Run(string(side), func(t *testing.T) {
+			t.Parallel()
+			left := selectedSnapshot(ksParent, []Doc{cmDoc(ksParent, manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "")}, store.StatusInfo{})
+			moved := ksParent
+			moved.Path = "././apps/a"
+			right := selectedSnapshot(moved, []Doc{cmDoc(moved, manifest.NamedResource{Name: "config", Namespace: "apps"}, "new", "")}, store.StatusInfo{})
+			unavailable := map[manifest.NamedResource]store.StatusInfo{ksParent.NamedResource: {Status: store.StatusFailed, Message: "failed"}}
+			if side == SideOrig {
+				left.Unavailable = unavailable
+			} else {
+				right.Unavailable = unavailable
+			}
+			backing := []Suppression{{Parent: hrParent, Side: SideOrig, Count: 1, Reason: "supplied"}, {Reason: "untouched"}}
+			before := slices.Clone(backing)
+			originalLeft := manifest.DeepCopyMap(left.Manifests[0].Documents[0])
+			originalRight := manifest.DeepCopyMap(right.Manifests[0].Documents[0])
+			selectedErr := errors.New("selected failure")
+			normalized := 0
+			out, warnings, suppressed, err := Compare(left, right, selectedErr, Options{
+				Format: FormatJSON, Suppressed: backing[:1],
+				Normalize: func(doc map[string]any) { normalized++; doc["kind"] = "Changed" },
+			})
+			if !errors.Is(err, selectedErr) {
+				t.Fatalf("selected error lost: %v", err)
+			}
+			var document struct {
+				Suppressed []Suppression `json:"suppressed"`
+			}
+			if err := json.Unmarshal(out, &document); err != nil {
+				t.Fatal(err)
+			}
+			moved.Path = "./apps/a"
+			want := Suppression{Parent: moved, Side: side, Count: 1, Reason: "failed"}
+			if len(document.Suppressed) != 2 || document.Suppressed[0] != backing[0] || document.Suppressed[1] != want {
+				t.Errorf("supplied or moved producer notes differ: %+v", document.Suppressed)
+			}
+			if !slices.Equal(suppressed, document.Suppressed) || len(warnings) != 0 {
+				t.Errorf("structured suppressions = %+v; warnings = %+v", suppressed, warnings)
+			}
+			images, notes, err := CompareImages(left, right, selectedErr, true)
+			if !errors.Is(err, selectedErr) || len(images) != 0 || !slices.Equal(notes, []Suppression{want}) {
+				t.Errorf("image suppression or selected error differs: %v, %+v, %v", images, notes, err)
+			}
+			_, directWarnings := Changes(nil, nil, Options{Suppressed: backing[:1]})
+			if len(directWarnings) != 0 {
+				t.Errorf("structured changes constructed presentation warnings: %+v", directWarnings)
+			}
+			if !slices.Equal(backing, before) || !reflect.DeepEqual(left.Manifests[0].Documents[0], originalLeft) ||
+				!reflect.DeepEqual(right.Manifests[0].Documents[0], originalRight) || len(left.Manifests) != 1 || len(right.Manifests) != 1 || normalized != 0 {
+				t.Error("comparison modified caller data or normalized withheld documents")
+			}
+		})
 	}
 }
 

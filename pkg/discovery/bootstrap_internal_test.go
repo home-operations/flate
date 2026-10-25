@@ -74,32 +74,79 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 func TestResolveEntrySources_Identity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		kind, group, namespace, name string
-		want                         bool
+		kind, group, namespace, name, path string
+		want                               bool
 	}{
-		{manifest.KindGitRepository, manifest.SourceDomain, "flux-system", "source", true},
-		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "source", true},
-		{manifest.KindBucket, manifest.SourceDomain, "other", "source", true},
-		{manifest.KindHelmRepository, manifest.SourceDomain, "other", "source", false},
-		{manifest.KindExternalArtifact, manifest.SourceDomain, "other", "source", false},
-		{manifest.KindGitRepository, "wrong.group", "other", "source", false},
-		{manifest.KindGitRepository, manifest.SourceDomain, "", "source", false},
-		{manifest.KindGitRepository, manifest.SourceDomain, "other", "", false},
+		{manifest.KindGitRepository, manifest.SourceDomain, "flux-system", "source", "", true},
+		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "source", "", true},
+		{manifest.KindBucket, manifest.SourceDomain, "other", "source", "", true},
+		{manifest.KindHelmRepository, manifest.SourceDomain, "other", "source", "", false},
+		{manifest.KindExternalArtifact, manifest.SourceDomain, "other", "source", "", false},
+		{manifest.KindGitRepository, "wrong.group", "other", "source", "", false},
+		{manifest.KindGitRepository, manifest.SourceDomain, "", "source", "", false},
+		{manifest.KindGitRepository, manifest.SourceDomain, "other", "", "", false},
+		{"", "", "other", "", "./apps", false},
+		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "", "./apps", false},
 	} {
-		t.Run(tc.kind+"/"+tc.group+"/"+tc.namespace+"/"+tc.name, func(t *testing.T) {
+		t.Run(tc.kind+"/"+tc.group+"/"+tc.namespace+"/"+tc.name+"/"+tc.path, func(t *testing.T) {
 			t.Parallel()
 			root := filepath.Join(t.TempDir(), ".flate-base", "missing")
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {Data: []byte("input")}}})
-			ks := &manifest.Kustomization{Name: "apps", Namespace: tc.namespace, SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: tc.group + "/v1", Kind: tc.kind, Name: tc.name}}
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"apps/file": {Data: []byte("input")}}})
+			ref := kustomizev1.CrossNamespaceSourceReference{Kind: tc.kind, Name: tc.name}
+			if tc.group != "" {
+				ref.APIVersion = tc.group + "/v1"
+			}
+			ks := &manifest.Kustomization{Name: "apps", Namespace: tc.namespace, Path: tc.path, SourceRef: ref}
 			st.AddObject(ks)
 			d := discoverer{cfg: Config{Path: root, Store: st}}
 			count, err := d.resolveEntrySources(t.Context(), true)
 			if err != nil || (count == 1) != tc.want {
 				t.Fatalf("resolution = %d, %v", count, err)
 			}
-			if obj := st.GetObject(ks.SourceID()); tc.want && (obj == nil || obj.Named() != ks.SourceID()) {
+			obj := st.GetObject(ks.SourceID())
+			if tc.want && (obj == nil || obj.Named() != ks.SourceID()) || !tc.want && (obj != nil || st.GetArtifact(ks.SourceID()) != nil) {
 				t.Fatalf("identity = %v", obj)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		obj  manifest.BaseManifest
+		want bool
+	}{
+		{
+			name: "source reference without path fact",
+			obj: &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{
+				Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "source"},
+			}}, want: true,
+		},
+		{
+			name: "artifact reference without path fact",
+			obj: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps",
+				Spec: map[string]any{"sources": []any{map[string]any{"kind": manifest.KindOCIRepository, "name": "source"}}}}, want: true,
+		},
+		{
+			name: "loader witness without path fact",
+			obj: &manifest.RawObject{APIVersion: manifest.FluxKustomizeDomain + "/v1", Kind: manifest.KindKustomization, Name: "lookalike", Namespace: "apps",
+				Spec: map[string]any{"path": ".", "sourceRef": map[string]any{"kind": manifest.KindOCIRepository, "name": "source"}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {}}})
+			st.AddObject(tc.obj)
+			d := discoverer{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
+			count, err := d.resolveEntrySources(t.Context(), true)
+			if err != nil || (count == 1) != tc.want {
+				t.Fatalf("generic reference resolution = %d, %v", count, err)
+			}
+			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "source"}
+			artifact, ok := st.GetArtifact(id).(*store.SourceArtifact)
+			if tc.want && (!ok || artifact.LocalRoot != root || st.GetObject(id).Named() != id) || !tc.want && (ok || st.GetObject(id) != nil) {
+				t.Fatalf("generic reference identity or root changed: %+v", artifact)
 			}
 		})
 	}
@@ -279,6 +326,37 @@ func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
 				}
 			})
 		}
+		t.Run(kind+"/duplicate and replaced witnesses", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"apps/x/file": {}}}
+			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+			witness := &manifest.Kustomization{Name: "apps", Namespace: "other", Path: "./absent",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
+			st.AddObject(witness)
+			source := witness.SourceID()
+			d := discoverer{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
+			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source) != nil {
+				t.Fatalf("failed root resolution = %d, %v", aliases, err)
+			}
+			if !slices.Equal(d.resolvedSources[source].refs, []manifest.BaseManifest{witness}) {
+				t.Fatalf("loader/store witnesses were duplicated or copied: %+v", d.resolvedSources[source].refs)
+			}
+			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source) != nil {
+				t.Fatalf("unchanged witnesses made progress = %d, %v", aliases, err)
+			}
+			replacement := witness.Clone()
+			replacement.Path = "./apps/x"
+			st.AddObject(replacement)
+			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 1 {
+				t.Fatalf("replacement witness did not retry = %d, %v", aliases, err)
+			}
+			artifact, ok := st.GetArtifact(source).(*store.SourceArtifact)
+			if !ok || artifact.LocalRoot != root || !artifact.InputAlias || st.GetObject(source).Named() != source || st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+				t.Fatalf("retried alias changed source or bootstrap identity: %+v", artifact)
+			}
+		})
 	}
 }
 

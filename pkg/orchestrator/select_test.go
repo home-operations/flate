@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -944,36 +945,80 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name    string
-		reason  store.StatusReason
-		message string
-		want    bool
+		name                     string
+		reason                   store.StatusReason
+		message                  string
+		requestedName, namespace string
+		emptyNamespace, local    bool
+		nonParticipant           bool
+		inferred, labels         bool
+		want                     bool
 	}{
 		{name: "typed skipped", reason: store.ReasonSkipped, want: true},
 		{name: "typed unchanged", reason: store.ReasonUnchanged, message: "different words", want: true},
 		{name: "suspended", reason: store.ReasonSuspended},
 		{name: "misleading skip", message: "skipped: external source"},
 		{name: "misleading unchanged", message: "unchanged"},
+		{name: "matched name", requestedName: "external", reason: store.ReasonSkipped, want: true},
+		{name: "unmatched name", requestedName: "other", reason: store.ReasonSkipped},
+		{name: "matched namespace", namespace: "apps", reason: store.ReasonSkipped, want: true},
+		{name: "unmatched namespace", namespace: "other", reason: store.ReasonSkipped},
+		{name: "empty object namespace", namespace: "apps", emptyNamespace: true, reason: store.ReasonSkipped, want: true},
+		{name: "local source", local: true, reason: store.ReasonSkipped},
+		{name: "non-participating kind", nonParticipant: true, reason: store.ReasonSkipped},
+		{name: "inferred namespace excludes output", requestedName: "external", inferred: true, reason: store.ReasonSkipped, want: true},
+		{name: "labels exclude output", labels: true, reason: store.ReasonSkipped, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			obj := &manifest.Kustomization{Name: "external", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
-			run := selectedRun(&Result{})
+			namespace := "apps"
+			if tc.emptyNamespace {
+				namespace = ""
+			}
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "sources", Name: "source"}
+			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "external", Namespace: namespace,
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Namespace: source.Namespace, Name: source.Name}}
+			if tc.nonParticipant {
+				obj = &manifest.HelmRelease{Name: "external", Namespace: namespace, Chart: manifest.HelmChart{Source: source}}
+			}
+			run, other := selectedRun(&Result{}), selectedRun(&Result{})
+			run.repoRoot = t.TempDir()
 			run.store.AddObject(obj)
-			run.store.AddObject(&manifest.OCIRepository{Name: "source", Namespace: "apps"})
+			run.store.AddObject(&manifest.OCIRepository{Name: source.Name, Namespace: source.Namespace})
 			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
-			root := []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Named().Kind}}
-			selected, err, _ := Select([]Rendered{run}, nil, root, nil)
-			if err != nil || selected[0].External != nil {
+			if tc.local {
+				run.store.SetArtifact(source, &store.SourceArtifact{LocalPath: run.repoRoot, FS: fstest.MapFS{"file": {}}})
+			}
+			if tc.inferred {
+				kept := &manifest.Kustomization{Name: "kept", Namespace: "kept"}
+				run.store.AddObject(kept)
+				run.index = indexForTest(map[manifest.NamedResource]string{kept.Named(): "kept.yaml", obj.Named(): "external.yaml"})
+				run.filter = change.NewFilter(change.NewSet([]string{"kept.yaml"}), run.index, run.store)
+			}
+			var labels map[string]string
+			if tc.labels {
+				labels = map[string]string{"app": "excluded"}
+			}
+			root := []manifest.NamedResource{{Group: obj.Named().Group, Kind: obj.Named().Kind, Name: tc.requestedName, Namespace: tc.namespace}}
+			selected, err, _ := Select([]Rendered{run}, nil, root, labels)
+			if err != nil || len(selected[0].External) != 0 {
 				t.Fatalf("single-run external disclosures: %+v %v", selected[0].External, err)
 			}
-			selected, err, _ = Select([]Rendered{run, run}, nil, root, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, res := range selected {
-				if (len(res.External) == 1) != tc.want || tc.want && res.External[0].Category != manifest.WarnExternalSource {
-					t.Fatalf("typed external disclosure = %+v, want=%t", res.External, tc.want)
+			for externalSide, runs := range [][]Rendered{{run, other}, {other, run}} {
+				selected, err, _ = Select(runs, nil, root, labels)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i, res := range selected {
+					var want []manifest.Warning
+					if tc.want && i == externalSide {
+						want = []manifest.Warning{{Resource: obj.Named(), Category: manifest.WarnExternalSource,
+							Message: "external source " + source.String() + " is outside the local tree; not rendered"}}
+					}
+					assert.Diff(t, res.External, want)
+					if (tc.inferred || tc.labels) && len(res.Objects) != 0 {
+						t.Fatalf("output filter admitted external object: %+v", res.Objects)
+					}
 				}
 			}
 		})

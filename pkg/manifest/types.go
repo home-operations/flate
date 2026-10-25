@@ -91,6 +91,8 @@ type BaseManifest interface {
 	// WithNamespace changes only the internal namespace, retaining immutable borrowed payloads.
 	WithNamespace(string) BaseManifest
 	Named() NamedResource
+	// SourcePath returns the source identity and authored path, or zero values when absent.
+	SourcePath() (NamedResource, string, bool)
 	Suspended() bool
 	ReferenceCapacity() (int, int)
 	kind() KindInfo

@@ -107,9 +107,7 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 		for _, obj := range s.run.store.ListObjects(root.Group, root.Kind) {
 			id := obj.Named()
 			if comparison {
-				if ks, ok := obj.(*manifest.Kustomization); ok {
-					s.prepareExternal(root, ks)
-				}
+				s.prepareExternal(root, obj)
 			}
 			if (root.Name != "" && id.Name != root.Name) || !s.includes(id.Namespace) {
 				continue
@@ -266,19 +264,19 @@ func (s *selectionSide) includes(namespace string) bool {
 	return ok
 }
 
-func (s *selectionSide) prepareExternal(root manifest.NamedResource, ks *manifest.Kustomization) {
-	id := ks.Named()
+func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifest.BaseManifest) {
+	src, _, _ := obj.SourcePath()
+	id := obj.Named()
 	if (root.Name != "" && id.Name != root.Name) || (root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace) {
 		return
 	}
-	if _, _, external := loader.SourceView(s.run.store, ks.SourceID(), s.run.repoRoot); !external {
+	if _, _, external := loader.SourceView(s.run.store, src, s.run.repoRoot); !external {
 		return
 	}
 	info, _ := s.run.store.GetStatus(id)
 	if info.Outcome() != store.OutcomeUnchanged && info.Outcome() != store.OutcomeSkipped {
 		return
 	}
-	src := ks.SourceID()
 	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Category: manifest.WarnExternalSource, Message: "external source " + src.String() + " is outside the local tree; not rendered"})
 }
 

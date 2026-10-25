@@ -22,8 +22,8 @@ func objectParent(obj manifest.BaseManifest) Parent {
 		return Parent{}
 	}
 	parent := Parent{NamedResource: obj.Named()}
-	if ks, ok := obj.(*manifest.Kustomization); ok {
-		parent.Path = strings.TrimPrefix(ks.Path, "./")
+	if _, path, ok := obj.SourcePath(); ok {
+		parent.Path = strings.TrimPrefix(path, "./")
 	}
 	return parent
 }

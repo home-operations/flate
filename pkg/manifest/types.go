@@ -90,6 +90,10 @@ func (n NamedResource) Compare(other NamedResource) int {
 type BaseManifest interface {
 	// WithNamespace changes only the internal namespace, retaining immutable borrowed payloads.
 	WithNamespace(string) BaseManifest
+	// ProjectionCompatible reports whether the desired receiver can reuse the previous projection.
+	// Both MUST be non-nil, the same concrete type and eligible under the caller's
+	// source-state and projected-identity lifecycle; metadata namespaces may differ.
+	ProjectionCompatible(previous BaseManifest) bool
 	Named() NamedResource
 	// SourcePath returns the source identity and authored path, or zero values when absent.
 	SourcePath() (NamedResource, string, bool)
@@ -264,6 +268,9 @@ func (r *RawObject) WithNamespace(namespace string) BaseManifest {
 	out.Namespace = namespace
 	return &out
 }
+
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (r *RawObject) ProjectionCompatible(BaseManifest) bool { return true }
 
 // Clone deep-copies the spec to preserve store and parsed-document immutability.
 func (r *RawObject) Clone() *RawObject {

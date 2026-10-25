@@ -202,6 +202,9 @@ func (h *HelmRelease) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (h *HelmRelease) ProjectionCompatible(BaseManifest) bool { return true }
+
 // TracksDigest reports whether chartRef directly selects an OCIRepository chart identity.
 func (h *HelmRelease) TracksDigest() bool {
 	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository &&

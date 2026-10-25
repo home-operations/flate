@@ -442,11 +442,8 @@ func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[mani
 			projected := obj
 			// Candidate identities MUST stay stable until their source state changes.
 			previous := l.candidates[id]
-			if previous.Obj != nil {
-				ks, isKS := obj.(*manifest.Kustomization)
-				if !isKS || previous.Obj.(*manifest.Kustomization).TargetNamespace == ks.TargetNamespace {
-					projected = previous.Obj
-				}
+			if previous.Obj != nil && obj.ProjectionCompatible(previous.Obj) {
+				projected = previous.Obj
 			}
 			if projected.Named().Namespace != ns {
 				projected = projected.WithNamespace(ns)
@@ -534,11 +531,8 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 		if !allowed[id] || !manifest.KindOf(obj).Discovery {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil {
-			ks, isKS := obj.(*manifest.Kustomization)
-			if !isKS || existing.(*manifest.Kustomization).TargetNamespace == ks.TargetNamespace {
-				continue
-			}
+		if existing := l.Store.GetObject(id); existing != nil && obj.ProjectionCompatible(existing) {
+			continue
 		}
 		l.Store.AddObject(obj, child.Doc)
 		l.admitted[id] = obj

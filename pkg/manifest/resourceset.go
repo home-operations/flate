@@ -52,6 +52,9 @@ func (r *ResourceSet) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (r *ResourceSet) ProjectionCompatible(BaseManifest) bool { return true }
+
 // GetLabels returns the ResourceSet's metadata.labels.
 func (r *ResourceSet) GetLabels() map[string]string { return r.Labels }
 
@@ -128,6 +131,9 @@ func (p *ResourceSetInputProvider) WithNamespace(namespace string) BaseManifest 
 	out.Namespace = namespace
 	return &out
 }
+
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (p *ResourceSetInputProvider) ProjectionCompatible(BaseManifest) bool { return true }
 
 // GetLabels returns the ResourceSetInputProvider's metadata.labels.
 func (p *ResourceSetInputProvider) GetLabels() map[string]string { return p.Labels }

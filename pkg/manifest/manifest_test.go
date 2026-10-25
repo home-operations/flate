@@ -101,6 +101,54 @@ func TestNamedResource(t *testing.T) {
 		(&RawObject{Kind: KindKustomization, APIVersion: "foreign.example/v2"}).Named())
 }
 
+func TestProjectionCompatible_ContentBoundary(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                          string
+		desiredTarget, previousTarget string
+		path, namespace               string
+		compatible                    bool
+	}{
+		{name: "equal target", desiredTarget: "apps", previousTarget: "apps", compatible: true},
+		{name: "different target", desiredTarget: "apps", previousTarget: "media"},
+		{name: "empty targets", compatible: true},
+		{name: "empty desired target", previousTarget: "apps"},
+		{name: "empty previous target", desiredTarget: "apps"},
+		{name: "changed path", desiredTarget: "apps", previousTarget: "apps", path: "./other", compatible: true},
+		{name: "different metadata namespace", desiredTarget: "apps", previousTarget: "apps", namespace: "projected", compatible: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			previous := &Kustomization{Name: "app", Namespace: "authored",
+				Path: "./app", TargetNamespace: tc.previousTarget}
+			desired := previous.Clone()
+			desired.TargetNamespace = tc.desiredTarget
+			if tc.path != "" {
+				desired.Path = tc.path
+			}
+			if tc.namespace != "" {
+				desired.Namespace = tc.namespace
+			}
+			previousSnapshot, desiredSnapshot := previous.Clone(), desired.Clone()
+			assert.Equal(t, desired.ProjectionCompatible(previous), tc.compatible)
+			assert.Equal(t, Equal(previous, previousSnapshot), true)
+			assert.Equal(t, Equal(desired, desiredSnapshot), true)
+		})
+	}
+	t.Run("changed repository URL", func(t *testing.T) {
+		t.Parallel()
+		previous := &GitRepository{Name: "source", Namespace: "apps",
+			URL: "https://fixture.invalid/previous"}
+		desired := *previous
+		desired.GitRepositorySpec = *previous.DeepCopy()
+		desired.URL = "https://fixture.invalid/desired"
+		previousSnapshot, desiredSnapshot := *previous, desired
+		assert.Equal(t, desired.ProjectionCompatible(previous), true)
+		assert.Diff(t, *previous, previousSnapshot)
+		assert.Diff(t, desired, desiredSnapshot)
+	})
+}
+
 func TestEqual_Operands(t *testing.T) {
 	t.Parallel()
 	ks := &Kustomization{Name: "app"}

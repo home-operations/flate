@@ -53,6 +53,9 @@ func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (h *HelmChartSource) ProjectionCompatible(BaseManifest) bool { return true }
+
 // parseHelmChartSource decodes a standalone HelmChart CRD via the
 // source-controller typed schema.
 func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {

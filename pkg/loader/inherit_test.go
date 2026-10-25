@@ -80,6 +80,72 @@ func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
 
 func TestAdmit_GraphProjection(t *testing.T) {
 	t.Parallel()
+	t.Run("projection_compatibility", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "app/kustomization.yaml", "namespace: apps\nresources: [sibling.yaml, source.yaml, ns.yaml]\nreplacements:\n"+nsReplacementRule)
+		testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n"))
+		testutil.WriteFile(t, root, "app/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/repo}\n")
+		testutil.WriteFile(t, root, "app/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
+		l := New(store.New())
+		l.SourceRoot = root
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		l.Admit(root)
+
+		id := testutil.KustomizationID("apps", "sibling")
+		candidate, ok := l.candidates[id].Obj.(*manifest.Kustomization)
+		if !ok || candidate.TargetNamespace != "apps" || l.Store.GetObject(id) != candidate {
+			t.Fatalf("initial projection = %+v, published=%v", candidate, l.Store.GetObject(id))
+		}
+		file := filepath.Join(root, "app/sibling.yaml")
+		authored := l.authoredObject(file, testutil.KustomizationID("flux-system", "sibling")).Obj.(*manifest.Kustomization)
+		snapshot := authored.Clone()
+		sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+		source, ok := l.candidates[sourceID].Obj.(*manifest.GitRepository)
+		if !ok || l.Store.GetObject(sourceID) != source {
+			t.Fatal("projected source missing from candidate or store")
+		}
+		publishedSource := source.WithNamespace(source.Namespace)
+		l.Store.DeleteObject(sourceID)
+		l.Store.AddObject(publishedSource)
+		assert.Equal(t, l.Store.GetObject(sourceID), publishedSource)
+		assert.Equal(t, l.projectAuthored(root), false)
+		assert.Equal(t, l.candidates[id].Obj, manifest.BaseManifest(candidate))
+		assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(candidate))
+		assert.Equal(t, l.candidates[sourceID].Obj, manifest.BaseManifest(source))
+		assert.Equal(t, l.Store.GetObject(sourceID), publishedSource)
+
+		published := candidate.Clone()
+		l.Store.DeleteObject(id)
+		l.Store.AddObject(published)
+		assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(published))
+		assert.Equal(t, l.projectAuthored(root), false)
+		assert.Equal(t, l.candidates[id].Obj, manifest.BaseManifest(candidate))
+		assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(published))
+
+		incompatible := candidate.Clone()
+		incompatible.TargetNamespace = "media"
+		l.Store.AddObject(incompatible)
+		assert.Equal(t, l.projectAuthored(root), true)
+		assert.Equal(t, l.candidates[id].Obj, manifest.BaseManifest(candidate))
+		assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(candidate))
+
+		stale := candidate.Clone()
+		stale.TargetNamespace = "media"
+		child := l.candidates[id]
+		child.Obj = stale
+		l.candidates[id] = child
+		l.Store.AddObject(stale)
+		assert.Equal(t, l.projectAuthored(root), true)
+		refreshed, ok := l.candidates[id].Obj.(*manifest.Kustomization)
+		if !ok || refreshed == stale || refreshed.TargetNamespace != "apps" || refreshed.Named() != id {
+			t.Fatalf("stale candidate masked prediction: %+v", refreshed)
+		}
+		assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(refreshed))
+		assert.Equal(t, manifest.Equal(authored, snapshot), true)
+		assert.Equal(t, l.authoredObject(file, snapshot.Named()).Obj, manifest.BaseManifest(authored))
+	})
 	t.Run("bootstrap_document_owners", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -797,7 +863,6 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
 	l.Admit(root)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 
 	projected := testutil.KustomizationID("apps", "sibling")
 	authored := testutil.KustomizationID("flux-system", "sibling")
@@ -827,6 +892,11 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 		return ks
 	}
 	first := check()
+	candidate := l.candidates[projected].Obj
+	assert.Equal(t, l.projectAuthored(root), false)
+	assert.Equal(t, l.candidates[projected].Obj, candidate)
+	assert.Equal(t, l.Store.GetObject(projected), manifest.BaseManifest(first))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 	l.Admit(root)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 	if check() != first {

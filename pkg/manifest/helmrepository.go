@@ -55,6 +55,9 @@ func (h *HelmRepository) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (h *HelmRepository) ProjectionCompatible(BaseManifest) bool { return true }
+
 // parseHelmRepository decodes a HelmRepository CR via the
 // source-controller typed schema.
 func parseHelmRepository(doc map[string]any) (*HelmRepository, error) {

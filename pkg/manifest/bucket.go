@@ -63,6 +63,9 @@ func (b *Bucket) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (b *Bucket) ProjectionCompatible(BaseManifest) bool { return true }
+
 // Suspended reports whether reconciliation is paused on this resource.
 func (b *Bucket) Suspended() bool { return b.Suspend }
 

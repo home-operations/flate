@@ -61,6 +61,9 @@ func (g *GitRepository) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (g *GitRepository) ProjectionCompatible(BaseManifest) bool { return true }
+
 // Suspended reports whether reconciliation is paused on this resource.
 func (g *GitRepository) Suspended() bool { return g.Suspend }
 
@@ -189,6 +192,9 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (o *OCIRepository) ProjectionCompatible(BaseManifest) bool { return true }
+
 // Suspended reports whether reconciliation is paused on this resource.
 func (o *OCIRepository) Suspended() bool { return o.Suspend }
 
@@ -260,6 +266,9 @@ func (e *ExternalArtifact) WithNamespace(namespace string) BaseManifest {
 	out.Namespace = namespace
 	return &out
 }
+
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (e *ExternalArtifact) ProjectionCompatible(BaseManifest) bool { return true }
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (e *ExternalArtifact) Suspended() bool { return false }

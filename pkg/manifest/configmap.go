@@ -30,6 +30,9 @@ func (c *ConfigMap) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (c *ConfigMap) ProjectionCompatible(BaseManifest) bool { return true }
+
 // Value reads only the requested data key; binaryData is never a Flux variable source.
 func (c *ConfigMap) Value(key string) (string, bool, error) {
 	v, ok := c.Data[key]
@@ -87,6 +90,9 @@ func (s *Secret) WithNamespace(namespace string) BaseManifest {
 	out.Namespace = namespace
 	return &out
 }
+
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (s *Secret) ProjectionCompatible(BaseManifest) bool { return true }
 
 // Value gives stringData membership precedence, including empty values.
 // Shadowed and unrequested data keys are never decoded.

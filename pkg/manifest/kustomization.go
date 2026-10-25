@@ -51,6 +51,11 @@ func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 	return &out
 }
 
+// ProjectionCompatible reports whether an eligible previous projection can be reused.
+func (k *Kustomization) ProjectionCompatible(previous BaseManifest) bool {
+	return k.TargetNamespace == previous.(*Kustomization).TargetNamespace
+}
+
 // Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
 func (k *Kustomization) Clone() *Kustomization {
 	out := *k

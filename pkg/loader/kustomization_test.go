@@ -738,6 +738,8 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 	root := t.TempDir()
 	l := New(store.New())
 	l.SourceRoot = root
+	previousCandidates := map[manifest.NamedResource]manifest.BaseManifest{}
+	previousPublished := map[manifest.NamedResource]manifest.BaseManifest{}
 	for _, version := range []string{"first", "second"} {
 		l.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 			"kustomization.yaml": {Data: []byte("namespace: apps\nresources: [objects.yaml]\n")},
@@ -759,6 +761,16 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			}
 		}
 		assert.Equal(t, sources, 1)
+		for _, id := range []manifest.NamedResource{
+			testutil.KustomizationID("apps", "child"),
+			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"},
+		} {
+			candidate, published := l.candidates[id].Obj, l.Store.GetObject(id)
+			if candidate == nil || published != candidate || candidate == previousCandidates[id] || published == previousPublished[id] {
+				t.Fatalf("source replacement did not refresh %s: candidate=%p, published=%p", id, candidate, published)
+			}
+			previousCandidates[id], previousPublished[id] = candidate, published
+		}
 		if err := l.FinalizeIndex(t.Context(), root); err != nil {
 			t.Fatal(err)
 		}

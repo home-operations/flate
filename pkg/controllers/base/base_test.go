@@ -123,7 +123,7 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, d); info.Status != store.StatusReady || attempts.Load() != 1 || renders.Load() != 1 {
 				t.Fatalf("initial status=%+v attempts=%d renders=%d", info, attempts.Load(), renders.Load())
 			}
-			if st.GetArtifact(id) == nil || !source && st.GetObject(child.Named()) == nil {
+			if st.GetArtifact(id, store.ArtifactContent) == nil || !source && st.GetObject(child.Named()) == nil {
 				t.Fatal("initial output was not published")
 			}
 			const cycle = "dependency cycle detected"
@@ -134,14 +134,14 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 				t.Errorf("cycle status=%+v valid=%t outcome=%v attempts=%d renders=%d, want terminal failure in one attempt without rendering", info, latest.Valid(), latest.Outcome(), attempts.Load(), renders.Load())
 			}
 			if source {
-				if artifact := st.GetArtifact(id); artifact != nil {
+				if artifact := st.GetArtifact(id, store.ArtifactContent); artifact != nil {
 					t.Errorf("stale source artifact remained visible: %+v", artifact)
 				}
 			} else {
 				if st.GetObject(child.Named()) != nil {
 					t.Error("stale emitted child remained visible")
 				}
-				output, ok := st.GetArtifact(id).(*store.Emission)
+				output, ok := st.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 				if !ok || !output.Complete || output.OutputReads != &latest.Reads || !output.OutputReads.Valid() || len(output.Children) != 0 {
 					t.Errorf("withdrawal did not publish a complete current inventory: %+v", output)
 				}
@@ -152,7 +152,7 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 			if info.Status != store.StatusReady || info.Message != "" || !latest.Valid() || attempts.Load() != 1 || renders.Load() != 2 {
 				t.Fatalf("recovered status=%+v valid=%t attempts=%d renders=%d", info, latest.Valid(), attempts.Load(), renders.Load())
 			}
-			if st.GetArtifact(id) == nil || !source && st.GetObject(child.Named()) == nil {
+			if st.GetArtifact(id, store.ArtifactContent) == nil || !source && st.GetObject(child.Named()) == nil {
 				t.Fatal("recovery did not republish output")
 			}
 			t.Logf("recovery attempts=%d renders=%d", attempts.Load(), renders.Load())
@@ -518,7 +518,7 @@ func TestExecution_Dispatch(t *testing.T) {
 				if retained.Value() != nil {
 					t.Fatal("terminal execution retained reconcile state")
 				}
-				if output, ok := st.GetArtifact(obj.Named()).(*store.Emission); !ok || output.OutputReads != &run.Reads || !output.OutputReads.Valid() {
+				if output, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission); !ok || output.OutputReads != &run.Reads || !output.OutputReads.Valid() {
 					t.Fatal("terminal cleanup released accepted output reads")
 				}
 				runtime.KeepAlive(st)
@@ -747,7 +747,7 @@ func TestExecution_GateReplacement(t *testing.T) {
 		_, err := first.RequireRefresh(t.Context(), obj, manifest.GateParents, manifest.DrainNone)
 		return err
 	})
-	if first.Valid() || st.GetArtifact(hr.Named()) != nil {
+	if first.Valid() || st.GetArtifact(hr.Named(), store.ArtifactContent) != nil {
 		t.Fatal("stale gate replacement admitted output")
 	}
 	second := controllertest.NewExecution(c, hr.Named())
@@ -832,7 +832,7 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			case "absent":
 				st.DeleteObject(input.Named())
 			}
-			before := st.GetArtifact(input.Named())
+			before := st.GetArtifact(input.Named(), store.ArtifactContent)
 			var fp string
 			var handled bool
 			var err error
@@ -855,7 +855,7 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			} else {
 				fp, handled, err = run.FingerprintDedup(input.Named(), content, &store.Emission{})
 			}
-			if fp != "" || !handled || err == nil || st.GetArtifact(input.Named()) != before {
+			if fp != "" || !handled || err == nil || st.GetArtifact(input.Named(), store.ArtifactContent) != before {
 				t.Fatalf("stale A accepted: key=%q handled=%t err=%v", fp, handled, err)
 			}
 			if path != "absent" && path != "suspended" {
@@ -949,13 +949,13 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 					s.SetArtifact(parent.Named(), &next)
 				} else {
 					s.RecordEmitted(parent.Named(), &next, nil)
-					if !complete && s.GetArtifact(parent.Named()).(*store.Emission).Fingerprint != "" {
+					if !complete && s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).Fingerprint != "" {
 						t.Fatal("incomplete successor retained a successful fingerprint")
 					}
 					changed := parent.Clone()
 					changed.Labels = map[string]string{"changed": "yes"}
 					s.AddObject(changed)
-					if s.GetArtifact(parent.Named()) != nil {
+					if s.GetArtifact(parent.Named(), store.ArtifactContent) != nil {
 						t.Fatal("fixture did not invalidate the current emission")
 					}
 				}

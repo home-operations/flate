@@ -63,7 +63,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name), err)
 	}
 	input := cache.NameBlob(source.HelmChartArchiveFilename, generation)
-	return &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Key: id,
+	return &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Content: cache.AcquisitionIdentity(input), Key: id,
 		URL: desc.Annotations["flate.chart-url"], Revision: desc.Annotations["flate.chart-version"], Digest: desc.Digest.Encoded(), Size: desc.Size}, nil
 }
 

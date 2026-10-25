@@ -945,7 +945,7 @@ spec:
 		t.Fatalf("Run: %v", err)
 	}
 
-	if got := o.Store().GetArtifact(producerID); got == nil {
+	if got := o.Store().GetArtifact(producerID, store.ArtifactContent); got == nil {
 		t.Errorf("producer %s artifact missing after Run; producer was kept but never reconciled", producerID)
 	}
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
@@ -1687,14 +1687,14 @@ data: {greeting: {{ .Values.greeting | quote }}}
 			}
 			assert.Equal(t, len(result.Failed), 0)
 			assert.Equal(t, len(result.Blocked), 0)
-			assert.Equal(t, o.store.GetArtifact(owner) != nil, true)
+			assert.Equal(t, o.store.GetArtifact(owner, store.ArtifactContent) != nil, true)
 			rendered, ok := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "rendered"})
 			if !ok {
 				t.Fatal("selected release did not render")
 			}
 			assert.Equal(t, rendered.Data["greeting"], "production")
 			assert.Equal(t, o.filter.ShouldReconcile(testutil.HelmReleaseID("apps", "sibling")), false)
-			assert.Equal(t, o.store.GetArtifact(testutil.HelmReleaseID("apps", "sibling")) == nil, true)
+			assert.Equal(t, o.store.GetArtifact(testutil.HelmReleaseID("apps", "sibling"), store.ArtifactContent) == nil, true)
 		})
 	}
 }

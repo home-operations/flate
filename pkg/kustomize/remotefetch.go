@@ -30,11 +30,8 @@ type remoteInput struct {
 }
 
 type remoteIdentity struct {
-	HTTP       string `json:"http,omitempty"`
-	HTTPStatus int    `json:"httpStatus,omitempty"`
-	Key        string `json:"key,omitempty"`
-	Revision   string `json:"revision,omitempty"`
-	Digest     string `json:"digest,omitempty"`
+	store.ArtifactInput
+	HTTPStatus int `json:"httpStatus,omitempty"`
 }
 
 func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (fs.FS, remoteIdentity, error) {
@@ -44,7 +41,7 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 		if err != nil {
 			return nil, httpFailureIdentity(err), err
 		}
-		return acquired, remoteIdentity{HTTP: cache.AcquisitionIdentity(acquired)}, nil
+		return acquired, remoteIdentity{ArtifactInput: (&store.SourceArtifact{FS: acquired, Content: cache.AcquisitionIdentity(acquired)}).Input(store.ArtifactContent)}, nil
 	case remoteGit:
 		if c.gitBase == nil {
 			return nil, remoteIdentity{}, fmt.Errorf("%w: kustomization references remote git base %q but no git fetcher is wired", manifest.ErrInput, r.URL)
@@ -69,10 +66,10 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 		if err != nil {
 			return nil, remoteIdentity{}, err
 		}
-		if artifact == nil || artifact.FS == nil || artifact.Key == "" || (artifact.Revision == "" && artifact.Digest == "") {
+		if artifact == nil || artifact.FS == nil || artifact.Content == "" {
 			return nil, remoteIdentity{}, fmt.Errorf("%w: remote git base has no immutable content", manifest.ErrInput)
 		}
-		return artifact.FS, remoteIdentity{Key: artifact.Key, Revision: artifact.Revision, Digest: artifact.Digest}, nil
+		return artifact.FS, remoteIdentity{ArtifactInput: artifact.Input(store.ArtifactContent)}, nil
 	default:
 		return nil, remoteIdentity{}, fmt.Errorf("%w: unknown remote operation %d", manifest.ErrInput, r.Operation)
 	}

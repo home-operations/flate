@@ -43,7 +43,7 @@ type entryResolution struct {
 func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
 	admitted := d.cfg.Input
 	if admitted == nil {
-		admitted, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+		admitted, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	if admitted == nil {
 		var err error
@@ -86,7 +86,7 @@ func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArti
 
 // Missing roots freeze at the first no-progress point; new references alone never invalidate them.
 func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool) (int, error) {
-	bootstrap, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	bootstrap, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	if d.resolvedSources == nil {
 		var err error
 		bootstrap, err = d.admitBootstrapInput(ctx)
@@ -154,7 +154,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 				return d.cfg.Store.GetObject(witness.Named()) != nil
 			}) {
 				previous, resolved := d.resolvedSources[id]
-				artifact, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
+				artifact, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 				d.cfg.Store.AddObject(obj, evidence[id].Doc)
 				if resolved && previous.object == obj && artifact != nil {
 					d.publishEntrySource(previous, artifact)
@@ -165,8 +165,8 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		if seen && obj == nil && previous.input == bootstrap && slices.Equal(previous.refs, groups[id]) {
 			continue
 		}
-		if seen && obj != nil && previous.object == obj && (d.cfg.Store.GetArtifact(id) != nil || d.cfg.Store.GetObject(id) != nil) {
-			art, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
+		if seen && obj != nil && previous.object == obj && (d.cfg.Store.GetArtifact(id, store.ArtifactContent) != nil || d.cfg.Store.GetObject(id) != nil) {
+			art, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			if previous.input == bootstrap || art == nil || !art.InputAlias && id != manifest.BootstrapSourceID {
 				continue
 			}
@@ -273,7 +273,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 }
 
 func (d *discoverer) bootstrapArtifactRoot(ctx context.Context, witnesses []manifest.BaseManifest) (string, error) {
-	bootstrap := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	bootstrap := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	scan, err := filepath.Rel(bootstrap.LocalPath, d.cfg.Path)
 	if err != nil {
 		return "", err
@@ -326,39 +326,43 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
 	label, viewKey := gittree.Label(gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
-		Root, Subtree, Origin, Key, Revision, Digest string
-		Ignore                                       string
-		Sparse                                       []string `json:",omitempty"`
-		Recurse                                      bool
-	}{repoRoot, subtree, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Revision, bootstrap.Digest, ignore, sparse, recurse}})
-	var input *gittree.FS
+		Root, Subtree, Origin, Key, Content, Digest string
+		Ignore                                      string
+		Sparse                                      []string `json:",omitempty"`
+		Recurse                                     bool
+	}{repoRoot, subtree, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}})
+	var input fs.FS
+	var identity string
 	var err error
-	if cached := d.aliasViews[viewKey]; cached != nil {
-		input, err = cached, ctx.Err()
+	cached := d.aliasViews[viewKey]
+	if cached != nil {
+		input, identity, err = cached.FS, cached.Content, ctx.Err()
 	} else {
 		current := bootstrap.FS
 		if subtree != "." {
 			current, err = gittree.Sub(current, subtree)
 		}
 		if err == nil {
-			input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: current, Ignore: ignore, Sparse: sparse})
+			input, identity, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: current, CurrentContent: bootstrap.Content, Content: struct{ Subtree string }{subtree}, Ignore: ignore, Sparse: sparse})
 		}
 	}
 	if err != nil {
 		return nil, err
 	}
 	if d.aliasViews == nil {
-		d.aliasViews = map[string]*gittree.FS{}
+		d.aliasViews = map[string]*store.SourceArtifact{}
 	}
-	d.aliasViews[viewKey] = input
 	id := candidate.object.Named()
 	artifact := *bootstrap
 	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+filepath.Join(repoRoot, subtree), input
 	artifact.ContentFingerprint = gittree.ContentFingerprint
-	artifact.InputAlias, artifact.Key = true, ""
+	artifact.InputAlias, artifact.Key, artifact.Content = true, "", identity
 	artifact.Warnings = nil
 	artifact.LocalPath = label
 	artifact.LocalRoot = filepath.Join(repoRoot, subtree)
+	if cached == nil {
+		d.aliasViews[viewKey] = &artifact
+	}
 	return &artifact, nil
 }
 
@@ -377,7 +381,7 @@ func (d *discoverer) publishEntrySource(candidate entryResolution, artifact *sto
 func (d *discoverer) warnBootstrapAliases(repoRoot string) {
 	var names []string
 	for id := range d.resolvedSources {
-		artifact, _ := d.cfg.Store.GetArtifact(id).(*store.SourceArtifact)
+		artifact, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 		if id != manifest.BootstrapSourceID && artifact != nil && artifact.InputAlias {
 			names = append(names, id.String())
 		}

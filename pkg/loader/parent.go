@@ -125,7 +125,7 @@ func (r documentReader) Readlink(file string) (string, error) {
 
 type sourceStore interface {
 	GetObject(manifest.NamedResource) manifest.BaseManifest
-	GetArtifact(manifest.NamedResource) store.Artifact
+	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 }
 
 // SourceView classifies an admitted source coordinate, committed pin and external ownership.
@@ -134,13 +134,13 @@ func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (roo
 	if ref.Name == "" || ref == manifest.BootstrapSourceID {
 		return repoRoot, false, false
 	}
-	if art, ok := s.GetArtifact(ref).(*store.SourceArtifact); ok && art.FS != nil {
+	if art, ok := s.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact); ok && art.FS != nil {
 		if art.LocalPath == repoRoot {
 			return repoRoot, false, false
 		}
 		if art.LocalRoot != "" && (art.LocalRoot == repoRoot || art.InputAlias && safepath.Contains(repoRoot, art.LocalRoot)) {
 			// Derived input keys pin selected bootstrap bytes, never authored refs.
-			return art.LocalPath, art.Key != "" && !art.InputAlias, false
+			return art.LocalPath, art.Content != "" && !art.InputAlias, false
 		}
 	}
 	if s.GetObject(ref) != nil {
@@ -169,7 +169,7 @@ func (r documentReader) localPath(file string) string {
 // OriginPath projects mutable inputs and aliases onto their physical input origin.
 // file MUST be within the admitted artifact's LocalPath.
 func OriginPath(art *store.SourceArtifact, file string) string {
-	if art != nil && art.LocalRoot != "" && (art.InputAlias || art.Key == "") {
+	if art != nil && art.LocalRoot != "" && (art.InputAlias || art.Content == "") {
 		if art.LocalRoot == art.LocalPath {
 			return filepath.Clean(file)
 		}

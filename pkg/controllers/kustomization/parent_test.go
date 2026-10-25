@@ -44,7 +44,7 @@ func TestReconcile_OptionalMaterializerAbsence(t *testing.T) {
 			c.Tasks.BlockTillDone()
 			defer assessment.Close()
 			if tc.status == store.StatusPending || tc.required {
-				if assessment.Outcome() != schedule.Blocked || s.GetArtifact(ks.Named()) != nil {
+				if assessment.Outcome() != schedule.Blocked || s.GetArtifact(ks.Named(), store.ArtifactContent) != nil {
 					t.Fatal("reader did not wait for its unresolved input")
 				}
 				c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { assessment.Settle(ctx, manifest.DrainForce) })
@@ -56,7 +56,7 @@ func TestReconcile_OptionalMaterializerAbsence(t *testing.T) {
 					t.Fatalf("required diagnostic causes=%+v blocked=%v", info, info.BlockedBy())
 				}
 			} else {
-				art, _ := s.GetArtifact(ks.Named()).(*store.Emission)
+				art, _ := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 				if info.Status != store.StatusReady || art == nil || len(art.Manifests) != 1 {
 					t.Fatalf("absent optional input prevented render: status=%+v artifact=%+v", info, art)
 				}
@@ -85,7 +85,7 @@ func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
 			c.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
 			s.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: child.Named(), ReconcileNode: c.ReconcileNode})
-			output, _ := s.GetArtifact(child.Named()).(*store.Emission)
+			output, _ := s.GetArtifact(child.Named(), store.ArtifactContent).(*store.Emission)
 			rendered := s.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "hello"})
 			if expr == "false" {
 				if info.Status != store.StatusFailed || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) || output != nil && len(output.Manifests) != 0 || rendered != nil {

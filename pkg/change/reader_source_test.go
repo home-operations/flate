@@ -37,7 +37,7 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*Set, [2]*store.Stor
 			files["inputs/kustomization.yaml"].Data = []byte("resources: [optional.yaml]\n")
 			files["inputs/optional.yaml"] = &fstest.MapFile{Data: fmt.Appendf(nil, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: %q}\ndata: {VALUE: available}\n", namespace)}
 		}
-		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".supplier"), LocalRoot: root, Key: fmt.Sprint(side), FS: files})
+		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".supplier"), LocalRoot: root, Key: fmt.Sprint(side), Content: fmt.Sprint(side), FS: files})
 	}
 	changes, err := Qualify(tb.Context(), nil, stores[0], stores[1])
 	if err != nil {
@@ -90,8 +90,8 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 				}
 				st.AddObject(sibling)
 				if mode == "artifact_replaced" {
-					art := *st.GetArtifact(source.Named()).(*store.SourceArtifact)
-					art.Revision = "replacement"
+					art := *st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+					art.Content, art.Revision = "replacement", "replacement"
 					st.SetArtifact(source.Named(), &art)
 				}
 				if mode == "declaration_replaced" {
@@ -146,7 +146,7 @@ spec:
 				if state == "unchanged_collision" {
 					value = 0
 				}
-				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprint(side), FS: fstest.MapFS{"config/prod.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}}})
+				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprint(side), Content: fmt.Sprint(side), FS: fstest.MapFS{"config/prod.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}}})
 				l := loader.New(st)
 				l.SourceRoot = root
 				_, err := l.Load(t.Context(), root)
@@ -206,7 +206,7 @@ func TestFilter_ReadSourceAlternatives(t *testing.T) {
 						value = side
 					}
 					st.AddObject(source)
-					st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprintf("%s-%d", name, side), FS: fstest.MapFS{"input.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}}})
+					st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprintf("%s-%d", name, side), Content: fmt.Sprintf("%s-%d", name, side), FS: fstest.MapFS{"input.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}}})
 					reads = append(reads, manifest.FileReader{Reader: reader.Named(), Source: source.Named()})
 				}
 				if mode == "changed_first" {

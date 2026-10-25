@@ -819,6 +819,13 @@ func testGenerationWaiter(t *testing.T, disk bool, fetch func(context.Context, *
 	check := func(artifact *store.SourceArtifact) {
 		assert.Equal(t, artifact.Revision, revision)
 		assert.Equal(t, artifact.Key, first.artifact.Key)
+		_, identity, viewErr := source.OperationView(t.Context(), artifact.FS)
+		assert.NoError(t, viewErr)
+		assert.Equal(t, artifact.Content, identity)
+		assert.Equal(t, artifact.Content, first.artifact.Content)
+		if artifact.Content == "" {
+			t.Fatal("missing acquired filesystem identity")
+		}
 		if artifact.Key == "" {
 			t.Fatal("missing cache identity")
 		}

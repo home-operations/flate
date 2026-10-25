@@ -109,6 +109,9 @@ func TestFetchHTTPChart(t *testing.T) {
 						t.Errorf("Fetch %s: %v", name, err)
 						return
 					}
+					if art.Content == "" || art.Content != sourcecache.AcquisitionIdentity(art.FS) {
+						t.Errorf("%s content generation = %q", name, art.Content)
+					}
 					if art.Kind != manifest.KindHelmChart || art.Digest != chartDigest(data) {
 						t.Errorf("%s artifact = %+v", name, art)
 					}

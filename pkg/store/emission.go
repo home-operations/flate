@@ -173,7 +173,7 @@ func (e *Emission) Footprint() iter.Seq2[manifest.NamedResource, manifest.Discov
 func (e *Emission) Finish() { e.previous = nil }
 
 func (e *Emission) shadows(binding sourceBinding) bool {
-	return e != nil && slices.Contains(e.shadowed, binding)
+	return e != nil && slices.ContainsFunc(e.shadowed, func(other sourceBinding) bool { return binding.equal(&other) })
 }
 
 type contributor struct {
@@ -188,18 +188,37 @@ type footprint struct {
 	independent bool
 }
 type sourceBinding struct {
-	source    manifest.NamedResource
-	key, root string
-	mutable   *SourceArtifact
+	source   manifest.NamedResource
+	artifact *SourceArtifact
+	mutable  *SourceArtifact
+}
+
+func (b *sourceBinding) equal(other *sourceBinding) bool {
+	if b == other {
+		return true
+	}
+	if b == nil {
+		b = &sourceBinding{}
+	}
+	if other == nil {
+		other = &sourceBinding{}
+	}
+	return b.source == other.source && b.mutable == other.mutable &&
+		(b.artifact == other.artifact || b.artifact.Input(ArtifactContent) == other.artifact.Input(ArtifactContent))
 }
 
 type admission struct {
-	changed     bool
-	independent bool
-	child       Child
-	targets     []manifest.ProducerTarget
-	binding     sourceBinding
+	independent      bool
+	changed          bool
+	objectChanged    bool
+	objectHead       *registrationHead
+	objectGeneration uint64
+	input            *ArtifactInput
+	child            Child
+	targets          []manifest.ProducerTarget
+	binding          sourceBinding
 }
+
 type inputStamp struct {
 	owner                *producerSlot
 	generation, revision uint64
@@ -288,7 +307,7 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 		obj = view.declaration()
 	}
 	e := Emission{Reads: reads, input: obj, inputDoc: view.child.Doc, previous: prev,
-		inputHead: inputStamp{owner: view.owner, generation: view.generation, binding: view.source}}
+		inputHead: inputStamp{owner: view.owner, generation: view.generation, binding: view.sourceBinding()}}
 	if view.owner != nil {
 		if reads != nil {
 			e.inputHead.revision = reads.input(view.owner.id).producer
@@ -317,9 +336,9 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if ref.Use == "source" {
 			e.binding.source = ref.NamedResource
-			if a, ok := getArtifact(ref.NamedResource).(*SourceArtifact); ok {
-				e.binding.key, e.binding.root = a.Key, a.LocalPath
-				if a.Key == "" {
+			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
+				e.binding.artifact = a
+				if a.Content == "" {
 					e.binding.mutable = a
 				}
 			}
@@ -328,9 +347,9 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 	}
 	if e.binding.source.Name == "" && s.contributionBinding(id).source == manifest.BootstrapSourceID {
 		e.binding.source = manifest.BootstrapSourceID
-		if a, ok := getArtifact(manifest.BootstrapSourceID).(*SourceArtifact); ok {
-			e.binding.key, e.binding.root = a.Key, a.LocalPath
-			if a.Key == "" {
+		if a, ok := getArtifact(manifest.BootstrapSourceID, ArtifactContent).(*SourceArtifact); ok {
+			e.binding.artifact = a
+			if a.Content == "" {
 				e.binding.mutable = a
 			}
 		}
@@ -387,6 +406,7 @@ type productionResult struct {
 	reads         *ReadSet
 	captureTarget bool
 	incoming      *Child
+	watch         bool
 }
 
 func (r *productionResult) reset(evidence []manifest.Production) {
@@ -448,7 +468,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		if reads != nil {
 			for _, productions := range [2][]manifest.Production{evidence, bare} {
 				for _, p := range productions {
-					reads.GetArtifact(p.Source)
+					reads.GetArtifact(p.Source, ArtifactContent)
 				}
 			}
 		}
@@ -460,7 +480,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		if c := s.coverage[p.Owner]; c != nil {
 			accepted := c.slot.current.Load()
 			if reads != nil {
-				reads.sample(id, c.slot, accepted)
+				reads.sample(id, c.slot, accepted, result.watch)
 			}
 			if c.slot.hidden.Load() || accepted.shadows(c.binding) {
 				return
@@ -521,7 +541,7 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 			for _, m := range sh.members[id] {
 				e := m.slot.current.Load()
 				if reads != nil {
-					reads.sample(id, m.slot, e)
+					reads.sample(id, m.slot, e, result.watch)
 				}
 				if !m.slot.visible.Load() {
 					continue
@@ -567,7 +587,7 @@ func sameProductionContext(coverage map[manifest.NamedResource]*contributor, a, 
 		return false
 	}
 	ac, bc := coverage[a.Owner], coverage[b.Owner]
-	return ac == nil || bc == nil || ac.binding == bc.binding
+	return ac == nil || bc == nil || ac.binding.equal(&bc.binding)
 }
 
 func compareProduction(a, b manifest.Production) int {
@@ -601,9 +621,9 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 			if len(c.records) == 0 || c.records[len(c.records)-1].id != id {
 				c.records = append(c.records, footprint{id: id, record: r, independent: independent})
 			}
-			if a, ok := s.GetArtifact(p.Source).(*SourceArtifact); ok {
-				c.binding.key, c.binding.root = a.Key, a.LocalPath
-				if a.Key == "" {
+			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
+				c.binding.artifact = a
+				if a.Content == "" {
 					c.binding.mutable = a
 				}
 			}
@@ -749,7 +769,7 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 			prepared := s.prepareAdmissions(id, &candidate, prev, byID)
 			proposal = prepareEmission(&candidate, prev, prepared, byID)
 		}
-		stable := prev != nil && (proposal == prev || sameMembership(prev, proposal) && slices.EqualFunc(prev.Children, proposal.Children, func(a, b Child) bool { return payloadEqual(a.payload, b.payload) }))
+		stable := prev != nil && (proposal == prev || sameMembership(prev, proposal) && slices.EqualFunc(prev.Children, proposal.Children, func(a, b Child) bool { return a.payload == b.payload }))
 		unchanged = proposal == prev || proposal.sameContent(prev)
 		if unchanged && !proposal.Complete && prev.Complete {
 			proposal.Complete = true
@@ -840,6 +860,7 @@ func (s *Store) prepareChildren(children []Child) []admission {
 }
 
 func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emission, byID map[manifest.NamedResource]int) []admission {
+	var projections []ArtifactInput
 	var refs, superseded, retained []manifest.NamedResource
 	prepared := next.entries
 	if !next.entriesOwned || !entriesMatch(next.Children, prepared) {
@@ -859,6 +880,13 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 		}
 		child.Productions = slices.Clone(child.Productions)
 		entry.child, entry.binding = child, next.binding
+		if child.payload != nil {
+			if projections == nil {
+				projections = make([]ArtifactInput, len(prepared))
+			}
+			projections[len(compacted)] = child.payload.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
+			entry.input = &projections[len(compacted)]
+		}
 		byID[child.Obj.Named()] = len(compacted)
 		compacted = append(compacted, entry)
 		dynamic = dynamic || manifest.ProducerNeedsCandidates(child.Obj)
@@ -884,7 +912,8 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 		}
 		proven[declaration] = append(proven[declaration], target)
 	}
-	if next.binding == s.contributionBinding(id) {
+	binding := s.contributionBinding(id)
+	if next.binding.equal(&binding) {
 		shadowed := prev.shadows(next.binding)
 		for _, f := range next.coverage {
 			for _, p := range f.record.Productions {
@@ -906,7 +935,7 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 	}
 	if prev != nil {
 		for _, entry := range prev.entries {
-			if entry.binding == next.binding {
+			if entry.binding.equal(&next.binding) {
 				_, replacement := byID[entry.child.Obj.Named()]
 				for ref := range manifest.References(entry.child.Obj, manifest.ReferenceRelations) {
 					if replacement {
@@ -944,15 +973,16 @@ func (e *Emission) sameContent(other *Emission) bool {
 func (e *Emission) sameOutput(other *Emission) bool {
 	sameDocuments := len(e.Manifests) == len(other.Manifests) &&
 		(len(e.Manifests) == 0 || &e.Manifests[0] == &other.Manifests[0])
-	sameInput := other.inputHead == e.inputHead && objectEqual(other.input, e.input) ||
+	sameInput := other.inputHead.owner == e.inputHead.owner && other.inputHead.generation == e.inputHead.generation &&
+		other.inputHead.revision == e.inputHead.revision && other.inputHead.binding.equal(&e.inputHead.binding) && objectEqual(other.input, e.input) ||
 		e.input != nil && semanticEqual(Child{Obj: other.input, Doc: other.inputDoc}, Child{Obj: e.input, Doc: e.inputDoc})
 	return sameInput && other.family == e.family &&
 		(sameDocuments || slices.EqualFunc(other.Manifests, e.Manifests, func(a, b map[string]any) bool { return specValueEqual(a, b) })) &&
 		other.Fingerprint == e.Fingerprint &&
 		slices.Equal(other.documentOwners, e.documentOwners) &&
-		other.binding == e.binding &&
+		other.binding.equal(&e.binding) &&
 		slices.Equal(other.Unreadable, e.Unreadable) &&
-		slices.Equal(other.shadowed, e.shadowed) &&
+		slices.EqualFunc(other.shadowed, e.shadowed, func(a, b sourceBinding) bool { return a.equal(&b) }) &&
 		slices.EqualFunc(other.coverage, e.coverage, func(a, b footprint) bool {
 			return a.id == b.id && slices.Equal(a.record.Productions, b.record.Productions)
 		})
@@ -980,7 +1010,7 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 		ps.mu.Unlock()
 		return publicationRetry
 	}
-	if proposal.Reads != nil && ps.cells[slot.id].generation != proposal.inputHead.generation {
+	if proposal.Reads != nil && ps.cells[slot.id].current().generation != proposal.inputHead.generation {
 		ps.mu.Unlock()
 		return publicationRejected
 	}
@@ -989,29 +1019,49 @@ func (s *Store) commitStable(slot *producerSlot, prev, proposal *Emission, gener
 		return publicationAccepted
 	}
 	if proposal != prev && proposal.revision == prev.revision {
+		if ps.artifacts[slot.id].publication == ^uint64(0) {
+			ps.mu.Unlock()
+			panic("store: publication revision exhausted")
+		}
 		slot.current.Store(proposal)
 		if slot.visible.Load() {
 			record := ps.artifacts[slot.id]
-			record.value = proposal
+			record.value, record.effective = proposal, proposal
+			record.publication++
 			ps.artifacts[slot.id] = record
 		}
 		ps.mu.Unlock()
 		return publicationAccepted
 	}
-	if slot.generation == ^uint64(0) || ps.artifacts[slot.id].generation == ^uint64(0) || ps.artifacts[slot.id].generation == 0 && !ps.canAdmit(1) {
+	if slot.generation == ^uint64(0) || ps.artifacts[slot.id].publication == ^uint64(0) || ps.artifacts[slot.id].generation == ^uint64(0) || ps.artifacts[slot.id].generation == 0 && !ps.canAdmit(1) {
 		ps.mu.Unlock()
 		panic("store: authority generation exhausted")
 	}
+	for _, a := range proposal.entries {
+		if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot && a.objectHead.stamp() == ^uint64(0) {
+			ps.mu.Unlock()
+			panic("store: authority generation exhausted")
+		}
+	}
+	for i := range proposal.entries {
+		a := &proposal.entries[i]
+		if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot {
+			a.objectGeneration = a.objectHead.stamp() + 1
+		}
+	}
 	slot.authority = ps.advanceLocked(slot.authority)
 	slot.current.Store(proposal)
+	for _, a := range proposal.entries {
+		if a.objectChanged && a.objectHead != nil && a.objectHead.selected.Load() == slot {
+			a.objectHead.shard.queue(a.objectHead)
+		}
+	}
 	var artifact eventDispatch
 	var events []eventDispatch
 	if slot.visible.Load() {
 		record := ps.artifacts[slot.id]
-		if record.generation == 0 {
-			ps.admitAbsenceLocked(slot.id, artifactFacet)
-		}
-		record.authority, record.value = ps.advanceLocked(record.authority), proposal
+		record.value = proposal
+		ps.publishArtifactLocked(slot.id, &record, proposal, ArtifactInput{})
 		ps.artifacts[slot.id] = record
 		artifact = fireUnderLock(s, EventArtifactUpdated, slot.id)
 		artifact.payload = proposal
@@ -1059,11 +1109,11 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 		s.unlockAll()
 		return publicationRetry
 	}
-	if proposal.Reads != nil && ps.cells[id].generation != proposal.inputHead.generation {
+	if proposal.Reads != nil && ps.cells[id].current().generation != proposal.inputHead.generation {
 		s.unlockAll()
 		return publicationRejected
 	}
-	if slot != nil && slot.generation == ^uint64(0) || ps.artifacts[id].generation == ^uint64(0) {
+	if slot != nil && slot.generation == ^uint64(0) || ps.artifacts[id].generation == ^uint64(0) || ps.artifacts[id].publication == ^uint64(0) {
 		s.unlockAll()
 		panic("store: authority generation exhausted")
 	}
@@ -1092,6 +1142,20 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 		}
 	}
 
+	for i := range proposal.entries {
+		entry := &proposal.entries[i]
+		// An admitted object's head MUST remain stable for the store's lifetime.
+		if entry.objectHead != nil {
+			continue
+		}
+		target := s.shardFor(entry.child.Obj.Named())
+		cell := target.cells[entry.child.Obj.Named()]
+		if cell.links == nil {
+			cell.links = target.newHeadLocked(cell.generation)
+			target.cells[entry.child.Obj.Named()] = cell
+		}
+		entry.objectHead = cell.links
+	}
 	slot.authority = ps.advanceLocked(slot.authority)
 	slot.current.Store(proposal)
 	if !slot.visible.Load() {
@@ -1101,7 +1165,7 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 			if cell.generation == 0 {
 				ps.admitAbsenceLocked(id, objectFacet)
 			}
-			cell.authority = ps.advanceLocked(cell.authority)
+			cell.authority = ps.advanceLocked(cell.current())
 			cell.hidden, cell.independent = true, independent
 			ps.cells[id] = cell
 		}
@@ -1119,10 +1183,8 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 	publications := s.reachabilityLocked(region)
 	if slot.visible.Load() {
 		record := ps.artifacts[id]
-		if record.generation == 0 {
-			ps.admitAbsenceLocked(id, artifactFacet)
-		}
-		record.authority, record.value = ps.advanceLocked(record.authority), proposal
+		record.value = proposal
+		ps.publishArtifactLocked(id, &record, proposal, ArtifactInput{})
 		ps.artifacts[id] = record
 		event := fireUnderLock(s, EventArtifactUpdated, id)
 		event.payload = proposal
@@ -1149,8 +1211,8 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 				continue
 			}
 			entry := proposal.entries[next]
-			direct := entry.changed && !admissionEqual(old, entry) ||
-				old.binding != entry.binding || !slices.Equal(old.child.Productions, entry.child.Productions) ||
+			direct := entry.objectChanged || entry.changed && !sameLabels(old.child, entry.child, ownershipLabel) ||
+				!old.binding.equal(&entry.binding) || !slices.Equal(old.child.Productions, entry.child.Productions) ||
 				!slices.EqualFunc(old.targets, entry.targets, func(a, b manifest.ProducerTarget) bool {
 					return a.NamedResource == b.NamedResource && slices.Equal(a.DeclaredKeys, b.DeclaredKeys)
 				})
@@ -1167,6 +1229,12 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 
 func prepareEmission(next, prev *Emission, prepared []admission, byID map[manifest.NamedResource]int) *Emission {
 	if prev != nil && next.Complete && !prev.OutputReads.Valid() {
+		for _, old := range prev.entries {
+			if i, ok := byID[old.child.Obj.Named()]; ok {
+				prepared[i].objectHead, prepared[i].objectGeneration = old.objectHead, old.objectGeneration
+				prepared[i].objectChanged = !reconcileEqual(prepared[i].child, old.child)
+			}
+		}
 		prev = nil
 	}
 	e := *next
@@ -1199,10 +1267,13 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 			if i, ok := byID[id]; ok {
 				entry := prepared[i]
 				entry.changed = !objectEqual(entry.child.Obj, old.child.Obj) || !specValueEqual(entry.child.Doc, old.child.Doc)
+				entry.objectChanged = !reconcileEqual(entry.child, old.child)
+				entry.objectHead = old.objectHead
+				entry.objectGeneration = old.objectGeneration
 				e.entries = append(e.entries, entry)
 				delete(byID, id)
 			} else if !next.Complete {
-				old.changed = false
+				old.changed, old.objectChanged = false, false
 				e.entries = append(e.entries, old)
 			}
 		}
@@ -1299,7 +1370,7 @@ func bindDocuments(docs []map[string]any, entries []admission) []manifest.NamedR
 	return owners
 }
 func sameMembership(a, b *Emission) bool {
-	if a.family != b.family || len(a.entries) != len(b.entries) || !slices.Equal(a.shadowed, b.shadowed) || a.binding != b.binding ||
+	if a.family != b.family || len(a.entries) != len(b.entries) || !slices.EqualFunc(a.shadowed, b.shadowed, func(a, b sourceBinding) bool { return a.equal(&b) }) || !a.binding.equal(&b.binding) ||
 		!slices.EqualFunc(a.coverage, b.coverage, func(a, b footprint) bool {
 			return a.id == b.id && slices.Equal(a.record.Productions, b.record.Productions)
 		}) {
@@ -1307,7 +1378,7 @@ func sameMembership(a, b *Emission) bool {
 	}
 	for i, x := range a.entries {
 		y := b.entries[i]
-		if x.child.Obj.Named() != y.child.Obj.Named() || x.binding != y.binding ||
+		if x.child.Obj.Named() != y.child.Obj.Named() || !x.binding.equal(&y.binding) ||
 			!slices.Equal(x.child.Productions, y.child.Productions) || !sameLabels(x.child, y.child, ownershipLabel) ||
 			!slices.EqualFunc(x.targets, y.targets, func(a, b manifest.ProducerTarget) bool { return a.NamedResource == b.NamedResource }) {
 			return false
@@ -1340,11 +1411,11 @@ func sameLabels(a, b Child, excluded func(string) bool) bool {
 }
 
 func admissionEqual(a, b admission) bool {
-	return a.binding == b.binding && childEqual(a.child, b.child)
+	return a.binding.equal(&b.binding) && childEqual(a.child, b.child)
 }
 
 func childEqual(a, b Child) bool {
-	return objectEqual(a.Obj, b.Obj) && specValueEqual(a.Doc, b.Doc) && slices.Equal(a.Productions, b.Productions) && payloadEqual(a.payload, b.payload) && a.output == b.output
+	return objectEqual(a.Obj, b.Obj) && specValueEqual(a.Doc, b.Doc) && slices.Equal(a.Productions, b.Productions) && a.payload == b.payload && a.output == b.output
 }
 func semanticEqual(a, b Child) bool {
 	if a.Doc == nil || b.Doc == nil {
@@ -1432,18 +1503,27 @@ type capture struct {
 	excluded      bool
 	accepted      bool
 	independent   bool
+	bound         bool
 	binding       *Input
 	support       *Input
-	bound         bool
 	preflight     string
 	child         Child
 	owner         *producerSlot
 	record        *Emission
 	payload       *SourceArtifact
+	payloadInput  *ArtifactInput
 	payloadOwner  *producerSlot
 	payloadRecord *Emission
-	source        sourceBinding
+	source        *sourceBinding
 	generation    uint64
+	position      int
+}
+
+func (c *capture) sourceBinding() sourceBinding {
+	if c.source != nil {
+		return *c.source
+	}
+	return sourceBinding{}
 }
 
 func (sh *shard) objectLocked(id manifest.NamedResource) manifest.BaseManifest {
@@ -1482,6 +1562,7 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view 
 			payload := record.entries[m.position].child.payload
 			if payload != nil && (view.payloadOwner == nil || m.slot.id.Compare(view.payloadOwner.id) > 0) {
 				view.payload, view.payloadOwner, view.payloadRecord = payload, m.slot, record
+				view.payloadInput = record.entries[m.position].input
 			}
 		}
 	}
@@ -1490,7 +1571,9 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view 
 			record := chosen.slot.current.Load()
 			child := &record.entries[chosen.position].child
 			if view != nil {
-				view.owner, view.record, view.child, view.source = chosen.slot, record, *child, record.entries[chosen.position].binding
+				view.owner, view.record, view.child, view.source = chosen.slot, record, *child, &record.entries[chosen.position].binding
+				view.generation = max(cell.generation, record.entries[chosen.position].objectGeneration)
+				view.position = chosen.position
 			}
 			return child.Obj
 		}
@@ -1513,6 +1596,8 @@ type regionState struct {
 	live, static, direct, visible, seed bool
 	independent                         bool
 	producerGeneration                  uint64
+	owner                               *producerSlot
+	source                              *sourceBinding
 	bucketGeneration                    uint64
 }
 
@@ -1620,8 +1705,15 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 		state.cell = sh.cells[id]
 		// Metadata-only cells may predate preparation; frozen facts cannot disagree.
 		state.independent = state.independent || state.cell.independent
+		state.cell.authority = state.cell.current()
 		if state.cell.generation == 0 {
 			admissions[kindShardIndex(id.Kind)]++
+		}
+		artifact := sh.artifacts[id]
+		for _, head := range []authority{artifact.authority, artifact.revisionHead, artifact.originHead} {
+			if head.generation == 0 {
+				admissions[kindShardIndex(id.Kind)]++
+			}
 		}
 		if sh.byName[kindID{id.Group, id.Kind}].links == nil {
 			admissions[kindShardIndex(id.Kind)]++
@@ -1638,8 +1730,9 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 		sh.captureLocked(id, state.cell, &view)
 		before := view.child
 		state.before, state.document, state.payload = before.Obj, before.Doc, view.payload
+		state.owner, state.source = view.owner, view.source
 		state.visible = !state.cell.hidden && (state.cell.static != nil || len(sh.members[id]) > 0)
-		if state.cell.generation == ^uint64(0) || sh.conditions[id].stamp().generation == ^uint64(0) || sh.artifacts[id].generation == ^uint64(0) || state.bucketGeneration == ^uint64(0) {
+		if state.cell.publication == ^uint64(0) || artifact.publication == ^uint64(0) || state.cell.generation == ^uint64(0) || sh.conditions[id].stamp().generation == ^uint64(0) || artifact.generation == ^uint64(0) || artifact.revisionHead.generation == ^uint64(0) || artifact.originHead.generation == ^uint64(0) || state.bucketGeneration == ^uint64(0) {
 			s.unlockAll()
 			panic("store: authority generation exhausted")
 		}
@@ -1759,6 +1852,8 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 		id := state.id
 		sh := s.shardFor(id)
 		cell := sh.cells[id]
+		generation, retired, hidden := cell.generation, cell.retired, cell.hidden
+		cell.generation = max(cell.generation, state.cell.generation)
 		if cell.generation == 0 && cell.static == nil && len(sh.members[id]) == 0 && sh.slots[id] == nil {
 			continue
 		}
@@ -1769,13 +1864,22 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 		var view capture
 		sh.captureLocked(id, cell, &view)
 		after := view.child
-		if state.direct || after.Obj != state.before || cell.static != state.cell.static ||
-			cell.rooted != state.cell.rooted || cell.retired != state.cell.retired || cell.hidden != state.cell.hidden {
+		if state.direct || (state.before == nil) != (after.Obj == nil) || state.owner != view.owner || !state.source.equal(view.source) ||
+			cell.rooted != state.cell.rooted && state.cell.static == nil || cell.retired != state.cell.retired || cell.hidden != state.cell.hidden {
 			if cell.generation == 0 {
 				sh.admitAbsenceLocked(id, objectFacet)
 			}
-			cell.authority = sh.advanceLocked(cell.authority)
+			cell.authority = sh.advanceLocked(cell.current())
+		}
+		if cell.generation != generation || cell.retired != retired || cell.hidden != hidden {
 			sh.cells[id] = cell
+		}
+		if head := cell.links; head != nil && (head.selected.Load() != view.owner || view.owner != nil && head.position.Load() != int64(view.position)) {
+			head.generation.Store(max(cell.generation, head.stamp()))
+			if view.owner != nil {
+				head.position.Store(int64(view.position))
+			}
+			head.selected.Store(view.owner)
 		}
 		key := kindID{id.Group, id.Kind}
 		bucket := sh.byName[key]
@@ -1787,13 +1891,33 @@ func (s *Store) reachabilityLocked(region objectRegion) []objectPublication {
 			bucket.authority = sh.enqueueLocked(bucket.authority)
 			sh.byName[key] = bucket
 		}
-		if !payloadEqual(state.payload, view.payload) {
+		// Direct removal MUST restore surviving emitted payloads after clearing static facets.
+		if state.direct || state.payload != view.payload || state.cell.hidden != cell.hidden {
 			record := sh.artifacts[id]
-			record.authority = sh.advanceLocked(record.authority)
-			sh.artifacts[id] = record
-			event := fireUnderLock(s, EventArtifactUpdated, id)
-			event.payload = view.payload
-			publications = append(publications, objectPublication{event: event, force: true})
+			effective := record.value
+			if cell.hidden {
+				effective = nil
+			} else if view.payload != nil {
+				effective = view.payload
+			}
+			if record.effective != effective {
+				var input ArtifactInput
+				if effective == view.payload && view.payload != nil {
+					input = *view.payloadInput
+				} else if source, ok := effective.(*SourceArtifact); ok {
+					input = source.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
+				}
+				changed := sh.publishArtifactLocked(id, &record, effective, input)
+				sh.artifacts[id] = record
+				if changed && (!cell.hidden || state.payload != nil) {
+					event := fireUnderLock(s, EventArtifactUpdated, id)
+					event.payload = effective
+					if effective == nil {
+						event.payload = view.payload
+					}
+					publications = append(publications, objectPublication{event: event, force: true})
+				}
+			}
 		}
 		if (state.direct || state.before != after.Obj) && (after.Obj != nil || state.visible || !cell.hidden) {
 			event := fireUnderLock(s, EventObjectAdded, id)

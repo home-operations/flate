@@ -40,7 +40,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 		testutil.WriteFile(t, root, "target/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty}\n")
 		st := store.New()
 		repository := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
-		artifact := &store.SourceArtifact{LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned"}
+		artifact := &store.SourceArtifact{LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned", Content: "pinned"}
 		artifact.FS = os.DirFS(artifact.LocalPath)
 		st.AddObject(repository)
 		st.SetArtifact(repository.Named(), artifact)
@@ -57,7 +57,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 		if _, ok := d.loader.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "dirty"}); ok {
 			t.Fatal("working-tree object survived the projected pinned claim")
 		}
-		if st.GetObject(repository.Named()) != repository || st.GetArtifact(repository.Named()) != artifact {
+		if st.GetObject(repository.Named()) != repository || st.GetArtifact(repository.Named(), store.ArtifactContent) != artifact {
 			t.Fatal("projected pinned claim replaced its resolved source")
 		}
 	})
@@ -82,7 +82,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: repository.Name, Namespace: repository.Namespace},
 			}
 			cm := &manifest.ConfigMap{Name: "dirty", Namespace: "flux-system"}
-			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned"}
+			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned", Content: "pinned"}
 			artifact.FS = os.DirFS(artifact.LocalPath)
 			d := discoverer{
 				cfg: Config{Store: st}, loader: loader.New(st),
@@ -108,7 +108,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			for _, repo := range []*manifest.GitRepository{repository, other} {
 				id := repo.Named()
 				status, ok := st.GetStatus(id)
-				if st.GetObject(id) != repo || st.GetArtifact(id) != artifact || !ok || status.Status != store.StatusReady {
+				if st.GetObject(id) != repo || st.GetArtifact(id, store.ArtifactContent) != artifact || !ok || status.Status != store.StatusReady {
 					t.Fatalf("source %s lost its resolved object, artifact or status", id)
 				}
 				if _, ok := d.loader.Index.Lookup(id); !ok || filesForTest(d.loader.Index)[id] == "" {
@@ -130,7 +130,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: other}}
 			if _, err := d.loader.Load(t.Context(), artifact.LocalPath); err != nil {
 				t.Fatal(err)
 			}
-			if st.GetObject(repository.Named()) != repository || st.GetArtifact(repository.Named()) != artifact {
+			if st.GetObject(repository.Named()) != repository || st.GetArtifact(repository.Named(), store.ArtifactContent) != artifact {
 				t.Fatal("committed subtree replaced the resolved source")
 			}
 
@@ -157,7 +157,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		source := &manifest.GitRepository{Name: "source"}
 		st.AddObject(source)
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
-		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named()))
+		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named(), store.ArtifactContent))
 		d := discoverer{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
 		if err := d.loadManifests(t.Context(), root, true); err != nil {
 			t.Fatal(err)
@@ -251,7 +251,7 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 					owner.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: src.Name}
 					art := &store.SourceArtifact{LocalPath: "/virtual/" + ownership, FS: input}
 					if ownership == "pinned" {
-						art.LocalRoot, art.Key = root, "pinned"
+						art.LocalRoot, art.Key, art.Content = root, "pinned", "pinned"
 					}
 					if ownership == "alias" {
 						art.LocalRoot, art.InputAlias = root, true
@@ -519,7 +519,7 @@ configMapGenerator: [{name: generated, literals: [value=selected]}]
 		t.Fatal("transformed child did not replace its raw identity")
 	}
 	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "nested-dev"}
-	if st.GetObject(source) == nil || st.GetArtifact(source) == nil {
+	if st.GetObject(source) == nil || st.GetArtifact(source, store.ArtifactContent) == nil {
 		t.Fatal("transformed source did not resolve in the fixed point")
 	}
 	leaf := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "leaf"}

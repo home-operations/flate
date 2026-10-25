@@ -158,7 +158,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 		if !ok || info.Status != store.StatusReady {
 			continue
 		}
-		if _, ok := o.store.GetArtifact(id).(*store.Emission); !ok {
+		if _, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.Emission); !ok {
 			continue
 		}
 		for crd := range o.store.RequiredInputs(id) {

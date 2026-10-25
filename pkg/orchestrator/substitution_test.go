@@ -554,7 +554,7 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		if got := substitutionValue(t, side.Result, consumer); got != want {
 			t.Fatalf("changed consumer got %q, want %q", got, want)
 		}
-		if !side.filter.ShouldReconcile(consumer) || side.filter.ShouldReconcile(stable) || side.Store().GetArtifact(stable) != nil || side.Store().GetObject(source.Object.Named()) != nil {
+		if !side.filter.ShouldReconcile(consumer) || side.filter.ShouldReconcile(stable) || side.Store().GetArtifact(stable, store.ArtifactContent) != nil || side.Store().GetObject(source.Object.Named()) != nil {
 			t.Fatal("selected-consumer admission or supplied-object isolation failed")
 		}
 	}

@@ -76,7 +76,7 @@ data:
 	foreign.Group = "example.test"
 	foreignArtifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "foreign"}
 	st.SetArtifact(foreign, foreignArtifact)
-	if resolver.LocalSourceArtifact(foreign) != foreignArtifact || resolver.LocalSourceArtifact(gr.Named()).URL != gr.URL {
+	if resolver.LocalSourceArtifact(foreign, store.ArtifactContent) != foreignArtifact || resolver.LocalSourceArtifact(gr.Named(), store.ArtifactContent).URL != gr.URL {
 		t.Fatal("source resolver lost canonical artifact identity")
 	}
 	cliSources := resolver

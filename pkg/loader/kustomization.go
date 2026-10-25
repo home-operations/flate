@@ -65,7 +65,7 @@ type documentReader struct {
 }
 
 type sourceReader interface {
-	GetArtifact(manifest.NamedResource) store.Artifact
+	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 	ListObjects(string, string) []manifest.BaseManifest
 }
 
@@ -80,18 +80,18 @@ func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.Di
 	for info := range manifest.Kinds() {
 		if info.SourceArtifact {
 			for _, obj := range s.ListObjects(info.Group, info.Kind) {
-				mountSource(mounted, s.GetArtifact(obj.Named()))
+				mountSource(mounted, s.GetArtifact(obj.Named(), store.ArtifactContent))
 			}
 		}
 	}
 	for _, index := range candidates {
 		for id, record := range index.Records {
 			if id.KindInfo().SourceArtifact && record.File != "" {
-				mountSource(mounted, s.GetArtifact(id))
+				mountSource(mounted, s.GetArtifact(id, store.ArtifactContent))
 			}
 		}
 	}
-	mountSource(mounted, s.GetArtifact(manifest.BootstrapSourceID))
+	mountSource(mounted, s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent))
 	return r.setSources(mounted)
 }
 

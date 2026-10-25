@@ -168,7 +168,7 @@ func TestCopyFile_Canceled(t *testing.T) {
 func TestEvaluate_ExtractIdentity(t *testing.T) {
 	t.Parallel()
 	owner := cachetest.New(t, "", cache.New)
-	identities := []inputIdentity{{Alias: "repo", Key: "family", Digest: "generation"}}
+	identities := []inputIdentity{{Alias: "repo", Input: store.ArtifactInput{Key: "family", Content: "generation", Digest: "generation"}}}
 	e := evaluation{owner: owner, maxAge: cache.Forever, identity: identities, inputs: map[string]*store.SourceArtifact{"repo": {FS: fstest.MapFS{"archive.tgz": {Data: compressedForTest(t, fstest.MapFS{"file": {Data: []byte("bytes")}})}}}}}
 	selection := archiveSelection{Alias: "repo", Path: "archive.tgz", Destination: "out"}
 	if err := e.extract(t.Context(), tree.NewBuilder(nil), selection); err != nil {

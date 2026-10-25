@@ -128,7 +128,7 @@ func TestFinalizeIndex_InputSourceViews(t *testing.T) {
 				art.InputAlias, art.LocalRoot = true, filepath.Join(root, "subtree")
 			}
 			if mode == "pinned" {
-				art.Key = "pinned"
+				art.Key, art.Content = "pinned", "pinned"
 			}
 			s.SetArtifact(source.Named(), art)
 			l := loader.New(s)
@@ -219,7 +219,7 @@ spec:
 					}
 					want = aliased
 				case "committed":
-					art.LocalPath, art.Key = filepath.Join(root, ".artifacts", "commit"), "committed"
+					art.LocalPath, art.Key, art.Content = filepath.Join(root, ".artifacts", "commit"), "committed", "committed"
 					for i, file := range want {
 						want[i] = path.Join(".artifacts/commit", file)
 					}
@@ -443,7 +443,7 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 				})
 				target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: ns, Name: "app-api"}
 				r, ok := idx.Lookup(target)
-				if !ok || r.Path != "" || s.GetObject(target) != nil || s.GetArtifact(target) != nil {
+				if !ok || r.Path != "" || s.GetObject(target) != nil || s.GetArtifact(target, store.ArtifactContent) != nil {
 					t.Fatalf("prediction supplied content: %+v", r)
 				}
 				want := manifest.Production{Owner: testutil.KustomizationID("flux-system", ns), Declaration: generator, Authored: manifest.NamedResource{Group: generator.Group, Kind: generator.Kind, Namespace: "authored", Name: generator.Name}, Source: source, File: generatorFile}
@@ -540,7 +540,7 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 	admitForFilter(s, root)
 	source := &manifest.GitRepository{Name: "foreign", Namespace: "flux-system"}
 	s.AddObject(source)
-	s.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: view, Key: "foreign-pin", FS: os.DirFS(view)})
+	s.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: view, Key: "foreign-pin", Content: "foreign-pin", FS: os.DirFS(view)})
 	l := loader.New(s)
 	l.SourceRoot = root
 	for _, scan := range []string{filepath.Join(root, "entry"), view} {

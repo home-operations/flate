@@ -46,7 +46,7 @@ func TestReadRegistration_SameByteAuthorityTransitions(t *testing.T) {
 				reads.Init(s, ownerID("reader"), nil)
 				reads.GetObject(child.Obj.Named())
 				reads.GetStatus(child.Obj.Named())
-				reads.GetArtifact(child.Obj.Named())
+				reads.GetArtifact(child.Obj.Named(), ArtifactContent)
 				for range reads.Productions(child.Obj.Named(), nil) {
 				}
 				t.Cleanup(reads.Retire)
@@ -215,7 +215,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 			if kind == "condition" {
 				reads.GetStatus(obj.Named())
 			} else {
-				reads.GetArtifact(obj.Named())
+				reads.GetArtifact(obj.Named(), ArtifactContent)
 			}
 			publish("b")
 			publish("a")
@@ -282,7 +282,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 			defer reads.Retire()
 			switch kind {
 			case "artifact":
-				reads.GetArtifact(id)
+				reads.GetArtifact(id, ArtifactContent)
 			case "producer":
 				reads.GetObject(child.Obj.Named())
 			case "bucket":
@@ -305,7 +305,7 @@ func TestReadRegistration_NoABA(t *testing.T) {
 			}()
 			assert.Equal(t, reads.Valid(), true)
 			assert.Equal(t, s.GetObject(child.Obj.Named()), child.Obj)
-			assert.Equal(t, s.GetArtifact(child.Obj.Named()).(*SourceArtifact).Key, "old")
+			assert.Equal(t, s.GetArtifact(child.Obj.Named(), ArtifactContent).(*SourceArtifact).Key, "old")
 			assert.Equal(t, s.GetObject(emissionChild("new", "new").Obj.Named()) == nil, true)
 		})
 	}
@@ -371,8 +371,8 @@ func TestEvidenceOwnerProof_StablePublicationCut(t *testing.T) {
 	var after capture
 	sh.captureLocked(fresh.Obj.Named(), sh.cells[fresh.Obj.Named()], &after)
 	sh.mu.RUnlock()
-	if before.owner != after.owner || before.record == after.record || before.generation != after.generation {
-		t.Error("stable cut did not retain producer authority without target repair")
+	if before.owner != after.owner || before.record == after.record || before.generation >= after.generation {
+		t.Error("selected material did not advance its existing target authority")
 	}
 	assert.Equal(t, before.record.entries[0].child.Obj, old.Obj)
 	assert.Equal(t, after.record.entries[0].child.Obj, fresh.Obj)
@@ -481,7 +481,7 @@ func TestFamilyAuthority_CrossFamilyWithdrawalCut(t *testing.T) {
 		t.Fatal("second withdrawal did not remove its static authority")
 	}
 	for _, id := range []manifest.NamedResource{p.Named(), q.Named(), fromP.Obj.Named(), fromQ.Obj.Named()} {
-		if s.GetObject(id) != nil || s.GetArtifact(id) != nil || len(s.Productions(id, nil)) != 0 {
+		if s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil || len(s.Productions(id, nil)) != 0 {
 			t.Errorf("rootless family retained authority for %s", id)
 		}
 	}
@@ -552,7 +552,7 @@ func TestFeasibility_RevisionBeforeSeparateInstall(t *testing.T) {
 		<-done
 		t.Fatal("stable publication visited the target shard after installation")
 	}
-	artifact := s.GetArtifact(p.Named()).(*Emission)
+	artifact := s.GetArtifact(p.Named(), ArtifactContent).(*Emission)
 	assert.Equal(t, artifact.Children[0].Obj, b.Obj)
 	target.mu.Unlock()
 	assert.Equal(t, s.GetObject(b.Obj.Named()), b.Obj)
@@ -596,6 +596,40 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 	assert.Equal(t, s.GetObject(seed.Obj.Named()), emitted.Obj)
 	s.RecordEmitted(p.Named(), &Emission{Complete: true}, nil)
 	assert.Equal(t, s.GetObject(seed.Obj.Named()), emitted.Obj)
+
+	t.Run("ignored_metadata", func(t *testing.T) {
+		t.Parallel()
+		st := New()
+		producer := ownerID("producer")
+		st.AddObject(&manifest.Kustomization{Name: producer.Name, Namespace: producer.Namespace})
+		obj := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
+		doc := map[string]any{"apiVersion": obj.APIVersion, "kind": obj.Kind, "metadata": map[string]any{"name": obj.Name, "namespace": obj.Namespace}}
+		st.RecordEmitted(producer, &Emission{Children: []Child{{Obj: obj, Doc: doc}}, Complete: true}, nil)
+		shard := st.shardFor(obj.Named())
+		shard.mu.RLock()
+		update := objectUpdate{obj: obj, document: doc, cell: shard.cells[obj.Named()]}
+		shard.captureLocked(obj.Named(), update.cell, &update.effective)
+		shard.mu.RUnlock()
+		update.compare()
+		var reads ReadSet
+		reads.Init(st, ownerID("reader"), nil)
+		defer reads.Close()
+		reads.GetObject(obj.Named())
+		changed := manifest.DeepCopyMap(doc)
+		changed["metadata"].(map[string]any)["annotations"] = map[string]any{"unrelated": "changed"}
+		st.RecordEmitted(producer, &Emission{Children: []Child{{Obj: obj, Doc: changed}}, Complete: true}, nil)
+		if !reads.Valid() {
+			t.Fatal("ignored metadata changed the consumed declaration")
+		}
+		if st.addAnchor(update) {
+			t.Fatal("anchor accepted equality against a superseded full document")
+		}
+		_, retained, attempt := st.GetEmission(obj.Named())
+		defer attempt.Finish()
+		if !specValueEqual(retained, changed) {
+			t.Fatal("stale anchor replaced the latest authoritative document")
+		}
+	})
 }
 
 func TestGetEmission_InputAuthorityStamp(t *testing.T) {
@@ -613,6 +647,7 @@ func TestGetEmission_InputAuthorityStamp(t *testing.T) {
 	var reads ReadSet
 	reads.Init(s, q.Named(), nil)
 	reads.GetObject(q.Named())
+	reads.Productions(q.Named(), nil)
 	s.RecordEmitted(p.Named(), &Emission{Children: []Child{{Obj: q}}, Complete: true, Fingerprint: "b"}, nil)
 	_, _, after := s.GetEmission(q.Named())
 	if reads.Valid() {

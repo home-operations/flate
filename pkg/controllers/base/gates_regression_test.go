@@ -244,7 +244,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			if err := execution.Emit(parent.Named(), &next, payloads); err == nil {
 				t.Fatalf("publication error=%v", err)
 			}
-			if s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named()) != nil || s.GetArtifact(parent.Named()) != nil || filter.ShouldReconcile(child.Named()) {
+			if s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil || s.GetArtifact(parent.Named(), store.ArtifactContent) != nil || filter.ShouldReconcile(child.Named()) {
 				t.Fatal("rejected publication admitted children or expanded selection")
 			}
 		})
@@ -330,7 +330,7 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			defer next.Finish()
 			next.Children, next.Manifests, next.Complete = children, visible, true
 			c.Emit(producer.Named(), &next, nil)
-			accepted, _ := s.GetArtifact(producer.Named()).(*store.Emission)
+			accepted, _ := s.GetArtifact(producer.Named(), store.ArtifactContent).(*store.Emission)
 			if accepted == nil || len(accepted.Manifests) != 1 {
 				t.Fatalf("accepted=%v", accepted)
 			}

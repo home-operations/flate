@@ -61,8 +61,8 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	assert.NoError(t, fresh.bootstrap(t.Context()))
 	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
 	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
-	assert.Equal(t, fresh.store.GetArtifact(owner) == nil, true)
-	assert.Equal(t, fresh.store.GetArtifact(child) == nil, true)
+	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
+	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetObject(child).(*manifest.Kustomization).Path, "./${ROOT}")
 	for range fresh.store.Sweep() {
 		t.Fatal("Bootstrap left probe registrations waiting for retirement")
@@ -76,7 +76,7 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	ref := canceled.store.GetObject(child).(*manifest.Kustomization).SourceID()
-	input := *canceled.store.GetArtifact(ref).(*store.SourceArtifact)
+	input := *canceled.store.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
 	input.FS = cancelRootFS{FS: input.FS, cancel: cancel}
 	canceled.store.SetArtifact(ref, &input)
 	canceled.completeBootstrap()
@@ -105,8 +105,8 @@ func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	for range o.store.Sweep() {
 		t.Fatal("canceled preparation left probe registrations")
 	}
-	assert.Equal(t, o.store.GetArtifact(testutil.KustomizationID("apps", "emitter")) == nil, true)
-	assert.Equal(t, o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).FS != nil, true)
+	assert.Equal(t, o.store.GetArtifact(testutil.KustomizationID("apps", "emitter"), store.ArtifactContent) == nil, true)
+	assert.Equal(t, o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).FS != nil, true)
 }
 
 func TestBootstrap_AcceptedOrphanHelmChildRoot(t *testing.T) {
@@ -152,8 +152,8 @@ spec:
 	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
 	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
-	assert.Equal(t, fresh.store.GetArtifact(owner) == nil, true)
-	assert.Equal(t, fresh.store.GetArtifact(child) == nil, true)
+	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
+	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
 	declaration := fresh.store.GetObject(owner).(*manifest.HelmRelease)
 	declaration = declaration.Clone()
 	declaration.Chart.Name = "./missing-chart"
@@ -183,7 +183,7 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	input := *o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	input := *o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	input.FS = cancelProbeFS{FS: input.FS, cancel: cancel}
 	o.store.SetArtifact(manifest.BootstrapSourceID, &input)
 	o.completeBootstrap()
@@ -264,7 +264,7 @@ spec:
 				ks := reads.GetDeclaration(owner).(*manifest.Kustomization)
 				prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(reads, cfg.WipeSecrets, warm.substitutionSources), cfg.Substitute)
 				assert.NoError(t, err)
-				source := reads.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+				source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 				_, receipt, err := kustomize.Render(t.Context(), warm.ksc.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: true, SubPath: prepared.Path, Spec: prepared, DependencySubstitutions: warm.dependencySubstitutions, Substitute: cfg.Substitute, StrictSubstitutions: cfg.StrictSubstitutions}, cfg.SourceRetry)
 				assert.NoError(t, err)
 				assert.NoError(t, warm.ksc.Trees.RecordRender(t.Context(), owner, receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
@@ -286,7 +286,7 @@ spec:
 			assert.NoError(t, fresh.bootstrap(t.Context()))
 			assert.Equal(t, fresh.filter.ShouldReconcile(owner), mode == "substitute_from")
 			assert.Equal(t, fresh.filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")), true)
-			assert.Equal(t, fresh.store.GetArtifact(owner) == nil, true)
+			assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 		})
 	}
 }
@@ -400,7 +400,7 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 			assert.NoError(t, err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			source := *current.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			source := *current.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			if mode == "error" {
 				source.FS = failedProbeFS{source.FS}
 			}

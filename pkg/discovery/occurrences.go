@@ -25,7 +25,7 @@ func (d *discoverer) entryRoots(ctx context.Context) ([]entryRoot, error) {
 	if err != nil {
 		return nil, err
 	}
-	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	var pinned []manifest.KSClaim
 	if d.hasPins {
 		var occurrences []loader.Occurrence
@@ -80,7 +80,7 @@ func (d *discoverer) entryRoots(ctx context.Context) ([]entryRoot, error) {
 				continue
 			}
 			count := 0
-			art, _ := d.cfg.Store.GetArtifact(source).(*store.SourceArtifact)
+			art, _ := d.cfg.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 			loaded, err := d.loadSourcePath(ctx, absolute, art, &count)
 			if err != nil {
 				return nil, err
@@ -99,7 +99,7 @@ func (d *discoverer) entryRoots(ctx context.Context) ([]entryRoot, error) {
 			}
 			queue = append(queue, children...)
 			local := sourceRoot == input.LocalPath
-			if art, ok := d.cfg.Store.GetArtifact(source).(*store.SourceArtifact); ok {
+			if art, ok := d.cfg.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact); ok {
 				local = local || art.InputAlias && art.LocalRoot == input.LocalPath
 			}
 			if local && root.seeds[o.Declaration] && slices.ContainsFunc(children, func(child loader.Occurrence) bool { return child.Declaration == o.Declaration }) && !slices.Contains(root.Anchors, target) {

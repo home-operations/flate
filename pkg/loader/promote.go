@@ -45,7 +45,7 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 			sources = opts.Reads
 		}
 		mounted := map[string]*store.SourceArtifact{}
-		mountSource(mounted, sources.GetArtifact(source))
+		mountSource(mounted, sources.GetArtifact(source, store.ArtifactContent))
 		reader.setSources(mounted)
 		var err error
 		objs, err = reader.parseFile(path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""})

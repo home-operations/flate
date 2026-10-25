@@ -50,7 +50,7 @@ spec:
 	if info, ok := o.Store().GetStatus(id); ok {
 		t.Errorf("foreign Bucket CRD is not a source node, so it must carry no status; got %+v", info)
 	}
-	if art := o.Store().GetArtifact(id); art != nil {
+	if art := o.Store().GetArtifact(id, store.ArtifactContent); art != nil {
 		t.Errorf("foreign Bucket CRD must not be fetched; artifact=%+v", art)
 	}
 	obj := o.Store().GetObject(id)

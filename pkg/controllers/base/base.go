@@ -103,7 +103,7 @@ func (c *Controller) KeepEmitted(parent manifest.NamedResource, child store.Chil
 	if f := c.filter; f != nil {
 		var objects interface {
 			GetObject(manifest.NamedResource) manifest.BaseManifest
-			GetArtifact(manifest.NamedResource) store.Artifact
+			GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 			GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission)
 			Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
 			IncomingProductions(store.Child, *manifest.DiscoveryIndex) []manifest.Production

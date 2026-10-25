@@ -128,7 +128,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				t.Fatalf("task failures = %d", tasks.Failures())
 			}
 			if boundary == "render" {
-				if runState.run.Reads.Valid() || accepted.Load() != nil || st.GetArtifact(id) != nil {
+				if runState.run.Reads.Valid() || accepted.Load() != nil || st.GetArtifact(id, store.ArtifactContent) != nil {
 					t.Fatal("replaced input A published stale output")
 				}
 			} else if emission := accepted.Load(); emission == nil || !hasRenderedDoc(emission, manifest.KindConfigMap, "from-b") {
@@ -206,7 +206,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 						}
 					}
 				}
-				accepted, _ := st.GetArtifact(rs.Named()).(*store.Emission)
+				accepted, _ := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 				return accepted
 			}
 			publish(a)
@@ -230,7 +230,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			broken.DefaultValues = fluxopv1.ResourceSetInput{"value": {Raw: []byte("invalid")}}
 			publish(&broken, b)
 			check(0, store.StatusFailed)
-			if failed, ok := st.GetArtifact(rs.Named()).(*store.Emission); ok && (len(failed.Manifests) != 0 || len(failed.Children) != 0) {
+			if failed, ok := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); ok && (len(failed.Manifests) != 0 || len(failed.Children) != 0) {
 				t.Fatal("failed successor exposed output with changed provider inputs")
 			}
 			publish(&changed, b)

@@ -72,7 +72,7 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 							defer active.Add(-1)
 							<-second
 						}
-						return &store.SourceArtifact{FS: gitInput, Key: "git-key", Revision: "one"}, nil
+						return &store.SourceArtifact{FS: gitInput, Key: "git-key", Content: "git-key-generation", Revision: "one"}, nil
 					})
 					return c
 				}

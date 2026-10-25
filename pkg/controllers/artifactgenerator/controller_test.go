@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -82,7 +83,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 			obj, doc := generatorForTest(t, []any{map[string]any{"name": "output", "copy": tc.operations}})
 			st.AddObject(obj, doc)
 			repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
-			st.SetArtifact(repo, &store.SourceArtifact{Kind: repo.Kind, Key: "input", Digest: "sha256:input", FS: fstest.MapFS{
+			st.SetArtifact(repo, &store.SourceArtifact{Kind: repo.Kind, Key: "input", Content: "input", Digest: "sha256:input", FS: fstest.MapFS{
 				"app/file.txt": {Data: []byte("file"), Mode: 0o644}, "base.yaml": {Data: []byte("a: 1\nb: 2\n")}, "overlay.yaml": {Data: []byte("b: 3\n")}, "archive.TGZ": {Data: compressed.Bytes()},
 			}})
 			runForTest(t, c, obj.Named())
@@ -91,7 +92,7 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 				t.Fatalf("generator status = %+v", status)
 			}
 			target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "output"}
-			artifact, ok := st.GetArtifact(target).(*store.SourceArtifact)
+			artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 			if !ok || artifact.FS == nil || artifact.Key == "" || !strings.HasPrefix(artifact.Digest, "sha256:") || artifact.Kind != manifest.KindExternalArtifact || artifact.Revision != "latest@"+artifact.Digest {
 				t.Fatalf("generated artifact = %+v", artifact)
 			}
@@ -99,12 +100,12 @@ func TestArtifactGenerator_AllStrategies(t *testing.T) {
 			if err != nil || string(data) != tc.want {
 				t.Fatalf("output %s = %q, %v", tc.path, data, err)
 			}
-			accepted, ok := st.GetArtifact(obj.Named()).(*store.Emission)
+			accepted, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
 			if !ok || !accepted.Complete || accepted.Fingerprint == "" || len(accepted.Children) != 1 {
 				t.Fatalf("accepted inventory = %+v", accepted)
 			}
 			runForTest(t, c, obj.Named())
-			if st.GetArtifact(target) != artifact {
+			if st.GetArtifact(target, store.ArtifactContent) != artifact {
 				t.Fatal("complete replay changed accepted bytes")
 			}
 		})
@@ -134,14 +135,14 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
 	input := fstest.MapFS{"a": {Data: []byte("a")}, "b": {Data: []byte("b")}, "c": {Data: []byte("c")}}
-	st.SetArtifact(repo, &store.SourceArtifact{Key: "first", Digest: "first", FS: &observedFS{FS: input, failPath: "c"}})
+	st.SetArtifact(repo, &store.SourceArtifact{Key: "first", Content: "first", Digest: "first", FS: &observedFS{FS: input, failPath: "c"}})
 	runForTest(t, c, obj.Named())
 	status, _ := st.GetStatus(obj.Named())
 	if status.Status != store.StatusFailed {
 		t.Fatalf("partial status = %+v", status)
 	}
 	for _, name := range []string{"a", "b"} {
-		artifact, ok := st.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: name}).(*store.SourceArtifact)
+		artifact, ok := st.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: name}, store.ArtifactContent).(*store.SourceArtifact)
 		if !ok || artifact.FS == nil {
 			t.Fatalf("accepted %s unavailable", name)
 		}
@@ -149,7 +150,7 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 			t.Fatalf("accepted %s = %q, %v", name, data, err)
 		}
 	}
-	accepted := st.GetArtifact(obj.Named()).(*store.Emission)
+	accepted := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
 	if accepted.Complete || accepted.Fingerprint != "" {
 		t.Fatal("partial attempt became replayable")
 	}
@@ -159,26 +160,26 @@ func TestArtifactGenerator_PartialFailure(t *testing.T) {
 		t.Fatalf("retry status = %+v", status)
 	}
 	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "c"}
-	artifact, ok := st.GetArtifact(target).(*store.SourceArtifact)
+	artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 	if !ok {
 		t.Fatal("same-input retry did not execute the failed output")
 	}
 	if data, err := fs.ReadFile(artifact.FS, "file"); err != nil || string(data) != "c" {
 		t.Fatalf("retried c = %q, %v", data, err)
 	}
-	accepted = st.GetArtifact(obj.Named()).(*store.Emission)
+	accepted = st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
 	if !accepted.Complete || len(accepted.Children) != 3 || accepted.Fingerprint == "" {
 		t.Fatalf("retried inventory = %+v", accepted)
 	}
 	nextInput := maps.Clone(input)
 	delete(nextInput, "b")
-	st.SetArtifact(repo, &store.SourceArtifact{Key: "second", Digest: "second", FS: nextInput})
+	st.SetArtifact(repo, &store.SourceArtifact{Key: "second", Content: "second", Digest: "second", FS: nextInput})
 	runForTest(t, c, obj.Named())
 	status, _ = st.GetStatus(obj.Named())
 	if status.Status != store.StatusFailed {
 		t.Fatalf("successor failure status = %+v", status)
 	}
-	if current := st.GetArtifact(target); current != artifact {
+	if current := st.GetArtifact(target, store.ArtifactContent); current != artifact {
 		t.Fatal("failure withdrew an unvisited accepted output")
 	}
 	if data, err := fs.ReadFile(artifact.FS, "file"); err != nil || string(data) != "c" {
@@ -200,7 +201,7 @@ func TestArtifactGenerator_Disabled(t *testing.T) {
 	t.Cleanup(unsubscribe)
 	runForTest(t, c, obj.Named())
 	status, _ := st.GetStatus(obj.Named())
-	if status.Status != store.StatusReady || st.GetArtifact(obj.Named()) != nil {
+	if status.Status != store.StatusReady || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 		t.Fatalf("disabled result = %+v", status)
 	}
 	if emissions.Load() != 0 {
@@ -274,11 +275,11 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 			st.AddObject(obj, doc)
 			input := &observedFS{FS: fstest.MapFS{"apps/Prod/file": {Data: []byte("bytes")}}}
 			repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
-			selected := &store.SourceArtifact{Key: "input", Digest: "digest", Revision: "revision", FS: input, Metadata: tc.sourceMetadata}
+			selected := &store.SourceArtifact{Key: "input", Content: "input", Digest: "digest", Revision: "revision", FS: input, Metadata: tc.sourceMetadata}
 			st.SetArtifact(repo, selected)
 			runForTest(t, c, obj.Named())
 			target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "prod"}
-			artifact, ok := st.GetArtifact(target).(*store.SourceArtifact)
+			artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 			if !ok {
 				status, _ := st.GetStatus(obj.Named())
 				t.Fatalf("missing generated source: %+v", status)
@@ -293,7 +294,7 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 			if tc.origin == "@absent" && len(artifact.Metadata) != 0 {
 				t.Fatalf("absent origin alias added metadata: %+v", artifact.Metadata)
 			}
-			emission, ok := st.GetArtifact(obj.Named()).(*store.Emission)
+			emission, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
 			if !ok {
 				t.Fatal("missing complete generator inventory")
 			}
@@ -327,7 +328,7 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 			updated.Metadata["unrelated"] = "changed"
 			st.SetArtifact(repo, &updated)
 			runForTest(t, c, obj.Named())
-			if st.GetArtifact(target) != artifact || input.opens.Load() != opens {
+			if st.GetArtifact(target, store.ArtifactContent) != artifact || input.opens.Load() != opens {
 				t.Fatal("unrelated metadata prevented replay")
 			}
 			updatedDoc := maps.Clone(doc)
@@ -336,7 +337,7 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 			updatedDoc["metadata"] = updatedMetadata
 			st.AddObject(obj, updatedDoc)
 			runForTest(t, c, obj.Named())
-			emission, ok = st.GetArtifact(obj.Named()).(*store.Emission)
+			emission, ok = st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
 			if !ok {
 				t.Fatal("UID refresh left no authoritative generator inventory")
 			}
@@ -350,7 +351,7 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 				next.Metadata["org.opencontainers.image.revision"] = "next-origin"
 				st.SetArtifact(repo, &next)
 				runForTest(t, c, obj.Named())
-				fresh := st.GetArtifact(target).(*store.SourceArtifact)
+				fresh := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 				if fresh.Revision != "revision" || fresh.Metadata["org.opencontainers.image.revision"] != "next-origin" {
 					t.Fatalf("origin-only metadata stayed stale: %+v", fresh)
 				}
@@ -358,7 +359,7 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 				last.Revision = "next-revision"
 				st.SetArtifact(repo, &last)
 				runForTest(t, c, obj.Named())
-				fresh = st.GetArtifact(target).(*store.SourceArtifact)
+				fresh = st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 				if fresh.Revision != "next-revision" || fresh.Metadata["org.opencontainers.image.revision"] != "next-origin" {
 					t.Fatalf("selected metadata stayed stale: %+v", fresh)
 				}
@@ -368,14 +369,22 @@ func TestArtifactGenerator_Metadata(t *testing.T) {
 			disabledMetadata["annotations"] = map[string]any{"source.extensions.fluxcd.io/reconcile": "disabled"}
 			disabledDoc["metadata"] = disabledMetadata
 			st.AddObject(obj, disabledDoc)
-			beforeDisabled := st.GetArtifact(target)
+			beforeDisabled := st.GetArtifact(target, store.ArtifactContent)
+			beforeDisabledOpens := input.opens.Load()
 			var emissions atomic.Int64
 			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(manifest.NamedResource, any) { emissions.Add(1) }, false)
 			runForTest(t, c, obj.Named())
 			unsubscribe()
-			if emissions.Load() != 0 || st.GetArtifact(target) != beforeDisabled {
+			if emissions.Load() != 0 || st.GetArtifact(target, store.ArtifactContent) != beforeDisabled {
 				t.Fatal("disable annotation arrival changed accepted outputs")
 			}
+			st.AddObject(obj, updatedDoc)
+			runForTest(t, c, obj.Named())
+			enabled := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
+			if input.opens.Load() != beforeDisabledOpens || enabled.Children[0].Doc["metadata"].(map[string]any)["labels"].(map[string]any)["source.extensions.fluxcd.io/generator"] != "next" {
+				t.Fatal("re-enabling did not retain cached content and current UID")
+			}
+
 		})
 	}
 }
@@ -394,12 +403,12 @@ func TestArtifactGenerator_RequiredUnusedAlias(t *testing.T) {
 	}
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
-	st.SetArtifact(repo, &store.SourceArtifact{Key: "input", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}})
+	st.SetArtifact(repo, &store.SourceArtifact{Key: "input", Content: "input", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}})
 	repo.Name = "unused"
 	st.UpdateStatus(repo, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "unavailable unused alias"})
 	runForTest(t, c, obj.Named())
 	status, _ := st.GetStatus(obj.Named())
-	if status.Status != store.StatusFailed || st.GetArtifact(obj.Named()) != nil {
+	if status.Status != store.StatusFailed || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 		t.Fatalf("unused alias result = %+v", status)
 	}
 }
@@ -418,7 +427,7 @@ func TestArtifactGenerator_InputAvailability(t *testing.T) {
 		{"key_without_fs", &store.SourceArtifact{Key: "key", LocalPath: "unused"}, store.StatusReady, "", store.StatusFailed, ""},
 		{"contentless", &store.SourceArtifact{}, store.StatusReady, "", store.StatusFailed, ""},
 		{"skipped", nil, store.StatusReady, store.ReasonSkipped, store.StatusReady, store.ReasonSkipped},
-		{"readable_before_ready", &store.SourceArtifact{Key: "key", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}}, store.StatusFailed, "", store.StatusReady, ""},
+		{"readable_before_ready", &store.SourceArtifact{Key: "key", Content: "key", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}}, store.StatusFailed, "", store.StatusReady, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -434,7 +443,7 @@ func TestArtifactGenerator_InputAvailability(t *testing.T) {
 			})
 			c := New(st, task.NewBounded(2), owner)
 
-			obj, doc := generatorForTest(t, []any{map[string]any{"name": "output", "copy": []any{map[string]any{"from": "@repo/file", "to": "@artifact/file"}}}})
+			obj, doc := generatorForTest(t, []any{map[string]any{"name": "output", "revision": "@repo", "originRevision": "@repo", "copy": []any{map[string]any{"from": "@repo/file", "to": "@artifact/file"}}}})
 			st.AddObject(obj, doc)
 			repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
 			if tc.artifact != nil {
@@ -449,8 +458,8 @@ func TestArtifactGenerator_InputAvailability(t *testing.T) {
 				t.Fatalf("input availability = %+v; want %s/%s", status, tc.want, tc.wantReason)
 			}
 			target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "output"}
-			if (st.GetArtifact(target) != nil) != (tc.name == "readable_before_ready") {
-				t.Fatalf("input %s output = %+v", tc.name, st.GetArtifact(target))
+			if (st.GetArtifact(target, store.ArtifactContent) != nil) != (tc.name == "readable_before_ready") {
+				t.Fatalf("input %s output = %+v", tc.name, st.GetArtifact(target, store.ArtifactContent))
 			}
 			if tc.name == "missing" {
 				c.Tasks.Go(t.Context(), "generator", func(ctx context.Context) {
@@ -501,7 +510,7 @@ func TestArtifactGenerator_AuthoritativeDocument(t *testing.T) {
 				got = run.reconcile(ctx, any(obj).(*manifest.RawObject), manifest.DrainNone)
 			})
 			c.Tasks.BlockTillDone()
-			if !errors.Is(got, manifest.ErrInput) || !errors.Is(got, manifest.ErrFlux) || st.GetArtifact(obj.Named()) != nil {
+			if !errors.Is(got, manifest.ErrInput) || !errors.Is(got, manifest.ErrFlux) || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 				t.Fatalf("document rejection = %v", got)
 			}
 			if tc.name == "missing" && !strings.Contains(got.Error(), "missing authoritative document") {
@@ -519,6 +528,7 @@ func TestArtifactGenerator_InputIdentity(t *testing.T) {
 	}{
 		{"key", func(input *store.SourceArtifact) { input.Key = "next-key" }},
 		{"digest", func(input *store.SourceArtifact) { input.Digest = "next-digest" }},
+		{"content", func(input *store.SourceArtifact) { input.Content = "next-content" }},
 		{"revision", func(input *store.SourceArtifact) { input.Revision = "next-revision" }},
 		{"root", func(input *store.SourceArtifact) { input.LocalRoot = "next-root" }},
 		{"path", func(input *store.SourceArtifact) { input.LocalPath = "next-path" }},
@@ -540,19 +550,19 @@ func TestArtifactGenerator_InputIdentity(t *testing.T) {
 			})
 			c := New(st, task.NewBounded(2), owner)
 
-			obj, doc := generatorForTest(t, []any{map[string]any{"name": "output", "copy": []any{map[string]any{"from": "@repo/file", "to": "@artifact/file"}}}})
+			obj, doc := generatorForTest(t, []any{map[string]any{"name": "output", "revision": "@repo", "originRevision": "@repo", "copy": []any{map[string]any{"from": "@repo/file", "to": "@artifact/file"}}}})
 			st.AddObject(obj, doc)
 			repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
-			input := store.SourceArtifact{Key: "key", Digest: "digest", Revision: "revision", LocalRoot: "root", LocalPath: "path", FS: fstest.MapFS{"file": {Data: []byte("same bytes")}}}
+			input := store.SourceArtifact{Key: "key", Content: "key", Digest: "digest", Revision: "revision", LocalRoot: "root", LocalPath: "path", FS: fstest.MapFS{"file": {Data: []byte("same bytes")}}}
 			st.SetArtifact(repo, &input)
 			runForTest(t, c, obj.Named())
 			target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "output"}
-			before := st.GetArtifact(target).(*store.SourceArtifact)
+			before := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 			next := input
 			tc.edit(&next)
 			st.SetArtifact(repo, &next)
 			runForTest(t, c, obj.Named())
-			after := st.GetArtifact(target).(*store.SourceArtifact)
+			after := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 			if before.Key == after.Key || before.Digest != after.Digest {
 				t.Fatalf("input %s identity before=%+v after=%+v", tc.name, before, after)
 			}
@@ -582,16 +592,16 @@ func TestArtifactGenerator_EmptyAndCanceledInventory(t *testing.T) {
 	}
 	st.AddObject(obj, doc)
 	repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
-	st.SetArtifact(repo, &store.SourceArtifact{Key: "first", Digest: "first", FS: fstest.MapFS{"apps/prod/file": {Data: []byte("bytes")}}})
+	st.SetArtifact(repo, &store.SourceArtifact{Key: "first", Content: "first", Digest: "first", FS: fstest.MapFS{"apps/prod/file": {Data: []byte("bytes")}}})
 	runForTest(t, c, obj.Named())
 	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "prod"}
-	accepted := st.GetArtifact(target)
+	accepted := st.GetArtifact(target, store.ArtifactContent)
 	if accepted == nil {
 		t.Fatal("initial output missing")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	st.SetArtifact(repo, &store.SourceArtifact{Key: "empty", Digest: "empty", FS: cancelOnReadDirFS{FS: fstest.MapFS{}, cancel: cancel}})
+	st.SetArtifact(repo, &store.SourceArtifact{Key: "empty", Content: "empty", Digest: "empty", FS: cancelOnReadDirFS{FS: fstest.MapFS{}, cancel: cancel}})
 	var got error
 	c.Tasks.Go(t.Context(), "generator", func(context.Context) {
 		run := &execution{Controller: c}
@@ -599,13 +609,13 @@ func TestArtifactGenerator_EmptyAndCanceledInventory(t *testing.T) {
 		got = run.reconcile(ctx, any(obj).(*manifest.RawObject), manifest.DrainNone)
 	})
 	c.Tasks.BlockTillDone()
-	if !errors.Is(got, context.Canceled) || st.GetArtifact(target) != accepted {
-		t.Fatalf("canceled evaluation = %v; output=%v", got, st.GetArtifact(target))
+	if !errors.Is(got, context.Canceled) || st.GetArtifact(target, store.ArtifactContent) != accepted {
+		t.Fatalf("canceled evaluation = %v; output=%v", got, st.GetArtifact(target, store.ArtifactContent))
 	}
-	st.SetArtifact(repo, &store.SourceArtifact{Key: "empty", Digest: "empty", Metadata: map[string]string{"fresh": "readable"}, FS: fstest.MapFS{}})
+	st.SetArtifact(repo, &store.SourceArtifact{Key: "empty", Content: "empty", Digest: "empty", Metadata: map[string]string{"fresh": "readable"}, FS: fstest.MapFS{}})
 	runForTest(t, c, obj.Named())
-	emission := st.GetArtifact(obj.Named()).(*store.Emission)
-	if !emission.Complete || len(emission.Children) != 0 || emission.Fingerprint == "" || st.GetArtifact(target) != nil {
+	emission := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
+	if !emission.Complete || len(emission.Children) != 0 || emission.Fingerprint == "" || st.GetArtifact(target, store.ArtifactContent) != nil {
 		t.Fatalf("zero expansion inventory = %+v", emission)
 	}
 }
@@ -641,7 +651,7 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "output"}
 	check := func(want string) {
 		t.Helper()
-		artifact, ok := st.GetArtifact(target).(*store.SourceArtifact)
+		artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 		if !ok {
 			t.Fatalf("missing %s output", want)
 		}
@@ -650,30 +660,45 @@ func TestArtifactGenerator_MetadataCapture(t *testing.T) {
 			t.Fatalf("captured %s = %q, %+v, %v", want, data, artifact, err)
 		}
 	}
-	stable := &store.SourceArtifact{Key: "stable", Digest: "stable", Revision: "stable-revision", Metadata: map[string]string{"org.opencontainers.image.revision": "stable-origin"}, FS: fstest.MapFS{"file": {Data: []byte("stable")}}}
+	stable := &store.SourceArtifact{Key: "stable", Content: "stable", Digest: "stable", Revision: "stable-revision", Metadata: map[string]string{"org.opencontainers.image.revision": "stable-origin"}, FS: fstest.MapFS{"file": {Data: []byte("stable")}}}
 	st.SetArtifact(repo, stable)
 	runForTest(t, c, obj.Named())
 	check("stable")
-	accepted := st.GetArtifact(target)
 	var replaced atomic.Bool
 	first := &observedFS{FS: fstest.MapFS{"file": {Data: []byte("first")}}}
 	first.onOpen = func(name string) {
 		if name == "file" && replaced.CompareAndSwap(false, true) {
-			st.SetArtifact(repo, &store.SourceArtifact{Key: "next", Digest: "next", Revision: "next-revision", Metadata: map[string]string{"org.opencontainers.image.revision": "next-origin"}, FS: fstest.MapFS{"file": {Data: []byte("next")}}})
+			st.SetArtifact(repo, &store.SourceArtifact{Key: "next", Content: "next", Digest: "next", Revision: "next-revision", Metadata: map[string]string{"org.opencontainers.image.revision": "next-origin"}, FS: fstest.MapFS{"file": {Data: []byte("next")}}})
 		}
 	}
-	st.SetArtifact(repo, &store.SourceArtifact{Key: "first", Digest: "first", Revision: "first-revision", Metadata: map[string]string{"org.opencontainers.image.revision": "first-origin"}, FS: first})
-	runForTest(t, c, obj.Named())
-	if !replaced.Load() || st.GetArtifact(target) != accepted {
-		t.Fatal("stale evaluation replaced the accepted bundle")
+	st.SetArtifact(repo, &store.SourceArtifact{Key: "first", Content: "first", Digest: "first", Revision: "first-revision", Metadata: map[string]string{"org.opencontainers.image.revision": "first-origin"}, FS: first})
+	var work generatorWork
+	tasks := &convergenceTasks{Service: c.Tasks, generator: obj.Named(), work: &work, completed: func(string) {}}
+	dispatcher := &convergenceDispatcher{generator: c, id: obj.Named(), work: &work}
+	scheduler := schedule.New(tasks, dispatcher)
+	defer st.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, value any) {
+		if id == target {
+			if artifact, ok := value.(*store.SourceArtifact); ok && artifact.Revision == "first-revision" {
+				t.Error("stale evaluation replaced the accepted bundle")
+			}
+		}
+		scheduler.OnPublication()
+	}, false)()
+	defer st.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { scheduler.OnPublication() }, false)()
+	scheduler.Seed([]schedule.NodeID{obj.Named()})
+	if err := scheduler.Run(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	runForTest(t, c, obj.Named())
+	c.Tasks.BlockTillDone()
+	if !replaced.Load() || work.dispatched.Load() != 2 || c.Tasks.Failures() != 0 {
+		t.Fatalf("metadata successor work = %+v", work.snapshot())
+	}
 	check("next")
 }
 
 func TestArtifactGenerator_MutableInput(t *testing.T) {
 	t.Parallel()
-	for _, identity := range []struct{ name, key, digest string }{{"missing_key", "", "digest"}, {"missing_generation", "family", ""}} {
+	for _, identity := range []struct{ name, key, digest, revision string }{{"missing_key", "", "digest", ""}, {"missing_generation", "family", "", ""}, {"metadata_without_content", "family", "digest", "revision"}} {
 		t.Run(identity.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
@@ -694,9 +719,9 @@ func TestArtifactGenerator_MutableInput(t *testing.T) {
 			repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
 			target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "output"}
 			for _, value := range []string{"first", "second"} {
-				st.SetArtifact(repo, &store.SourceArtifact{Key: identity.key, Digest: identity.digest, Metadata: map[string]string{"snapshot": value}, FS: fstest.MapFS{"file": {Data: []byte(value)}}})
+				st.SetArtifact(repo, &store.SourceArtifact{Key: identity.key, Digest: identity.digest, Revision: identity.revision, Metadata: map[string]string{"snapshot": value}, FS: fstest.MapFS{"file": {Data: []byte(value)}}})
 				runForTest(t, c, obj.Named())
-				artifact, ok := st.GetArtifact(target).(*store.SourceArtifact)
+				artifact, ok := st.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 				if !ok {
 					t.Fatalf("missing %s output", value)
 				}

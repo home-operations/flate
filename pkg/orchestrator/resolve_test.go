@@ -150,7 +150,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 		assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
 		if id == f.reader && !before {
 			first.Do(func() {
-				if assessment.Assessment.Outcome() != schedule.Blocked || f.o.store.GetArtifact(f.reader) != nil {
+				if assessment.Assessment.Outcome() != schedule.Blocked || f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
 					t.Error("running Ready supplier admitted frozen absence")
 				}
 				parked <- struct{}{}
@@ -181,7 +181,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 		case err := <-done:
 			t.Fatalf("scheduler ended while supplier was running: %v", err)
 		}
-		if f.o.store.GetArtifact(f.reader) != nil {
+		if f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
 			t.Error("reader published before supplier settled")
 		}
 		close(release)
@@ -376,7 +376,7 @@ func TestResolve_OptionalDeterminism(t *testing.T) {
 				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
 				assert.NoError(t, sched.Run(t.Context()))
 				unsub()
-				art, ok := f.o.store.GetArtifact(f.reader).(*store.Emission)
+				art, ok := f.o.store.GetArtifact(f.reader, store.ArtifactContent).(*store.Emission)
 				if !ok {
 					t.Fatal("reader did not complete")
 				}
@@ -506,7 +506,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			facts := o.store.ReferenceFacts(target, o.index)
 			if facts.Data != nil || facts.Accepted || !slices.ContainsFunc(facts.Productions, func(p manifest.Production) bool {
 				return p.Owner == producer && p.Declaration.Kind == "ArtifactGenerator" && p.Source == manifest.BootstrapSourceID
-			}) || o.store.GetArtifact(target) != nil {
+			}) || o.store.GetArtifact(target, store.ArtifactContent) != nil {
 				t.Fatalf("source-qualified prediction supplied content or disappeared: %+v", facts)
 			}
 			reader := d.Dispatch(t.Context(), testutil.KustomizationID("apps", "reader"), manifest.DrainNone).Assessment
@@ -563,7 +563,7 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 					t.Fatal("successor mutated the predecessor's frozen absence")
 				}
 				prior.Settle(t.Context(), manifest.DrainForce)
-				if f.o.store.GetArtifact(f.reader) != nil {
+				if f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
 					t.Fatal("stale force assessment published output")
 				}
 				sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
@@ -651,7 +651,7 @@ func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
 						t.Error("queued supplier did not retain optional absence")
 					}
 					sched.OnArrival(f.supplier, true)
-					if started.Load() || f.o.store.GetArtifact(f.reader) != nil {
+					if started.Load() || f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
 						t.Error("queued supplier started or admitted reader before a worker slot opened")
 					}
 					close(releaseKeeper)

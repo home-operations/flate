@@ -140,7 +140,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 	if !ok || info.Status != store.StatusReady {
 		t.Fatalf("ResourceSet status=%+v", info)
 	}
-	art, ok := o.store.GetArtifact(id).(*store.Emission)
+	art, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 	if !ok || len(art.Manifests) != 2 {
 		t.Fatalf("ResourceSet artifact=%+v status=%+v present=%t inventory=%t", art, info, o.store.GetObject(id) != nil, o.store.HasInventory(id))
 	}
@@ -200,7 +200,7 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "dependency not found") {
 					t.Fatalf("strict absent error=%v", err)
 				}
-				assert.Equal(t, o.store.GetArtifact(manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "flux-operator"}) == nil, true)
+				assert.Equal(t, o.store.GetArtifact(manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "flux-operator"}, store.ArtifactContent) == nil, true)
 				return
 			}
 			if err != nil {
@@ -429,7 +429,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				t.Fatalf("initial render blocked: %v", initial.Blocked)
 			}
 			t.Cleanup(initial.Close)
-			before := s.GetArtifact(rs.Named())
+			before := s.GetArtifact(rs.Named(), store.ArtifactContent)
 			fresh := *rs
 			fresh.ResourceSetSpec = *rs.DeepCopy()
 			switch state {
@@ -475,7 +475,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			}
 			assert.Equal(t, info.Status, wantStatus)
 			if state == "dedup" {
-				accepted := s.GetArtifact(rs.Named()).(*store.Emission)
+				accepted := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 				assert.Diff(t, accepted.Manifests, before.(*store.Emission).Manifests)
 			}
 			wantPublications := 1
@@ -577,7 +577,7 @@ spec:
 			status, ok := o.store.GetStatus(id)
 			assert.Equal(t, ok, true)
 			assert.Equal(t, status.Status, store.StatusReady)
-			art, ok := o.store.GetArtifact(id).(*store.Emission)
+			art, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 			if !ok || len(art.Manifests) != 1 {
 				t.Fatalf("%s artifact=%+v", id, art)
 			}

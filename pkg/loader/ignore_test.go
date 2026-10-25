@@ -306,7 +306,7 @@ func TestLoader_KrmignoreNormalization(t *testing.T) {
 					t.Fatalf("%s indexed = %t, want %t", name, indexed, want)
 				}
 			}
-			if st.GetArtifact(manifest.BootstrapSourceID) != nil || st.GetObject(manifest.BootstrapSourceID) != nil {
+			if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil || st.GetObject(manifest.BootstrapSourceID) != nil {
 				t.Fatal("standalone load published bootstrap identity")
 			}
 		})

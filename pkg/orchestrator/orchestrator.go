@@ -295,7 +295,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index

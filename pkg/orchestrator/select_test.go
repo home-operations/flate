@@ -1213,7 +1213,7 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 		orig, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
 		for _, name := range []string{"one", "two"} {
-			artifact := head.store.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}).(*store.SourceArtifact)
+			artifact := head.store.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Diff(t, artifact.Warnings, []manifest.Warning(nil))
 		}
 		selected, err, diagnostic := Select([]Rendered{orig, head}, err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)

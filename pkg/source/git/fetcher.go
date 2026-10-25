@@ -157,6 +157,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 	timeout := repo.OperationTimeout()
 	policy.Timeout = &timeout
 	var input *gittree.FS
+	var identity string
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
 		cloned, err := f.acquire(ctx, storer, worktree, request)
@@ -177,7 +178,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		}
 
 		viewOptions.Worktree = worktree
-		input, _, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, viewOptions)
+		input, identity, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, viewOptions)
 		if err != nil {
 			return plumbing.ZeroHash, fmt.Errorf("%w: validate git view: %w", manifest.ErrInput, err)
 		}
@@ -189,13 +190,13 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 
 	viewOptions.Worktree = generation.Worktree
 	if input == nil {
-		input, _, err = gittree.New(ctx, generation.Backing, generation.Commit, viewOptions)
+		input, identity, err = gittree.New(ctx, generation.Backing, generation.Commit, viewOptions)
 	}
 	if err != nil {
 		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%w: %s: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Warnings: gitWarnings(input, repo.Named(), repo.URL, refLabel)}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Content: identity, Warnings: gitWarnings(input, repo.Named(), repo.URL, refLabel)}, nil
 }
 
 func gitWarningArtifact(input *gittree.FS, id manifest.NamedResource, repository, ref string) *store.SourceArtifact {

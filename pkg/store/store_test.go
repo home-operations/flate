@@ -801,7 +801,7 @@ func TestStore_SetArtifact(t *testing.T) {
 	s.SetArtifact(id, art)
 	s.SetArtifact(id, art) // idempotent
 	assert.Equal(t, count, 1)
-	got := s.GetArtifact(id)
+	got := s.GetArtifact(id, ArtifactContent)
 	if got == nil {
 		t.Errorf("GetArtifact: nil")
 	}
@@ -1243,7 +1243,7 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							assert.Equal(t, ok, true)
 							assert.Equal(t, status.Status, StatusReady)
 							assert.Equal(t, status.Message, id.Group)
-							assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
+							assert.Diff(t, s.GetArtifact(id, ArtifactContent), Artifact(&SourceArtifact{URL: id.Group}))
 							owners := testutil.Owners(s.Productions(id, nil))
 							assert.Equal(t, len(owners), 1)
 							assert.Equal(t, owners[0].Group, id.Group)
@@ -1267,13 +1267,13 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						_, removedObservation = s.Snapshot(removed, true)
 						conds := removedObservation.Conditions
 						assert.Equal(t, len(conds), 0)
-						assert.Equal(t, s.GetArtifact(removed), nil)
+						assert.Equal(t, s.GetArtifact(removed, ArtifactContent), nil)
 						id := objects[1].Named()
 						assert.Equal(t, s.GetObject(id), objects[1])
 						status, ok := s.GetStatus(id)
 						assert.Equal(t, ok, true)
 						assert.Equal(t, status.Message, id.Group)
-						assert.Diff(t, s.GetArtifact(id), Artifact(&SourceArtifact{URL: id.Group}))
+						assert.Diff(t, s.GetArtifact(id, ArtifactContent), Artifact(&SourceArtifact{URL: id.Group}))
 						var observation Observation
 						_, observation = s.Snapshot(id, true)
 						conds = observation.Conditions

@@ -142,7 +142,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 	t.Parallel()
 	repo := ociRepo("oci://oci.trueforge.org/truecharts")
 	repo.Interval = metav1.Duration{Duration: time.Hour}
-	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot"}}
+	stub := &stubOCI{art: &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: "/slot", Content: "acquired-generation"}}
 	fInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}
 	f := &Fetcher{network: newTestNetwork(t), oci: stub}
 
@@ -167,6 +167,9 @@ func TestFetch_OCIBranch(t *testing.T) {
 	}
 	if stub.got.Reference == nil || stub.got.Reference.Tag != "3.0.0" {
 		t.Errorf("synthesized ref = %+v, want tag 3.0.0", stub.got.Reference)
+	}
+	if art.Content != stub.art.Content {
+		t.Fatal("OCI forwarding changed content identity")
 	}
 	if art.Kind != manifest.KindHelmChart {
 		t.Errorf("artifact Kind = %q, want re-stamped HelmChart", art.Kind)

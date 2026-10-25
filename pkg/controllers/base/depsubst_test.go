@@ -105,7 +105,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			}
 			replayed, _ := st.Get[*manifest.Kustomization](child.Named())
 			assert.Equal(t, replayed.DependsOn[0].Name, tt.want)
-			output, matched := st.GetArtifact(parent.Named()).(*store.Emission).Replay(manifest.Fingerprint("inputs"))
+			output, matched := st.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).Replay(manifest.Fingerprint("inputs"))
 			assert.Equal(t, matched, true)
 			assert.Diff(t, output.Manifests, docs)
 			assert.Diff(t, output.Children[1].Doc, childDoc)

@@ -28,7 +28,7 @@ func TestFetcher_NoArtifact(t *testing.T) {
 					t.Fatal("missing producer evidence")
 				}
 			}
-			if s.GetObject(ea.Named()) != nil || s.GetArtifact(ea.Named()) != nil {
+			if s.GetObject(ea.Named()) != nil || s.GetArtifact(ea.Named(), store.ArtifactContent) != nil {
 				t.Fatal("prediction supplied source content")
 			}
 			_, err := f.Fetch(t.Context(), ea, testReadSet(ea), sourcecache.Policy{})

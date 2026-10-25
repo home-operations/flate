@@ -41,7 +41,7 @@ func memoryTree(tb testing.TB, files map[string]string) *tree.Tree {
 }
 
 func treeRef(lower *tree.Tree, key string) *store.SourceArtifact {
-	return &store.SourceArtifact{FS: lower, Key: key}
+	return &store.SourceArtifact{FS: lower, Key: key, Content: key}
 }
 
 func TestTreeFS_MethodMatrix(t *testing.T) {

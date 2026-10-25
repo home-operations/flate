@@ -57,11 +57,11 @@ data: {key: value}
 	if first.Assessment.Outcome() == schedule.Blocked || !first.Assessment.Valid() || arrivals.Load() != 1 {
 		t.Fatalf("fresh assessment=%+v arrivals=%d", first.Assessment, arrivals.Load())
 	}
-	before := s.GetArtifact(rs.Named()).(*store.Emission)
+	before := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	var reader store.ReadSet
 	reader.Init(s, testutil.KustomizationID("ns", "reader"), nil)
 	defer reader.Retire()
-	reader.GetArtifact(rs.Named())
+	reader.GetArtifact(rs.Named(), store.ArtifactContent)
 	var statusEvents, artifactEvents atomic.Int64
 	unsubStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statusEvents.Add(1) }, false)
 	defer unsubStatus()
@@ -69,7 +69,7 @@ data: {key: value}
 	defer unsubArtifact()
 	second := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer second.Assessment.Close()
-	after := s.GetArtifact(rs.Named()).(*store.Emission)
+	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if second.Assessment.Outcome() == schedule.Blocked || !second.Assessment.Valid() || !reader.Valid() || arrivals.Load() != 1 || statusEvents.Load() != 0 || artifactEvents.Load() != 0 || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
 		t.Fatalf("dedup assessment=%+v reader valid=%t object/status/artifact events=%d/%d/%d", second.Assessment, reader.Valid(), arrivals.Load()-1, statusEvents.Load(), artifactEvents.Load())
 	}
@@ -77,7 +77,7 @@ data: {key: value}
 	skipped := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer skipped.Assessment.Close()
 	info, _ := s.GetStatus(rs.Named())
-	after = s.GetArtifact(rs.Named()).(*store.Emission)
+	after = s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if skipped.Assessment.Outcome() == schedule.Blocked || info.Outcome() != store.OutcomeSkipped || info.Message != "" || !reader.Valid() || arrivals.Load() != 1 || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
 		t.Fatalf("typed skip lost its outcome: status=%+v arrivals=%d", info, arrivals.Load())
 	}
@@ -109,7 +109,7 @@ data: {key: fixed}
 				if initial.Assessment.Outcome() == schedule.Blocked || !initial.Assessment.Valid() {
 					t.Fatalf("fresh setup failed: %+v", initial.Assessment)
 				}
-				before := s.GetArtifact(rs.Named()).(*store.Emission)
+				before := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 
 				opts := base.Options{}
 				wantUnresolved := false
@@ -207,7 +207,7 @@ data: {key: fixed}
 					t.Fatalf("no-op emitted %d arrivals", arrivals.Load())
 				}
 				if name == "fresh fingerprint identical docs" {
-					after := s.GetArtifact(rs.Named()).(*store.Emission)
+					after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 					if before.Fingerprint == after.Fingerprint {
 						t.Fatal("fresh fingerprint must replace artifact identity")
 					}
@@ -270,15 +270,15 @@ data: {key: fixed}
 			info, _ := s.GetStatus(child.Named())
 			switch mode {
 			case "pending_peer":
-				if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{peer.Named()}) || s.GetArtifact(child.Named()) != nil {
+				if run.Outcome() != schedule.Blocked || !slices.Equal(run.Blocked, []manifest.NamedResource{peer.Named()}) || s.GetArtifact(child.Named(), store.ArtifactContent) != nil {
 					t.Fatalf("pending materializer did not park exact peer: outcome=%v blocked=%v", run.Outcome(), run.Blocked)
 				}
 			case "ready_without_child", "failed_without_child":
-				if run.Outcome() != schedule.DependencyFailed || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named(), peer.Named()}) || s.GetArtifact(child.Named()) != nil {
+				if run.Outcome() != schedule.DependencyFailed || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named(), peer.Named()}) || s.GetArtifact(child.Named(), store.ArtifactContent) != nil {
 					t.Fatalf("non-supplying owners lost provenance: %+v", info)
 				}
 			default:
-				if run.Outcome() != schedule.Terminal || info.Status != store.StatusReady || s.GetArtifact(child.Named()) == nil {
+				if run.Outcome() != schedule.Terminal || info.Status != store.StatusReady || s.GetArtifact(child.Named(), store.ArtifactContent) == nil {
 					t.Fatalf("effective declaration did not render: %+v", info)
 				}
 			}
@@ -352,14 +352,14 @@ data: {key: initial}
 	if dispatches.Load() != 2 {
 		t.Fatalf("captured attempts=%d, want 2", dispatches.Load())
 	}
-	before := s.GetArtifact(rs.Named()).(*store.Emission)
+	before := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	var reader store.ReadSet
 	reader.Init(s, testutil.KustomizationID("ns", "reader"), nil)
 	defer reader.Retire()
-	reader.GetArtifact(rs.Named())
+	reader.GetArtifact(rs.Named(), store.ArtifactContent)
 	settled := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer settled.Assessment.Close()
-	after := s.GetArtifact(rs.Named()).(*store.Emission)
+	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if settled.Assessment.Outcome() == schedule.Blocked || !settled.Assessment.Valid() || !reader.Valid() || before.Fingerprint != after.Fingerprint || !cmp.Equal(before.Manifests, after.Manifests) {
 		t.Fatalf("settled newest content did not deduplicate: %+v", settled.Assessment)
 	}
@@ -486,13 +486,13 @@ data: {value: rendered}
 			s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: k.Name, Namespace: k.Namespace}}}, Complete: true}, nil)
 			s.SetArtifact(l.Named(), &store.SourceArtifact{Key: "static-l"})
 			s.UpdateStatus(l.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			if s.GetObject(l.Named()) != l || s.GetArtifact(l.Named()) == nil {
+			if s.GetObject(l.Named()) != l || s.GetArtifact(l.Named(), store.ArtifactContent) == nil {
 				t.Fatal("fixture L is not live with an artifact")
 			}
 			if info, ok := s.GetStatus(l.Named()); !ok || info.Status != store.StatusReady {
 				t.Fatal("fixture L is not Ready")
 			}
-			if s.GetArtifact(k) != nil {
+			if s.GetArtifact(k, store.ArtifactContent) != nil {
 				t.Fatal("fixture K unexpectedly emitted")
 			}
 			var publications atomic.Int64
@@ -521,7 +521,7 @@ data: {value: rendered}
 			})
 			tasks.BlockTillDone()
 			output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: l.Namespace, Name: "withdrawn-output"}
-			if tasks.Failures() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil || s.GetArtifact(l.Named()) != nil || s.GetObject(output) != nil {
+			if tasks.Failures() != 0 || publications.Load() != 0 || s.GetObject(l.Named()) != nil || s.GetArtifact(l.Named(), store.ArtifactContent) != nil || s.GetObject(output) != nil {
 				t.Fatalf("withdrawn body/artifact leaked: publications=%d", publications.Load())
 			}
 			s.AddObject(l)
@@ -955,7 +955,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	if err := scheduler.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	output, ok := o.store.GetArtifact(consumer).(*store.Emission)
+	output, ok := o.store.GetArtifact(consumer, store.ArtifactContent).(*store.Emission)
 	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 || output.Manifests[0]["data"].(map[string]any)["value"] != "pinned" {
 		t.Fatalf("after-drain transitive output: blocked=%t settled=%t output=%+v", blocked.Load(), settled.Load(), output)
 	}

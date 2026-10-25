@@ -60,7 +60,7 @@ generatorOptions:
 	if !ok {
 		t.Fatal("bootstrap owner missing")
 	}
-	req := kustomize.RenderRequest{Source: o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact), SubPath: "apps", Spec: ks}
+	req := kustomize.RenderRequest{Source: o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact), SubPath: "apps", Spec: ks}
 	first, _, err := kustomize.Render(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry)
 	assert.NoError(t, err)
 	second, _, err := kustomize.Render(t.Context(), o.ksc.Trees, req, o.cfg.SourceRetry)

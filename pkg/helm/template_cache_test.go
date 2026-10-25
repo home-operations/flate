@@ -1370,7 +1370,7 @@ type changingChartReader struct {
 	calls     int
 }
 
-func (r *changingChartReader) GetArtifact(manifest.NamedResource) store.Artifact {
+func (r *changingChartReader) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact {
 	artifact := r.artifacts[min(r.calls, len(r.artifacts)-1)]
 	r.calls++
 	return artifact
@@ -1537,7 +1537,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 			t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
 		}
 		root, st, hr := sourceValuesCacheFixture(t)
-		artifact := st.GetArtifact(hr.ChartSource())
+		artifact := st.GetArtifact(hr.ChartSource(), store.ArtifactContent)
 		testutil.WriteFile(t, root, "charts/demo/prod.yaml", "marker: packaged\n")
 		hr.Chart.Source.Kind = manifest.KindExternalArtifact
 		hr.ChartValuesFiles = []string{"prod.yaml"}
@@ -1644,5 +1644,44 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 		loaded, err := loadDecodedChart(t.Context(), c, hr, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, loaded.chart == initial.chart, true)
+	}
+}
+
+func TestSources_SelectedRevision(t *testing.T) {
+	t.Parallel()
+	for _, tracked := range []bool{false, true} {
+		t.Run(fmt.Sprint(tracked), func(t *testing.T) {
+			t.Parallel()
+			st, hr, dir := ociRenderFixture(t)
+			hr = hr.Clone()
+			if !tracked {
+				hr.ChartRef = nil
+			}
+			owner := cachetest.New(t, "", cache.New)
+			client := NewClient(owner)
+			input := acquireChartFS(t, owner, chartFixtureFS(hr, os.DirFS(dir)))
+			artifact := &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: input, Key: "chart", Content: cache.AcquisitionIdentity(input), Digest: "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8", Revision: "6.15.0@sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"}
+			st.SetArtifact(hr.ChartSource(), artifact)
+			var reads store.ReadSet
+			reads.Init(st, hr.Named(), nil)
+			defer reads.Close()
+			_, _, err := client.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(&reads)})
+			assert.NoError(t, err)
+			next := *artifact
+			next.Revision = "6.16.0"
+			next.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
+			st.SetArtifact(hr.ChartSource(), &next)
+			assert.Equal(t, reads.Valid(), !tracked)
+			var fresh store.ReadSet
+			fresh.Init(st, hr.Named(), nil)
+			defer fresh.Close()
+			loaded, err := client.describeChart(t.Context(), hr, NewSources(&fresh))
+			assert.NoError(t, err)
+			assert.Equal(t, loaded.artifact.Revision, next.Revision)
+			later := next
+			later.Revision = "6.17.0"
+			st.SetArtifact(hr.ChartSource(), &later)
+			assert.Equal(t, fresh.Valid(), !tracked)
+		})
 	}
 }

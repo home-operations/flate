@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"archive/tar"
 	"context"
 	"errors"
 	"io/fs"
@@ -14,8 +15,11 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
@@ -39,28 +43,28 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	if count, err := d.resolveEntrySources(t.Context(), false); err != nil || count != 1 {
 		t.Fatalf("initial evidence resolution = %d, %v", count, err)
 	}
-	before := st.GetArtifact(id).(*store.SourceArtifact)
+	before := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	child, childDoc, emission := st.GetEmission(testutil.KustomizationID("apps", "child"))
 	emission.Finish()
 	if !st.DeleteObject(id) {
 		t.Fatal("source was not admitted before removal")
 	}
 	st.DeleteObject(testutil.KustomizationID("apps", "child"))
-	if st.GetObject(id) != nil || st.GetArtifact(id) != nil || st.GetObject(testutil.KustomizationID("apps", "child")) != nil {
+	if st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil || st.GetObject(testutil.KustomizationID("apps", "child")) != nil {
 		t.Fatal("source removal retained published evidence")
 	}
 	if count, err := d.resolveEntrySources(t.Context(), false); err != nil || count != 1 {
 		t.Fatalf("removed evidence resolution = %d, %v", count, err)
 	}
-	after, ok := st.GetArtifact(id).(*store.SourceArtifact)
+	after, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	if !ok || !after.InputAlias || after.LocalRoot != before.LocalRoot || after.LocalPath != before.LocalPath || st.GetObject(id) != nil {
 		t.Fatalf("loader evidence lost source identity: %+v", after)
 	}
-	if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(id) != after {
+	if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(id, store.ArtifactContent) != after {
 		t.Fatalf("unchanged evidence resolution = %d, %v", count, err)
 	}
 	st.AddObject(child, childDoc)
-	if count, err := d.resolveEntrySources(t.Context(), false); err != nil || count != 0 || st.GetArtifact(id) != after {
+	if count, err := d.resolveEntrySources(t.Context(), false); err != nil || count != 0 || st.GetArtifact(id, store.ArtifactContent) != after {
 		t.Fatalf("source republication changed resolved evidence: %d, %v", count, err)
 	}
 	_, doc, attempt := st.GetEmission(id)
@@ -105,7 +109,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 				t.Fatalf("resolution = %d, %v", count, err)
 			}
 			obj := st.GetObject(ks.SourceID())
-			if tc.want && (obj == nil || obj.Named() != ks.SourceID()) || !tc.want && (obj != nil || st.GetArtifact(ks.SourceID()) != nil) {
+			if tc.want && (obj == nil || obj.Named() != ks.SourceID()) || !tc.want && (obj != nil || st.GetArtifact(ks.SourceID(), store.ArtifactContent) != nil) {
 				t.Fatalf("identity = %v", obj)
 			}
 		})
@@ -144,7 +148,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 				t.Fatalf("generic reference resolution = %d, %v", count, err)
 			}
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "source"}
-			artifact, ok := st.GetArtifact(id).(*store.SourceArtifact)
+			artifact, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			if tc.want && (!ok || artifact.LocalRoot != root || st.GetObject(id).Named() != id) || !tc.want && (ok || st.GetObject(id) != nil) {
 				t.Fatalf("generic reference identity or root changed: %+v", artifact)
 			}
@@ -178,7 +182,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 				t.Fatal(err)
 			}
-			got := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			got := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			if d.cfg.Path != got.LocalPath {
 				t.Fatalf("scan coordinate = %q, want admitted root %q", d.cfg.Path, got.LocalPath)
 			}
@@ -192,7 +196,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			if st.GetObject(source.Named()) != source {
 				t.Fatal("authored source replaced")
 			}
-			alias := st.GetArtifact(source.Named()).(*store.SourceArtifact)
+			alias := st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
 			if alias.ContentFingerprint == nil {
 				t.Fatal("alias content fingerprint is absent")
 			}
@@ -239,7 +243,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			t.Fatalf("resolution = %d, %v, want %d", count, err, len(ids))
 		}
 		for _, id := range ids {
-			artifact, ok := st.GetArtifact(id).(*store.SourceArtifact)
+			artifact, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			want := filepath.Join(root, "kubernetes")
 			if id.Kind == manifest.KindGitRepository {
 				want = root
@@ -248,7 +252,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 				t.Fatalf("%s artifact = %+v, want root %s", id, artifact, want)
 			}
 		}
-		if st.GetObject(wrong) != nil || st.GetArtifact(wrong) != nil {
+		if st.GetObject(wrong) != nil || st.GetArtifact(wrong, store.ArtifactContent) != nil {
 			t.Fatal("wrong-group identity collided with an entry source")
 		}
 	})
@@ -308,12 +312,12 @@ func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
 						t.Fatal(err)
 					}
 					if tc.want == "" {
-						if aliases != 0 || st.GetObject(source) != nil || st.GetArtifact(source) != nil {
+						if aliases != 0 || st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil {
 							t.Fatalf("inconsistent source aliased: %v", aliases)
 						}
 						continue
 					}
-					art, ok := st.GetArtifact(source).(*store.SourceArtifact)
+					art, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 					if !ok || aliases != 1 || st.GetObject(source) == nil {
 						t.Fatalf("missing alias: %v, %+v", aliases, art)
 					}
@@ -327,10 +331,10 @@ func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
 						}
 					}
 					st.AddObject(&manifest.Kustomization{Name: "later", Namespace: "other", Path: "./root-only", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name}})
-					if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source) != art {
+					if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != art {
 						t.Fatalf("published root changed: %v, %v", aliases, err)
 					}
-					if st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+					if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
 						t.Fatal("bootstrap replaced")
 					}
 				}
@@ -347,13 +351,13 @@ func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
 			st.AddObject(witness)
 			source := witness.SourceID()
 			d := discoverer{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
-			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source) != nil {
+			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != nil {
 				t.Fatalf("failed root resolution = %d, %v", aliases, err)
 			}
 			if !slices.Equal(d.resolvedSources[source].refs, []manifest.BaseManifest{witness}) {
 				t.Fatalf("loader/store witnesses were duplicated or copied: %+v", d.resolvedSources[source].refs)
 			}
-			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source) != nil {
+			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != nil {
 				t.Fatalf("unchanged witnesses made progress = %d, %v", aliases, err)
 			}
 			replacement := witness.Clone()
@@ -362,8 +366,8 @@ func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
 			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 1 {
 				t.Fatalf("replacement witness did not retry = %d, %v", aliases, err)
 			}
-			artifact, ok := st.GetArtifact(source).(*store.SourceArtifact)
-			if !ok || artifact.LocalRoot != root || !artifact.InputAlias || st.GetObject(source).Named() != source || st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+			artifact, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			if !ok || artifact.LocalRoot != root || !artifact.InputAlias || st.GetObject(source).Named() != source || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
 				t.Fatalf("retried alias changed source or bootstrap identity: %+v", artifact)
 			}
 		})
@@ -403,4 +407,62 @@ type deniedBootstrap struct{}
 
 func (deniedBootstrap) Open(name string) (fs.File, error) {
 	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
+}
+
+func TestResolveEntrySources_Content(t *testing.T) {
+	t.Parallel()
+	owner := cachetest.New(t, "", cache.New)
+	input, _, key, err := owner.Acquire(t.Context(), cache.ArchiveKey{Policy: "fixed", Content: t.Name()}, cache.Policy{MaxAge: cache.Forever}, func(_ context.Context, target cache.ProducerInput) (cache.ProducerResult, error) {
+		writer := tar.NewWriter(target)
+		if err := writer.AddFS(fstest.MapFS{"apps/file": {Data: []byte("selected")}, "other/file": {Data: []byte("other")}}); err != nil {
+			return cache.ProducerResult{}, err
+		}
+		return cache.ProducerResult{}, writer.Close()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap := &store.SourceArtifact{FS: input, Key: key, Content: cache.AcquisitionIdentity(input), LocalRoot: "/input", LocalPath: "/input", Revision: "first"}
+	obj := &manifest.GitRepository{Name: "alias", Namespace: "apps"}
+	candidate := entryResolution{input: bootstrap, object: obj, subtree: "apps"}
+
+	for _, phase := range []string{"warm", "metadata", "subtree", "mutable"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			d := discoverer{}
+			first, err := d.entrySourceView(t.Context(), candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			selected := candidate
+			cloned := *bootstrap
+			selected.input = &cloned
+			switch phase {
+			case "metadata":
+				cloned.Revision = "next"
+				cloned.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
+			case "subtree":
+				selected.subtree = "other"
+			case "mutable":
+				cloned.Content = ""
+				cloned.Key = ""
+				cloned.FS = fstest.MapFS{"apps/file": {Data: []byte("selected")}}
+			}
+			got, err := d.entrySourceView(t.Context(), selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, identity, err := source.OperationView(t.Context(), got.FS)
+			if err != nil || got.Content != identity {
+				t.Fatalf("view identity = %q, want %q: %v", got.Content, identity, err)
+			}
+			if phase == "mutable" {
+				if got.Content != "" {
+					t.Fatal("mutable alias acquired a generation")
+				}
+			} else if got.Content == "" || (got.Content == first.Content) != (phase != "subtree") {
+				t.Fatalf("shaped identity = %q, first %q", got.Content, first.Content)
+			}
+		})
+	}
 }

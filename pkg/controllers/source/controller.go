@@ -124,7 +124,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	fetcher := c.Fetchers[id.Kind]
 	// Available content survives idempotent re-emission. Released pins must
 	// reacquire normally and publish a Ready transition to wake content consumers.
-	if art, ok := c.Store.GetArtifact(id).(*store.SourceArtifact); ok {
+	if art, ok := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
 		if art.FS != nil && art.Reads.Valid() {
 			for _, warning := range art.Warnings {
 				c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
@@ -225,13 +225,9 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 			c.acquired = artifact
 			return nil
 		}
-		current, _ := c.Store.GetArtifact(obj.Named()).(*store.SourceArtifact)
 		captured := *artifact
 		captured.Reads = &c.run.Reads
 		c.Store.SetArtifact(obj.Named(), &captured)
-		if current != nil && current.Reads != captured.Reads {
-			current.Reads.Retire()
-		}
 	}
 	slog.Debug("source: fetch complete", "id", obj.Named().String())
 	return nil

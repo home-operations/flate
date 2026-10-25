@@ -29,6 +29,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -252,6 +253,10 @@ func TestFetchRemoteBase_GenerationAdmission(t *testing.T) {
 			artifact, err = f.FetchRemoteBase(t.Context(), request, policy)
 			if err != nil || artifact == nil {
 				t.Fatalf("repaired generation = %v, %v", artifact, err)
+			}
+			_, identity, viewErr := source.OperationView(t.Context(), artifact.FS)
+			if viewErr != nil || identity == "" || artifact.Content != identity {
+				t.Fatalf("returned generation = %q, want %q: %v", artifact.Content, identity, viewErr)
 			}
 			assertWorktree(t, artifact.FS, "hello.txt", "hi")
 			t.Run("waiter and hit", func(t *testing.T) {

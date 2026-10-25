@@ -179,7 +179,7 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 					assert.Equal(t, status.Status, store.StatusPending)
 					status, _ = s.GetStatus(consumer.Named())
 					assert.Equal(t, status.Status, store.StatusReady)
-					output, ok := s.GetArtifact(consumer.Named()).(*store.Emission)
+					output, ok := s.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
 					if !ok {
 						t.Fatal("promoted consumer has no rendered emission")
 					}

@@ -47,10 +47,9 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 }
 
 type inputIdentity struct {
-	Alias                                              string
-	Source                                             manifest.NamedResource
-	Key, Digest, Revision, Root, Path, Content, Origin string
-	OriginPresent                                      bool
+	Alias  string
+	Source manifest.NamedResource
+	Input  store.ArtifactInput
 }
 type evaluation struct {
 	owner    *cache.Cache
@@ -67,7 +66,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		return nil
 	}
 	raw, ok := selected.(*manifest.RawObject)
-	if !ok || !raw.ReconcileDocument() {
+	if !ok {
 		return fmt.Errorf("%w: expected ArtifactGenerator document", manifest.ErrInput)
 	}
 	if doc == nil {
@@ -89,10 +88,11 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if err != nil || !bytes.Equal(actual, expected) {
 		return fmt.Errorf("%w: mismatched generator spec", manifest.ErrInput)
 	}
-	metadata, _ := doc["metadata"].(map[string]any)
-	annotations, _ := metadata["annotations"].(map[string]any)
-	disabled, _ := annotations["source.extensions.fluxcd.io/reconcile"].(string)
-	if strings.EqualFold(disabled, "disabled") {
+	uid, disabled, consumes := raw.ReconcileInput(doc)
+	if !consumes {
+		return fmt.Errorf("%w: expected ArtifactGenerator document", manifest.ErrInput)
+	}
+	if disabled {
 		return nil
 	}
 	spec, err := decodeSpec(raw.Spec)
@@ -105,22 +105,35 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	}
 	evaluation := evaluation{owner: c.cache, inputs: make(map[string]*store.SourceArtifact, len(spec.Sources)), maxAge: cache.Forever}
 	views := make(map[string]fs.FS, len(spec.Sources))
+	selections := make(map[string]store.ArtifactRead, len(spec.Sources))
+	for _, output := range spec.Artifacts {
+		if alias := strings.TrimPrefix(output.Revision, "@"); alias != "" {
+			selections[alias] |= store.ArtifactRevision
+		}
+		if alias := strings.TrimPrefix(output.OriginRevision, "@"); alias != "" {
+			selections[alias] |= store.ArtifactOrigin
+		}
+	}
 	for ref := range manifest.References(raw, manifest.ReferenceRelations) {
-		artifact := c.run.Reads.GetArtifact(ref.NamedResource).(*store.SourceArtifact)
 		alias := spec.Sources[ref.Position].Alias
+		read := store.ArtifactContent | selections[alias]
+		artifact := c.run.Reads.GetArtifact(ref.NamedResource, read).(*store.SourceArtifact)
+		if read&store.ArtifactOrigin != 0 && artifact.Metadata["org.opencontainers.image.revision"] == "" {
+			read |= store.ArtifactRevision
+			c.run.Reads.GetArtifact(ref.NamedResource, read)
+		}
 		evaluation.inputs[alias], views[alias] = artifact, artifact.FS
-		origin, present := artifact.Metadata["org.opencontainers.image.revision"]
-		evaluation.identity = append(evaluation.identity, inputIdentity{Alias: alias, Source: ref.NamedResource, Key: artifact.Key, Digest: artifact.Digest, Revision: artifact.Revision, Root: artifact.LocalRoot, Path: artifact.LocalPath, Content: cache.AcquisitionIdentity(artifact.FS), Origin: origin, OriginPresent: present})
-		if artifact.Key == "" || artifact.Digest == "" && artifact.Revision == "" {
+		evaluation.identity = append(evaluation.identity, inputIdentity{Alias: alias, Source: ref.NamedResource, Input: artifact.Input(read)})
+		if artifact.Content == "" {
 			evaluation.maxAge = 0
 		}
 	}
-	uid, _ := metadata["uid"].(string)
 	content := struct {
-		Generator     manifest.NamedResource
-		Spec          specification
-		UID, Disabled string
-		Inputs        []inputIdentity
+		Generator manifest.NamedResource
+		Spec      specification
+		UID       string
+		Disabled  bool
+		Inputs    []inputIdentity
 	}{id, spec, uid, disabled, evaluation.identity}
 	var replayContent any = content
 	if evaluation.maxAge == 0 {
@@ -156,7 +169,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		if input == nil || keyID == "" || digest == "" {
 			return fmt.Errorf("%w: incomplete generated source %q", manifest.ErrInput, req.Output.Name)
 		}
-		payload := &store.SourceArtifact{Kind: manifest.KindExternalArtifact, FS: input, Key: keyID, Digest: digest, Revision: "latest@" + digest}
+		payload := &store.SourceArtifact{Kind: manifest.KindExternalArtifact, FS: input, Key: keyID, Content: cache.AcquisitionIdentity(input), Digest: digest, Revision: "latest@" + digest}
 		if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {
 			payload.Revision = evaluation.inputs[alias].Revision
 		}

@@ -117,7 +117,7 @@ func (f *Filter) RefineHistory(history map[manifest.NamedResource]iter.Seq2[mani
 					if !ok {
 						continue
 					}
-					art, _ := f.objs.GetArtifact(source).(*store.SourceArtifact)
+					art, _ := f.objs.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 					physical := loader.OriginPath(art, filepath.Join(art.LocalPath, filepath.FromSlash(base)))
 					rel, err := filepath.Rel(f.root, physical)
 					if err != nil {
@@ -180,7 +180,7 @@ func (f *Filter) resolveRoot(source manifest.NamedResource, root string) (string
 	if f.objs == nil || root == "" || path.IsAbs(root) || strings.Contains(root, "://") || strings.HasPrefix(path.Clean(root), "../") || path.Clean(root) == ".." {
 		return "", false
 	}
-	art, _ := f.objs.GetArtifact(source).(*store.SourceArtifact)
+	art, _ := f.objs.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	if art == nil || art.FS == nil {
 		return "", false
 	}

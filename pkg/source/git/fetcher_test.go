@@ -20,6 +20,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
@@ -70,6 +71,13 @@ func TestFetcher_ContentIsolation(t *testing.T) {
 			art, err := fetcher.fetch(t.Context(), gitAcquisition{spec: &r, options: gitlib.CloneOptions{URL: r.URL, NoCheckout: true}}, sourcecache.Policy{Retry: sourcecache.RetryConfig{}})
 			if err != nil {
 				t.Fatal(err)
+			}
+			_, identity, viewErr := source.OperationView(t.Context(), art.FS)
+			if viewErr != nil || identity == "" || art.Content != identity {
+				t.Fatalf("returned generation = %q, want %q: %v", art.Content, identity, viewErr)
+			}
+			if tc.name == "unchanged" && art.Content != first.Content {
+				t.Fatal("warm hit changed content generation")
 			}
 			if (art.Key == first.Key) != tc.wantSame {
 				t.Fatalf("identity=%q, base=%q, want same=%t", art.Key, first.Key, tc.wantSame)

@@ -18,7 +18,7 @@ type objectReader interface {
 	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
 	IncomingProductions(store.Child, *manifest.DiscoveryIndex) []manifest.Production
 	GetObject(manifest.NamedResource) manifest.BaseManifest
-	GetArtifact(manifest.NamedResource) store.Artifact
+	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 	GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission)
 }
 
@@ -68,7 +68,7 @@ type selection struct {
 // root defaults to the admitted bootstrap coordinate; nil changes disables filtering.
 func NewFilter(changes *Set, index *manifest.DiscoveryIndex, objs objects, root string) *Filter {
 	if root == "" && objs != nil {
-		if input, ok := objs.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact); ok {
+		if input, ok := objs.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok {
 			root = input.LocalPath
 		}
 	}
@@ -359,7 +359,7 @@ func (s *selection) evidence(ref manifest.NamedResource) sourceEvidence {
 	}
 	if known {
 		if s.objects != nil {
-			out.artifact, _ = s.objects.GetArtifact(ref).(*store.SourceArtifact)
+			out.artifact, _ = s.objects.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
 			declaration := s.objects.GetObject(ref)
 			for side, artifact := range pair.artifacts {
 				if artifact != nil && artifact == out.artifact && declaration == pair.declarations[side] {
@@ -391,7 +391,7 @@ func (e sourceEvidence) input(s *selection, ref, id manifest.NamedResource) bool
 	}
 	artifact := e.artifact
 	if artifact == nil && s.objects != nil {
-		artifact, _ = s.objects.GetArtifact(ref).(*store.SourceArtifact)
+		artifact, _ = s.objects.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	if artifact == nil {
 		return false
@@ -453,7 +453,7 @@ func (s *selection) coordinates(p manifest.Production) (relative, indexed string
 	f := s.filter
 	relative, indexed = p.File, p.File
 	if filepath.IsAbs(p.Path) && s.objects != nil {
-		art, _ := s.objects.GetArtifact(p.Source).(*store.SourceArtifact)
+		art, _ := s.objects.GetArtifact(p.Source, store.ArtifactContent).(*store.SourceArtifact)
 		root := f.root
 		if art != nil {
 			root = art.LocalPath
@@ -655,7 +655,7 @@ func (s *selection) affectedSourceRoot(id, ref manifest.NamedResource) bool {
 		}
 		art := evidence.artifact
 		if art == nil {
-			art, _ = s.objects.GetArtifact(ref).(*store.SourceArtifact)
+			art, _ = s.objects.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
 		}
 		root := s.filter.root
 		if ref != manifest.BootstrapSourceID && art != nil {

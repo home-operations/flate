@@ -255,9 +255,9 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 
 func TestReadSet_RemoteObservations(t *testing.T) {
 	entries := []remoteEntry{
-		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "z", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{Key: "family", Revision: "1"}},
-		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"}, Identity: remoteIdentity{HTTP: "http-b"}},
-		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "a", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{Key: "family", Revision: "2"}},
+		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "z", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "1"}}},
+		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"}, Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Content: "http-b"}}},
+		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "a", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{ArtifactInput: store.ArtifactInput{Key: "family", Content: "2"}}},
 		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"}, Identity: remoteIdentity{HTTPStatus: http.StatusNotFound}},
 	}
 	policy := entries[0]
@@ -372,7 +372,7 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 							return nil, ctx.Err()
 						}
 					}
-					return &store.SourceArtifact{FS: memoryTree(t, repositories[request.URL]), Key: request.URL, Revision: revision}, nil
+					return &store.SourceArtifact{FS: memoryTree(t, repositories[request.URL]), Key: request.URL, Content: revision, Revision: revision}, nil
 				})
 				return c
 			}
@@ -497,7 +497,7 @@ func TestReadSet_RemotePolicyValidation(t *testing.T) {
 		if changed.Load() && request.Timeout == time.Minute && !request.Submodules {
 			revision = "changed"
 		}
-		return &store.SourceArtifact{Key: "same", Revision: revision, FS: fstest.MapFS{}}, nil
+		return &store.SourceArtifact{Key: "same", Content: revision, Revision: revision, FS: fstest.MapFS{}}, nil
 	})
 	rec := newReadSet("/src")
 	for _, input := range []remoteInput{

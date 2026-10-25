@@ -597,7 +597,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 							if req.URL != gitURL {
 								t.Errorf("unexpected git URL %q", req.URL)
 							}
-							return &store.SourceArtifact{FS: remote, Key: "family", Revision: fmt.Sprint(v)}, nil
+							return &store.SourceArtifact{FS: remote, Key: "family", Content: fmt.Sprint(v), Revision: fmt.Sprint(v)}, nil
 						})
 
 						return c
@@ -605,7 +605,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					request := func() RenderRequest {
 						source := localSource(t, root)
 						if immutable {
-							source.Key, source.Revision = "local-family", "local-pin"
+							source.Key, source.Content, source.Revision = "local-family", "local-content", "local-pin"
 						}
 						return RenderRequest{Source: source, Label: root, SubPath: "."}
 					}
@@ -726,7 +726,7 @@ func closeTestTreeCache(t *testing.T, c *TreeCache) {
 
 func TestRenderKey_ContentInputs(t *testing.T) {
 	t.Parallel()
-	req := RenderRequest{Source: &store.SourceArtifact{Key: "family"}, SubPath: ".", Spec: demoSpec}
+	req := RenderRequest{Source: &store.SourceArtifact{Key: "family", Content: "generation"}, SubPath: ".", Spec: demoSpec}
 	key := renderKey(req, "/source", nil)
 	for _, tc := range []struct {
 		name   string
@@ -762,7 +762,11 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		{name: "ignore selection", change: func(r *RenderRequest) { r.ApplyIgnore = true }},
 		{name: "ignore bytes", ignore: []byte("*.yaml")},
 		{name: "acquisition", change: func(r *RenderRequest) { r.Source.Key = "other-family" }},
-		{name: "revision", change: func(r *RenderRequest) { r.Source.Revision = "revision" }},
+		{name: "revision", same: true, change: func(r *RenderRequest) { r.Source.Revision = "revision" }},
+		{name: "generation", change: func(r *RenderRequest) { r.Source.Content = "next" }},
+		{name: "origin", same: true, change: func(r *RenderRequest) {
+			r.Source.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
+		}},
 		{name: "digest", change: func(r *RenderRequest) { r.Source.Digest = "digest" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -917,7 +921,7 @@ func TestRender_CacheFrames(t *testing.T) {
 			cache := newTestTreeCache(t, cacheDir)
 			source := localSource(t, root)
 			if tc.immutable {
-				source.Key = "immutable-pin"
+				source.Key, source.Content = "immutable-pin", "immutable-generation"
 				source.Revision, source.Digest = "revision", "digest"
 			}
 			req := RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoSpec}
@@ -1233,7 +1237,7 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 				}
 				remote := memoryTree(t, files)
 				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					return &store.SourceArtifact{FS: remote, Key: "stable-parent", Revision: revision}, nil
+					return &store.SourceArtifact{FS: remote, Key: "stable-parent", Content: revision, Revision: revision}, nil
 				})
 				return c
 			}
@@ -1398,7 +1402,7 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 			newCache := func() *TreeCache {
 				c := newTestTreeCache(t, cacheDir)
 				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					return &store.SourceArtifact{FS: remote, Key: "family", Revision: "1"}, nil
+					return &store.SourceArtifact{FS: remote, Key: "family", Content: "family-generation", Revision: "1"}, nil
 				})
 				return c
 			}
@@ -1571,7 +1575,7 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 		view.origins = append(view.origins, mountOrigin{path: "view", source: "."})
 		c := newTestTreeCache(t, "")
 		c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-			return &store.SourceArtifact{FS: memoryTree(t, map[string]string{"foreign": "remote"}), Key: "git-family", Revision: "1"}, nil
+			return &store.SourceArtifact{FS: memoryTree(t, map[string]string{"foreign": "remote"}), Key: "git-family", Content: "git-family-generation", Revision: "1"}, nil
 		})
 		walk := inputWalk{cache: c, fs: view}
 		gitPath, err := walk.fetchGitBase(t.Context(), kustomizeinput.GitBase{RepoURL: "file:///example.invalid/o/repo.git"}, walkScope{root: filepath.Join(root, "view")})
@@ -1860,7 +1864,7 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 					if changed.Load() && tc.changeGit {
 						name = "changed-git-output"
 					}
-					return &store.SourceArtifact{Key: "repository", Revision: name, FS: memoryTree(t, map[string]string{"base/kustomization.yaml": "resources: [cm.yaml]\n", "base/cm.yaml": cmYAML(name)})}, nil
+					return &store.SourceArtifact{Key: "repository", Content: name, Revision: name, FS: memoryTree(t, map[string]string{"base/kustomization.yaml": "resources: [cm.yaml]\n", "base/cm.yaml": cmYAML(name)})}, nil
 				})
 				return c
 			}
@@ -1886,14 +1890,14 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 			if hit {
 				snap = persisted
 			}
-			if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input.Operation != remoteGit || snap.Remotes[1].Identity != (remoteIdentity{Key: "repository", Revision: "git-output"}) {
+			if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input.Operation != remoteGit || snap.Remotes[1].Identity != (remoteIdentity{Present: true, Readable: true, Key: "repository", Content: "git-output"}) {
 				t.Fatalf("selection observations=%+v", snap.Remotes)
 			}
 			if tc.initialStatus == http.StatusNotFound {
 				if snap.Remotes[0].Identity != (remoteIdentity{HTTPStatus: http.StatusNotFound}) {
 					t.Fatalf("HTTP probe identity=%+v", snap.Remotes[0].Identity)
 				}
-			} else if snap.Remotes[0].Identity.HTTP == "" || snap.Remotes[0].Identity.HTTPStatus != 0 {
+			} else if snap.Remotes[0].Identity.Content == "" || snap.Remotes[0].Identity.HTTPStatus != 0 {
 				t.Fatalf("HTTP content identity=%+v", snap.Remotes[0].Identity)
 			}
 			if hits.Load() != 1 {
@@ -2032,5 +2036,27 @@ func TestRender_AcceptedCacheAcquisitionOverlap(t *testing.T) {
 				t.Fatal("render did not finish")
 			}
 		})
+	}
+}
+
+func TestRender_UnidentifiedContent(t *testing.T) {
+	t.Parallel()
+	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("first")})
+	cache := newTestTreeCache(t, t.TempDir())
+	request := func() RenderRequest {
+		source := localSource(t, root)
+		source.Key, source.Revision, source.Digest = "family", "revision", "digest"
+		return RenderRequest{Source: source, Label: root, SubPath: ".", Spec: demoSpec}
+	}
+	first, _, err := Render(t.Context(), cache, request(), sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	if !hasRenderField(first, "name", "first") {
+		t.Fatal("missing first render")
+	}
+	testutil.WriteFile(t, root, "cm.yaml", cmYAML("second"))
+	second, _, err := Render(t.Context(), cache, request(), sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	if !hasRenderField(second, "name", "second") {
+		t.Fatal("descriptor metadata pinned unidentified mutable bytes")
 	}
 }

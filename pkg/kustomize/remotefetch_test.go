@@ -40,7 +40,7 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 		calls := 0
 		c.gitBase = func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 			calls++
-			return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "key", Revision: "revision"}, nil
+			return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "key", Content: "key-generation", Revision: "revision"}, nil
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -86,7 +86,7 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 					if operation != remoteGit || request.URL != descriptor.URL || request.Ref != descriptor.Ref || request.MaxAge != time.Minute || gotRetry != retry {
 						t.Fatalf("acquisition request=%+v retry=%+v", request, gotRetry)
 					}
-					return &store.SourceArtifact{Key: "family", Revision: fmt.Sprint(v), FS: fstest.MapFS{"content": {Data: fmt.Append(nil, v)}}}, nil
+					return &store.SourceArtifact{Key: "family", Content: fmt.Sprint(v), Revision: fmt.Sprint(v), FS: fstest.MapFS{"content": {Data: fmt.Append(nil, v)}}}, nil
 				})
 				input := newTreeFS(fstest.MapFS{}, "/src", nil)
 				input.retry, input.maxAge = retry, time.Minute
@@ -98,10 +98,10 @@ func TestRemoteInput_AcquisitionIdentity(t *testing.T) {
 				if err != nil || string(body) != fmt.Sprint(v) {
 					t.Fatalf("acquired body=%q error=%v", body, err)
 				}
-				if operation == remoteHTTP && (identity.HTTP == "" || identity.HTTP != sourcecache.AcquisitionIdentity(acquired)) {
+				if operation == remoteHTTP && (identity.Content == "" || identity.Content != sourcecache.AcquisitionIdentity(acquired)) {
 					t.Fatalf("HTTP identity=%+v", identity)
 				}
-				if operation == remoteGit && (identity.Key != "family" || identity.Revision != fmt.Sprint(v)) {
+				if operation == remoteGit && (identity.Key != "family" || identity.Content != fmt.Sprint(v)) {
 					t.Fatalf("Git identity=%+v", identity)
 				}
 				if first == (remoteIdentity{}) {
@@ -125,10 +125,11 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 	}{
 		{name: "unavailable"},
 		{name: "fetch-error", err: fs.ErrNotExist},
-		{name: "missing filesystem", artifact: &store.SourceArtifact{Key: "family", Revision: "revision"}},
+		{name: "missing filesystem", artifact: &store.SourceArtifact{Key: "family", Content: "family-generation", Revision: "revision"}},
 		{name: "missing family", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Revision: "revision"}},
 		{name: "missing generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family"}},
-		{name: "digest generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Digest: "digest"}},
+		{name: "digest without generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Digest: "digest"}},
+		{name: "content generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Content: "generation", Digest: "digest"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -138,7 +139,7 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 			})
 			descriptor := remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo.git", Ref: "main"}
 			_, identity, err := descriptor.acquire(t.Context(), c, newTreeFS(fstest.MapFS{}, "/src", nil))
-			if tc.name == "digest generation" {
+			if tc.name == "content generation" {
 				if err != nil || identity.Key != "family" || identity.Digest != "digest" {
 					t.Fatalf("digest generation=%+v error=%v", identity, err)
 				}

@@ -123,7 +123,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("reconcile: %+v", info)
 			}
-			art := st.GetArtifact(hr.Named()).(*store.Emission)
+			art := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 			retained := make([]map[string]any, len(art.Manifests))
 			if len(art.Manifests) != 8 {
 				t.Fatalf("chart documents = %d", len(art.Manifests))
@@ -170,7 +170,7 @@ metadata: {name: issuer}
 			st.DeleteObject(manifest.NamedResource{Group: "cert-manager.io", Kind: "ClusterIssuer", Namespace: hr.ReleaseNamespace(), Name: "issuer"})
 			var authority store.ReadSet
 			authority.Init(st, manifest.NamedResource{Name: "artifact-reader"}, nil)
-			authority.GetArtifact(hr.Named())
+			authority.GetArtifact(hr.Named(), store.ArtifactContent)
 			var repeatedEvents atomic.Int64
 			var stopEvents []store.Unsubscribe
 			for _, kind := range []store.EventKind{store.EventObjectAdded, store.EventStatusUpdated, store.EventArtifactUpdated} {
@@ -187,7 +187,7 @@ metadata: {name: issuer}
 			for _, stop := range stopEvents {
 				stop()
 			}
-			current := st.GetArtifact(hr.Named()).(*store.Emission)
+			current := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 			if current.Fingerprint != art.Fingerprint || !authority.Valid() || repeatedEvents.Load() != 0 {
 				t.Fatalf("unchanged output authority changed: valid=%t events=%d", authority.Valid(), repeatedEvents.Load())
 			}
@@ -218,7 +218,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("shared-prefix digest reconcile: %+v", info)
 			}
-			sameVersion := st.GetArtifact(hr.Named()).(*store.Emission)
+			sameVersion := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 			if sameVersion.Fingerprint == art.Fingerprint {
 				t.Fatal("full digests sharing twelve characters reused controller fingerprint")
 			}
@@ -232,7 +232,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("changed digest reconcile: %+v", info)
 			}
-			updated := st.GetArtifact(hr.Named()).(*store.Emission)
+			updated := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 			version = "6.15.0"
 			if !tc.disable {
 				version += "+abcdef123456"
@@ -249,7 +249,7 @@ metadata: {name: issuer}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("changed revision reconcile: %+v", info)
 			}
-			revised := st.GetArtifact(hr.Named()).(*store.Emission)
+			revised := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 			if revised.Fingerprint == updated.Fingerprint {
 				t.Fatal("changed revision reused controller fingerprint")
 			}
@@ -513,7 +513,7 @@ data: {greeting: hi}
 						}
 					}
 					info, _ := st.GetStatus(id)
-					art, _ := st.GetArtifact(id).(*store.Emission)
+					art, _ := st.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 					output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hr-refresh-output"}
 					if suspended {
 						if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
@@ -666,7 +666,7 @@ data:
 			if !ok || current.Values["output"] != "B" {
 				t.Fatalf("current input is not B: %+v", current)
 			}
-			if st.GetArtifact(id) != emission {
+			if st.GetArtifact(id, store.ArtifactContent) != emission {
 				t.Error("canonical B does not expose its accepted output")
 			}
 			output, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "binding"})
@@ -738,7 +738,7 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-one", FS: os.DirFS(firstDir), LocalPath: firstDir})
 	st.UpdateStatus(chart, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	initialRun := reconcile()
-	initial, ok := st.GetArtifact(hr.Named()).(*store.Emission)
+	initial, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	if !ok || initialRun.Outcome() == schedule.Blocked || initialRun.Reused || len(initial.Manifests) != 2 {
 		t.Fatal("initial two-document render did not settle")
 	}
@@ -765,7 +765,7 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	}, false)
 	t.Cleanup(stop)
 	replay := reconcile()
-	after := st.GetArtifact(hr.Named()).(*store.Emission)
+	after := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	if pending.Load() {
 		t.Error("equal synthetic-chart replay transiently became Pending")
 	}
@@ -779,13 +779,13 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	fresh.Data = map[string]any{"values.yaml": "value: second\n"}
 	st.AddObject(&fresh)
 	valuesRun := reconcile()
-	withValues := st.GetArtifact(hr.Named()).(*store.Emission)
+	withValues := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	if valuesRun.Outcome() == schedule.Blocked || valuesRun.Reused || withValues.Fingerprint == after.Fingerprint || renderedConfigMapValue(withValues.Manifests, "value") != "second" || len(withValues.Manifests) != 2 {
 		t.Fatal("changed consumed values reused stale output")
 	}
 	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-two", FS: os.DirFS(secondDir), LocalPath: secondDir})
 	sourceRun := reconcile()
-	withSource := st.GetArtifact(hr.Named()).(*store.Emission)
+	withSource := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	if sourceRun.Outcome() == schedule.Blocked || sourceRun.Reused || withSource.Fingerprint == withValues.Fingerprint || renderedConfigMapValue(withSource.Manifests, "source") != "two" || len(withSource.Manifests) != 2 {
 		t.Fatalf("changed chart content: unresolved=%t reused=%t fingerprint=%q previous=%q source=%q documents=%d", sourceRun.Outcome() == schedule.Blocked, sourceRun.Reused, withSource.Fingerprint, withValues.Fingerprint, renderedConfigMapValue(withSource.Manifests, "source"), len(withSource.Manifests))
 	}
@@ -861,7 +861,7 @@ func TestReconcile_MutableChartAndSourceValuesReplay(t *testing.T) {
 		executions = append(executions, next)
 		for range st.Sweep() {
 		}
-		return st.GetArtifact(hr.Named()).(*store.Emission)
+		return st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	}
 	assertOutput := func(output *store.Emission, value, source string) {
 		t.Helper()
@@ -932,7 +932,7 @@ items:
 	if info.Status != store.StatusFailed || !strings.Contains(info.Message, "Object 'Kind' is missing") {
 		t.Fatalf("invalid list did not retain its original failure: %+v", info)
 	}
-	if art, _ := st.GetArtifact(hr.Named()).(*store.Emission); art != nil && art.Complete {
+	if art, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission); art != nil && art.Complete {
 		t.Fatal("failed render published completed output")
 	}
 	if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "invalid", Namespace: "apps"}) != nil {
@@ -976,7 +976,7 @@ func TestReconcile_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
 			}
 			stored := st.GetObject(hr.Named()).(*manifest.HelmRelease)
 			assert.Diff(t, stored.Values, original.Values)
-			if emission, _ := st.GetArtifact(hr.Named()).(*store.Emission); emission != nil && (emission.Complete || emission.Render != nil || len(emission.Manifests) != 0) {
+			if emission, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission); emission != nil && (emission.Complete || emission.Render != nil || len(emission.Manifests) != 0) {
 				t.Error("failed chart published completed output or a successful receipt")
 			}
 			if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "rescued", Namespace: "apps"}) != nil {

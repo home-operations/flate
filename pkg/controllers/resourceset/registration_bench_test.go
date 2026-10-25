@@ -219,7 +219,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 					if info.Status != store.StatusReady {
 						b.Fatal("writer did not finish Ready")
 					}
-					current, ok := s.GetArtifact(rs.Named()).(*store.Emission)
+					current, ok := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 					if !ok || !current.Complete || len(current.Children) != 2 || current.Fingerprint != expected[i].fingerprint || !cmp.Equal(current.Manifests, expected[i].manifests) {
 						b.Fatal("equal publications changed the complete two-document inventory")
 					}
@@ -268,14 +268,14 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	if settled.Outcome() == schedule.Blocked || !settled.Valid() || info.Outcome() != store.OutcomePassed {
 		t.Fatalf("initial settlement: unresolved=%t valid=%t status=%+v", settled.Outcome() == schedule.Blocked, settled.Valid(), info)
 	}
-	initial := s.GetArtifact(rs.Named()).(*store.Emission)
+	initial := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if len(initial.Manifests) != 2 || len(initial.Children) != 2 {
 		t.Fatal("initial render did not retain both documents and identities")
 	}
 	var reader store.ReadSet
 	reader.Init(s, manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "ns", Name: "reader"}, nil)
 	defer reader.Retire()
-	reader.GetArtifact(rs.Named())
+	reader.GetArtifact(rs.Named(), store.ArtifactContent)
 	freshProvider := *provider
 	freshProvider.Labels = map[string]string{"color": "blue", "revision": "fresh"}
 	s.AddObject(&freshProvider)
@@ -297,7 +297,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	inventory.Complete = true
 	replay.run.Emit(rs.Named(), &inventory, nil)
 	inventory.Finish()
-	if accepted := s.GetArtifact(rs.Named()).(*store.Emission); accepted.Fingerprint != initial.Fingerprint || !cmp.Equal(accepted.Manifests, initial.Manifests) || !cmp.Equal(accepted.Children, initial.Children, cmpopts.IgnoreUnexported(store.Child{})) {
+	if accepted := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); accepted.Fingerprint != initial.Fingerprint || !cmp.Equal(accepted.Manifests, initial.Manifests) || !cmp.Equal(accepted.Children, initial.Children, cmpopts.IgnoreUnexported(store.Child{})) {
 		t.Error("same-inventory publication lost its rendered identity or bytes")
 	}
 	var objectEvents, statusEvents atomic.Int64
@@ -313,7 +313,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	second := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer second.Close()
 	settled.Retire()
-	after := s.GetArtifact(rs.Named()).(*store.Emission)
+	after := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if second.Outcome() == schedule.Blocked || !second.Valid() || !reader.Valid() || updates.Load() != 1 || objectEvents.Load() != 0 || statusEvents.Load() != 0 || !second.Reused {
 		t.Fatalf("equal output: unresolved=%t reader valid=%t artifact/object/status events=%d/%d/%d reused=%t status=%v", second.Outcome() == schedule.Blocked, reader.Valid(), updates.Load()-1, objectEvents.Load(), statusEvents.Load(), second.Reused, statusChange.Load())
 	}
@@ -325,7 +325,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	s.AddObject(&fresh)
 	third := c.ReconcileNode(t.Context(), rs.Named(), manifest.DrainNone)
 	defer third.Close()
-	changed := s.GetArtifact(rs.Named()).(*store.Emission)
+	changed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if third.Outcome() == schedule.Blocked || reader.Valid() || updates.Load() != 2 || third.Reused || changed.Fingerprint == initial.Fingerprint || !cmp.Equal(changed.Manifests, initial.Manifests) {
 		t.Fatalf("changed fingerprint: reader valid=%t artifact events=%d reused=%t", reader.Valid(), updates.Load(), third.Reused)
 	}

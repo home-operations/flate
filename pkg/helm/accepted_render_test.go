@@ -343,7 +343,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			{"wipe", func(o *RenderOptions) { o.WipeSecrets = true }},
 			{"skip kinds", func(o *RenderOptions) { o.SkipKinds = []string{manifest.KindKustomization} }},
 			{"source binding", func(o *RenderOptions) {
-				changed := *o.Sources.LocalSourceArtifact(hr.ChartSource())
+				changed := *o.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
 				changed.URL = "different"
 				sources := store.New()
 				sources.SetArtifact(hr.ChartSource(), &changed)
@@ -480,7 +480,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 				t.Fatal("matching source binding missed")
 			}
 			changed := hr.Clone()
-			source := *input.Sources.LocalSourceArtifact(hr.ChartSource())
+			source := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
 			tc.mutate(changed, &source)
 			objects := store.New()
 			objects.SetArtifact(changed.ChartSource(), &source)

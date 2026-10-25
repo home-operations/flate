@@ -428,7 +428,7 @@ func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 		go func() { done <- s.Run(t.Context()) }()
 		<-entered
 		previous := first.Load()
-		output, ok := st.GetArtifact(consumer.Named()).(*store.Emission)
+		output, ok := st.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
 		assert.Equal(t, ok, true)
 		assert.Equal(t, output.OutputReads == &previous.Reads, true)
 		assert.Equal(t, previous.Reads.Valid(), false)

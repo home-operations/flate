@@ -148,7 +148,7 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 		cancel()
 		unwatch()
 		assert.NoError(t, err)
-		art, _ := s.GetArtifact(effective.Named()).(*store.SourceArtifact)
+		art, _ := s.GetArtifact(effective.Named(), store.ArtifactContent).(*store.SourceArtifact)
 		if art == nil {
 			t.Fatal("accepted effective source did not acquire its warmed layer")
 		}

@@ -135,10 +135,10 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	c.Emit(parent.Named(), &attempt, map[manifest.NamedResource]*store.SourceArtifact{target: payload})
 	checkPayload := func() {
 		t.Helper()
-		if s.GetArtifact(target) != payload {
+		if s.GetArtifact(target, store.ArtifactContent) != payload {
 			t.Fatal("publication lost the accepted payload")
 		}
-		data, err := fs.ReadFile(s.GetArtifact(target).(*store.SourceArtifact).FS, "file")
+		data, err := fs.ReadFile(s.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact).FS, "file")
 		if err != nil || string(data) != "bytes" {
 			t.Fatalf("accepted bytes = %q, %v", data, err)
 		}
@@ -159,7 +159,7 @@ func TestEmit_PayloadProvenance(t *testing.T) {
 	checkPayload()
 	fresh, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	c.Emit(parent.Named(), &store.Emission{Children: fresh, Manifests: retained, Fingerprint: attempt.Fingerprint, Complete: true}, nil)
-	if s.GetObject(target) == nil || s.GetArtifact(target) != nil {
+	if s.GetObject(target) == nil || s.GetArtifact(target, store.ArtifactContent) != nil {
 		t.Fatal("fresh equal declaration-only emission retained borrowed payload authority")
 	}
 }
@@ -428,7 +428,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	next.Fingerprint, next.Complete = fingerprint, true
 	s.RecordEmitted(childID, &next, nil)
 	next.Finish()
-	before := s.GetArtifact(childID)
+	before := s.GetArtifact(childID, store.ArtifactContent)
 	s.UpdateStatus(childID, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	publish("second", "app")
 	var arrivals, statuses int
@@ -436,11 +436,11 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	defer stopObjects()
 	stopStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statuses++ }, false)
 	defer stopStatus()
-	if _, handled, err := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input", &store.Emission{}); !handled || err != nil || s.GetArtifact(childID) != before || arrivals != 0 || statuses != 0 {
+	if _, handled, err := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input", &store.Emission{}); !handled || err != nil || s.GetArtifact(childID, store.ArtifactContent) != before || arrivals != 0 || statuses != 0 {
 		t.Fatalf("metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d", handled, err, arrivals, statuses)
 	}
 	publish("third", "different")
-	if s.GetArtifact(childID) != nil {
+	if s.GetArtifact(childID, store.ArtifactContent) != nil {
 		t.Fatal("changed effective input exposed stale current artifact")
 	}
 	obj, _, accepted := s.GetEmission(childID)
@@ -740,7 +740,7 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	initial.Fingerprint, initial.Complete = manifest.Fingerprint("rendered input"), true
 	first.Emit(parent.Named(), &initial, nil)
 	initial.Finish()
-	if !s.GetArtifact(parent.Named()).(*store.Emission).OutputReads.Valid() {
+	if !s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).OutputReads.Valid() {
 		t.Fatal("initial output is not valid")
 	}
 	changed := manifest.DeepCopyMap(doc)
@@ -750,7 +750,7 @@ func TestEmit_ChangedCompletePayloadDoesNotInheritKey(t *testing.T) {
 	next.Complete = true
 	c.Emit(parent.Named(), &next, nil)
 	next.Finish()
-	accepted := s.GetArtifact(parent.Named()).(*store.Emission)
+	accepted := s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission)
 	if accepted.Fingerprint != "" {
 		t.Errorf("changed complete output inherited key %q", accepted.Fingerprint)
 	}
@@ -800,7 +800,7 @@ func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
 				attempt.Finish()
 				first.Reads.Accept()
 				first.Retire()
-				if output, ok := st.GetArtifact(declaration.Named()).(*store.Emission); !ok || output.OutputReads != &first.Reads {
+				if output, ok := st.GetArtifact(declaration.Named(), store.ArtifactContent).(*store.Emission); !ok || output.OutputReads != &first.Reads {
 					t.Error("predecessor lost its borrowed output")
 					return
 				}
@@ -819,7 +819,7 @@ func TestExecution_ReplacementReclaimsBorrowedOutput(t *testing.T) {
 				changed := *declaration
 				changed.Path = "new"
 				publish(&changed)
-				if st.GetArtifact(declaration.Named()) != nil {
+				if st.GetArtifact(declaration.Named(), store.ArtifactContent) != nil {
 					t.Error("changed parent input left the predecessor artifact visible")
 					return
 				}
@@ -947,7 +947,7 @@ func TestFingerprintDedup_AcceptedReceipt(t *testing.T) {
 					defer progress.Retire()
 					partial := store.Emission{}
 					progress.Emit(owner.Named(), &partial, nil)
-					if st.GetArtifact(owner.Named()).(*store.Emission).Complete {
+					if st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission).Complete {
 						t.Fatal("fixture did not preserve a borrowed complete predecessor")
 					}
 				}
@@ -985,7 +985,7 @@ func TestFingerprintDedup_AcceptedReceipt(t *testing.T) {
 				}
 				assert.Diff(t, attempt.Render, expected)
 				assert.Equal(t, attempt.Reads, &second.Reads)
-				assert.Diff(t, st.GetArtifact(owner.Named()).(*store.Emission).Render, expected)
+				assert.Diff(t, st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission).Render, expected)
 				if attempt.Footprint() == nil || !attempt.Complete {
 					t.Fatal("replay did not hand back exact complete acceptance")
 				}
@@ -1017,14 +1017,14 @@ func TestEmit_RejectedAttemptClearsFootprint(t *testing.T) {
 			if next.Footprint() == nil {
 				t.Fatal("fixture did not accept complete-empty output")
 			}
-			before := st.GetArtifact(owner.Named())
+			before := st.GetArtifact(owner.Named(), store.ArtifactContent)
 			st.AddObject(&manifest.ConfigMap{Name: dependency.Name, Namespace: dependency.Namespace, Data: map[string]any{"value": "changed"}})
 			if caller == "store" {
 				st.RecordEmitted(owner.Named(), &next, nil)
 			} else {
 				controller.Emit(owner.Named(), &next, nil)
 			}
-			if next.Footprint() != nil || st.GetArtifact(owner.Named()) != before {
+			if next.Footprint() != nil || st.GetArtifact(owner.Named(), store.ArtifactContent) != before {
 				t.Fatal("early rejection retained caller acceptance or replaced inventory")
 			}
 		})

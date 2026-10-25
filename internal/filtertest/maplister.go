@@ -31,7 +31,7 @@ func (m MapLister) Productions(id manifest.NamedResource, index *manifest.Discov
 }
 
 // GetArtifact returns no acquired artifact for map-only fixtures.
-func (m MapLister) GetArtifact(manifest.NamedResource) store.Artifact { return nil }
+func (m MapLister) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact { return nil }
 
 // IncomingProductions returns only the contribution evidence supplied by the fixture.
 func (m MapLister) IncomingProductions(child store.Child, _ *manifest.DiscoveryIndex) []manifest.Production {

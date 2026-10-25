@@ -24,7 +24,7 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 	hasExpr := dep.ReadyExpr != nil && *dep.ReadyExpr != ""
 	for {
 		if dep.ArtifactOnly {
-			if art, ok := w.Store.GetArtifact(id).(*store.SourceArtifact); ok && art.FS != nil {
+			if art, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok && art.FS != nil {
 				return Classification{Kind: schedule.Terminal}
 			}
 		}
@@ -45,14 +45,14 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 			existence = nil
 			continue
 		}
-		if dep.UnknownArtifactRoot && level >= manifest.DrainCascade && obj == nil && w.Store.GetArtifact(id) == nil {
+		if dep.UnknownArtifactRoot && level >= manifest.DrainCascade && obj == nil && w.Store.GetArtifact(id, store.ArtifactContent) == nil {
 			return Classification{Err: fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, id)}
 		}
 		if present && ready {
 			return w.artifactReady(dep, level)
 		}
 		if !present && dep.Artifact {
-			if _, ok := w.Store.GetArtifact(id).(*store.SourceArtifact); ok {
+			if _, ok := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
 				return w.artifactReady(dep, level)
 			}
 		}
@@ -103,7 +103,7 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 	if descriptor, ok := w.Store.GetObject(id).(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
 		return Classification{Kind: schedule.Terminal}
 	}
-	art, _ := w.Store.GetArtifact(id).(*store.SourceArtifact)
+	art, _ := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	if art != nil && art.FS != nil {
 		return Classification{Kind: schedule.Terminal}
 	}

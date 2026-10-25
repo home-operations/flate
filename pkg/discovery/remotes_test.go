@@ -42,9 +42,9 @@ func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
 			}
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.Equal(t, err, nil)
-			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).LocalPath, wantRoot)
+			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath, wantRoot)
 			assert.Diff(t, d.remotes, map[string]struct{}{want: {}})
-			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Equal(t, artifact.LocalPath, wantRoot)
 			if artifact.FS == nil {
 				t.Fatal("bootstrap source has no admitted filesystem")
@@ -78,8 +78,8 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			_, err := d.resolveEntrySources(t.Context(), false)
 			assert.Equal(t, len(d.remotes), 0)
 			assert.Equal(t, err, nil)
-			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).LocalPath, root)
-			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			assert.Equal(t, d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath, root)
+			artifact := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			assert.Equal(t, artifact.Kind, manifest.KindGitRepository)
 			assert.Equal(t, artifact.URL, "file://"+root)
 			assert.Equal(t, artifact.LocalPath, root)

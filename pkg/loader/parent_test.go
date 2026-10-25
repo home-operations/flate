@@ -71,7 +71,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				if tc.pinned {
 					src := &manifest.GitRepository{Name: ks.SourceRef.Name, Namespace: ks.SourceRef.Namespace}
 					st.AddObject(src)
-					st.SetArtifact(src.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(root, "snapshot"), Key: "pinned", FS: input})
+					st.SetArtifact(src.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: filepath.Join(root, "snapshot"), Key: "pinned", Content: "pinned", FS: input})
 				} else {
 					l.documents.views = map[string]fs.FS{root: input}
 				}
@@ -281,7 +281,7 @@ func TestSourceView_LocalRoot(t *testing.T) {
 			st.AddObject(repo)
 			st.AddObject(ks)
 			artifact := &store.SourceArtifact{
-				Kind: manifest.KindGitRepository, LocalPath: "/cache", LocalRoot: tc.localRoot, Key: "pinned", FS: fstest.MapFS{},
+				Kind: manifest.KindGitRepository, LocalPath: "/cache", LocalRoot: tc.localRoot, Key: "pinned", Content: "pinned", FS: fstest.MapFS{},
 			}
 			if tc.unavailable {
 				artifact.FS = nil
@@ -671,6 +671,7 @@ func TestSourceView_InputOrigin(t *testing.T) {
 	}{
 		{name: "mutable_subtree_alias", alias: true, physicalInput: "subtree/apps"},
 		{name: "mutable_identity", identity: true, physicalInput: "apps"},
+		{name: "mutable_family", physicalInput: "apps"},
 		{name: "committed_at_same_mount", pinned: true, physicalInput: ".inputs/source/apps"},
 		{name: "external_at_same_mount", external: true, physicalInput: ".inputs/source/apps"},
 	} {
@@ -679,6 +680,9 @@ func TestSourceView_InputOrigin(t *testing.T) {
 			repoRoot := t.TempDir()
 			mount := filepath.Join(repoRoot, ".inputs", "source")
 			art := &store.SourceArtifact{LocalPath: mount, LocalRoot: repoRoot, Key: "derived", InputAlias: tc.alias, FS: fstest.MapFS{}}
+			if tc.pinned {
+				art.Content = art.Key
+			}
 			if tc.identity {
 				mount, art.LocalPath, art.Key = repoRoot, repoRoot, ""
 			}
@@ -686,6 +690,7 @@ func TestSourceView_InputOrigin(t *testing.T) {
 				art.LocalRoot = filepath.Join(repoRoot, "subtree")
 			}
 			if tc.external {
+				art.Content = art.Key
 				art.LocalRoot = t.TempDir()
 			}
 			st := store.New()

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"iter"
 	"reflect"
+	"strings"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
@@ -262,8 +263,17 @@ func (r *RawObject) Named() NamedResource {
 // Suspended reports whether reconciliation is paused on this resource.
 func (r *RawObject) Suspended() bool { return false }
 
-// ReconcileDocument reports whether reconciliation consumes the authoritative document.
-func (r *RawObject) ReconcileDocument() bool { return r.isArtifactGenerator() }
+// ReconcileInput returns the declaration metadata consumed by reconciliation.
+func (r *RawObject) ReconcileInput(doc map[string]any) (string, bool, bool) {
+	if !r.isArtifactGenerator() {
+		return "", false, false
+	}
+	metadata, _ := doc["metadata"].(map[string]any)
+	uid, _ := metadata["uid"].(string)
+	annotations, _ := metadata["annotations"].(map[string]any)
+	disabled, _ := annotations["source.extensions.fluxcd.io/reconcile"].(string)
+	return uid, strings.EqualFold(disabled, "disabled"), true
+}
 
 // WithNamespace returns a shallow namespace copy; borrowed payloads MUST remain immutable.
 func (r *RawObject) WithNamespace(namespace string) BaseManifest {

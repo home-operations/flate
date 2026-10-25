@@ -73,9 +73,9 @@ func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy 
 	}
 
 	return &store.SourceArtifact{
-		Kind:     manifest.KindBucket,
-		URL:      fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
-		FS:       input,
+		Kind: manifest.KindBucket,
+		URL:  fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
+		FS:   input, Content: cache.AcquisitionIdentity(input),
 		Key:      id,
 		Revision: desc.Annotations["flate.revision"],
 		Metadata: map[string]string{

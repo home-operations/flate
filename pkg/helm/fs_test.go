@@ -849,7 +849,7 @@ spec:
 	assert.NoError(t, err)
 	hr := st.GetObject(testutil.HelmReleaseID("apps", "demo")).(*manifest.HelmRelease)
 	assert.Equal(t, hr.TracksDigest(), true)
-	artifact := st.GetArtifact(hr.ChartSource()).(*store.SourceArtifact)
+	artifact := st.GetArtifact(hr.ChartSource(), store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, artifact.InputAlias, true)
 	assert.Equal(t, artifact.Revision, "")
 	cli := NewClient(owner)
@@ -862,5 +862,5 @@ spec:
 	assert.NoError(t, err)
 	assert.Equal(t, warm.chart == loaded.chart, true)
 	assert.Equal(t, warm.fingerprint, loaded.fingerprint)
-	assert.Equal(t, st.GetArtifact(hr.ChartSource()), store.Artifact(artifact))
+	assert.Equal(t, st.GetArtifact(hr.ChartSource(), store.ArtifactContent), store.Artifact(artifact))
 }

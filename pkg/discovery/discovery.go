@@ -34,9 +34,6 @@ type Result struct {
 	// orchestrator forwards it to lazy-promotion so SOPS Secrets
 	// stay wiped on demand the same way they were at file-load.
 	WipeSecrets bool
-	// DisableChartDigestTracking reflects inline instance patches in file-parsed
-	// HelmReleases, including releases deferred until render emission or exact promotion.
-	DisableChartDigestTracking bool
 	// DependencySubstitutions is frozen after complete discovery and before rendering.
 	DependencySubstitutions values.DependencySubstitutions
 }
@@ -134,12 +131,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 	d.documents = documents
 	return &Result{
-		Documents:                  d.documents,
-		DependencySubstitutions:    substitutions,
-		RepoRoot:                   repoRoot,
-		Index:                      l.Index,
-		WipeSecrets:                cfg.WipeSecrets,
-		DisableChartDigestTracking: l.DisableChartDigestTracking,
+		Documents:               d.documents,
+		DependencySubstitutions: substitutions,
+		RepoRoot:                repoRoot,
+		Index:                   l.Index,
+		WipeSecrets:             cfg.WipeSecrets,
 	}, nil
 }
 

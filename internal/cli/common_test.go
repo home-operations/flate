@@ -381,12 +381,12 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 func TestBindCommon_ChartDigestTrackingOverride(t *testing.T) {
 	const key = "FLATE_DISABLE_CHART_DIGEST_TRACKING"
 	for _, tc := range []struct {
-		name                           string
-		args                           []string
-		env                            string
-		setEnv, auto, disable, invalid bool
+		name                     string
+		args                     []string
+		env                      string
+		setEnv, disable, invalid bool
 	}{
-		{name: "absent", auto: true},
+		{name: "absent"},
 		{name: "bare", args: []string{"--disable-chart-digest-tracking"}, disable: true},
 		{name: "explicit true", args: []string{"--disable-chart-digest-tracking=true"}, disable: true},
 		{name: "explicit false", args: []string{"--disable-chart-digest-tracking=false"}},
@@ -396,6 +396,7 @@ func TestBindCommon_ChartDigestTrackingOverride(t *testing.T) {
 		{name: "flag true wins", args: []string{"--disable-chart-digest-tracking=true"}, env: "false", setEnv: true, disable: true},
 		{name: "flag overrides invalid env", args: []string{"--disable-chart-digest-tracking=false"}, env: "invalid", setEnv: true},
 		{name: "invalid env", env: "invalid", setEnv: true, invalid: true},
+		{name: "invalid flag", args: []string{"--disable-chart-digest-tracking=invalid"}, invalid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(key, tc.env)
@@ -420,24 +421,17 @@ func TestBindCommon_ChartDigestTrackingOverride(t *testing.T) {
 			root.SetArgs(append([]string{"probe"}, tc.args...))
 			err := root.ExecuteContext(t.Context())
 			if tc.invalid {
-				if err == nil || !strings.Contains(err.Error(), key) || ran {
-					t.Fatalf("invalid environment result: err=%v ran=%t", err, ran)
+				if err == nil || ran || tc.setEnv && !strings.Contains(err.Error(), key) {
+					t.Fatalf("invalid selection result: err=%v ran=%t", err, ran)
 				}
 				return
 			}
 			if err != nil || !ran {
 				t.Fatalf("command result: err=%v ran=%t", err, ran)
 			}
-			assert.Equal(t, got.DisableChartDigestTracking == nil, tc.auto)
-			if !tc.auto {
-				assert.Equal(t, *got.DisableChartDigestTracking, tc.disable)
-			}
+			assert.Equal(t, got.HelmOptions.DisableChartDigestTracking, tc.disable)
 		})
 	}
-	got := buildOrchCfg(commonFlags{})
-	assert.Equal(t, got.DisableChartDigestTracking == nil, true)
-	got = buildOrchCfg(commonFlags{disableChartDigestTracking: new(true)})
-	assert.Equal(t, *got.DisableChartDigestTracking, true)
 }
 
 func TestResolveBaseline_AdmittedIdentity(t *testing.T) {

@@ -80,11 +80,6 @@ type Config struct {
 
 	// HelmOptions tunes templating and kind filtering through SkipKinds.
 	HelmOptions helm.Options
-	// DisableChartDigestTracking selects chart digest tracking for the orchestrator.
-	// Bootstrap assigns HelmOptions.DisableChartDigestTracking and ignores any value
-	// supplied there. Nil selects automatic detection from file-loaded HelmRelease
-	// values; false forces tracking on. New copies the requested value.
-	DisableChartDigestTracking *bool
 	// WipeSecrets controls Secret cleartext placeholders.
 	WipeSecrets bool
 	// AllowMissingSecrets converts source auth-secret-not-found errors
@@ -348,9 +343,6 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
 	o.agc = artifactgenerator.New(st, ts, owner)
 	o.depGraph = newDependencyGraph()
-	if cfg.DisableChartDigestTracking != nil {
-		o.cfg.DisableChartDigestTracking = new(*cfg.DisableChartDigestTracking)
-	}
 	return o, nil
 }
 
@@ -449,9 +441,6 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	if err := o.buildChangeFilter(ctx, o.repoRoot); err != nil {
 		return err
 	}
-	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
-		o.hrc.Options.DisableChartDigestTracking = *requested
-	}
 
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
 	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
@@ -510,7 +499,6 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	}
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
-	o.hrc.Options.DisableChartDigestTracking = res.DisableChartDigestTracking
 	var entryPolicy manifest.EmissionPolicy
 	skipKinds := o.cfg.HelmOptions.SkipResourceKinds()
 	for _, doc := range res.Documents {

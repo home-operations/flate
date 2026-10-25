@@ -777,8 +777,8 @@ func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 			}
 		}
 		flag := sub.Flags().Lookup("disable-chart-digest-tracking")
-		if flag == nil || flag.Value.Type() != "boolfunc" || flag.NoOptDefVal != "true" {
-			t.Fatalf("%v: missing boolean override binding", argv)
+		if flag == nil || flag.Value.Type() != "bool" || flag.NoOptDefVal != "true" {
+			t.Fatalf("%v: missing boolean selection binding", argv)
 		}
 		if !strings.Contains(flag.Usage, envKey("disable-chart-digest-tracking")) {
 			t.Errorf("%v: missing environment usage", argv)

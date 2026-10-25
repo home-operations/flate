@@ -39,10 +39,6 @@ type Options struct {
 type Loader struct {
 	Store   *store.Store
 	Options Options
-	// DisableChartDigestTracking records inline instance patches before admission.
-	// Load calls sharing a Loader MUST be sequential.
-	DisableChartDigestTracking bool
-
 	// SourceRoot anchors slash-separated discovery coordinates and bounds
 	// standalone input admission. Source artifacts supply their own FS.
 	SourceRoot string
@@ -724,9 +720,6 @@ func (l *Loader) loadFile(path string) (int, error) {
 		if !info.Tracked {
 			l.recordObject(obj, path)
 			continue
-		}
-		if hr, ok := obj.(*manifest.HelmRelease); ok {
-			l.DisableChartDigestTracking = l.DisableChartDigestTracking || disablesChartDigestTracking(hr)
 		}
 		id := obj.Named()
 		if !l.acceptObject(id) {

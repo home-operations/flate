@@ -9,7 +9,6 @@ import (
 	"os"
 	"runtime"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -67,8 +66,7 @@ type commonFlags struct {
 	gitDepth int
 	cacheDir string
 
-	helm                       helm.Options
-	disableChartDigestTracking *bool
+	helm helm.Options
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
@@ -125,16 +123,9 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.BoolVar(&f.helm.NoHooks, "no-hooks", false, "exclude hook-annotated templates")
 	fs.StringSliceVarP(&f.helm.ShowOnly, "show-only", "s", nil, "only show specific template paths (repeatable)")
 	fs.BoolVar(&f.helm.EnableDNS, "enable-dns", false, "enable DNS lookups during helm template")
-	fs.BoolFunc("disable-chart-digest-tracking",
-		"preserve original OCI chart versions (absent: auto-detect; =false: force digest tracking)",
-		func(text string) error {
-			disabled, err := strconv.ParseBool(text)
-			if err != nil {
-				return err
-			}
-			f.disableChartDigestTracking = &disabled
-			return nil
-		})
+	fs.BoolVar(&f.helm.DisableChartDigestTracking, "disable-chart-digest-tracking", false,
+		"set when the cluster runs helm-controller with --feature-gates=DisableChartDigestTracking=true; "+
+			"=true preserves original OCI chart versions, =false enables tracking (default); CLI overrides the environment")
 }
 
 // listFlags holds flags that are only meaningful for list/get commands.
@@ -242,13 +233,12 @@ func buildOrchCfg(c commonFlags) orchestrator.Config {
 	return orchestrator.Config{
 		Path: c.path, RepoRoot: c.pathRoot,
 		Input: c.input, BaseInput: c.baseInput, ExternalChanges: c.changes, Cache: c.owner,
-		SelfURLs:                   c.selfURLs,
-		PathOrig:                   c.pathOrigRoot,
-		HelmOptions:                c.helm,
-		DisableChartDigestTracking: c.disableChartDigestTracking,
-		WipeSecrets:                true,
-		RegistryConfig:             c.registryConfig,
-		Concurrency:                c.concurrency,
+		SelfURLs:       c.selfURLs,
+		PathOrig:       c.pathOrigRoot,
+		HelmOptions:    c.helm,
+		WipeSecrets:    true,
+		RegistryConfig: c.registryConfig,
+		Concurrency:    c.concurrency,
 		SourceRetry: sourcecache.RetryConfig{
 			Attempts: sourceRetryAttempts,
 			MinWait:  sourceRetryMinWait,

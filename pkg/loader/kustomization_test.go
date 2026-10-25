@@ -99,38 +99,38 @@ func TestResolve_Directory(t *testing.T) {
 	}
 }
 
-// TestFinalizeIndex_Excluded pins the #777 orphan signal: a manifest is
-// "unreferenced" only when its own directory's kustomization.yaml exists and does
-// not list it. A listed file, or a directory with no kustomization at all (a
-// loose top-level entry), is not.
-func TestFinalizeIndex_Excluded(t *testing.T) {
+func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	// excluded/ — kustomization references only cm.yaml; ks.yaml is a stray file.
-	testutil.WriteFile(t, dir, "excluded/kustomization.yaml", "resources:\n  - cm.yaml\n")
-	// referenced/ — kustomization references ks.yaml.
-	testutil.WriteFile(t, dir, "referenced/kustomization.yaml", "resources:\n  - ks.yaml\n  - cm.yaml\n")
-	// loose/ — a KS file with no kustomization.yaml beside it.
-
-	cases := []struct {
-		name string
-		file string
-		want bool
+	for _, tc := range []struct {
+		name, resources string
+		builder, want   bool
 	}{
-		{"excluded by own kustomization", "excluded/ks.yaml", true},
-		{"referenced by own kustomization", "referenced/ks.yaml", false},
-		{"no kustomization in dir", "loose/ks.yaml", false},
-	}
-	for _, tc := range cases {
+		{"omitted", "resources: [cm.yaml]\n", true, false},
+		{"listed", "resources: [ks.yaml, cm.yaml]\n", true, true},
+		{"builder-free", "", false, true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			l := loaderFixture(store.New(), nil)
-			id := testutil.KustomizationID("", "stray")
-			l.Index.Records[id] = manifest.DiscoveryRecord{Path: filepath.Join(dir, tc.file), File: tc.file}
-			rendererFixture(t, l, dir)
-			if got := l.Index.Records[id].Excluded; got != tc.want {
-				t.Errorf("Excluded(%q) = %v, want %v", tc.file, got, tc.want)
+			root := t.TempDir()
+			if tc.builder {
+				testutil.WriteFile(t, root, "app/kustomization.yaml", tc.resources)
 			}
+			testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
+			testutil.WriteFile(t, root, "app/ks.yaml", testutil.KustomizationYAML("stray", "apps", "  path: ./leaf\n"))
+			l := New(store.New())
+			l.SourceRoot = root
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			l.Admit(root)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			if got := l.AdmitsRoot(testutil.KustomizationID("apps", "stray"), filepath.Join(root, "app/ks.yaml")); got != tc.want {
+				t.Fatalf("admission=%t want %t", got, tc.want)
+			}
+			var owners []manifest.NamedResource
+			if tc.want {
+				owners = []manifest.NamedResource{testutil.KustomizationID("apps", "stray")}
+			}
+			assert.Diff(t, l.Index.Claims["leaf/"], owners)
 		})
 	}
 	for _, version := range []string{"", "/", "example.test/", "example.test/v1/extra"} {
@@ -708,6 +708,33 @@ func TestDocumentReader_IndexedSource(t *testing.T) {
 
 func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 	t.Parallel()
+	t.Run("membership replacement", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		l := New(store.New())
+		l.SourceRoot = root
+		for _, included := range []bool{true, false, true} {
+			resources := "namespace: apps\nresources: []\n"
+			if included {
+				resources = "namespace: apps\nresources: [owner.yaml]\n"
+			}
+			l.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+				"app/kustomization.yaml":    {Data: []byte(resources)},
+				"app/owner.yaml":            {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./target\n"))},
+				"target/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+				"target/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target}\n")},
+			}})
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			l.Admit(root)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			id := testutil.KustomizationID("apps", "owner")
+			if l.AdmitsRoot(id, filepath.Join(root, "app/owner.yaml")) != included || (l.Store.GetObject(id) != nil) != included {
+				t.Fatalf("replacement membership retained another view: included=%t", included)
+			}
+		}
+	})
+
 	root := t.TempDir()
 	l := New(store.New())
 	l.SourceRoot = root

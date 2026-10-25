@@ -47,6 +47,31 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 
 func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 	t.Parallel()
+	t.Run("inactive supplier and source", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "active.yaml", testutil.KustomizationYAML("active", "apps", "  path: ./active\n  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n"))
+		testutil.WriteFile(t, root, "inactive/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "inactive/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./inactive-target\n  postBuild: {substitute: {PREFIX: inactive-}}\n  sourceRef: {kind: GitRepository, name: inactive-only}\n"))
+		testutil.WriteFile(t, root, "inactive-target/kustomization.yaml", "resources: [source.yaml]\n")
+		testutil.WriteFile(t, root, "inactive-target/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: inactive-source, namespace: apps}\nspec: {url: https://fixture.invalid/inactive.git}\n")
+		st := store.New()
+		result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: root, Store: st})
+		if err != nil {
+			t.Fatal(err)
+		}
+		active, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "active"))
+		if !ok || active.DependsOn[0].Name != "dev-config" || result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "dev-config" {
+			t.Fatal("inactive declaration supplied active substitution")
+		}
+		for _, name := range []string{"inactive-only", "inactive-source"} {
+			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}
+			if st.GetObject(id) != nil || st.GetArtifact(id) != nil {
+				t.Fatalf("inactive evidence published a source: %s", id)
+			}
+		}
+	})
+
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [child.yaml, supplier.yaml]\n")
 	testutil.WriteFile(t, root, "app/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  dependsOn: [{name: '${PREFIX:-dev-}config'}]\n"))

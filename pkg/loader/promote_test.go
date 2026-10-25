@@ -347,6 +347,24 @@ spec:
 
 func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 	t.Parallel()
+	t.Run("inactive package batch", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "apps/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n"))
+		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "target/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: raw}\n")
+		l := New(store.New())
+		l.SourceRoot = root
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		obj := &manifest.ConfigMap{Name: "injected", Namespace: "apps"}
+		l.RegisterBuilt(filepath.Join(root, "target"), []store.Child{{Obj: obj}})
+		if _, indexed := l.Index.Lookup(obj.Named()); indexed || l.Store.GetObject(obj.Named()) != nil {
+			t.Fatal("inactive package published authoritative output")
+		}
+	})
+
 	root := t.TempDir()
 	for file, body := range map[string]string{
 		"kustomization.yaml":                   "resources: [entry]\n",

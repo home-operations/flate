@@ -26,8 +26,8 @@ func BenchmarkProjectAuthored_SharedBootstrapPath(b *testing.B) {
 		b.Fatal(err)
 	}
 	l.Admit(root)
-	if len(l.Kustomizations()) != 64 {
-		b.Fatal("bootstrap peers missing")
+	if len(l.kustomizations()) != 64 || len(l.Kustomizations()) != 0 {
+		b.Fatal("inactive bootstrap evidence missing or runnable")
 	}
 	b.ReportAllocs()
 	for b.Loop() {

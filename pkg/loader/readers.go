@@ -83,6 +83,20 @@ func (l *Loader) finalizeRecords(repoRoot string, emittedFiles map[string][]mani
 		}
 	}
 	for id, r := range l.Index.Records {
+		if r.Path != "" {
+			if id.KindInfo().Discovery {
+				if _, known := l.roots[id]; !known {
+					if l.roots == nil {
+						l.roots = map[manifest.NamedResource]bool{}
+					}
+					l.roots[id] = l.rootAdmission(r.Path, r.File, id.KindInfo().Structural).admits(l, id, r)
+				}
+			} else if doc := l.documents.cache[r.Path]; r.Authored != (manifest.NamedResource{}) && !doc.rootKnown {
+				doc.rootAdmitted = l.rootAdmission(r.Path, r.File, false).admits(l, id, r)
+				doc.rootKnown = true
+				l.documents.cache[r.Path] = doc
+			}
+		}
 		if r.File != "" {
 			if len(r.Refs) != 0 && repoRoot != "" {
 				clear(visited)

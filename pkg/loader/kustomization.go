@@ -25,6 +25,9 @@ type document struct {
 	objects       []store.Child
 	built         []store.Child
 	selected      bool
+	eligible      fileEligibility
+	rootKnown     bool
+	rootAdmitted  bool
 	lookup        map[manifest.NamedResource]store.Child
 	plugins       *[]pluginInputs
 	loaded        bool
@@ -131,13 +134,14 @@ func (l *Loader) mountSources() {
 	if len(changed) == 0 {
 		return
 	}
+	l.resetAdmissions()
 	if l.scopes != nil {
-		ready := l.scopes.ready
+		sources := l.scopes.sources
 		l.scopes = nil
 		l.ensureScopes()
-		for state := range ready {
-			if state == l.sourceState(state.id) {
-				l.scopes.ready[state] = struct{}{}
+		for state, scope := range sources {
+			if state == l.sourceState(state.id, state.repoRoot) {
+				l.scopes.sources[state] = scope
 			}
 		}
 	}

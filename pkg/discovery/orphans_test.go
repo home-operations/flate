@@ -128,6 +128,32 @@ spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
 
 func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 	t.Parallel()
+	t.Run("omitted mixed file", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		body := testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n") + "---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: sibling, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: chart}}\n"
+		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "apps/disabled.yaml", body)
+		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: []\n")
+		st := store.New()
+		l := loader.New(st)
+		l.SourceRoot = root
+		if _, err := l.Load(t.Context(), root); err != nil {
+			t.Fatal(err)
+		}
+		l.Admit(root)
+		if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			t.Fatal(err)
+		}
+		d := discoverer{cfg: Config{Store: st}, loader: l}
+		d.promoteOrphans(t.Context(), nil)
+		for _, id := range []manifest.NamedResource{testutil.KustomizationID("apps", "disabled"), testutil.HelmReleaseID("apps", "sibling")} {
+			if st.GetObject(id) != nil {
+				t.Fatalf("omitted file promoted %s", id)
+			}
+		}
+	})
+
 	dir := t.TempDir()
 	body := testutil.KustomizationYAML("self", "apps", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n") + "---\n" +
 		`apiVersion: helm.toolkit.fluxcd.io/v2

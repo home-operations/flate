@@ -96,6 +96,9 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		}
 	}
 	for _, contribution := range l.scopes.contributions {
+		if !contribution.active || contribution.membershipOnly {
+			continue
+		}
 		for _, v := range contribution.visits {
 			v.owner, v.source = contribution.owner, contribution.source
 			record(v)
@@ -166,7 +169,7 @@ func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]s
 	}
 	var roots []string
 	for _, dir := range slices.Sorted(maps.Keys(remaining)) {
-		if !l.documents.cache[dir].traversed {
+		if !l.documents.cache[dir].traversed || l.documents.cache[l.documents.cache[dir].file].eligible < fileEligible {
 			continue
 		}
 		rel, err := filepath.Rel(repoRoot, l.documents.cache[dir].file)
@@ -232,10 +235,12 @@ type graphContext struct {
 
 type graphVisit struct {
 	graphContext
-	file               string
+	file, origin       string
+	localFile          string
 	prefix, coordinate string
 	owner              manifest.NamedResource
 	source             manifest.NamedResource
+	input              int
 	localBase          string
 	incomplete         string
 	document           *types.Kustomization
@@ -282,6 +287,9 @@ func (l *Loader) StandaloneRoots(repoRoot string) []string {
 }
 
 func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
+	if len(l.documents.cache) == 0 {
+		return nil
+	}
 	l.ensureScopes()
 	roots := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
@@ -327,7 +335,10 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 			}
 			continue
 		}
-		delete(roots, local)
+		record, _ := l.Index.Lookup(ks.Named())
+		if filepath.Dir(record.Path) != local {
+			delete(roots, local)
+		}
 		if pinned {
 			for dir := range roots {
 				if strings.HasPrefix(dir, prefix) {
@@ -348,7 +359,12 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 				continue
 			}
 			if child, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
-				delete(roots, child)
+				if _, candidate := roots[child]; candidate {
+					base, _ := filepath.Rel(repoRoot, child)
+					if !l.anchorRoot(repoRoot, filepath.ToSlash(base)) {
+						delete(roots, child)
+					}
+				}
 			}
 		}
 	}

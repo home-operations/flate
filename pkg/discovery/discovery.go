@@ -306,6 +306,7 @@ func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) er
 // Resolved sources must retain their objects and artifacts so a pinned root
 // claim cannot replace its own source with a working-tree alias.
 func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
+	claims := d.loader.Claims(repoRoot)
 	pinnedSources := make(map[manifest.NamedResource]struct{})
 	pinnedKS := make(map[manifest.NamedResource]struct{})
 	for _, child := range d.loader.Kustomizations() {
@@ -317,7 +318,7 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 		}
 	}
 	var prefixes []manifest.KSClaim
-	for _, c := range d.loader.Claims(repoRoot) {
+	for _, c := range claims {
 		if _, pinned := pinnedKS[c.ID]; pinned {
 			prefixes = append(prefixes, c)
 		}

@@ -56,6 +56,7 @@ type Loader struct {
 	entryPath  string
 	candidates map[manifest.NamedResource]store.Child
 	admitted   map[manifest.NamedResource]manifest.BaseManifest
+	roots      map[manifest.NamedResource]bool
 
 	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
 	// reads in place of <root>/.krmignore, with its patterns anchored
@@ -90,11 +91,14 @@ func New(s *store.Store) *Loader {
 	}
 }
 
-// Sources yields immutable source-artifact evidence in unspecified order.
+// Sources yields eligible immutable source-artifact evidence in unspecified order.
 func (l *Loader) Sources() iter.Seq[store.Child] {
 	return func(yield func(store.Child) bool) {
 		for id, r := range l.Index.Files() {
 			if !id.KindInfo().SourceArtifact {
+				continue
+			}
+			if l.documents.cache[r.Path].eligible == fileInactive {
 				continue
 			}
 			obj := l.indexedObject(id, r)
@@ -114,22 +118,39 @@ func (l *Loader) AdmitsRoot(id manifest.NamedResource, file string) bool {
 	if r.Path == "" {
 		return r.Authored == (manifest.NamedResource{}) && l.candidates[id].Obj != nil
 	}
-	if l.entry != entryKustomize && id.KindInfo().Discovery && l.candidates[id].Obj != nil && l.documents.cache[file].loaded && !l.documents.cache[file].bootstrap {
-		return true
+	if admitted, known := l.roots[id]; known {
+		return admitted
+	}
+	if doc := l.documents.cache[file]; !id.KindInfo().Discovery && doc.rootKnown {
+		return doc.rootAdmitted
 	}
 	return l.rootAdmission(file, r.File, id.KindInfo().Structural).admits(l, id, r)
 }
 
+type fileEligibility uint8
+
+const (
+	fileUnknown fileEligibility = iota
+	fileInactive
+	fileEligible
+	fileIndependent
+)
+
 type rootAdmission struct {
+	denied bool
 	owners []manifest.NamedResource
 	peers  [][]manifest.NamedResource
 }
 
 func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdmission {
-	var scope rootAdmission
+	eligible := l.documents.cache[file].eligible
+	scope := rootAdmission{denied: eligible == fileInactive}
+	if scope.denied {
+		return scope
+	}
 	if l.scopes != nil {
 		for _, v := range l.scopes.visits[file] {
-			if v.owner != (manifest.NamedResource{}) {
+			if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource {
 				scope.owners = appendUniqueProducer(scope.owners, v.owner)
 			}
 		}
@@ -137,9 +158,11 @@ func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdm
 	if origin := l.documents.localPath(file); origin != file {
 		coordinate = l.fileCoordinate(origin)
 	}
-	owners, ancestors := l.Index.OwnersOfFile(coordinate)
-	for _, owner := range append(owners, ancestors...) {
-		scope.owners = appendUniqueProducer(scope.owners, owner)
+	if eligible != fileIndependent {
+		owners, ancestors := l.Index.OwnersOfFile(coordinate)
+		for _, owner := range append(owners, ancestors...) {
+			scope.owners = appendUniqueProducer(scope.owners, owner)
+		}
 	}
 	if !structural {
 		return scope
@@ -156,6 +179,9 @@ func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdm
 }
 
 func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, record manifest.DiscoveryRecord) bool {
+	if a.denied {
+		return false
+	}
 	var peers [][]manifest.NamedResource
 	if id.KindInfo().Structural {
 		for _, group := range a.peers {
@@ -179,8 +205,23 @@ func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, record manif
 	return true
 }
 
-// Kustomizations returns admitted and reachable source-qualified owner evidence.
+// Kustomizations returns eligible source-qualified owner evidence.
 func (l *Loader) Kustomizations() []store.Child {
+	return l.eligibleKustomizations(l.kustomizations())
+}
+
+func (l *Loader) eligibleKustomizations(kss []store.Child) []store.Child {
+	if len(l.Index.Records) == 0 {
+		return kss
+	}
+	return slices.DeleteFunc(kss, func(child store.Child) bool {
+		ks := child.Obj.(*manifest.Kustomization)
+		r, indexed := l.Index.Lookup(ks.Named())
+		return indexed && l.documents.cache[r.Path].eligible == fileInactive
+	})
+}
+
+func (l *Loader) kustomizations() []store.Child {
 	objects := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
 	out := make([]store.Child, 0, len(objects))
 	for _, obj := range objects {

@@ -1218,7 +1218,10 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 		})
 	}
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
-		l.scopes.ready[l.sourceState(ks.SourceID())] = struct{}{}
+		state := l.sourceState(ks.SourceID(), root)
+		scope := l.scopeSource(state)
+		scope.ready = true
+		l.scopes.sources[state] = scope
 	}
 	l.Admit(root)
 	projected := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}

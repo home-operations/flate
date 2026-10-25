@@ -803,7 +803,7 @@ spec: {url: 'https://fixture.invalid/other'}
 func TestE2E_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
-	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\ntransformers: [transformers]\n")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [sibling.yaml]\ntransformers: [transformers]\n")
 	testutil.WriteFile(t, root, "app/transformers/kustomization.yaml", "namespace: apps\nresources: [../../transformers]\n")
 	testutil.WriteFile(t, root, "transformers/kustomization.yaml", "resources: [transformer.yaml]\n")
 	testutil.WriteFile(t, root, "transformers/transformer.yaml", `apiVersion: builtin

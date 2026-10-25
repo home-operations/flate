@@ -132,13 +132,6 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 	}
 }
 
-// TestLoader_DiscoveryBootstrapScanSkipsPatchFragment pins the no-path
-// guard: a sibling YAML that is a kind: Kustomization with only spec.patches
-// (no spec.path, no spec.sourceRef) is a kustomize patch fragment — referenced
-// via `patches:`, never a reconcilable Flux KS — and must NOT be surfaced by
-// the bootstrap-sibling scan, even though a real entry KS sibling is. No
-// covering KS is pre-seeded, so this pins the order-independence (the guard
-// reads only the parsed object, unlike the dir-coverage guard).
 func TestLoader_DiscoveryBootstrapScanSkipsPatchFragment(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -146,13 +139,12 @@ func TestLoader_DiscoveryBootstrapScanSkipsPatchFragment(t *testing.T) {
 kind: Kustomization
 resources:
   - ./cm.yaml
+  - ./entry.yaml
 patches:
   - path: ./patch.yaml
 `)
 	testutil.WriteFile(t, dir, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm, namespace: apps}\n")
-	// Real bootstrap-entry sibling KS (has spec.path) — must still surface.
 	testutil.WriteFile(t, dir, "apps/entry.yaml", testutil.KustomizationYAML("entry", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
-	// Patch fragment: kind: Kustomization, only spec.patches, no path/source.
 	testutil.WriteFile(t, dir, "apps/patch.yaml", testutil.KustomizationYAML("patch", "", "  patches:\n    - patch: |-\n        apiVersion: helm.toolkit.fluxcd.io/v2\n        kind: HelmRelease\n        metadata: {name: not-used}\n      target: {kind: HelmRelease}\n"))
 
 	s := store.New()
@@ -774,15 +766,6 @@ components:
 	}
 }
 
-// TestLoader_DiscoveryPicksUpBootstrapSiblingKS pins the
-// bootstrap-sibling scan: a Flux Kustomization CR authored in a YAML
-// file next to a kustomization.yaml but NOT listed in its `resources:`
-// is a real Flux pattern (the KS is kubectl-applied directly). Without
-// the scan, that KS is invisible and the change filter has no parent
-// to attribute file changes under spec.path to. Only Flux Kustomizations
-// are picked up — a sibling HelmRelease must stay invisible, since
-// extending the scan to every CR would silently relax the
-// "kustomize package = resources only" contract for unrelated kinds.
 func TestLoader_DiscoveryPicksUpBootstrapSiblingKS(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -823,8 +806,8 @@ spec:
 	}
 
 	ksID := testutil.KustomizationID("flux-system", "flux-entry-repos")
-	if s.GetObject(ksID) == nil {
-		t.Errorf("bootstrap-sibling Flux KS must reach the Store during discovery")
+	if s.GetObject(ksID) != nil || l.AdmitsRoot(ksID, filepath.Join(dir, "repositories/# flux-entry.yaml")) {
+		t.Error("unlisted declaration became runnable")
 	}
 	if got, want := filesForTest(l.Index)[ksID], "repositories/# flux-entry.yaml"; got != want {
 		t.Errorf("SourceFiles[KS] = %q; want %q", got, want)

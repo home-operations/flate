@@ -26,20 +26,13 @@ func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
 func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
 	l.mountSources()
 	var kss []*manifest.Kustomization
-	for _, child := range l.Kustomizations() {
+	for _, child := range l.eligibleKustomizations(l.admit(repoRoot)) {
 		ks := child.Obj.(*manifest.Kustomization)
 		if _, _, external := SourceView(l.Store, ks.SourceID(), repoRoot); !external {
 			kss = append(kss, ks)
 		}
 	}
 	return buildClaims(l.Store, repoRoot, l.documents, kss)
-}
-
-func localKustomizations(s *store.Store, repoRoot string) []*manifest.Kustomization {
-	return slices.DeleteFunc(s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization), func(ks *manifest.Kustomization) bool {
-		_, _, external := SourceView(s, ks.SourceID(), repoRoot)
-		return external
-	})
 }
 
 func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss []*manifest.Kustomization) []manifest.KSClaim {

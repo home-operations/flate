@@ -30,6 +30,36 @@ import (
 
 func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 	t.Parallel()
+	t.Run("projected owner", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "flux/kustomization.yaml", "namespace: control\nresources: [owner.yaml]\n")
+		testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "", "  path: ./target\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
+		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "target/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty}\n")
+		st := store.New()
+		repository := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+		artifact := &store.SourceArtifact{LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned"}
+		artifact.FS = os.DirFS(artifact.LocalPath)
+		st.AddObject(repository)
+		st.SetArtifact(repository.Named(), artifact)
+		d := discoverer{cfg: Config{Store: st}, loader: loader.New(st)}
+		d.loader.SourceRoot = root
+		if _, err := d.loader.Load(t.Context(), root); err != nil {
+			t.Fatal(err)
+		}
+		d.discardPinnedWorkingTreeFiles(root)
+		owner := testutil.KustomizationID("control", "owner")
+		if _, ok := d.loader.Index.Lookup(owner); !ok {
+			t.Fatal("admission lost the projected pinned owner")
+		}
+		if _, ok := d.loader.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "dirty"}); ok {
+			t.Fatal("working-tree object survived the projected pinned claim")
+		}
+		if st.GetObject(repository.Named()) != repository || st.GetArtifact(repository.Named()) != artifact {
+			t.Fatal("projected pinned claim replaced its resolved source")
+		}
+	})
 	for _, tc := range []struct {
 		name     string
 		resolved bool

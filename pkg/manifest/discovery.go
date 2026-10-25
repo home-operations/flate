@@ -29,7 +29,6 @@ type DiscoveryRecord struct {
 	Refs        []NamedResource // Authored chart/source references under the discovery identity.
 	Parent      NamedResource   // Strict structural parent, excluding peers with the same claimed path.
 	Productions []Production    // Immutable source-qualified contributor evidence.
-	Excluded    bool            // A raw Kustomization file is omitted by its directory's resources list.
 	Pinned      bool            // The Kustomization reads a committed local source artifact.
 }
 

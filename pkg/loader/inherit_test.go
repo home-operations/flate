@@ -26,7 +26,7 @@ var writeFile = testutil.WriteFile
 
 func TestAdmit_UnchangedInputs(t *testing.T) {
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [peers.yaml]\n")
 	var docs strings.Builder
 	for i := range 4 {
 		if i != 0 {
@@ -90,22 +90,156 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
 		l.Admit(root)
-		self := testutil.KustomizationID("apps", "self")
-		excluded := testutil.KustomizationID("apps", "excluded")
-		first := l.Store.GetObject(self)
-		if first == nil || l.Store.GetObject(excluded) != nil {
-			t.Fatalf("document admission: self=%v excluded=%v", first, l.Store.GetObject(excluded))
+		for _, name := range []string{"self", "excluded"} {
+			id := testutil.KustomizationID("apps", name)
+			if l.Store.GetObject(id) != nil || l.AdmitsRoot(id, filepath.Join(root, "app/siblings.yaml")) {
+				t.Fatalf("omitted declaration became runnable: %s", id)
+			}
+			if _, ok := l.Index.Lookup(id); !ok {
+				t.Fatalf("lost inactive evidence: %s", id)
+			}
 		}
-		_, err = l.Load(t.Context(), root)
-		assert.NoError(t, err)
 		l.Admit(root)
-		if l.Store.GetObject(self) != first {
-			t.Fatal("unchanged admission replaced self-owner")
-		}
-		if _, ok := l.Index.Lookup(excluded); ok {
-			t.Fatal("excluded peer survived projection")
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		if l.AdmitsRoot(testutil.KustomizationID("apps", "self"), filepath.Join(root, "app/siblings.yaml")) {
+			t.Fatal("finalization lost denial")
 		}
 	})
+	t.Run("inactive_unresolved_source", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "apps/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n  sourceRef: {kind: GitRepository, name: missing}\n"))
+		testutil.WriteFile(t, root, "target/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n"))
+		l := New(store.New())
+		l.SourceRoot = root
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		l.Admit(root)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		child := testutil.KustomizationID("apps", "child")
+		if l.Store.GetObject(child) != nil || l.AdmitsRoot(child, filepath.Join(root, "target/child.yaml")) {
+			t.Fatal("inactive unresolved owner enabled builder-free descendant")
+		}
+	})
+	t.Run("plain_entry_under_inactive_claim", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "direct.yaml", testutil.KustomizationYAML("direct", "apps", "  path: ./leaf\n"))
+		testutil.WriteFile(t, root, "disabled/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "disabled/owner.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: .\n"))
+		l := New(store.New())
+		l.SourceRoot = root
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		l.Admit(root)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		id := testutil.KustomizationID("apps", "direct")
+		if l.Store.GetObject(id) == nil || !l.AdmitsRoot(id, filepath.Join(root, "direct.yaml")) {
+			t.Fatal("inactive broad claim disabled the plain entry's direct manifest")
+		}
+	})
+	t.Run("inactive_alias_resource_outside_claim", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "flux/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
+		testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: [../outside/source.yaml]\n")
+		testutil.WriteFile(t, root, "outside/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: inactive-source, namespace: apps}\nspec: {url: https://fixture.invalid/unused}\n")
+		st := store.New()
+		l := New(st)
+		l.SourceRoot = root
+		admitForTest(st, root)
+		source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+		st.AddObject(source)
+		mount := filepath.Join(t.TempDir(), "alias")
+		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: mount, LocalRoot: root, InputAlias: true, FS: os.DirFS(root)})
+		for _, dir := range []string{root, filepath.Join(mount, "target")} {
+			_, err := l.Load(t.Context(), dir)
+			assert.NoError(t, err)
+		}
+		l.Admit(root)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "inactive-source"}
+		if st.GetObject(id) != nil || l.AdmitsRoot(id, filepath.Join(root, "outside/source.yaml")) {
+			t.Fatal("inactive alias enabled its physical resource outside the path claim")
+		}
+		for child := range l.Sources() {
+			if child.Obj.Named() == id {
+				t.Fatal("inactive alias exposed its physical source for acquisition")
+			}
+		}
+	})
+
+	for _, included := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inactive_cycle/cross_package=%t", included), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			files := map[string]string{
+				"apps/kustomization.yaml":      "resources: []\n",
+				"apps/disabled.yaml":           testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n  components: [../component]\n"),
+				"target/kustomization.yaml":    "resources: [nested.yaml, source.yaml]\nconfigMapGenerator:\n- name: inactive-generated\n  literals: [VALUE=unused]\n",
+				"target/nested.yaml":           testutil.KustomizationYAML("nested", "apps", "  path: ./nested\n"),
+				"target/source.yaml":           "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: inactive-source, namespace: apps}\nspec: {url: oci://fixture.invalid/unused}\n",
+				"nested/kustomization.yaml":    "resources: [cycle.yaml]\n",
+				"nested/cycle.yaml":            testutil.KustomizationYAML("cycle", "apps", "  path: ./target\n"),
+				"component/kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [data.yaml]\n",
+				"component/data.yaml":          "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: inactive-component, namespace: apps}\n",
+			}
+			if included {
+				files["independent/kustomization.yaml"] = "resources: [../apps/disabled.yaml]\n"
+			}
+			for file, body := range files {
+				testutil.WriteFile(t, root, file, body)
+			}
+			l := New(store.New())
+			l.SourceRoot = root
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			l.Admit(root)
+			before := l.Kustomizations()
+			l.Admit(root)
+			if !slices.EqualFunc(before, l.Kustomizations(), func(a, b store.Child) bool { return a.Obj == b.Obj }) {
+				t.Fatal("unchanged revision replaced declarations")
+			}
+			for _, ks := range before {
+				if !included {
+					t.Fatalf("inactive cycle enabled %s", ks.Obj.Named())
+				}
+			}
+			if roots := l.StandaloneRoots(root); !included && len(roots) != 1 {
+				t.Fatalf("inactive targets became standalone: %v", roots)
+			}
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			id := testutil.KustomizationID("apps", "disabled")
+			file := filepath.Join(root, "apps/disabled.yaml")
+			if l.AdmitsRoot(id, file) != included {
+				t.Fatalf("finalized admission=%t want %t", l.AdmitsRoot(id, file), included)
+			}
+			if _, indexed := l.Index.Lookup(id); !indexed {
+				t.Fatal("inactive owner evidence was discarded")
+			}
+			if !included {
+				for obj := range l.Sources() {
+					t.Fatalf("inactive source escaped evidence boundary: %s", obj.Obj.Named())
+				}
+				for _, obj := range l.Store.ListObjects("", manifest.KindConfigMap) {
+					if obj.Named().Name == "inactive-generated" || obj.Named().Name == "inactive-component" {
+						t.Fatalf("inactive data materialized: %s", obj.Named())
+					}
+				}
+			} else {
+				if len(l.Kustomizations()) != 3 {
+					t.Fatal("independent edge did not enable nested cycle")
+				}
+				if l.Store.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "inactive-generated"}) == nil {
+					t.Fatal("independent edge did not enable generator")
+				}
+			}
+
+		})
+	}
+
 	for _, tc := range []struct {
 		name   string
 		hrDir  string
@@ -116,6 +250,12 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		wantKS []string
 		alias  bool
 	}{
+		{name: "inactive_namespace", files: map[string]string{
+			"flux/kustomization.yaml": "resources: [enabled.yaml]\n",
+			"flux/enabled.yaml":       testutil.KustomizationYAML("enabled", "flux-system", "  {path: ./apps, targetNamespace: media}\n"),
+			"flux/disabled.yaml":      testutil.KustomizationYAML("disabled", "flux-system", "  {path: ./apps, targetNamespace: inactive}\n"),
+			"apps/kustomization.yaml": "resources: [hr.yaml]\n",
+		}, scans: []string{"."}, want: []string{"media"}},
 		{name: "named_ready", files: map[string]string{
 			"flux/kustomization.yaml": "resources: [ks.yaml, ../apps]\n",
 			"flux/ks.yaml":            testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, targetNamespace: media, sourceRef: {kind: GitRepository, name: cluster}}\n"),
@@ -382,6 +522,11 @@ spec:
 			if _, ok := l.Index.Lookup(testutil.HelmReleaseID("inner", "app")); ok {
 				t.Fatal("inner base namespace must not override its overlay")
 			}
+			if tc.name == "inactive_namespace" {
+				if _, ok := l.Index.Lookup(testutil.HelmReleaseID("inactive", "app")); ok {
+					t.Fatal("inactive owner projected a second consumer namespace")
+				}
+			}
 		})
 	}
 
@@ -640,7 +785,7 @@ func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\ntransformers: [transformers]\n")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [sibling.yaml]\ntransformers: [transformers]\n")
 	testutil.WriteFile(t, root, "app/transformers/kustomization.yaml", "namespace: apps\nresources: [../../transformers]\n")
 	testutil.WriteFile(t, root, "transformers/kustomization.yaml", "resources: [transformer.yaml]\n")
 	testutil.WriteFile(t, root, "transformers/transformer.yaml", namespaceTransformer)
@@ -700,11 +845,10 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	assert.NoError(t, err)
 	l.Admit(root)
 	sibling := testutil.KustomizationID("apps", "sibling")
-	if l.Store.GetObject(sibling) == nil {
-		t.Fatal("bootstrap sibling not initially admitted")
+	if l.Store.GetObject(sibling) != nil {
+		t.Fatal("omitted bootstrap sibling admitted")
 	}
-	_, doc, emission := l.Store.GetEmission(sibling)
-	emission.Finish()
+	doc := l.candidates[sibling].Doc
 	if doc == nil || doc["spec"].(map[string]any)["path"] != "./leaf" {
 		t.Fatalf("bootstrap sibling lost authoritative document: %v", doc)
 	}
@@ -713,7 +857,7 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := l.Index.Lookup(sibling); ok || l.Store.GetObject(sibling) != nil {
-		t.Fatal("excluded bootstrap sibling resurrected through projection")
+	if _, ok := l.Index.Lookup(sibling); !ok || l.Store.GetObject(sibling) != nil || l.AdmitsRoot(sibling, filepath.Join(root, "app/sibling.yaml")) {
+		t.Fatal("inactive declaration lost evidence or became runnable")
 	}
 }

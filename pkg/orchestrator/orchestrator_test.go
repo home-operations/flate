@@ -307,22 +307,9 @@ data: {k: v}
 	}
 }
 
-// TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout reproduces the
-// dual git-source redundancy pattern: two Kustomizations defined in the
-// same file and pointing at the SAME spec.path. They are peers (neither
-// renders the other), so they must not be wired as each other's
-// structural parent — a mutual parent edge deadlocks the pair in
-// the shared dependency gate and stalls their dependents. The context timeout bounds
-// the run if a mutual parent edge regresses.
 func TestOrchestrator_TwoKSSameSpecPathNoSpuriousTimeout(t *testing.T) {
 	dir := t.TempDir()
-	// Two KSes, same spec.path ./flux, both defined in flux/repo.yaml so
-	// both source files sit under their shared spec.path prefix — the
-	// file-prefix parent index would otherwise make each the other's
-	// structural parent and deadlock the pair. repo.yaml is intentionally
-	// NOT listed in flux/kustomization.yaml (it's surfaced by the
-	// bootstrap-sibling scan), so rendering ./flux does not re-emit the
-	// peers — isolating the file-index parent edge this fix targets.
+	testutil.WriteFile(t, dir, "peers/kustomization.yaml", "resources: [../flux/repo.yaml]\n")
 	testutil.WriteFile(t, dir, "flux/repo.yaml", testutil.KustomizationYAML("config-a", "flux-system", `  path: ./flux
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `)+"---\n"+
@@ -335,8 +322,6 @@ kind: ConfigMap
 metadata: {name: flux-cm}
 data: {k: v}
 `)
-	// Downstream consumer dependsOn one of the peers — the cascade victim
-	// if config-a deadlocks.
 	testutil.WriteFile(t, dir, "consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps\n  dependsOn:\n    - name: config-a\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "apps/cm.yaml", `apiVersion: v1
@@ -352,7 +337,6 @@ data: {k: v}
 	if err := o.Bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	// The context timeout bounds a regressed mutual-parent deadlock.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := o.Run(ctx); err != nil {
@@ -367,57 +351,60 @@ data: {k: v}
 	}
 }
 
-// TestOrchestrator_CommentedOutKSNotReconciled is the e2e fence for the
-// bootstrap-sibling over-discovery: a Flux Kustomization commented out of its
-// namespace's kustomization.yaml (a disabled app) that lives inside
-// cluster-apps' rendered tree must NOT be discovered or reconciled — real Flux
-// never deploys it. The entry is scoped to kubernetes/flux (with a git checkout
-// so spec.paths resolve against the repo root) so cluster-apps is discovered
-// before its subtree is scanned.
 func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
-	dir := t.TempDir()
-	testutil.GitInit(t, dir)
-	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps/test\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
-	// Bare apps/test → its network/ subdir is a kustomize base. echo is listed
-	// and rendered; tunnel is commented out (a disabled app).
-	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: network
-resources:
-  - ./echo.yaml
-  # - ./tunnel.yaml
-`)
-	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/echo.yaml", testutil.KustomizationYAML("echo", "network", "  path: ./kubernetes/apps/base/echo\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
-	testutil.WriteFile(t, dir, "kubernetes/apps/test/network/tunnel.yaml", testutil.KustomizationYAML("tunnel", "network", "  path: ./kubernetes/apps/base/tunnel\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
-	testutil.WriteFile(t, dir, "kubernetes/apps/base/echo/kustomization.yaml", "resources:\n  - ./cm.yaml\n")
-	testutil.WriteFile(t, dir, "kubernetes/apps/base/echo/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: echo-cm}\ndata: {k: v}\n")
-	testutil.WriteFile(t, dir, "kubernetes/apps/base/tunnel/kustomization.yaml", "resources:\n  - ./cm.yaml\n")
-	testutil.WriteFile(t, dir, "kubernetes/apps/base/tunnel/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: tunnel-cm}\ndata: {k: v}\n")
-
-	o, err := New(t.Context(), Config{Path: dir + "/kubernetes/flux", WipeSecrets: true, Concurrency: 4})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	if err := o.Bootstrap(context.Background()); err != nil {
-		t.Fatalf("Bootstrap: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := o.Run(ctx); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	// echo is listed → reconciled.
-	echoID := testutil.KustomizationID("network", "echo")
-	if _, ok := o.Store().GetStatus(echoID); !ok {
-		t.Errorf("listed KS echo should be reconciled")
-	}
-	// tunnel is commented out → never discovered or reconciled.
-	tunnelID := testutil.KustomizationID("network", "tunnel")
-	if o.Store().GetObject(tunnelID) != nil {
-		t.Errorf("commented-out KS tunnel must not reach the store")
-	}
-	if _, ok := o.Store().GetStatus(tunnelID); ok {
-		t.Errorf("commented-out KS tunnel must not be reconciled")
+	t.Parallel()
+	for _, entry := range []string{".", "kubernetes/flux"} {
+		for _, enabled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/enabled=%t", entry, enabled), func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				testutil.GitInit(t, dir)
+				testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps/test\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+				resources := "namespace: network\nresources: [echo.yaml]\n"
+				if enabled {
+					resources = "namespace: network\nresources: [echo.yaml, tunnel.yaml]\n"
+				}
+				testutil.WriteFile(t, dir, "kubernetes/apps/test/network/kustomization.yaml", resources)
+				for _, name := range []string{"echo", "tunnel"} {
+					spec := "  path: ./kubernetes/apps/base/" + name + "\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
+					if name == "tunnel" {
+						spec += "  components: [../../../components/backup]\n"
+					}
+					testutil.WriteFile(t, dir, "kubernetes/apps/test/network/"+name+".yaml", testutil.KustomizationYAML(name, "network", spec))
+					testutil.WriteFile(t, dir, "kubernetes/apps/base/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+					testutil.WriteFile(t, dir, "kubernetes/apps/base/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-cm}\n")
+				}
+				testutil.WriteFile(t, dir, "kubernetes/components/backup/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [backup.yaml]\n")
+				testutil.WriteFile(t, dir, "kubernetes/components/backup/backup.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: backup-cm}\n")
+				o, err := New(t.Context(), Config{Path: filepath.Join(dir, entry), WipeSecrets: true, Concurrency: 2})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := o.Render(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := map[string]bool{}
+				for _, batch := range result.Manifests {
+					for _, obj := range batch.Documents {
+						name, _ := manifest.DocMetadata(obj)
+						found[name] = true
+					}
+				}
+				if !found["echo-cm"] {
+					t.Error("listed app output is missing")
+				}
+				for _, name := range []string{"tunnel", "tunnel-cm", "backup-cm"} {
+					if found[name] != enabled {
+						t.Errorf("output %s present=%t, want %t", name, found[name], enabled)
+					}
+				}
+				id := testutil.KustomizationID("network", "tunnel")
+				if (o.Store().GetObject(id) != nil) != enabled {
+					t.Errorf("disabled app reached store: %v", id)
+				}
+			})
+		}
 	}
 }
 

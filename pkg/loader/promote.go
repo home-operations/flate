@@ -88,6 +88,11 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 	l.ensureScopes()
 	sourceRoot := cmp.Or(l.SourceRoot, l.documents.mountedRoot(root), root)
+	l.Admit(sourceRoot)
+	_, packageFile := l.documents.read(root)
+	if l.documents.cache[packageFile].eligible == fileInactive {
+		return
+	}
 	rel, _ := filepath.Rel(sourceRoot, root)
 	var inputs, shared []string
 	for _, visit := range l.scopeWalk(graphVisit{root: sourceRoot, dir: filepath.ToSlash(rel), source: manifest.BootstrapSourceID}) {
@@ -165,6 +170,7 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 		l.candidates[id] = child
 	}
 	l.scopes.complete = false
+	l.admit(sourceRoot)
 }
 
 // BuiltDocuments returns the authoritative package batch for an indexed built object.

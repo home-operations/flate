@@ -544,7 +544,7 @@ func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 			l := New(s)
 			l.Index.Records[sibling.Named()] = manifest.DiscoveryRecord{File: "apps/patch.yaml", Path: filepath.Join(root, "apps/patch.yaml")}
 			idx := rendererFixture(t, l, root)
-			if !idx.Records[sibling.Named()].Excluded {
+			if l.AdmitsRoot(sibling.Named(), filepath.Join(root, "apps/patch.yaml")) {
 				t.Fatal("file-role input counted as a listed structural resource")
 			}
 			for _, file := range []string{"apps/" + filename, "inputs/absolute.yaml", "inputs/escaped.yaml", "inputs/missing", "apps/patch.yaml"} {

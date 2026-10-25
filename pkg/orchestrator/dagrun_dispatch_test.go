@@ -27,6 +27,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -536,14 +537,18 @@ data: {value: rendered}
 }
 
 type sharedRepositoryFetcher struct {
-	mu    sync.Mutex
-	calls map[manifest.NamedResource]int
+	mu      sync.Mutex
+	calls   map[manifest.NamedResource]int
+	observe func(context.Context, manifest.BaseManifest, *store.ReadSet)
 }
 
-func (f *sharedRepositoryFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, _ *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *sharedRepositoryFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.mu.Lock()
 	f.calls[obj.Named()]++
 	f.mu.Unlock()
+	if f.observe != nil {
+		f.observe(ctx, obj, reads)
+	}
 	return &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart", FS: fstest.MapFS{
 		"Chart.yaml":               {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
 		"templates/configmap.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n")},
@@ -554,166 +559,319 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		for _, scenario := range []string{"unchanged", "effective_input_change", "withdrawal_reanchor"} {
 			t.Run(fmt.Sprintf("workers=%d/%s", workers, scenario), func(t *testing.T) {
-				var logs bytes.Buffer
-				previous := slog.Default()
-				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-				defer slog.SetDefault(previous)
-				dir := t.TempDir()
-				o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, Concurrency: workers})
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() {
-					if err := o.Stop(); err != nil {
-						t.Error(err)
-					}
-				})
-				f := &sharedRepositoryFetcher{calls: map[manifest.NamedResource]int{}}
-				o.WithFetcher(manifest.KindHelmRepository, f).WithFetcher(manifest.KindHelmChart, f)
-				s := o.store
-				p := testutil.KustomizationID("flux-system", "publisher")
-				s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
-				doc := map[string]any{
-					"apiVersion": manifest.SourceDomain + "/v1", "kind": manifest.KindHelmRepository,
-					"metadata": map[string]any{"name": "shared", "namespace": "apps"},
-					"spec":     map[string]any{"url": "https://charts.example", "interval": "1h"},
-				}
-				children, _ := parseChildrenForTest(p, []map[string]any{doc}, manifest.ParseDocOptions{})
-				if len(children) != 1 {
-					t.Fatal("repository fixture was not parsed")
-				}
-				repo := children[0].Obj.Named()
-				s.AddObject(children[0].Obj)
-				o.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-					repo: {Productions: []manifest.Production{{Owner: p, Source: manifest.BootstrapSourceID}}},
-					p:    {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
-				}}
-				var releases []manifest.NamedResource
-				for i := range 3 {
-					hr := &manifest.HelmRelease{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Chart: manifest.HelmChart{Name: "demo", Version: "1.0.0", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: repo.Name}}}
-					s.AddObject(hr)
-					releases = append(releases, hr.Named())
-				}
-				o.configureControllers()
-				o.src.StartLifecycle()
-				o.ksc.StartLifecycle()
-				o.hrc.StartLifecycle()
-				acquired, published := make(chan struct{}), make(chan struct{})
-				var once sync.Once
-				unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-					if info, ok := payload.(store.StatusInfo); id == repo && ok && info.Status == store.StatusReady {
-						once.Do(func() { close(acquired) })
-					}
-				}, false)
-				defer unsub()
-				publish := sync.OnceFunc(func() {
-					nextDoc := manifest.DeepCopyMap(doc)
-					nextDoc["metadata"].(map[string]any)["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": p.Name}
-					if scenario == "effective_input_change" {
-						nextDoc["spec"].(map[string]any)["url"] = "https://changed.example"
-					}
-					_, _, next := s.GetEmission(p)
-					next.Children, next.Manifests = parseChildrenForTest(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
-					next.Complete = true
-					t.Logf("parent %s emission: effective input equal=%t, seed document absent, emitted document present; source=%s support=%v", p, cmp.Equal(children[0].Obj, next.Children[0].Obj), manifest.BootstrapSourceID, s.Productions(repo, nil))
-					o.ksc.Emit(p, &next, nil)
-					next.Finish()
-					s.UpdateStatus(p, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-					close(published)
-				})
-				if scenario == "withdrawal_reanchor" {
-					_, _, initial := s.GetEmission(p)
-					initial.Children = children
-					o.ksc.Emit(p, &initial, nil)
-					initial.Finish()
-				} else {
-					publish()
-				}
-				d := dagDispatcher{o}
-				dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-					if id != p {
-						if id.Kind == manifest.KindHelmRelease && scenario == "effective_input_change" {
-							o.tasks.YieldSlot(func() {
+				var outputs [2][][]map[string]any
+				for run, arrival := range []string{"before_return", "after_acceptance"} {
+					synctest.Test(t, func(t *testing.T) {
+						var logs bytes.Buffer
+						previous := slog.Default()
+						slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+						defer slog.SetDefault(previous)
+						ctx, cancel := context.WithCancel(t.Context())
+						defer cancel()
+						dir := t.TempDir()
+						o, err := New(ctx, Config{Path: dir, RepoRoot: dir, Concurrency: workers})
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer func() {
+							if err := o.Stop(); err != nil {
+								t.Error(err)
+							}
+						}()
+						f := &sharedRepositoryFetcher{calls: map[manifest.NamedResource]int{}}
+						o.WithFetcher(manifest.KindHelmRepository, f).WithFetcher(manifest.KindHelmChart, f)
+						s := o.store
+						p := testutil.KustomizationID("flux-system", "publisher")
+						s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
+						doc := map[string]any{
+							"apiVersion": manifest.SourceDomain + "/v1", "kind": manifest.KindHelmRepository,
+							"metadata": map[string]any{"name": "shared", "namespace": "apps"},
+							"spec":     map[string]any{"url": "https://charts.example", "interval": "1h"},
+						}
+						children, _ := parseChildrenForTest(p, []map[string]any{doc}, manifest.ParseDocOptions{})
+						if len(children) != 1 {
+							t.Fatal("repository fixture was not parsed")
+						}
+						original := children[0].Obj.(*manifest.HelmRepository)
+						repo := original.Named()
+						s.AddObject(original)
+						o.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							repo: {Productions: []manifest.Production{{Owner: p, Source: manifest.BootstrapSourceID}}},
+							p:    {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
+						}}
+						var releases []manifest.NamedResource
+						permits := []chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
+						var releaseConsumers []func()
+						for i := range 3 {
+							hr := &manifest.HelmRelease{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Chart: manifest.HelmChart{Name: "demo", Version: "1.0.0", Source: repo}}
+							s.AddObject(hr)
+							releases = append(releases, hr.Named())
+							releaseConsumers = append(releaseConsumers, sync.OnceFunc(func() { close(permits[i]) }))
+						}
+						releaseConsumers[0]()
+						o.configureControllers()
+						o.src.StartLifecycle()
+						o.ksc.StartLifecycle()
+						o.hrc.StartLifecycle()
+						publishPermit, published := make(chan struct{}), make(chan struct{})
+						fetchPermit, accepted := make(chan struct{}), make(chan struct{})
+						assessmentPermit := make(chan struct{})
+						releasePublisher := sync.OnceFunc(func() { close(publishPermit) })
+						releaseFetch := sync.OnceFunc(func() { close(fetchPermit) })
+						releaseAssessment := sync.OnceFunc(func() { close(assessmentPermit) })
+						signalAccepted := sync.OnceFunc(func() { close(accepted) })
+						publish := sync.OnceFunc(func() {
+							nextDoc := manifest.DeepCopyMap(doc)
+							nextDoc["metadata"].(map[string]any)["labels"] = map[string]any{"kustomize.toolkit.fluxcd.io/name": p.Name}
+							if scenario == "effective_input_change" {
+								nextDoc["spec"].(map[string]any)["url"] = "https://changed.example"
+							}
+							_, _, next := s.GetEmission(p)
+							defer next.Finish()
+							next.Children, next.Manifests = parseChildrenForTest(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
+							next.Complete = true
+							o.ksc.Emit(p, &next, nil)
+							s.UpdateStatus(p, store.StatusInfo{Status: store.StatusReady})
+							close(published)
+						})
+						if scenario != "effective_input_change" {
+							_, _, initial := s.GetEmission(p)
+							initial.Children = children
+							o.ksc.Emit(p, &initial, nil)
+							initial.Finish()
+						}
+						type acquisition struct {
+							reads *store.ReadSet
+							url   string
+							id    manifest.NamedResource
+						}
+						entered := make(chan acquisition, 1)
+						var firstFetch sync.Once
+						f.observe = func(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) {
+							chart := obj.(*manifest.HelmChartSource)
+							r, ok := reads.Get[*manifest.HelmRepository](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: chart.Namespace, Name: chart.SourceRef.Name})
+							if !ok {
+								t.Error("fetch did not capture its backing repository")
+								return
+							}
+							firstFetch.Do(func() {
+								entered <- acquisition{reads: reads, url: r.URL, id: chart.Named()}
 								select {
-								case <-published:
+								case <-fetchPermit:
 								case <-ctx.Done():
 								}
 							})
 						}
-						hidden := id == repo && s.GetDeclaration(id) == nil
-						result := d.Dispatch(ctx, id, level)
-						if hidden && scenario == "withdrawal_reanchor" {
-							publish()
-						}
-						return result
-					}
-					o.tasks.YieldSlot(func() {
-						select {
-						case <-acquired:
-						case <-ctx.Done():
-						}
-					})
-					if scenario == "withdrawal_reanchor" {
-						_, _, empty := s.GetEmission(p)
-						empty.Children, empty.Manifests = nil, nil
-						empty.Complete = true
-						o.ksc.Emit(p, &empty, nil)
-						if s.GetDeclaration(repo) != nil {
-							t.Error("withdrawal retained repository authority")
-						}
-
-						return schedule.Result{}
-					}
-					publish()
-					return schedule.Result{}
-				}}
-				sched := schedule.New(o.tasks, dispatch)
-				unwatch := o.watchDAG(sched)
-				defer unwatch()
-				sched.Seed(append([]schedule.NodeID{repo, p}, releases...))
-				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-				defer cancel()
-				if err := sched.Run(ctx); err != nil {
-					t.Fatal(err)
-				}
-				o.tasks.BlockTillDone()
-				completions := map[manifest.NamedResource]int{}
-				for line := range bytes.SplitSeq(logs.Bytes(), []byte("\n")) {
-					if len(line) == 0 {
-						continue
-					}
-					var event struct {
-						Message string `json:"msg"`
-						ID      string `json:"id"`
-					}
-					if err := json.Unmarshal(line, &event); err != nil {
-						t.Fatal(err)
-					}
-					if event.Message == "fetch complete" {
-						for id := range f.calls {
-							if id.String() == event.ID {
-								completions[id]++
+						captured := make(chan *base.Execution, 1)
+						var firstRepository sync.Once
+						d := dagDispatcher{o}
+						dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+							if id == p {
+								o.tasks.YieldSlot(func() {
+									select {
+									case <-publishPermit:
+									case <-ctx.Done():
+									}
+								})
+								if ctx.Err() != nil {
+									return schedule.Result{}
+								}
+								if scenario == "withdrawal_reanchor" {
+									_, _, empty := s.GetEmission(p)
+									defer empty.Finish()
+									empty.Children, empty.Manifests, empty.Complete = nil, nil, true
+									o.ksc.Emit(p, &empty, nil)
+									if s.GetDeclaration(repo) != nil {
+										t.Error("withdrawal retained repository authority")
+									}
+								} else {
+									publish()
+								}
+								return schedule.Result{}
+							}
+							for i, hr := range releases {
+								if id == hr {
+									o.tasks.YieldSlot(func() {
+										select {
+										case <-permits[i]:
+										case <-ctx.Done():
+										}
+									})
+								}
+							}
+							hidden := id == repo && s.GetDeclaration(id) == nil
+							result := d.Dispatch(ctx, id, level)
+							if id == repo && scenario == "effective_input_change" {
+								firstRepository.Do(func() {
+									execution := result.Assessment.(*base.Execution)
+									r, ok := execution.Reads.Get[*manifest.HelmRepository](repo)
+									if !ok || r.URL != original.URL {
+										t.Error("initial assessment lost the original repository URL")
+									}
+									captured <- execution
+									o.tasks.YieldSlot(func() {
+										select {
+										case <-assessmentPermit:
+										case <-ctx.Done():
+										}
+									})
+								})
+							}
+							if hidden && scenario == "withdrawal_reanchor" {
+								publish()
+							}
+							if id.Kind == manifest.KindHelmChart && result.Assessment.Valid() && result.Assessment.Outcome() == schedule.Terminal {
+								signalAccepted()
+							}
+							return result
+						}}
+						sched := schedule.New(o.tasks, dispatch)
+						unwatch := o.watchDAG(sched)
+						defer unwatch()
+						sched.Seed(append([]schedule.NodeID{repo, p}, releases...))
+						done := make(chan error, 1)
+						go func() { done <- sched.Run(ctx) }()
+						joined := false
+						defer func() {
+							cancel()
+							releasePublisher()
+							releaseAssessment()
+							releaseFetch()
+							for _, release := range releaseConsumers {
+								release()
+							}
+							if !joined {
+								<-done
+							}
+							o.tasks.BlockTillDone()
+						}()
+						await := func(signal <-chan struct{}) {
+							t.Helper()
+							select {
+							case <-signal:
+							case err := <-done:
+								joined = true
+								t.Fatalf("scheduler stopped before barrier: %v", err)
 							}
 						}
-					}
+						if scenario == "effective_input_change" {
+							var initial *base.Execution
+							select {
+							case initial = <-captured:
+							case err := <-done:
+								joined = true
+								t.Fatalf("scheduler stopped before capturing the original URL: %v", err)
+							}
+							synctest.Wait()
+							if !initial.Reads.Valid() {
+								t.Fatal("initial assessment was already superseded")
+							}
+							releasePublisher()
+							await(published)
+							if initial.Reads.Valid() {
+								t.Error("changed URL retained the original captured assessment")
+							}
+							releaseAssessment()
+						}
+						var first acquisition
+						select {
+						case first = <-entered:
+						case err := <-done:
+							joined = true
+							t.Fatalf("scheduler stopped before fetch entry: %v", err)
+						}
+						synctest.Wait()
+						if !first.reads.Valid() {
+							t.Fatal("initial acquisition was already superseded")
+						}
+						if arrival == "before_return" {
+							releaseConsumers[1]()
+							synctest.Wait()
+							releaseConsumers[2]()
+							synctest.Wait()
+							if first.reads.Valid() {
+								t.Error("equal child arrivals did not exercise captured-authority invalidation")
+							}
+						}
+						if scenario != "effective_input_change" {
+							if first.url != original.URL {
+								t.Errorf("initial fetch URL=%q, want %q", first.url, original.URL)
+							}
+							releasePublisher()
+							await(published)
+							synctest.Wait()
+						}
+						releaseFetch()
+						await(accepted)
+						synctest.Wait()
+						if arrival == "after_acceptance" {
+							releaseConsumers[1]()
+							synctest.Wait()
+							releaseConsumers[2]()
+						}
+						err = <-done
+						joined = true
+						o.tasks.BlockTillDone()
+						if err != nil {
+							t.Fatal(err)
+						}
+						final, ok := s.Get[*manifest.HelmRepository](repo)
+						if !ok {
+							t.Fatal("final repository is absent")
+						}
+						oldChart := helmchart.Synthesize(original, "demo", "1.0.0").Named()
+						finalChart := helmchart.Synthesize(final, "demo", "1.0.0").Named()
+						t.Logf("run=%d arrivals=%s old chart=%s final chart=%s first acquired=%s URL=%s", run, arrival, oldChart, finalChart, first.id, first.url)
+						if scenario == "effective_input_change" && (oldChart == finalChart || first.id != finalChart || first.url != "https://changed.example" || f.calls[oldChart] != 0) {
+							t.Error("changed repository did not replace the captured chart identity")
+						}
+						completions := map[manifest.NamedResource]int{}
+						for line := range bytes.SplitSeq(logs.Bytes(), []byte("\n")) {
+							if len(line) == 0 {
+								continue
+							}
+							var event struct {
+								Message string `json:"msg"`
+								ID      string `json:"id"`
+							}
+							if err := json.Unmarshal(line, &event); err != nil {
+								t.Fatal(err)
+							}
+							if event.Message == "source: fetch complete" {
+								for id := range f.calls {
+									if id.String() == event.ID {
+										completions[id]++
+									}
+								}
+							}
+						}
+						t.Logf("acquisitions=%v completions=%v", f.calls, completions)
+						if f.calls[repo] != 0 || completions[repo] != 0 {
+							t.Error("existence-only repository fetched")
+						}
+						for id, calls := range f.calls {
+							if completions[id] > 1 || completions[id] > calls || calls > 2 {
+								t.Errorf("%s calls=%d completions=%d", id, calls, completions[id])
+							}
+						}
+						if completions[finalChart] != 1 {
+							t.Errorf("final chart completions=%d, want 1", completions[finalChart])
+						}
+						for _, id := range releases {
+							if info, ok := s.GetStatus(id); !ok || info.Status != store.StatusReady || info.Message != "" {
+								t.Errorf("consumer %s: %+v", id, info)
+							}
+							_, _, output := s.GetEmission(id)
+							if len(output.Manifests) != 1 {
+								t.Errorf("consumer %s emitted %d documents", id, len(output.Manifests))
+							}
+							outputs[run] = append(outputs[run], output.Manifests)
+							output.Finish()
+						}
+					})
 				}
-				t.Logf("repository %s acquisitions=%d completions=%d; all acquisitions=%v completions=%v", repo, f.calls[repo], completions[repo], f.calls, completions)
-				if f.calls[repo] != 0 || completions[repo] != 0 {
-					t.Errorf("existence-only repository fetched: acquisitions=%d completions=%d", f.calls[repo], completions[repo])
-				}
-				for id, calls := range f.calls {
-					if completions[id] > 1 || completions[id] > calls || calls > 2 {
-						t.Errorf("%s calls=%d completions=%d", id, calls, completions[id])
-					}
-				}
-				for _, id := range releases {
-					if info, ok := s.GetStatus(id); !ok || info.Status != store.StatusReady || info.Message != "" {
-						t.Errorf("consumer %s: %+v", id, info)
-					}
-					_, _, output := s.GetEmission(id)
-					if len(output.Manifests) != 1 {
-						t.Errorf("consumer %s emitted %d documents", id, len(output.Manifests))
-					}
+				if diff := cmp.Diff(outputs[0], outputs[1]); diff != "" {
+					t.Errorf("controlled output differs (-want +got): %s", diff)
 				}
 			})
 		}

@@ -60,7 +60,8 @@ type FetchOptions struct {
 
 type execution struct {
 	*Controller
-	run base.Execution
+	run      base.Execution
+	acquired *store.SourceArtifact
 }
 
 // New constructs a source controller. Register fetchers on the
@@ -99,8 +100,20 @@ func (c *Controller) Owns(id manifest.NamedResource) bool {
 func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
 	ex := &execution{Controller: c}
 	ex.run.Init(c.Controller, id)
-	ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
-	return &ex.run
+	for {
+		ex.run.Dispatch(ctx, level, ex, (*execution).reconcile)
+		if ex.acquired == nil || ex.run.Reads.Valid() {
+			return &ex.run
+		}
+		next := &execution{Controller: c, acquired: ex.acquired}
+		next.run.Init(c.Controller, id)
+		if !next.run.Reads.Matches(&ex.run.Reads) {
+			next.run.Reads.Retire()
+			return &ex.run
+		}
+		ex.run.Retire()
+		ex = next
+	}
 }
 
 func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, level manifest.DrainLevel) error {
@@ -143,6 +156,12 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 		if blocked := c.run.Reads.UnsettledProducers(id); len(blocked) != 0 {
 			return &depwait.ErrBlocked{Deps: blocked}
 		}
+	}
+
+	if c.acquired != nil {
+		artifact := c.acquired
+		c.acquired = nil
+		return c.completeFetch(obj, artifact, nil)
 	}
 
 	c.SetPendingUnlessReady(id, "fetching")
@@ -205,6 +224,7 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	}
 	if artifact != nil {
 		if !c.run.Reads.Valid() {
+			c.acquired = artifact
 			return nil
 		}
 		current, _ := c.Store.GetArtifact(obj.Named()).(*store.SourceArtifact)

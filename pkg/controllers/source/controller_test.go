@@ -28,6 +28,7 @@ import (
 )
 
 type fakeFetcher struct {
+	during   func()
 	calls    int
 	retry    sourcecache.Policy
 	artifact *store.SourceArtifact
@@ -42,6 +43,9 @@ func (f *fakeFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, reads 
 	f.retry = policy
 	if f.secret != "" {
 		src.SecretLookup(reads)(obj.Named().Namespace, f.secret)
+	}
+	if f.during != nil {
+		f.during()
 	}
 	if f.err != nil {
 		return nil, f.err
@@ -116,41 +120,78 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 func TestSource_DeclarationContributorsReuse(t *testing.T) {
 	t.Parallel()
 	for _, complete := range []bool{false, true} {
-		t.Run(fmt.Sprintf("complete=%t", complete), func(t *testing.T) {
-			t.Parallel()
-			f := &fakeFetcher{artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
-			c, st := newController(t, map[string]src.Fetcher{manifest.KindHelmChart: f})
-			chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
-			first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
-			second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
-			st.AddObjects([]manifest.BaseManifest{first, second})
-			publish := func(value string) {
-				c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete}, nil)
-			}
-			publish("first")
-			var accepted *base.Execution
-			c.Tasks.Go(t.Context(), "initial", func(ctx context.Context) {
-				accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
-			})
-			c.Tasks.BlockTillDone()
-			defer accepted.Close()
-			if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != 1 {
-				t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
-			}
-			c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
-			publish("changed")
-			if accepted.Valid() {
-				t.Fatal("producer publication did not invalidate the captured availability assessment")
-			}
-			c.Tasks.Go(t.Context(), "successor", func(ctx context.Context) {
-				next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
-				defer next.Close()
-				if next.Outcome() == schedule.Blocked || !next.Valid() || f.calls != 1 {
-					t.Errorf("successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused", next.Valid(), next.Outcome() == schedule.Blocked, f.calls)
+		for _, timing := range []string{"accepted", "in_flight", "changed_in_flight"} {
+			t.Run(fmt.Sprintf("complete=%t/%s", complete, timing), func(t *testing.T) {
+				t.Parallel()
+				f := &fakeFetcher{artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
+				c, st := newController(t, map[string]src.Fetcher{manifest.KindHelmChart: f})
+				chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
+				first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
+				second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
+				st.AddObjects([]manifest.BaseManifest{first, second})
+				publish := func(value string) {
+					c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete}, nil)
 				}
+				publish("first")
+				entered, release := make(chan struct{}), make(chan struct{})
+				unblock := sync.OnceFunc(func() { close(release) })
+				defer unblock()
+				if timing != "accepted" {
+					f.during = sync.OnceFunc(func() {
+						close(entered)
+						select {
+						case <-release:
+						case <-t.Context().Done():
+						}
+					})
+				}
+				var accepted *base.Execution
+				c.Tasks.Go(t.Context(), "initial", func(ctx context.Context) {
+					accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+				})
+				if timing != "accepted" {
+					<-entered
+					if timing == "changed_in_flight" {
+						next := *chart
+						next.Version = "2.0.0"
+						chart = &next
+					}
+					c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
+					publish("changed")
+					unblock()
+				}
+				c.Tasks.BlockTillDone()
+				wantCalls := 1
+				if timing == "changed_in_flight" {
+					if accepted.Valid() || st.GetArtifact(chart.Named()) != nil {
+						t.Fatal("changed content accepted the invalidated acquisition")
+					}
+					accepted.Retire()
+					c.Tasks.Go(t.Context(), "changed content", func(ctx context.Context) {
+						accepted = c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+					})
+					c.Tasks.BlockTillDone()
+					wantCalls = 2
+				}
+				defer accepted.Close()
+				if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != wantCalls {
+					t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
+				}
+				c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
+				publish("changed again")
+				if accepted.Valid() {
+					t.Fatal("producer publication did not invalidate the captured availability assessment")
+				}
+				c.Tasks.Go(t.Context(), "successor", func(ctx context.Context) {
+					next := c.ReconcileNode(ctx, chart.Named(), manifest.DrainNone)
+					defer next.Close()
+					if next.Outcome() == schedule.Blocked || !next.Valid() || f.calls != wantCalls {
+						t.Errorf("successor valid=%t unresolved=%t acquisitions=%d, want unchanged content reused", next.Valid(), next.Outcome() == schedule.Blocked, f.calls)
+					}
+				})
+				c.Tasks.BlockTillDone()
 			})
-			c.Tasks.BlockTillDone()
-		})
+		}
 	}
 }
 

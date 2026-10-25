@@ -43,7 +43,7 @@ type Filter struct {
 	mu   sync.RWMutex
 	keep map[manifest.NamedResource]struct{}
 
-	// Runtime uses membership; construction also tracks admission strength.
+	// Ancestor-only entries stay kept so parent patches apply. They must never be primary, or AddEmitted would cascade-include unrelated file-loaded siblings.
 	primary map[manifest.NamedResource]uint8
 
 	// keepByName: (Group, Kind, Name) presence set used as an O(1) fallback

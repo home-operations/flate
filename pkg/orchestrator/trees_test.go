@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"testing/synctest"
 	"time"
 
@@ -478,24 +479,28 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 }
 
 func TestRenderTrees_OwnCacheCloses(t *testing.T) {
-	baseDir, headDir, root := t.TempDir(), t.TempDir(), t.TempDir()
-	writeCluster(t, baseDir, "v1", "same")
-	writeCluster(t, headDir, "v2", "same")
-	if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir},
-		orchestrator.Config{CacheDir: root, Concurrency: 2}); err != nil {
-		t.Fatal(err)
-	}
-	res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-	if err != nil || len(res.Errors) != 0 {
-		t.Fatalf("own cache retained lock: result=%+v err=%v", res, err)
-	}
-	if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{}, orchestrator.Tree{},
-		orchestrator.Config{CacheDir: root, Concurrency: 2}); !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("missing input error = %v", err)
-	}
-	res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-	if err != nil || len(res.Errors) != 0 {
-		t.Fatalf("input failure retained owner: result=%+v err=%v", res, err)
+	for _, headOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("head_only_%t", headOnly), func(t *testing.T) {
+			baseDir, headDir, root := t.TempDir(), t.TempDir(), t.TempDir()
+			writeCluster(t, baseDir, "v1", "same")
+			writeCluster(t, headDir, "v2", "same")
+			if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir},
+				orchestrator.Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly}); err != nil {
+				t.Fatal(err)
+			}
+			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+			if err != nil || len(res.Errors) != 0 {
+				t.Fatalf("own cache retained lock: result=%+v err=%v", res, err)
+			}
+			if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{}, orchestrator.Tree{},
+				orchestrator.Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly}); !errors.Is(err, manifest.ErrInput) {
+				t.Fatalf("missing input error = %v", err)
+			}
+			res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+			if err != nil || len(res.Errors) != 0 {
+				t.Fatalf("input failure retained owner: result=%+v err=%v", res, err)
+			}
+		})
 	}
 }
 
@@ -565,7 +570,7 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 		}
 	}
 	t.Run("scan_paths", func(t *testing.T) {
-		for _, mode := range []string{"directories", "supplied"} {
+		for _, mode := range []string{"directories", "supplied", "head_only"} {
 			t.Run(mode, func(t *testing.T) {
 				root := t.TempDir()
 				for _, name := range []string{"a", "b"} {
@@ -573,8 +578,8 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 					testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
 					testutil.WriteFile(t, root, "apps/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cfg-"+name+"}\n")
 				}
-				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
-				if mode == "supplied" {
+				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: mode == "head_only"}
+				if mode != "directories" {
 					input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 					assert.NoError(t, err)
 					cfg.BaseInput, cfg.Input = input, input
@@ -584,6 +589,10 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 					orchestrator.Tree{RepoRoot: root, Path: filepath.Join(root, "scans", "b")}, cfg)
 				assert.NoError(t, err)
 				for side, rendered := range []orchestrator.Rendered{base, head} {
+					if cfg.HeadOnly && side == 0 {
+						assert.Equal(t, rendered == (orchestrator.Rendered{}), true)
+						continue
+					}
 					if rendered.Result == nil {
 						t.Fatalf("side %d has no result", side)
 					}
@@ -604,14 +613,14 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 }
 
 func TestRenderTrees_SuppliedViews(t *testing.T) {
-	for _, workers := range []int{2, 4} {
+	for _, headOnly := range []bool{false, true} {
 		for _, scenario := range []string{"differing_options", "filtered_addition", "filtered_deletion", "explicit_changes", "explicit_empty"} {
-			t.Run(fmt.Sprintf("%s/workers_%d", scenario, workers), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/head_only_%t", scenario, headOnly), func(t *testing.T) {
 				root := t.TempDir()
 				writeCluster(t, root, "same", "same")
 				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 				assert.NoError(t, err)
-				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: workers}
+				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: headOnly}
 				for side := range 2 {
 					current := input.FS
 					filtered := scenario == "filtered_addition" && side == 0 || scenario == "filtered_deletion" && side == 1
@@ -661,6 +670,10 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 					orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: root}, cfg)
 				assert.NoError(t, err)
 				for side, rendered := range []orchestrator.Rendered{base, head} {
+					if headOnly && side == 0 {
+						assert.Equal(t, rendered == (orchestrator.Rendered{}), true)
+						continue
+					}
 					if rendered.Result == nil {
 						t.Fatalf("side %d has no result", side)
 					}
@@ -694,6 +707,51 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 	}
 }
 
+func TestRenderTrees_HeadOnly(t *testing.T) {
+	for _, headFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("head_failure_%t", headFailure), func(t *testing.T) {
+			baseInput := &store.SourceArtifact{LocalPath: filepath.Join(t.TempDir(), "base")}
+			headInput := &store.SourceArtifact{LocalPath: filepath.Join(t.TempDir(), "head")}
+			before := fstest.MapFS{
+				"flux/hr.yaml":                       {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/demo\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")},
+				"charts/demo/Chart.yaml":             {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+				"charts/demo/templates/cm.yaml":      {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: surviving}\n")},
+				"charts/demo/templates/deleted.yaml": {Data: []byte("{{ fail \"baseline reconciliation ran\" }}\n")},
+			}
+			after := make(fstest.MapFS, len(before)-1)
+			for name, file := range before {
+				if name != "charts/demo/templates/deleted.yaml" {
+					after[name] = file
+				}
+			}
+			if headFailure {
+				after["charts/demo/templates/cm.yaml"] = &fstest.MapFile{Data: []byte("{{ fail \"head reconciliation failed\" }}\n")}
+			}
+			baseInput.FS, headInput.FS = before, after
+			cfg := orchestrator.Config{BaseInput: baseInput, Input: headInput, Concurrency: 2, HeadOnly: true}
+			baseTree := orchestrator.Tree{RepoRoot: baseInput.LocalPath, Path: filepath.Join(baseInput.LocalPath, "flux")}
+			headTree := orchestrator.Tree{RepoRoot: headInput.LocalPath, Path: filepath.Join(headInput.LocalPath, "flux")}
+			base, head, err := orchestrator.RenderTrees(t.Context(), baseTree, headTree, cfg)
+			if base != (orchestrator.Rendered{}) || head.Orchestrator == nil || head.Result == nil {
+				t.Fatalf("head-only completion = base=%+v head=%+v err=%v", base, head, err)
+			}
+			if headFailure {
+				if !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "head reconciliation failed") || len(head.Result.Failed) != 1 {
+					t.Fatalf("head failure lost partial result: %+v %v", head.Result, err)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Diff(t, configMapNames(head.Result), map[string]bool{"surviving": true})
+				cfg.HeadOnly = false
+				_, _, err = orchestrator.RenderTrees(t.Context(), baseTree, headTree, cfg)
+				if err == nil || !strings.Contains(err.Error(), "baseline reconciliation ran") {
+					t.Fatalf("baseline failure control did not reconcile: %v", err)
+				}
+			}
+		})
+	}
+}
+
 type joinedTreeFS struct {
 	once    sync.Once
 	acquire func() error
@@ -706,12 +764,42 @@ func (f *joinedTreeFS) Open(_ string) (fs.File, error) {
 }
 
 func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
-	for _, workers := range []int{2, 4} {
+	t.Run("discovery_failure", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			release := make(chan struct{})
+			failure := errors.New("baseline discovery failed")
+			baseInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
+				<-release
+				return failure
+			}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}}}
+			headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
+			var base, head orchestrator.Rendered
+			done := make(chan error, 1)
+			go func() {
+				var err error
+				base, head, err = orchestrator.RenderTrees(t.Context(), orchestrator.Tree{}, orchestrator.Tree{},
+					orchestrator.Config{BaseInput: baseInput, Input: headInput, ExternalChanges: change.NewSet(nil), Concurrency: 2, HeadOnly: true})
+				done <- err
+			}()
+			synctest.Wait()
+			close(release)
+			err := <-done
+			if !errors.Is(err, failure) || strings.Count(err.Error(), failure.Error()) != 1 {
+				t.Fatalf("discovery cause lost or duplicated: %v", err)
+			}
+			for _, side := range []orchestrator.Rendered{base, head} {
+				if side.Orchestrator != nil || side.Result == nil || len(side.Result.Manifests)+len(side.Result.Failed) != 0 {
+					t.Fatalf("failed preparation exposed content: %+v", side)
+				}
+			}
+		})
+	})
+	for _, headOnly := range []bool{false, true} {
 		for _, tc := range []struct {
 			backing  string
 			injected bool
 		}{{"memory", true}, {"disk", true}, {"disk", false}} {
-			t.Run(fmt.Sprintf("%d/%s/injected_%t", workers, tc.backing, tc.injected), func(t *testing.T) {
+			t.Run(fmt.Sprintf("head_only_%t/%s/injected_%t", headOnly, tc.backing, tc.injected), func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					root := ""
 					if tc.backing == "disk" {
@@ -750,7 +838,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						}
 						inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
 					}
-					cfg := orchestrator.Config{CacheDir: root, Concurrency: workers, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
+					cfg := orchestrator.Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
 					if tc.injected {
 						cfg.Cache = owner
 					}
@@ -817,8 +905,8 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 		}
 	}
 	t.Run("http-bootstrap", func(t *testing.T) {
-		for _, injected := range []bool{false, true} {
-			t.Run(fmt.Sprintf("injected_%t", injected), func(t *testing.T) {
+		for _, tc := range []struct{ headOnly, injected bool }{{false, false}, {false, true}, {true, false}, {true, true}} {
+			t.Run(fmt.Sprintf("head_only_%t/injected_%t", tc.headOnly, tc.injected), func(t *testing.T) {
 				entered, completed := make(chan struct{}, 2), make(chan struct{}, 2)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
@@ -835,8 +923,8 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf("configMapGenerator: [{name: remote, envs: [%s/%d]}]\n", server.URL, i))
 					trees[i] = orchestrator.Tree{RepoRoot: root}
 				}
-				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
-				if injected {
+				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: tc.headOnly}
+				if tc.injected {
 					var err error
 					cfg.Cache, err = sourcecache.New(t.Context(), cfg.CacheDir)
 					assert.NoError(t, err)
@@ -859,7 +947,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 				for range 2 {
 					<-completed
 				}
-				if injected {
+				if tc.injected {
 					r, _, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{Content: "after-http-bootstrap"}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := io.WriteString(w, "live")
 						return sourcecache.ProducerResult{}, err

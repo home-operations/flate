@@ -1153,7 +1153,7 @@ spec:
 				}
 				return result, st
 			}
-			var previous map[string][]manifest.NamedResource
+			var previous *manifest.DiscoveryIndex
 			for _, state := range []string{"absent", "present", "deleted"} {
 				if state == "present" {
 					testutil.WriteFile(t, root, "config/prod.yaml", "greeting: production\n")
@@ -1168,7 +1168,12 @@ spec:
 						want = append(want, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"})
 					}
 					slices.SortFunc(want, manifest.NamedResource.Compare)
-					assert.Diff(t, result.Index.Readers["config/prod.yaml"], want)
+					for _, reader := range want {
+						inputRecord, ok := result.Index.Lookup(reader)
+						assert.Equal(t, ok, true)
+						assert.Equal(t, slices.Contains(inputRecord.Inputs, "config/prod.yaml"), true)
+					}
+					assert.Equal(t, len(result.Index.Readers["config/prod.yaml"]), 0)
 					record, ok := result.Index.Lookup(demo)
 					assert.Equal(t, ok, true)
 					assert.Equal(t, record.Parent, owner)
@@ -1182,9 +1187,9 @@ spec:
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
 					assert.Equal(t, len(result.Index.Claims["config/"]), 0)
 					if previous != nil {
-						assert.Diff(t, result.Index.Readers, previous)
+						assert.Diff(t, result.Index.Records, previous.Records)
 					}
-					previous = result.Index.Readers
+					previous = result.Index
 				}
 			}
 			if form == "inline" {
@@ -1193,15 +1198,18 @@ spec:
 				testutil.WriteFile(t, root, "workloads/demo/chart.yaml", strings.ReplaceAll(chart, "./config/prod.yaml", "./config/next.yaml"))
 			}
 			next, _ := discover("flux")
-			assert.Equal(t, slices.Contains(next.Index.Readers["config/next.yaml"], demo), true)
-			assert.Equal(t, slices.Contains(next.Index.Readers["config/prod.yaml"], demo), false)
-			assert.Equal(t, slices.Contains(previous["config/prod.yaml"], demo), true)
+			record, _ := next.Index.Lookup(demo)
+			assert.Equal(t, slices.Contains(record.Inputs, "config/next.yaml"), true)
+			assert.Equal(t, slices.Contains(record.Inputs, "config/prod.yaml"), false)
+			old, _ := previous.Lookup(demo)
+			assert.Equal(t, slices.Contains(old.Inputs, "config/prod.yaml"), true)
 			testutil.WriteFile(t, root, "standalone/kustomization.yaml", "resources: [hr.yaml, chart.yaml]\nnamespace: apps\n")
 			testutil.WriteFile(t, root, "standalone/hr.yaml", strings.Replace(hr, "name: demo", "name: standalone", 1))
 			testutil.WriteFile(t, root, "standalone/chart.yaml", chart)
 			result, st := discover("standalone")
 			standalone := testutil.HelmReleaseID("apps", "standalone")
-			assert.Equal(t, slices.Contains(result.Index.Readers["config/prod.yaml"], standalone), true)
+			standaloneRecord, _ := result.Index.Lookup(standalone)
+			assert.Equal(t, slices.Contains(standaloneRecord.Inputs, "config/prod.yaml"), true)
 			assert.Equal(t, st.GetObject(standalone) != nil, true)
 			record, ok := result.Index.Lookup(standalone)
 			assert.Equal(t, ok, true)

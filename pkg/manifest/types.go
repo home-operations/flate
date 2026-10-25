@@ -170,6 +170,8 @@ type Reference struct {
 	Ordering bool
 	// Files borrows immutable source-relative input declarations.
 	Files []string
+	// ChartPath declares a source-relative chart directory or archive; dot selects the root.
+	ChartPath string
 }
 
 // References yields dependencies in source-field order for the selected view without deduplication.

@@ -36,7 +36,7 @@ func TestDescriptionProjection(t *testing.T) {
 		"charts/child/Chart.yaml":            {Data: []byte("apiVersion: v2\nname: child\nversion: 1.0.0\ndependencies: [{name: grand, version: 1.0.0, tags: [group]}]\n")},
 		"charts/child/templates/unused.yaml": {Data: []byte("{{ .Values.nested }}")},
 	}
-	initial, _, err := captureChart(files, ".")
+	initial, _, err := captureChart(t.Context(), files, ".")
 	assert.NoError(t, err)
 	for name := range files {
 		t.Run(name, func(t *testing.T) {
@@ -47,7 +47,7 @@ func TestDescriptionProjection(t *testing.T) {
 				changed[path] = &cloned
 			}
 			changed[name].Data = append(bytes.Clone(changed[name].Data), '\n')
-			next, _, err := captureChart(changed, ".")
+			next, _, err := captureChart(t.Context(), changed, ".")
 			assert.NoError(t, err)
 			if initial.fingerprint() == next.fingerprint() {
 				t.Fatal("changed captured bytes shared an identity")

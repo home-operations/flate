@@ -344,7 +344,7 @@ func (s selection) filterChanges(ctx context.Context, baseline *gittree.FS, rout
 		if before[name] {
 			input = baseline
 		}
-		if err := changes.CollectInputs(ctx, input, name); err != nil {
+		if err := changes.CollectInputs(ctx, input, name, before[name]); err != nil {
 			return nil, err
 		}
 	}

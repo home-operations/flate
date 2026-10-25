@@ -161,7 +161,7 @@ func TestRun_LogLevelFlag_RejectsInvalid(t *testing.T) {
 	}
 }
 
-// TestRun_MissingPathErrors covers the runOrchestrator early-error path
+// TestRun_MissingPathErrors covers the runOrchestrators early-error path
 // when --path is empty (the verb code defaults --path to "." so we
 // can't easily make it empty, but a non-existent dir reliably fails).
 func TestRun_MissingPathErrors(t *testing.T) {

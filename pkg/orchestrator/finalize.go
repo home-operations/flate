@@ -82,6 +82,15 @@ func (o *Orchestrator) decodeFailures(prefixes []manifest.KSClaim) (map[manifest
 				attributed[reader] = o.index.Errors[file]
 			}
 		}
+		for reader, record := range o.index.Records {
+			if !slices.Contains(record.Inputs, file) {
+				continue
+			}
+			owned = true
+			if o.filter.ShouldReconcile(reader) && attributed[reader] == nil {
+				attributed[reader] = o.index.Errors[file]
+			}
+		}
 		if !owned {
 			unowned = append(unowned, o.index.Errors[file])
 		}

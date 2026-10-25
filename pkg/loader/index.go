@@ -65,7 +65,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 		return err
 	}
 
-	l.finalizeRecords(repoRoot, emittedFiles)
+	if err := l.finalizeRecords(ctx, repoRoot, emittedFiles); err != nil {
+		return err
+	}
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes = nil
 	for _, file := range slices.Sorted(maps.Keys(l.Index.Errors)) {

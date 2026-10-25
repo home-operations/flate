@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -665,10 +667,10 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "selected render failed"}}}
 			resourceErr := &orchestrator.FailuresError{Message: "aggregate render failure"}
 			closeErr, writeErr := errors.New("shared cleanup failed"), errors.New("payload write failed")
-			runs := []orchestrator.Rendered{{Orchestrator: o, Result: res, Err: resourceErr}, {Orchestrator: o, Result: &orchestrator.Result{}}}
+			runs := []orchestrator.Rendered{{Orchestrator: o, Result: res, Err: resourceErr}}
 			roots := []manifest.NamedResource{id}
-			sides, selectedErr, remainder := orchestrator.Select(runs, errors.Join(resourceErr, fmt.Errorf("cache close: %w", closeErr)), roots, nil)
-			if len(sides) != 2 || selectedErr == nil {
+			sides, selectedErr, remainder := orchestrator.Select(runs, errors.Join(fmt.Errorf("head tree: %w", errors.Join(resourceErr, context.Canceled)), fmt.Errorf("cache close: %w", closeErr)), roots, nil)
+			if len(sides) != 1 || selectedErr == nil {
 				t.Fatalf("completed run selection: %v", selectedErr)
 			}
 			var stdout, stderr bytes.Buffer
@@ -679,7 +681,7 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			}
 			got := finishSelected(selectedRequest{roots: roots, stdout: &stdout, stderr: &stderr, presentation: mode},
 				&selectedInvocation{sides: sides, err: selectedErr, remainder: remainder}, payload)
-			if !errors.Is(got, closeErr) || !errors.Is(got, writeErr) || !errors.Is(got, selectedErr) {
+			if !errors.Is(got, closeErr) || !errors.Is(got, writeErr) || !errors.Is(got, context.Canceled) || !errors.Is(got, selectedErr) {
 				t.Fatalf("lost selected, cleanup or payload error: %v", got)
 			}
 			if _, reported := errors.AsType[reportedError](got); !reported {
@@ -687,7 +689,7 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, message := range []string{"selected render failed", closeErr.Error(), writeErr.Error()} {
+			for _, message := range []string{"selected render failed", closeErr.Error(), writeErr.Error(), context.Canceled.Error()} {
 				assert.Equal(t, strings.Count(stderr.String(), message), 1)
 			}
 		})
@@ -726,7 +728,7 @@ func TestRun_DiagnosticOnlyComparison(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			args := append(slices.Clone(command), "--path", root, "--base", pin.String(), "--concurrency", "2")
 			code := Run(args, &stdout, &stderr)
-			if code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "Git status unavailable") || !strings.Contains(stderr.String(), "missing objects") || strings.Contains(stderr.String(), `no Kustomization named`) {
+			if code != 1 || stdout.Len() != 0 || strings.Count(stderr.String(), "Git status unavailable") != 1 || strings.Count(stderr.String(), "missing objects") != 1 || strings.Contains(stderr.String(), `no Kustomization named`) {
 				t.Fatalf("diagnostic-only %v = exit %d, stdout %q, stderr %q", command, code, stdout.String(), stderr.String())
 			}
 		})
@@ -761,6 +763,58 @@ func TestRunOrchestratorCfg_BootstrapWarningOnly(t *testing.T) {
 		t.Fatalf("failed bootstrap exposed content: %+v", run)
 	}
 	assert.Diff(t, run.Result.Warnings, []manifest.Warning{warning})
+	for _, unavailable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unavailable_%t", unavailable), func(t *testing.T) {
+			t.Parallel()
+			baseWarning, headWarning := warning, warning
+			baseWarning.Message, headWarning.Message = "base before failure", "head before failure"
+			base := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(filepath.Join(root, "missing")), Warnings: []manifest.Warning{baseWarning}}
+			head := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root), Warnings: []manifest.Warning{headWarning}}
+			wantErr := os.ErrNotExist
+			if unavailable {
+				base.FS = nil
+				wantErr = manifest.ErrInput
+			}
+			runs, err := runOrchestrators(t.Context(), commonFlags{
+				path: root, input: head, baseInput: base, changes: change.NewSet(nil), concurrency: 2,
+			}, false)
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("baseline discovery error lost: %v", err)
+			}
+			var warnings []manifest.Warning
+			for _, run := range runs {
+				if run.Orchestrator != nil || run.Result == nil || len(run.Result.Manifests)+len(run.Result.Failed) != 0 {
+					t.Fatalf("failed preparation exposed content: %+v", run)
+				}
+				for _, w := range run.Result.Warnings {
+					if w.Category == manifest.WarnBaselineStatusUnavailable {
+						warnings = append(warnings, w)
+					}
+				}
+			}
+			assert.Diff(t, warnings, []manifest.Warning{baseWarning, headWarning})
+			roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
+			sides, selectedErr, remainder := orchestrator.Select(runs, err, roots, nil)
+			if !errors.Is(selectedErr, wantErr) || !errors.Is(remainder, wantErr) || len(sides) != len(runs) {
+				t.Fatalf("preparation projection = %+v %v %v", sides, selectedErr, remainder)
+			}
+			var stderr bytes.Buffer
+			finished := finishSelected(selectedRequest{roots: roots, stderr: &stderr, presentation: presentData},
+				&selectedInvocation{sides: sides, err: selectedErr, remainder: remainder}, selectedPayload{})
+			if _, reported := errors.AsType[reportedError](finished); !reported {
+				assert.NoError(t, (output.Encoder{Writer: &stderr}).Errors(finished))
+			}
+			for _, w := range []manifest.Warning{baseWarning, headWarning} {
+				assert.Equal(t, strings.Count(stderr.String(), w.Message), 1)
+			}
+			if !unavailable {
+				cause, ok := errors.AsType[*os.PathError](err)
+				if !ok || strings.Count(stderr.String(), cause.Error()) != 1 {
+					t.Fatalf("baseline discovery cause was duplicated: %v\n%s", err, stderr.String())
+				}
+			}
+		})
+	}
 }
 
 func TestFinishSelected_JoinsWriterErrors(t *testing.T) {

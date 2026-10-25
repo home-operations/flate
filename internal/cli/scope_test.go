@@ -524,7 +524,9 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 
 func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	run := runOrchestrator(t.Context(), commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2})
+	runs, runErr := runOrchestrators(t.Context(), commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2}, false)
+	assert.NoError(t, runErr)
+	run := runs[0]
 	o, res, err := run.Orchestrator, run.Result, run.Err
 	if err != nil || res == nil {
 		t.Fatalf("fresh fixture failed: %v", err)

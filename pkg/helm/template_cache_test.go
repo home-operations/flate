@@ -232,7 +232,7 @@ data:
 			Pin, Path string
 			Auto      bool
 		}{Pin: pin, Auto: true})
-		captured, _, err := captureChart(input, ".")
+		captured, _, err := captureChart(t.Context(), input, ".")
 		assert.NoError(t, err)
 		ch, err := captured.load()
 		assert.NoError(t, err)
@@ -284,7 +284,7 @@ data:
 	}
 	writeBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey, data []map[string]any) {
 		t.Helper()
-		captured, _, err := captureChart(input, ".")
+		captured, _, err := captureChart(t.Context(), input, ".")
 		assert.NoError(t, err)
 		ch, err := captured.load()
 		assert.NoError(t, err)

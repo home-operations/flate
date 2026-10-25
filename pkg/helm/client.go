@@ -102,7 +102,7 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 			label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
 		}
 		var missing bool
-		captured, missing, err = captureChart(input, location)
+		captured, missing, err = captureChart(ctx, input, location)
 		if missing {
 			return err
 		}

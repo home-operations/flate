@@ -164,43 +164,42 @@ func TestFilter_StructuralParentOfOwnerKSAlsoKept(t *testing.T) {
 
 func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	t.Parallel()
-	// Two leaf KSes under the same meta-KS. Only plex changes. plex
-	// + meta are kept; atuin (an unrelated sibling under the meta-KS)
-	// must NOT be pulled in — keeping the meta-KS reconcile-eligible
-	// does not widen sibling-resource coverage.
-	meta := &manifest.Kustomization{
-		Name: "cluster-apps", Namespace: "flux-system",
-		Path: "apps",
-	}
-	plex := &manifest.Kustomization{
-		Name: "plex", Namespace: "media",
-		Path: "apps/media/plex/app",
-	}
-	atuin := &manifest.Kustomization{
-		Name: "atuin", Namespace: "default",
-		Path: "apps/default/atuin/app",
-	}
-	metaID, plexID, atuinID := meta.Named(), plex.Named(), atuin.Named()
+	meta := &manifest.Kustomization{Name: "cluster-apps", Namespace: "flux-system", Path: "apps"}
+	plex := &manifest.Kustomization{Name: "plex", Namespace: "media", Path: "apps/media/plex/app"}
+	atuin := &manifest.Kustomization{Name: "atuin", Namespace: "default", Path: "apps/default/atuin/app"}
+	source := &manifest.GitRepository{Name: "source", Namespace: "flux-system"}
+	release := &manifest.HelmRelease{Name: "plex", Namespace: "media", Chart: manifest.HelmChart{Name: "charts/plex", Source: source.Named()}}
+	independent := &manifest.Kustomization{Name: "chart-independent", Namespace: "default", Path: "independent"}
 	hrAtuin := testutil.HelmReleaseID("default", "atuin")
-
-	f := NewFilter(NewSet([]string{"apps/media/plex/app/helmrelease.yaml"}), filterFixture{files: map[manifest.NamedResource]string{
-		metaID:  "flux/cluster/ks.yaml",
-		plexID:  "apps/media/plex/app/ks.yaml",
-		atuinID: "apps/default/atuin/app/ks.yaml",
-		hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
-	}, root: "", objects: mapLister{metaID: meta, plexID: plex, atuinID: atuin}}.index(), mapLister{metaID: meta, plexID: plex, atuinID: atuin})
-
-	if !f.ShouldReconcile(metaID) {
-		t.Errorf("meta KS must be kept (ancestor of changed file): %v", f.KeepNames())
-	}
-	if !f.ShouldReconcile(plexID) {
-		t.Errorf("plex KS must be kept (owns changed file): %v", f.KeepNames())
-	}
-	if f.ShouldReconcile(atuinID) {
-		t.Errorf("unrelated sibling atuin must not be pulled in: %v", f.KeepNames())
-	}
-	if f.ShouldReconcile(hrAtuin) {
-		t.Errorf("unrelated sibling atuin HR must not be pulled in: %v", f.KeepNames())
+	objects := mapLister{meta.Named(): meta, plex.Named(): plex, atuin.Named(): atuin, release.Named(): release, source.Named(): source, independent.Named(): independent}
+	for _, file := range []string{"apps/media/plex/app/helmrelease.yaml", "charts/plex/templates/cm.yaml"} {
+		t.Run(file, func(t *testing.T) {
+			t.Parallel()
+			index := filterFixture{files: map[manifest.NamedResource]string{
+				meta.Named(): "flux/cluster/ks.yaml", plex.Named(): "apps/media/plex/app/ks.yaml",
+				atuin.Named(): "apps/default/atuin/app/ks.yaml", hrAtuin: "apps/default/atuin/app/helmrelease.yaml",
+				release.Named(): "apps/media/plex/app/helmrelease.yaml", source.Named(): "flux/source.yaml",
+				independent.Named(): "charts/plex/independent.yaml",
+			}, objects: objects, refs: map[manifest.NamedResource][]manifest.NamedResource{release.Named(): {source.Named()}}}.index()
+			r := index.Records[release.Named()]
+			r.Inputs = []string{"charts/plex/templates/cm.yaml"}
+			index.Records[release.Named()] = r
+			f := NewFilter(NewSet([]string{file}), index, objects)
+			for _, id := range []manifest.NamedResource{meta.Named(), plex.Named(), release.Named(), source.Named()} {
+				if !f.ShouldReconcile(id) {
+					t.Errorf("required resource %s omitted: %v", id, f.KeepNames())
+				}
+			}
+			for _, id := range []manifest.NamedResource{atuin.Named(), hrAtuin, independent.Named()} {
+				if f.ShouldReconcile(id) {
+					t.Errorf("unrelated resource %s selected: %v", id, f.KeepNames())
+				}
+			}
+			owners, _ := index.OwnersOfFile("charts/plex/independent.yaml")
+			if slices.Contains(owners, release.Named()) {
+				t.Fatal("chart read acquired render ownership")
+			}
+		})
 	}
 }
 

@@ -267,32 +267,68 @@ func buildOrchCfg(c commonFlags) orchestrator.Config {
 	}
 }
 
-func runOrchestrator(ctx context.Context, c commonFlags) orchestrator.Rendered {
-	if c.path == "" {
-		return orchestrator.Rendered{Err: errors.New("path is required")}
+func runOrchestrators(ctx context.Context, c commonFlags, pair bool) ([]orchestrator.Rendered, error) {
+	count := 1
+	if pair {
+		count = 2
 	}
-	if err := validatePathFlag("--path", c.path); err != nil {
-		return orchestrator.Rendered{Err: err}
-	}
-	if c.pathOrig != "" {
-		if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
-			return orchestrator.Rendered{Err: err}
+	runs := make([]orchestrator.Rendered, count)
+	if !pair {
+		if c.path == "" {
+			return runs, errors.New("path is required")
+		}
+		if err := validatePathFlag("--path", c.path); err != nil {
+			return runs, err
+		}
+		if c.pathOrig != "" {
+			if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
+				return runs, err
+			}
 		}
 	}
 	if err := c.loadSubstitutions(ctx); err != nil {
-		return orchestrator.Rendered{Err: err}
+		return runs, err
 	}
-	cleanup, err := resolveBaseline(ctx, &c, false)
+	cleanup, err := resolveBaseline(ctx, &c, pair)
 	if err != nil {
-		var warnings []manifest.Warning
-		if c.input != nil {
-			warnings = c.input.Warnings
+		for i, input := range []*store.SourceArtifact{c.baseInput, c.input} {
+			if input == nil {
+				continue
+			}
+			side := 0
+			if pair {
+				side = i
+			}
+			if runs[side].Result == nil {
+				runs[side].Result = &orchestrator.Result{}
+			}
+			runs[side].Result.Warnings = append(runs[side].Result.Warnings, input.Warnings...)
 		}
-		return orchestrator.Rendered{Result: &orchestrator.Result{Warnings: warnings}, Err: err}
+		return runs, err
 	}
-	run := runOrchestratorCfg(ctx, buildOrchCfg(c))
-	run.Err = errors.Join(run.Err, cleanup())
-	return run
+	cfg := buildOrchCfg(c)
+	if c.baseInput == nil {
+		runs[0] = runOrchestratorCfg(ctx, cfg)
+		err = runs[0].Err
+	} else {
+		cfg.HeadOnly = !pair
+		var base, head orchestrator.Rendered
+		base, head, err = orchestrator.RenderTrees(ctx,
+			orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
+			orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs}, cfg)
+		if pair {
+			runs[0], runs[1] = base, head
+		} else {
+			if head.Orchestrator == nil && base.Result != nil {
+				if head.Result == nil {
+					head.Result = &orchestrator.Result{}
+				}
+				head.Result.Warnings = append(slices.Clone(base.Result.Warnings), head.Result.Warnings...)
+			}
+			runs[0] = head
+		}
+	}
+	return runs, errors.Join(err, cleanup())
 }
 
 // validatePathFlag rejects a flag value that doesn't point at a real
@@ -398,15 +434,7 @@ type selectedPayload struct {
 
 func runSelected(ctx context.Context, req selectedRequest, payload func(*selectedInvocation) selectedPayload) error {
 	start := time.Now()
-	var runs []orchestrator.Rendered
-	var runErr error
-	if req.pair {
-		orig, current, err := runDiffOrchestrators(ctx, &req.flags)
-		runs, runErr = []orchestrator.Rendered{orig, current}, err
-	} else {
-		run := runOrchestrator(ctx, req.flags)
-		runs, runErr = []orchestrator.Rendered{run}, run.Err
-	}
+	runs, runErr := runOrchestrators(ctx, req.flags, req.pair)
 	inv := selectedInvocation{elapsed: time.Since(start)}
 	inv.sides, inv.err, inv.remainder = orchestrator.Select(runs, runErr, req.roots, req.labels)
 	if len(inv.sides) == 0 {

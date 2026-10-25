@@ -41,6 +41,7 @@ linters:
             - "**/pkg/source/sourceignore/**"
             - "**/pkg/source/ssrfguard/**"
             - "**/internal/assert/**"
+            - "**/internal/chartinput/**"
             - "**/internal/fetcherr/**"
             - "**/internal/kustpath/**"
             - "**/internal/kustomizeinput/**"

@@ -2,7 +2,9 @@ package discovery
 
 import (
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -25,26 +27,50 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 	sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "sibling"}
 	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "default", Name: "generator"}
 	for _, tc := range []struct {
-		name  string
-		order []manifest.NamedResource
+		name      string
+		order     []manifest.NamedResource
+		chartPath string
 	}{
-		{"x_then_shared", []manifest.NamedResource{x, shared}},
-		{"shared_then_x", []manifest.NamedResource{shared, x}},
-		{"discovery", nil},
+		{name: "x_then_shared", order: []manifest.NamedResource{x, shared}},
+		{name: "shared_then_x", order: []manifest.NamedResource{shared, x}},
+		{name: "discovery"},
+		{name: "root chart", chartPath: "."},
+		{name: "nested chart", chartPath: "charts/demo"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
+			view := fstest.MapFS{}
+			for name, file := range input {
+				view[path.Join(tc.chartPath, name)] = file
+			}
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: view})
 			l := loader.New(st)
+			if tc.chartPath != "" {
+				view[path.Join(tc.chartPath, "Chart.yaml")] = &fstest.MapFile{Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")}
+				source := &manifest.GitRepository{Name: "source", Namespace: "default"}
+				release := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: tc.chartPath, Source: source.Named()}}
+				st.AddObjects([]manifest.BaseManifest{source, release})
+				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID))
+				l.Index.Records[release.Named()] = manifest.DiscoveryRecord{File: "release.yaml", Refs: []manifest.NamedResource{source.Named()}}
+				if err := l.FinalizeIndex(t.Context(), root); err != nil {
+					t.Fatal(err)
+				}
+				record, _ := l.Index.Lookup(release.Named())
+				if !slices.Contains(record.Inputs, path.Join(tc.chartPath, "a.yaml")) {
+					t.Fatalf("chart did not read independent declarations: %+v", record.Inputs)
+				}
+			}
 			for _, id := range []manifest.NamedResource{x, shared, sibling} {
 				file := "a.yaml"
 				if id == shared {
 					file = "z.yaml"
 				}
+				file = path.Join(tc.chartPath, file)
 				l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: root + "/" + file, File: file}
 			}
-			l.Index.Records[generator] = manifest.DiscoveryRecord{Authored: generator, Path: root + "/generator.yaml", File: "generator.yaml"}
+			file := path.Join(tc.chartPath, "generator.yaml")
+			l.Index.Records[generator] = manifest.DiscoveryRecord{Authored: generator, Path: root + "/" + file, File: file}
 			d := &discoverer{cfg: Config{Store: st}, loader: l}
 			if tc.order == nil {
 				d.promoteOrphans(t.Context(), nil)

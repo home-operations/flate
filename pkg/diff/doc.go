@@ -34,8 +34,9 @@
 // [Compare] consumes two [Snapshot] values from completed runs selected by
 // orchestrator.Select, withholds unavailable producer batches, and returns
 // formatted bytes, duplicate warnings and structured suppressions without discarding
-// selected render errors. Render two trees,
-// select the requested producer kinds, then compare them:
+// selected render errors. The comparison requires cfg.HeadOnly to be false so
+// both runs are completed. Render two trees, select the requested producer kinds,
+// then compare them:
 //
 //	base, head, runErr := orchestrator.RenderTrees(ctx,
 //		orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir}, cfg)

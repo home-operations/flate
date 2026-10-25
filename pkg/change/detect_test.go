@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -474,6 +476,51 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 	}
 }
 
+func TestSet_WithReaders(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, file, body string
+		before           bool
+	}{
+		{"before", "templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\n", true},
+		{"after", "templates/cm.yaml", "{{ template }}", false},
+		{"binary", "charts/child.tgz", "archive", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			before, after := fstest.MapFS{}, fstest.MapFS{}
+			present := after
+			if tc.before {
+				present = before
+			}
+			present[tc.file] = &fstest.MapFile{Data: []byte(tc.body)}
+			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+			assert.NoError(t, err)
+			original := maps.Clone(set.inputs)
+			reader := testutil.KustomizationID("apps", "reader")
+			wrongSide := testutil.KustomizationID("apps", "opposite")
+			unrelated := testutil.KustomizationID("apps", "unrelated")
+			admitted := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				reader:    {File: "reader.yaml", Inputs: []string{tc.file}},
+				unrelated: {File: "unrelated.yaml", Inputs: []string{path.Dir(tc.file) + "/other"}},
+			}}
+			opposite := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				wrongSide: {File: "opposite.yaml", Inputs: []string{tc.file}},
+			}}
+			indexes := [2]*manifest.DiscoveryIndex{opposite, admitted}
+			if tc.before {
+				indexes = [2]*manifest.DiscoveryIndex{admitted, opposite}
+			}
+			want := map[manifest.NamedResource]struct{}{reader: {}}
+			maps.Copy(want, original)
+			resolved := set.WithReaders(indexes[0], indexes[1])
+			assert.Diff(t, resolved.inputs, want)
+			assert.Diff(t, set.inputs, original)
+			assert.Diff(t, set.WithReaders(indexes[0], indexes[1]).inputs, want)
+		})
+	}
+}
+
 func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
 	t.Parallel()
 	for _, ignored := range []string{"before", "after", "both"} {
@@ -588,7 +635,7 @@ func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
 	cancel()
 	input := &evidenceFailureFS{FS: fstest.MapFS{"input.yaml": {}}}
 	var set Set
-	err := set.CollectInputs(ctx, input, "input.yaml")
+	err := set.CollectInputs(ctx, input, "input.yaml", false)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error=%v", err)
 	}
@@ -619,7 +666,7 @@ func TestCollectInputs_CancelAfterOpen(t *testing.T) {
 		return ctx
 	})
 	var set Set
-	err := set.CollectInputs(checked, input, "input.yaml")
+	err := set.CollectInputs(checked, input, "input.yaml", false)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error=%v", err)
 	}
@@ -673,7 +720,7 @@ func TestCollectInputs_ReadResults(t *testing.T) {
 				return copy(p, body), tc.readErr
 			}
 			var set Set
-			err := set.CollectInputs(checked, input, "input.yaml")
+			err := set.CollectInputs(checked, input, "input.yaml", false)
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
 				assert.Diff(t, set.inputs, map[manifest.NamedResource]struct{}{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {}})
@@ -743,7 +790,7 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 				return copy(p, "later content"), tc.readErr
 			}
 			var set Set
-			err := set.CollectInputs(ctx, input, "input.yaml")
+			err := set.CollectInputs(ctx, input, "input.yaml", false)
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
 			} else if !errors.Is(err, tc.wantErr) {

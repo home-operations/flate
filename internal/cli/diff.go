@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"slices"
 
@@ -10,7 +9,6 @@ import (
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 )
 
 func newDiffCmd() *cobra.Command {
@@ -128,27 +126,4 @@ func appendSuppressionWarnings(warnings []manifest.Warning, suppressed []diff.Su
 	}
 	slices.SortFunc(warnings, manifest.CompareWarning)
 	return warnings
-}
-
-func runDiffOrchestrators(ctx context.Context, c *commonFlags) (orchestrator.Rendered, orchestrator.Rendered, error) {
-	// Diff requires a baseline. Owner cleanup waits for both sides to join.
-	if err := c.loadSubstitutions(ctx); err != nil {
-		return orchestrator.Rendered{}, orchestrator.Rendered{}, err
-	}
-	cleanup, err := resolveBaseline(ctx, c, true)
-	if err != nil {
-		var orig, current []manifest.Warning
-		if c.baseInput != nil {
-			orig = c.baseInput.Warnings
-		}
-		if c.input != nil {
-			current = c.input.Warnings
-		}
-		return orchestrator.Rendered{Result: &orchestrator.Result{Warnings: orig}}, orchestrator.Rendered{Result: &orchestrator.Result{Warnings: current}, Err: err}, err
-	}
-	base, head, runErr := orchestrator.RenderTrees(ctx,
-		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
-		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs},
-		buildOrchCfg(*c))
-	return base, head, errors.Join(runErr, cleanup())
 }

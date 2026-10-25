@@ -21,6 +21,10 @@
 // Dependency and source identities come from References over the authored spec.
 // Embedded specs MUST remain immutable after parse so projections cannot diverge.
 //
+// References expose borrowed source files and authored chart paths. Discovery
+// expands these reads into exact DiscoveryRecord.Inputs without render ownership;
+// DiscoveryIndex.Readers contains only Kustomize graph ownership evidence.
+//
 // # Mutation contract
 //
 // Every concrete manifest type in this package is treated as

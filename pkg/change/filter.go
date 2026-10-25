@@ -356,6 +356,12 @@ func (f *Filter) resolve() {
 			enqueueAncestor(ancestor)
 		}
 	}
+	for id := range f.changes.inputs {
+		if record, ok := f.index.Lookup(id); ok {
+			enqueuePrimary(id, true)
+			enqueueAncestorChain(record.File, id)
+		}
+	}
 	changedInputs := len(f.changes.inputs) != 0
 	for id, record := range f.index.Files() {
 		if changed(record) {

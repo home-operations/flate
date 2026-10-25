@@ -37,7 +37,7 @@ type DiscoveryRecord struct {
 type DiscoveryIndex struct {
 	Records map[NamedResource]DiscoveryRecord // Authored and projected identities.
 	Claims  map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
-	Readers map[string][]NamedResource        // Graph and declared source-input readers by file or missing directory.
+	Readers map[string][]NamedResource        // Graph ownership readers by file or missing resource directory.
 	Errors  map[string]error                  // File decode failures deferred until final source ownership is known.
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -339,6 +340,62 @@ func TestDAGSweep_DecodeFailureAttribution(t *testing.T) {
 	assert.Equal(t, publications, 1)
 	reads.Retire()
 	for range st.Sweep() {
+	}
+}
+
+func TestDecodeFailures_ExactInputs(t *testing.T) {
+	t.Parallel()
+	for _, relation := range []string{"source values", "chart", "graph"} {
+		for _, selected := range []bool{false, true} {
+			for _, unowned := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/selected=%t/unowned=%t", relation, selected, unowned), func(t *testing.T) {
+					t.Parallel()
+					st := store.New()
+					var reader manifest.BaseManifest = &manifest.HelmRelease{Name: "reader", Namespace: "apps"}
+					if relation == "graph" {
+						reader = &manifest.Kustomization{Name: "reader", Namespace: "apps", Path: "unrelated"}
+					}
+					st.AddObject(reader)
+					index := indexForTest(map[manifest.NamedResource]string{reader.Named(): "reader.yaml"})
+					files := []string{"inputs/a.yaml", "inputs/z.yaml"}
+					if relation == "chart" {
+						files = []string{"charts/demo/a.yaml", "charts/demo/z.yaml"}
+					}
+					first, second := fmt.Errorf("%w: first", manifest.ErrInput), fmt.Errorf("%w: second", manifest.ErrInput)
+					index.Errors = map[string]error{files[0]: first, files[1]: second}
+					if relation == "graph" {
+						index.Readers = map[string][]manifest.NamedResource{files[0]: {reader.Named()}, files[1]: {reader.Named()}}
+					} else {
+						r := index.Records[reader.Named()]
+						r.Inputs = files
+						index.Records[reader.Named()] = r
+					}
+					unownedErr := fmt.Errorf("%w: unowned", manifest.ErrInput)
+					if unowned {
+						index.Errors["charts/demo/not-read.yaml"] = unownedErr
+					}
+					var changes []string
+					if selected {
+						changes = []string{"reader.yaml"}
+					}
+					o := &Orchestrator{store: st, index: index, filter: change.NewFilter(change.NewSet(changes), index, st), tasks: task.NewBounded(2)}
+					attributed, other := o.decodeFailures(nil)
+					assert.Equal(t, len(attributed) != 0, selected)
+					if selected {
+						assert.Equal(t, attributed[reader.Named()], first)
+					}
+					if unowned {
+						assert.Equal(t, len(other), 1)
+						assert.Equal(t, other[0], unownedErr)
+					} else {
+						assert.Equal(t, len(other), 0)
+					}
+					o.classifyCompleted()
+					assert.Equal(t, o.finalize() != nil, selected || unowned)
+					assert.Equal(t, len(st.Warnings()), 0)
+				})
+			}
+		}
 	}
 }
 

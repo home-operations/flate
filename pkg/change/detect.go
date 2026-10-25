@@ -21,11 +21,12 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Set contains changed relative paths and exact one-sided data identities for selection.
+// Set contains changed relative paths and exact one-sided input identities for selection.
 // Completed sets are immutable and safe to share; CollectInputs is construction-only.
 type Set struct {
-	paths  map[string]struct{}
-	inputs map[manifest.NamedResource]struct{}
+	paths    map[string]struct{}
+	inputs   map[manifest.NamedResource]struct{}
+	oneSided [2]map[string]struct{}
 }
 
 // NewSet constructs a path-only Set without Detect's one-sided input identities.
@@ -141,11 +142,12 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	out := &Set{paths: paths}
 	slices.Sort(oneSided)
 	for _, name := range oneSided {
+		_, onAfter := aft[name]
 		input := before.FS
-		if _, ok := aft[name]; ok {
+		if onAfter {
 			input = after.FS
 		}
-		if err := out.CollectInputs(ctx, input, name); err != nil {
+		if err := out.CollectInputs(ctx, input, name, !onAfter); err != nil {
 			return nil, err
 		}
 	}
@@ -159,14 +161,23 @@ type inputReader func([]byte) (int, error)
 
 func (r inputReader) Read(p []byte) (int, error) { return r(p) }
 
-// CollectInputs adds data identities from a path admitted on exactly one side.
+// CollectInputs records a path admitted on exactly one side and the data it defines.
+// Before identifies the baseline side; WithReaders resolves its exact read dependents.
 // Call only while constructing an unpublished Set, never concurrently, and discard
 // the set on error. Completed sets returned by Detect or baseline resolution MUST
 // remain immutable.
-func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string) error {
+func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, before bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	side := 1
+	if before {
+		side = 0
+	}
+	if s.oneSided[side] == nil {
+		s.oneSided[side] = make(map[string]struct{})
+	}
+	s.oneSided[side][name] = struct{}{}
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".yaml", ".yml", ".json":
 	default:
@@ -226,6 +237,34 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string) error
 		}
 	}
 	return ctx.Err()
+}
+
+// WithReaders returns a set including consumers of one-sided files in their admitting index.
+// The receiver and both discovery indexes remain immutable.
+func (s *Set) WithReaders(before, after *manifest.DiscoveryIndex) *Set {
+	if s == nil || len(s.oneSided[0])+len(s.oneSided[1]) == 0 {
+		return s
+	}
+	out := *s
+	out.inputs = maps.Clone(s.inputs)
+	for side, index := range [2]*manifest.DiscoveryIndex{before, after} {
+		if index == nil || len(s.oneSided[side]) == 0 {
+			continue
+		}
+		for id, record := range index.Records {
+			if !slices.ContainsFunc(record.Inputs, func(name string) bool {
+				_, changed := s.oneSided[side][name]
+				return changed
+			}) {
+				continue
+			}
+			if out.inputs == nil {
+				out.inputs = make(map[manifest.NamedResource]struct{})
+			}
+			out.inputs[id] = struct{}{}
+		}
+	}
+	return &out
 }
 
 type fileMeta struct {

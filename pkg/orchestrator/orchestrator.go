@@ -56,6 +56,8 @@ type Config struct {
 	Input *store.SourceArtifact
 	// BaseInput carries the opposite side's admitted direct reader.
 	BaseInput *store.SourceArtifact
+	// HeadOnly makes RenderTrees discover both inputs and render only the head.
+	HeadOnly bool
 
 	// Path is the directory to scan for Flux objects (the scan entry
 	// point — a cluster's Flux entry, which may be a subdir of RepoRoot).
@@ -438,6 +440,40 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 			err = o.bootstrapErr
 		}
 	}()
+	if err := o.discover(ctx); err != nil {
+		return err
+	}
+
+	o.freezeSubstitutions()
+	o.failDependsOnCycles()
+	if err := o.buildChangeFilter(ctx, o.repoRoot); err != nil {
+		return err
+	}
+	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
+		o.hrc.Options.DisableChartDigestTracking = *requested
+	}
+
+	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
+	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
+		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
+	for kind, f := range map[string]source.Fetcher{
+		manifest.KindBucket: source.Wrap(manifest.KindBucket,
+			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, ForceGeneric: o.cfg.ForceGenericProvider}),
+		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
+		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
+	} {
+		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
+			o.src.Fetchers[kind] = f
+		}
+	}
+	o.bootstrapped = true
+	return nil
+}
+
+func (o *Orchestrator) discover(ctx context.Context) error {
+	if o.index != nil {
+		return nil
+	}
 	gitFetcher := &git.Fetcher{
 		Cache: o.cache, Depth: o.cfg.GitDepth,
 		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
@@ -474,6 +510,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	}
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
+	o.hrc.Options.DisableChartDigestTracking = res.DisableChartDigestTracking
 	var entryPolicy manifest.EmissionPolicy
 	skipKinds := o.cfg.HelmOptions.SkipResourceKinds()
 	for _, doc := range res.Documents {
@@ -483,30 +520,9 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 	}
 	o.dependencySubstitutions = res.DependencySubstitutions
 
-	o.freezeSubstitutions()
-	o.failDependsOnCycles()
-	if err := o.buildChangeFilter(ctx, res.RepoRoot); err != nil {
-		return err
+	if current, exists := o.src.Fetchers[manifest.KindGitRepository]; exists && current == nil {
+		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
 	}
-	o.hrc.Options.DisableChartDigestTracking = res.DisableChartDigestTracking
-	if requested := o.cfg.DisableChartDigestTracking; requested != nil {
-		o.hrc.Options.DisableChartDigestTracking = *requested
-	}
-	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
-	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
-		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
-	for kind, f := range map[string]source.Fetcher{
-		manifest.KindGitRepository: source.Wrap(manifest.KindGitRepository, gitFetcher),
-		manifest.KindBucket: source.Wrap(manifest.KindBucket,
-			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, ForceGeneric: o.cfg.ForceGenericProvider}),
-		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
-		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
-	} {
-		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
-			o.src.Fetchers[kind] = f
-		}
-	}
-	o.bootstrapped = true
 	return nil
 }
 

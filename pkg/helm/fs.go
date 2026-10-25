@@ -2,6 +2,7 @@ package helm
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,8 +14,8 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	"helm.sh/helm/v4/pkg/chart/v2/util"
-	"helm.sh/helm/v4/pkg/ignore"
 
+	"github.com/home-operations/flate/internal/chartinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
@@ -75,7 +76,10 @@ func (c capturedChart) load() (*chart.Chart, error) {
 }
 
 // A missing requested location is distinct from a read failure within a chart.
-func captureChart(input fs.FS, name string) (capturedChart, bool, error) {
+func captureChart(ctx context.Context, input fs.FS, name string) (capturedChart, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return capturedChart{}, false, err
+	}
 	info, err := fs.Stat(input, name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -88,7 +92,7 @@ func captureChart(input fs.FS, name string) (capturedChart, bool, error) {
 		if err != nil {
 			return capturedChart{}, false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
 		}
-		files, err := chartFilesInFS(input)
+		files, err := chartFilesInFS(ctx, input)
 		return capturedChart{files: files}, false, err
 	}
 	r, err := input.Open(name)
@@ -106,54 +110,11 @@ func captureChart(input fs.FS, name string) (capturedChart, bool, error) {
 }
 
 // Capture MUST finish before LoadFiles consumes the records.
-func chartFilesInFS(input fs.FS) ([]*archive.BufferedFile, error) {
-	rules := ignore.Empty()
-	var policy []byte
-	present := false
-	if r, err := input.Open(ignore.HelmIgnore); err == nil {
-		data, readErr := io.ReadAll(io.LimitReader(r, archive.MaxDecompressedChartSize+1))
-		if err := errors.Join(readErr, r.Close()); err != nil {
-			return nil, fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
-		}
-		if int64(len(data)) > archive.MaxDecompressedChartSize {
-			return nil, fmt.Errorf("%w: chart ignore rules exceed maximum decompressed size", manifest.ErrInput)
-		}
-		policy, present = data, true
-		rules, err = ignore.Parse(bytes.NewReader(policy))
-		if err != nil {
-			return nil, fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%w: chart ignore rules: %w", manifest.ErrInput, err)
-	}
-	rules.AddDefaults()
+func chartFilesInFS(ctx context.Context, input fs.FS) ([]*archive.BufferedFile, error) {
 	files := []*archive.BufferedFile{}
 	remaining := archive.MaxDecompressedChartSize
-	err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if name == "." {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if rules.Ignore(name, info) {
-			if entry.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("cannot load irregular file %s as it has file mode type bits set", name)
-		}
-		data := policy
-		if name != ignore.HelmIgnore || !present {
+	err := chartinput.Walk(ctx, input, func(name string, info fs.FileInfo, data []byte) error {
+		if data == nil {
 			r, err := input.Open(name)
 			if err != nil {
 				return err

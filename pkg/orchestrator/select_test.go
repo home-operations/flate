@@ -423,6 +423,27 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	domainErr := fmt.Errorf("%w: independent domain", manifest.ErrFlux)
 	failed := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{testutil.KustomizationID("flux-system", "failed"): {Status: store.StatusFailed, Message: "resource failed"}}})
 	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
+	t.Run("head_only", func(t *testing.T) {
+		t.Parallel()
+		raw := errors.Join(joinTreeErrors(inputErr, failed.Err), closeErr)
+		selected, err, remainder := Select([]Rendered{failed}, raw, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+		if len(selected) != 1 || len(selected[0].Failed) != 1 {
+			t.Fatalf("head-only selection lost partial failures: %+v %v", selected, err)
+		}
+		for _, got := range []error{err, remainder} {
+			for _, cause := range []error{inputErr, manifest.ErrInput, context.Canceled, closeErr} {
+				if !errors.Is(got, cause) || strings.Count(got.Error(), cause.Error()) != 1 {
+					t.Fatalf("head-only projection lost or duplicated %v: %v", cause, got)
+				}
+			}
+		}
+		if _, ok := errors.AsType[*FailuresError](err); !ok {
+			t.Fatal("selected failure identity lost")
+		}
+		if _, ok := errors.AsType[*FailuresError](remainder); ok {
+			t.Fatalf("resource failure entered remainder: %v", remainder)
+		}
+	})
 	for _, tc := range []struct {
 		name                  string
 		orig, current, shared error
@@ -1188,11 +1209,11 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 	assert.Diff(t, current.Warnings, []manifest.Warning{status, raw})
 }
 
-func TestRenderOne_BootstrapWarningOnly(t *testing.T) {
+func TestDiscoverOne_BootstrapWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	o, result, err := renderOne(t.Context(), Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2})
+	o, result, err := discoverOne(t.Context(), Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2})
 	if o != nil || result == nil || !errors.Is(err, manifest.ErrInput) || len(result.Manifests)+len(result.Failed) != 0 {
 		t.Fatalf("failed bootstrap exposed content: %v, %+v, %v", o, result, err)
 	}

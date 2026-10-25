@@ -7,6 +7,7 @@ import (
 	"maps"
 	"path"
 	"slices"
+	"strings"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 )
@@ -29,9 +30,10 @@ func (h HelmChart) Materializes() bool {
 
 // ChartLocation validates the source kind and selects a source path or artifact discovery.
 func (h HelmChart) ChartLocation() (string, bool, error) {
-	switch h.Source.Kind {
-	case KindGitRepository, KindBucket, KindExternalArtifact:
+	if h.hasSourceChartPath() {
 		return path.Clean(h.Name), false, nil
+	}
+	switch h.Source.Kind {
 	case KindOCIRepository, KindHelmChart:
 		return "", true, nil
 	case KindHelmRepository, "":
@@ -41,9 +43,40 @@ func (h HelmChart) ChartLocation() (string, bool, error) {
 	}
 }
 
+func (h HelmChart) hasSourceChartPath() bool {
+	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket || h.Source.Kind == KindExternalArtifact
+}
+
 // UsesSourceValuesFiles reports whether values files are relative to the source artifact root.
 func (h HelmChart) UsesSourceValuesFiles() bool {
 	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket
+}
+
+func (h *HelmChart) sourceInputs(files []string) (string, []string) {
+	if h.Source.Group != SourceDomain {
+		return "", nil
+	}
+	if !h.UsesSourceValuesFiles() {
+		files = nil
+	}
+	if !h.hasSourceChartPath() || h.Name == "" || strings.HasPrefix(h.Name, "/") || strings.IndexByte(h.Name, 0) >= 0 {
+		return "", files
+	}
+	// Reference iteration MUST validate without allocating a normalized path.
+	depth := 0
+	for part := range strings.SplitSeq(h.Name, "/") {
+		switch part {
+		case "", ".":
+		case "..":
+			depth--
+		default:
+			depth++
+		}
+		if depth < 0 {
+			return "", files
+		}
+	}
+	return h.Name, files
 }
 
 // RepoFullName returns the source namespace-name display label.
@@ -329,10 +362,7 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 func (h *HelmRelease) references(yield func(Reference) bool) {
 	if h.hasChartReferences() {
 		source := Resolve(h.Chart.Source, "", h.Namespace)
-		var files []string
-		if source.Group == SourceDomain && h.Chart.UsesSourceValuesFiles() {
-			files = h.ChartValuesFiles
-		}
+		chartPath, files := h.Chart.sourceInputs(h.ChartValuesFiles)
 		var authored NamedResource
 		gate := func(id NamedResource) (GateStage, bool) {
 			if id != source || id.Name == "" {
@@ -357,14 +387,16 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 			ref := tmpl.Spec.SourceRef
 			authored = Resolve(NamedResource{Group: referenceGroup(cmp.Or(ref.Kind, KindHelmRepository), ref.APIVersion), Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
 			refFiles := files
+			refChartPath := chartPath
 			if authored != source {
 				refFiles = nil
+				refChartPath = ""
 			}
 			if source.Kind == "" && source.Name == "" {
 				source = authored
 			}
 			stage, artifact := gate(authored)
-			if !yield(Reference{NamedResource: authored, Use: "source", Content: true, Files: refFiles, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+			if !yield(Reference{NamedResource: authored, Use: "source", Content: true, Files: refFiles, ChartPath: refChartPath, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
 				return
 			}
 		}
@@ -372,7 +404,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 			stage, artifact := gate(source)
 			if !yield(Reference{
 				NamedResource: source,
-				Use:           "source", Content: true, Files: files, Gate: stage, Artifact: artifact, ChartSource: artifact,
+				Use:           "source", Content: true, Files: files, ChartPath: chartPath, Gate: stage, Artifact: artifact, ChartSource: artifact,
 				ArtifactStages: GateArtifacts,
 			}) {
 				return

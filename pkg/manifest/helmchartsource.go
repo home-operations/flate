@@ -77,13 +77,10 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 func (h *HelmChartSource) references(yield func(Reference) bool) {
 	kind := cmp.Or(h.SourceRef.Kind, KindHelmRepository)
 	chart := helmChartFromSource(h)
-	var files []string
-	if chart.Source.Group == SourceDomain && chart.UsesSourceValuesFiles() {
-		files = h.ValuesFiles
-	}
+	chartPath, files := chart.sourceInputs(h.ValuesFiles)
 	yield(Reference{
 		NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, h.SourceRef.APIVersion), Kind: kind, Name: h.SourceRef.Name}, "", h.Namespace),
-		Use:           "source", Content: h.SourceRef.Name != "", Files: files,
+		Use:           "source", Content: h.SourceRef.Name != "", Files: files, ChartPath: chartPath,
 	})
 }
 

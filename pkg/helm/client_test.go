@@ -137,7 +137,7 @@ func chartFixtureDescription(t *testing.T, ch *chart.Chart) chartDescription {
 	data, err := yaml.Marshal(ch.Values)
 	assert.NoError(t, err)
 	testutil.WriteFile(t, root, filepath.Join(ch.Name(), "values.yaml"), string(data))
-	captured, _, err := captureChart(os.DirFS(root), ch.Name())
+	captured, _, err := captureChart(t.Context(), os.DirFS(root), ch.Name())
 	assert.NoError(t, err)
 	fingerprint := captured.fingerprint()
 	return chartDescription{chart: ch, captured: captured, fingerprint: fingerprint, key: fingerprint, location: ch.Name(), analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}

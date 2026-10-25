@@ -38,10 +38,8 @@ type Controller struct {
 	*base.Controller
 	retry cache.RetryConfig
 
-	// Fetchers maps source CR kind → Fetcher implementation. Source
-	// kinds with no entry are ignored, which is also how a flate caller
-	// disables a kind (omitting it from the map, e.g. via
-	// Orchestrator.WithFetcher(kind, nil)). Exposed for Orchestrator.WithFetcher.
+	// Fetchers maps source kinds to their fetchers. Kinds without an entry
+	// are ignored. Register fetchers before StartLifecycle.
 	Fetchers map[string]src.Fetcher
 
 	// allowMissingSecrets converts ErrMissingSecret fetch errors into a

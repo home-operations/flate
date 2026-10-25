@@ -76,13 +76,13 @@ spec:
 			testutil.WriteFile(t, artifact, "payload/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, artifact, "payload/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output}\n")
 			retry := sourcecache.RetryConfig{Attempts: 2}
-			o, err := New(t.Context(), Config{SourceRetry: retry, Path: root + "/flux", RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+			o, err := newTestOrchestrator(t, Tree{Path: root + "/flux", RepoRoot: root}, Config{SourceRetry: retry, CacheDir: t.TempDir(), Concurrency: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
 			f := &generatedOCIFetcher{root: artifact, err: tc.fetchErr, wantRetry: retry}
-			o.WithFetcher(manifest.KindOCIRepository, f)
-			res, err := o.Render(t.Context())
+			o.src.Fetchers[manifest.KindOCIRepository] = f
+			res, err := o.render(t.Context())
 			if (err == nil) != (tc.producer && tc.fetchErr == nil) {
 				t.Fatalf("Render error=%v", err)
 			}

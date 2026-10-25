@@ -255,6 +255,9 @@ func TestRun_AdmittedScanCoordinates(t *testing.T) {
 		}); err == nil {
 			t.Fatal("scan outside admitted root succeeded")
 		}
+		if _, err := discovery.Plan(t.Context(), discovery.Config{Input: input, Path: filepath.Join(parent, "outside")}); err == nil {
+			t.Fatal("entry plan escaped the admitted root")
+		}
 	})
 }
 
@@ -537,6 +540,13 @@ func TestRun_SymlinkEntryResolved(t *testing.T) {
 	want, _ := filepath.EvalSymlinks(target)
 	if got.RepoRoot != want {
 		t.Errorf("RepoRoot = %q, want %q", got.RepoRoot, want)
+	}
+	entries, err := discovery.Plan(t.Context(), discovery.Config{Path: link})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != want || entries[0].Input.LocalPath != want {
+		t.Fatalf("entry plan changed resolved source/scan bounds: %+v", entries)
 	}
 }
 

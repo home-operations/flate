@@ -102,13 +102,11 @@ func TestSweep_GitGenerations(t *testing.T) {
 				}
 			}
 			if scenario == "bad-graph" {
-				r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "a-expired"}, Policy{MaxAge: 0}, producer([]byte("stale"), ocispec.Descriptor{}))
+				_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "a-expired"}, Policy{MaxAge: 0}, producer([]byte("stale"), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := r.Close(); err != nil {
-					t.Fatal(err)
-				}
+
 				stale := time.Now().Add(-24 * time.Hour)
 				if err := os.Chtimes(filepath.Join(c.root.Name(), blobPath(digest.FromString("stale"))), stale, stale); err != nil {
 					t.Fatal(err)
@@ -255,25 +253,21 @@ func TestSweep_CoalescedAccessRetention(t *testing.T) {
 		root := t.TempDir()
 		c := cachetest.New(t, root, New)
 		key := BlobKey{Content: "coalesced-access"}
-		r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), ocispec.Descriptor{}))
+		_, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Close(); err != nil {
-			t.Fatal(err)
-		}
+
 		v, _ := c.entries.Load(id)
 		at := time.Now().Add(-500 * time.Millisecond)
 		if err := c.root.Chtimes(blobPath(v.(*entry).stored.Digest), at, at); err != nil {
 			t.Fatal(err)
 		}
-		r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		_, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Close(); err != nil {
-			t.Fatal(err)
-		}
+
 		if err := c.Close(); err != nil {
 			t.Fatal(err)
 		}

@@ -9,23 +9,32 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 
+	"github.com/google/uuid"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 )
 
+type acquisitionCallbacks struct {
+	produce  func(context.Context, *Cache, *payload) (*entry, error)
+	validate func(context.Context, fs.FS) (bool, error)
+}
+
 type acquisitionProducer interface {
 	identity() string
-	produce(context.Context, *Cache, *payload) (*entry, error)
 	restore(context.Context, *Cache, ocispec.Descriptor, *entry) error
 }
 
 type payload struct {
 	writer    io.Writer
+	disk      *Cache
+	file      *os.File
+	name      string
 	memory    bytes.Buffer
 	hash      digest.Digester
 	discard   func() error
@@ -59,7 +68,7 @@ func (p ProducerInput) Previous(ctx context.Context) (*ocispec.Descriptor, error
 	}
 	if !s.verified {
 		prior := &entry{fs: e.fs, descriptor: e.descriptor, stored: e.stored, resolved: e.resolved}
-		if p.cache.store != nil {
+		if p.cache.store != nil && !s.key.memoryOnly {
 			upstream, at, valid := decode(e.stored, s.key.required)
 			if !valid {
 				s.previous = nil
@@ -100,9 +109,26 @@ type ProducerResult struct {
 }
 
 func (s *payload) Write(data []byte) (int, error) {
+	if s.writer == nil {
+		if err := s.stage(); err != nil {
+			return 0, &CacheError{err}
+		}
+	}
 	n, err := s.writer.Write(data)
 	s.written += int64(n)
 	return n, err
+}
+
+func (s *payload) stage() error {
+	name := acquirePath(uuid.NewString())
+	file, err := s.disk.root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	s.file, s.name = file, name
+	s.hash = digest.SHA256.Digester()
+	s.writer = io.MultiWriter(file, s.hash.Hash())
+	return nil
 }
 
 func (s *payload) complete(ctx context.Context, c *Cache, result ProducerResult) (*entry, error) {
@@ -128,8 +154,7 @@ func (s *payload) complete(ctx context.Context, c *Cache, result ProducerResult)
 type acquisitionContent struct{ Archive, Blob, Git any }
 
 type archiveProducer struct {
-	key   ArchiveKey
-	write func(context.Context, ProducerInput) (ProducerResult, error)
+	key ArchiveKey
 }
 
 func (p archiveProducer) identity() string {
@@ -140,7 +165,7 @@ func (p archiveProducer) identity() string {
 	}{p.key.Content, p.key.Ignore, p.key.Policy, 1}})
 }
 
-func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload, write func(context.Context, ProducerInput) (ProducerResult, error)) (*entry, error) {
 	if staged.hash == nil {
 		staged.hash = digest.SHA256.Digester()
 		staged.writer = staged.hash.Hash()
@@ -160,7 +185,7 @@ func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload)
 		if err := gctx.Err(); err != nil {
 			return err
 		}
-		produced, err := p.write(gctx, ProducerInput{Writer: io.MultiWriter(staged, pw), cache: c, payload: staged})
+		produced, err := write(gctx, ProducerInput{Writer: io.MultiWriter(staged, pw), cache: c, payload: staged})
 		result = produced
 		if re, ok := errors.AsType[*readerError](err); ok {
 			err = re.error
@@ -234,19 +259,19 @@ func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Des
 }
 
 type blobProducer struct {
-	key   BlobKey
-	write func(context.Context, ProducerInput) (ProducerResult, error)
+	content any
+	render  RenderMode
 }
 
 func (p blobProducer) identity() string {
-	if p.key.PersistOnly {
-		return blobID(processIdentity, p.key.Content.(string))
+	if p.render != 0 {
+		return blobID(processIdentity, p.content.(string), p.render)
 	}
-	return manifest.Fingerprint(acquisitionContent{Blob: struct{ Content any }{p.key.Content}})
+	return manifest.Fingerprint(acquisitionContent{Blob: struct{ Content any }{p.content}})
 }
 
-func (p blobProducer) produce(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
-	result, err := p.write(ctx, ProducerInput{Writer: staged, cache: c, payload: staged})
+func (p blobProducer) produce(ctx context.Context, c *Cache, staged *payload, write func(context.Context, ProducerInput) (ProducerResult, error)) (*entry, error) {
+	result, err := write(ctx, ProducerInput{Writer: staged, cache: c, payload: staged})
 	if err != nil {
 		return nil, &producerError{err}
 	}
@@ -257,7 +282,7 @@ func (p blobProducer) produce(ctx context.Context, c *Cache, staged *payload) (*
 	if staged.unchanged {
 		return e, nil
 	}
-	if c.store == nil {
+	if c.store == nil || staged.key.memoryOnly {
 		data := staged.memory.Bytes()
 		e.fs = fileFS{name: "content", identity: digest.FromBytes(data).String(), size: int64(len(data)), open: func() (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(data)), nil
@@ -280,7 +305,7 @@ func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descri
 		return root.err
 	}
 	name := stored.Digest.Encoded()
-	e.fs = fileFS{name: "content", identity: stored.Digest.String(), size: stored.Size, open: func() (io.ReadCloser, error) {
+	e.fs = fileFS{backingPath: blobPath(stored.Digest), name: "content", identity: stored.Digest.String(), size: stored.Size, open: func() (io.ReadCloser, error) {
 		current, temporary, err := root.current(c.root)
 		if err != nil {
 			return nil, err

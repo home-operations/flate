@@ -97,8 +97,8 @@ func TestOperationView_AcquisitionBoundary(t *testing.T) {
 		return sourcecache.ProducerResult{}, err
 	})
 	assert.NoError(t, err)
-	blob := sourcecache.FileFS("file", r)
-	assert.NoError(t, r.Close())
+	blob := sourcecache.NameBlob("file", r)
+
 	builder := tree.NewBuilder(nil)
 	assert.NoError(t, builder.AddFile("file", []byte("content"), 0o600))
 	bare, err := builder.Build()

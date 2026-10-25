@@ -79,14 +79,11 @@ func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, req
 	}
 	switch repo.LayerOperation() {
 	case sourcev1.OCILayerCopy:
-		r, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, policy, produce)
+		generation, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
 			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
 		}
-		input, descriptor, id = cache.FileFS(source.OCICopiedLayerFilename, r), desc, key
-		if err := r.Close(); err != nil {
-			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
-		}
+		input, descriptor, id = cache.NameBlob(source.OCICopiedLayerFilename, generation), desc, key
 	case sourcev1.OCILayerExtract:
 		var err error
 		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, Policy: "source", Required: []string{"upstream-digest", "revision"}}, policy, produce)

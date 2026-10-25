@@ -23,11 +23,12 @@ func TestOrchestrator_UnreferencedBaseKSNotAdmitted(t *testing.T) {
 	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml", testutil.KustomizationYAML("app-a", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/base/app-b/ks.yaml", testutil.KustomizationYAML("app-b", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-b\n  dependsOn:\n    - name: app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+	if len(renderedSingleton1) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	o := renderedSingleton1[0].Orchestrator
+	res := renderedSingleton1[0].Result
 	if err != nil {
 		t.Fatalf("Render returned a failure error for unreferenced base KSes: %v", err)
 	}

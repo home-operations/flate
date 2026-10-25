@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -30,7 +31,7 @@ import (
 func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
 	chartName, version := hc.Chart, hc.Version
 	key := cache.BlobKey{Content: struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material}, Required: []string{"chart-version", "chart-url"}}
-	reader, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+	generation, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		idx, err := f.fetchIndex(ctx, r, policy.Retry)
 		if err != nil {
 			return cache.ProducerResult{}, err
@@ -60,10 +61,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name), err)
 	}
-	input := cache.FileFS(source.HelmChartArchiveFilename, reader)
-	if err := reader.Close(); err != nil {
-		return nil, err
-	}
+	input := cache.NameBlob(source.HelmChartArchiveFilename, generation)
 	return &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Key: id,
 		URL: desc.Annotations["flate.chart-url"], Revision: desc.Annotations["flate.chart-version"], Digest: desc.Digest.Encoded(), Size: desc.Size}, nil
 }
@@ -72,7 +70,7 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, retry cache
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
 	var candidate *repo.IndexFile
 	var candidateDigest digest.Digest
-	reader, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+	generation, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		candidate = nil
 		var buf bytes.Buffer
 		desc, err := r.get(ctx, indexURL, io.MultiWriter(w, &buf))
@@ -95,23 +93,21 @@ func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, retry cache
 	}
 	release, err := f.indexLocks.Acquire(ctx, desc.Digest.String())
 	if err != nil {
-		return nil, errors.Join(err, reader.Close())
+		return nil, err
 	}
 	defer release()
 	if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
-		return v.(*repo.IndexFile), reader.Close()
+		return v.(*repo.IndexFile), nil
 	}
 	if candidateDigest != desc.Digest || candidate == nil {
-		data, readErr := io.ReadAll(reader)
-		if err := errors.Join(readErr, reader.Close()); err != nil {
+		data, err := fs.ReadFile(generation, "content")
+		if err != nil {
 			return nil, err
 		}
 		candidate, err = indexFromBytes(data)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", indexURL, err)
 		}
-	} else if err := reader.Close(); err != nil {
-		return nil, err
 	}
 	f.indexCache.Store(desc.Digest.String(), candidate)
 	return candidate, nil

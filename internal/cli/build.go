@@ -60,7 +60,11 @@ func buildCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 			flags: *c, roots: c.roots(firstArg(argv), kinds...),
 			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentBuild,
 		}, func(inv *selectedInvocation) selectedPayload {
-			return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Documents(collectRendered(inv.sides[0], b))}
+			groups := make([]output.DocumentGroup, len(inv.groups))
+			for i, group := range inv.groups {
+				groups[i] = output.DocumentGroup{Cluster: group.cluster, Documents: collectRendered(group.sides[0], b)}
+			}
+			return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).DocumentGroups(groups)}
 		})
 	}
 	bindCommon(cmd.Flags(), c)

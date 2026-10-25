@@ -395,7 +395,7 @@ spec:
 			for i, doc := range before.Manifests {
 				before.Manifests[i] = manifest.DeepCopyMap(doc)
 			}
-			o := &Orchestrator{store: st, index: index, cfg: Config{HelmOptions: helm.Options{SkipKinds: skip}}}
+			o := &Orchestrator{store: st, index: index, cfg: treeConfig{Config: Config{HelmOptions: helm.Options{SkipKinds: skip}}, Tree: Tree{}}}
 			parentDocs := docs[:4]
 			if len(skip) > 0 {
 				parentDocs = docs[:2]

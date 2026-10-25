@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -71,7 +71,7 @@ func TestBuildIdentity_Dirty(t *testing.T) {
 	}
 }
 
-func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
+func TestBlob_RenderBuildIdentity(t *testing.T) {
 	original := processIdentity
 	t.Cleanup(func() { processIdentity = original })
 	info := &debug.BuildInfo{
@@ -85,14 +85,12 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	root := t.TempDir()
 	processIdentity = identityA
 	c := cachetest.New(t, root, New)
-	key := BlobKey{Content: "render-input", PersistOnly: true}
-	r, _, _, err := c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
+	key := BlobKey{Content: "render-input", Render: RenderAccepted}
+	_, _, _, err := c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Close(); err != nil {
-		t.Fatal(err)
-	}
+
 	for _, identity := range []string{identityA, identityB} {
 		if err := c.Close(); err != nil {
 			t.Fatal(err)
@@ -102,14 +100,12 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 			t.Fatalf("foreign or ordinary identity hit: %v", err)
 		}
-		r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(identity), ocispec.Descriptor{}))
+		_, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer([]byte(identity), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Close(); err != nil {
-			t.Fatal(err)
-		}
-		assert.Equal(t, id, blobID(identity, key.Content.(string)))
+
+		assert.Equal(t, id, blobID(identity, key.Content.(string), key.Render))
 	}
 	for _, identity := range []string{identityA, identityB} {
 		if err := c.Close(); err != nil {
@@ -121,40 +117,34 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err := io.ReadAll(r)
-		if closeErr := r.Close(); err != nil || closeErr != nil {
-			t.Fatalf("read: %v, close: %v", err, closeErr)
-		}
+		data, err := fs.ReadFile(r, "content")
+		assert.NoError(t, err)
+
 		assert.Equal(t, string(data), identity)
 	}
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
 	processIdentity = ""
+	key.Render = RenderPending
 	c = cachetest.New(t, root, New)
 	index := filepath.Join(c.root.Name(), indexPath())
 	before, err := os.ReadFile(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, producer([]byte("DIRTY"), ocispec.Descriptor{}), nil} {
-		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, produce)
-		if produce == nil {
-			if r != nil || !errors.Is(err, errdef.ErrNotFound) {
-				t.Fatalf("dirty lookup hit: %v", err)
-			}
-			continue
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := io.ReadAll(r)
-		if closeErr := r.Close(); err != nil || closeErr != nil {
-			t.Fatalf("read: %v, close: %v", err, closeErr)
-		}
-		assert.Equal(t, string(data), "")
+	r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	if r != nil || !errors.Is(err, errdef.ErrNotFound) {
+		t.Fatalf("unidentified cold lookup: %v", err)
 	}
-	c.entries.Range(func(_, _ any) bool { t.Error("dirty output installed an entry"); return true })
+	for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){producer([]byte("DIRTY"), ocispec.Descriptor{}), nil} {
+		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, produce)
+		assert.NoError(t, err)
+		data, _ := fs.ReadFile(r, "content")
+
+		assert.Equal(t, string(data), "DIRTY")
+	}
+
 	after, err := os.ReadFile(index)
 	if err != nil {
 		t.Fatal(err)
@@ -162,12 +152,18 @@ func TestBlob_PersistOnlyBuildIdentity(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("dirty output changed persistent tags")
 	}
+	assert.NoError(t, c.Close())
+	c = cachetest.New(t, root, New)
+	if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
+		t.Fatalf("unidentified render survived reopen: %v", err)
+	}
+
 	r, _, _, err = c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: Forever}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, readErr := io.ReadAll(r)
-	assert.NoError(t, errors.Join(readErr, r.Close()))
+	data, _ := fs.ReadFile(r, "content")
+
 	assert.Equal(t, string(data), "ordinary")
 }
 

@@ -356,53 +356,72 @@ func selectionError(sides []selectionSide, runErr error) (error, error) {
 	if runErr == nil {
 		return nil, nil
 	}
-	if len(sides) == 1 {
-		remainder := nonResourceErrors(runErr)
-		return errors.Join(selectedFailures(sides[0].result), remainder), remainder
+	selected := make([]error, len(sides))
+	remainders := make([]error, len(sides))
+	for i, side := range sides {
+		remainder := side.run.Err
+		if attributed, ok := remainder.(*treeError); ok { //nolint:errorlint // Strip only the attribution node, preserving joined siblings.
+			remainder = attributed.err
+		}
+		remainders[i] = nonResourceErrors(remainder)
+		selected[i] = errors.Join(selectedFailures(side.result), remainders[i])
 	}
-	var projectedTree bool
-	var project func(error) (error, error)
-	project = func(err error) (error, error) {
-		if err == nil {
-			return nil, nil
+	projectSides := func(mask uint) (error, error) {
+		if len(sides) == 1 {
+			return selected[0], remainders[0]
 		}
-		// A descendant tree MUST NOT absorb its ancestor's joined siblings.
-		if tree, ok := errors.AsType[*treeErrors](err); ok && errors.Is(tree, err) {
-			projectedTree = true
-			orig, current := nonResourceErrors(tree.base), nonResourceErrors(tree.head)
-			return joinSelectedErrors(
-				errors.Join(selectedFailures(sides[0].result), orig),
-				errors.Join(selectedFailures(sides[1].result), current),
-			), joinSelectedErrors(orig, current)
-		}
-		if _, ok := errors.AsType[*treeErrors](err); !ok {
-			remainder := nonResourceErrors(err)
-			return remainder, remainder
-		}
-		if child := errors.Unwrap(err); child != nil {
-			return project(child)
-		}
-		if e, ok := errors.AsType[interface {
-			error
-			Unwrap() []error
-		}](err); ok {
-			children := e.Unwrap()
-			out := make([]error, 0, len(children))
-			remainders := make([]error, 0, len(children))
-			for _, child := range children {
-				selected, remainder := project(child)
-				out = append(out, selected)
-				remainders = append(remainders, remainder)
+		var chosen, remaining [2]error
+		for i := range sides {
+			if mask&(1<<i) != 0 {
+				chosen[i], remaining[i] = selected[i], remainders[i]
 			}
-			return errors.Join(out...), errors.Join(remainders...)
 		}
-		return err, err
+		return joinSelectedErrors(chosen[0], chosen[1]), joinSelectedErrors(remaining[0], remaining[1])
 	}
-	projected, remainder := project(runErr)
-	if projectedTree {
-		return projected, remainder
+	var project func(error) (uint, bool, error, error)
+	project = func(err error) (uint, bool, error, error) {
+		if err == nil {
+			return 0, true, nil, nil
+		}
+		var mask uint
+		for i, side := range sides {
+			if side.run.Err != nil && errors.Is(side.run.Err, err) && errors.Is(err, side.run.Err) {
+				mask |= 1 << i
+			}
+		}
+		if mask != 0 {
+			selected, remainder := projectSides(mask)
+			return mask, true, selected, remainder
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			var projected, remaining []error
+			clean := true
+			for _, child := range joined.Unwrap() {
+				found, onlyTrees, selected, remainder := project(child)
+				projected, remaining = append(projected, selected), append(remaining, remainder)
+				mask, clean = mask|found, clean && onlyTrees
+			}
+			if mask != 0 {
+				if clean {
+					selected, remainder := projectSides(mask)
+					return mask, true, selected, remainder
+				}
+				return mask, false, errors.Join(projected...), errors.Join(remaining...)
+			}
+		} else if child := errors.Unwrap(err); child != nil {
+			if found, clean, selected, remainder := project(child); found != 0 {
+				return found, clean, selected, remainder
+			}
+		}
+		remainder := nonResourceErrors(err)
+		return 0, false, remainder, remainder
 	}
-	return errors.Join(joinSelectedErrors(selectedFailures(sides[0].result), selectedFailures(sides[1].result)), projected), remainder
+	mask, _, projected, remainder := project(runErr)
+	if mask == 0 {
+		selected, remaining := projectSides((1 << len(sides)) - 1)
+		return errors.Join(selected, projected), errors.Join(remaining, remainder)
+	}
+	return projected, remainder
 }
 
 func joinSelectedErrors(orig, current error) error {

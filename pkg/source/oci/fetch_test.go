@@ -260,7 +260,8 @@ func TestFetcher_Freshness(t *testing.T) {
 			if tt.offline {
 				srv.Close()
 			}
-			second, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: tt.interval})
+			shared := &Fetcher{Network: newTestNetwork(t), Cache: f.Cache}
+			second, err := shared.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: tt.interval})
 			if tt.failRefresh {
 				if err == nil {
 					t.Fatal("expected refresh to fail after registry shutdown")

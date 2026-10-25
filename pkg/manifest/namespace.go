@@ -50,3 +50,11 @@ func defaultNamespace(obj BaseManifest, doc map[string]any, namespace string, ch
 	doc["metadata"] = metadata
 	return obj, doc, true
 }
+
+// RenderNamespace returns a manifest's forced output namespace, if any.
+func RenderNamespace(obj BaseManifest) string {
+	if k, ok := obj.(*Kustomization); ok {
+		return k.TargetNamespace
+	}
+	return ""
+}

@@ -1,4 +1,4 @@
-package orchestrator_test
+package orchestrator
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"testing/synctest"
@@ -32,7 +33,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -63,7 +63,7 @@ func writeCluster(t *testing.T, dir, aVal, bVal string) {
 // configMapNames returns the set of ConfigMap names across every parent's
 // rendered manifests in a Result — what each side of the comparison
 // actually rendered.
-func configMapNames(res *orchestrator.Result) map[string]bool {
+func configMapNames(res *Result) map[string]bool {
 	out := map[string]bool{}
 	for _, docs := range outputByParent(res.Manifests) {
 		for _, m := range docs {
@@ -153,10 +153,9 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 				for side, root := range []string{baseDir, headDir} {
 					var first []byte
 					for run := range 2 {
-						o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+						rendered, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, Path: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 						assert.NoError(t, err)
-						result, err := o.Render(t.Context())
-						assert.NoError(t, err)
+						result := rendered[0].Result
 						assert.Equal(t, configMapNames(result)["from-submodule"], tc.query == "")
 						byParent := outputByParent(result.Manifests)
 						consumer := testutil.KustomizationID("flux-system", "consumer-a")
@@ -177,14 +176,10 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			base, head, err := orchestrator.RenderTrees(ctx,
-				orchestrator.Tree{RepoRoot: baseDir},
-				orchestrator.Tree{RepoRoot: headDir},
-				orchestrator.Config{
-					WipeSecrets: true,
-					Network:     new(source.Network),
-					Concurrency: 2,
-				})
+			renderedTrees1, err := RenderTrees(ctx, []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true,
+				Network:     new(source.Network),
+				Concurrency: 2})
+			base, head := renderedTrees1[0], renderedTrees1[1]
 			if (err != nil) != (tc.namespace == "") {
 				t.Fatalf("RenderTrees: %v, want blocked=%t", err, tc.namespace == "")
 			}
@@ -192,7 +187,7 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 				t.Fatalf("both sides must render: base=%v head=%v", base.Result, head.Result)
 			}
 
-			for _, side := range []orchestrator.Rendered{base, head} {
+			for _, side := range []Rendered{base, head} {
 				children := 0
 				for _, obj := range side.Store().ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 					if obj.Name == "consumer-a" {
@@ -205,7 +200,7 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 			}
 
 			consumer := testutil.KustomizationID(tc.namespace, "consumer-a")
-			for i, side := range []orchestrator.Rendered{base, head} {
+			for i, side := range []Rendered{base, head} {
 				if tc.remote {
 					assert.Equal(t, configMapNames(side.Result)["from-submodule"], tc.query == "")
 				}
@@ -229,7 +224,7 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 				return
 			}
 
-			for i, rendered := range []orchestrator.Rendered{base, head} {
+			for i, rendered := range []Rendered{base, head} {
 				obj, ok := rendered.Store().Get[*manifest.Kustomization](consumer)
 				if !ok {
 					t.Fatalf("side %d lost effective consumer identity", i)
@@ -249,7 +244,7 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 				assert.Equal(t, ns, "")
 			}
 
-			selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
+			selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 				[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 			body, _, _, err := diff.Compare(
 				diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
@@ -321,12 +316,11 @@ spec: {url: https://example.test/cluster.git}
 			cluster := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 			fullApp := make([][]map[string]any, 2)
 			for side, input := range []*store.SourceArtifact{inputs.BaseInput, inputs.Source} {
-				o, err := orchestrator.New(t.Context(), orchestrator.Config{
-					Path: input.LocalPath, RepoRoot: input.LocalPath, Input: input, Cache: owner, Concurrency: 2,
-					SelfURLs: []string{"https://example.test/cluster.git"},
-				})
-				assert.NoError(t, err)
-				result, err := o.Render(t.Context())
+				renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: input.LocalPath, RepoRoot: input.LocalPath, Input: input, SelfURLs: []string{"https://example.test/cluster.git"}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Cache: owner, Concurrency: 2})
+				if len(renderedSingleton1) != 1 {
+					t.Fatalf("missing render: %v", err)
+				}
+				result := renderedSingleton1[0].Result
 				assert.NoError(t, err)
 				fullApp[side] = outputByParent(result.Manifests)[app]
 				if len(fullApp[side]) != 1 {
@@ -338,14 +332,15 @@ spec: {url: https://example.test/cluster.git}
 				}
 				assert.Diff(t, fullApp[side][0]["data"], map[string]any{"value": want})
 			}
-			cfg := orchestrator.Config{BaseInput: inputs.BaseInput, Input: inputs.Source, ExternalChanges: inputs.Changes, Cache: owner, Concurrency: 2}
-			baseTree := orchestrator.Tree{RepoRoot: inputs.BaseInput.LocalPath, Path: inputs.BaseScanPath, SelfURLs: []string{"https://example.test/cluster.git"}}
-			headTree := orchestrator.Tree{RepoRoot: inputs.Source.LocalPath, Path: inputs.ScanPath, SelfURLs: []string{"https://example.test/cluster.git"}}
+			cfg := treeConfig{Cache: owner, Concurrency: 2, BaseInput: inputs.BaseInput, Input: inputs.Source, ExternalChanges: inputs.Changes}
+			baseTree := Tree{RepoRoot: inputs.BaseInput.LocalPath, Path: inputs.BaseScanPath, SelfURLs: []string{"https://example.test/cluster.git"}}
+			headTree := Tree{RepoRoot: inputs.Source.LocalPath, Path: inputs.ScanPath, SelfURLs: []string{"https://example.test/cluster.git"}}
 			var first [2][]byte
 			for run := range 2 {
-				base, head, err := orchestrator.RenderTrees(t.Context(), baseTree, headTree, cfg)
+				renderedTrees2, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseTree.RepoRoot, Path: baseTree.Path, SelfURLs: baseTree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: headTree.RepoRoot, Path: headTree.Path, SelfURLs: headTree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+				base, head := renderedTrees2[0], renderedTrees2[1]
 				assert.NoError(t, err)
-				for side, rendered := range []orchestrator.Rendered{base, head} {
+				for side, rendered := range []Rendered{base, head} {
 					if rendered.Result == nil || rendered.Orchestrator == nil {
 						t.Fatalf("side %d missing render result", side)
 					}
@@ -422,13 +417,11 @@ spec:
       data: {key: losing-omitted}
 `, i+1))
 	}
-	base, head, err := orchestrator.RenderTrees(t.Context(),
-		orchestrator.Tree{RepoRoot: baseDir},
-		orchestrator.Tree{RepoRoot: headDir},
-		orchestrator.Config{Concurrency: 2, Network: new(source.Network)})
+	renderedTrees3, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2, Network: new(source.Network)})
+	base, head := renderedTrees3[0], renderedTrees3[1]
 	assert.NoError(t, err)
 	parent := testutil.KustomizationID("flux-system", "app-a")
-	for i, side := range []orchestrator.Rendered{base, head} {
+	for i, side := range []Rendered{base, head} {
 		if side.Result == nil || side.Err != nil {
 			t.Fatalf("side %d incomplete: result=%v err=%v", i, side.Result, side.Err)
 		}
@@ -461,7 +454,7 @@ spec:
 		slices.Sort(identities)
 		assert.Diff(t, identities, []string{"ConfigMap/flux-system/cm-one", "ResourceSet/flux-system/a", "ResourceSet/flux-system/z", "Secret/default/secret-one"})
 	}
-	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
+	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
 		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
@@ -520,17 +513,15 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	entry := func(root string) string { return root + "/kubernetes/flux/cluster" }
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	base, head, err := orchestrator.RenderTrees(ctx,
-		orchestrator.Tree{RepoRoot: baseDir, Path: entry(baseDir)},
-		orchestrator.Tree{RepoRoot: headDir, Path: entry(headDir)},
-		orchestrator.Config{WipeSecrets: true, Concurrency: 4})
+	renderedTrees4, err := RenderTrees(ctx, []Tree{{RepoRoot: baseDir, Path: entry(baseDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, Path: entry(headDir), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4})
+	base, head := renderedTrees4[0], renderedTrees4[1]
 	if err != nil {
 		t.Fatalf("RenderTrees: %v", err)
 	}
 	if base.Result == nil || head.Result == nil {
 		t.Fatalf("both sides must render: base=%v head=%v", base.Result, head.Result)
 	}
-	selected, selectedErr, _ := orchestrator.Select([]orchestrator.Rendered{base, head}, err,
+	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
 		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
@@ -560,16 +551,16 @@ func TestRenderTrees_OwnCacheCloses(t *testing.T) {
 			baseDir, headDir, root := t.TempDir(), t.TempDir(), t.TempDir()
 			writeCluster(t, baseDir, "v1", "same")
 			writeCluster(t, headDir, "v2", "same")
-			if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir},
-				orchestrator.Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly}); err != nil {
+			if _, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: baseDir}, {ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: headDir}},
+				Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly}); err != nil {
 				t.Fatal(err)
 			}
 			res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
 			if err != nil || len(res.Errors) != 0 {
 				t.Fatalf("own cache retained lock: result=%+v err=%v", res, err)
 			}
-			if _, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{}, orchestrator.Tree{},
-				orchestrator.Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly}); !errors.Is(err, manifest.ErrInput) {
+			if _, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}},
+				Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly}); !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("missing input error = %v", err)
 			}
 			res, err = sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
@@ -597,7 +588,7 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 					writeCluster(t, root, "same", "same")
 					alias := filepath.Join(t.TempDir(), "linked")
 					assert.NoError(t, os.Symlink(root, alias))
-					cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: workers}
+					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: workers, Tree: Tree{}}
 					if tc.base || tc.head {
 						resolved, err := baseline.ResolvePaths(t.Context(), alias, root)
 						assert.NoError(t, err)
@@ -614,11 +605,11 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 					case "empty":
 						cfg.ExternalChanges = change.NewSet(nil)
 					}
-					base, head, err := orchestrator.RenderTrees(t.Context(),
-						orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: alias}, cfg)
+					renderedTrees7, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput}, {RepoRoot: alias, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+					base, head := renderedTrees7[0], renderedTrees7[1]
 					assert.NoError(t, err)
 					full := tc.base == tc.head && external == "automatic"
-					for side, rendered := range []orchestrator.Rendered{base, head} {
+					for side, rendered := range []Rendered{base, head} {
 						if rendered.Result == nil {
 							t.Fatalf("side %d has no result", side)
 						}
@@ -654,19 +645,18 @@ func TestRenderTrees_SameDirectoryKeepsFullRender(t *testing.T) {
 					testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
 					testutil.WriteFile(t, root, "apps/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cfg-"+name+"}\n")
 				}
-				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: mode == "head_only"}
+				cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: mode == "head_only", Tree: Tree{}}
 				if mode != "directories" {
 					input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 					assert.NoError(t, err)
 					cfg.BaseInput, cfg.Input = input, input
 				}
-				base, head, err := orchestrator.RenderTrees(t.Context(),
-					orchestrator.Tree{RepoRoot: root, Path: filepath.Join(root, "scans", "a")},
-					orchestrator.Tree{RepoRoot: root, Path: filepath.Join(root, "scans", "b")}, cfg)
+				renderedTrees8, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, Path: filepath.Join(root, "scans", "a"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: root, Path: filepath.Join(root, "scans", "b"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+				base, head := renderedTrees8[0], renderedTrees8[1]
 				assert.NoError(t, err)
-				for side, rendered := range []orchestrator.Rendered{base, head} {
+				for side, rendered := range []Rendered{base, head} {
 					if cfg.HeadOnly && side == 0 {
-						assert.Equal(t, rendered == (orchestrator.Rendered{}), true)
+						assert.Equal(t, rendered == (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}), true)
 						continue
 					}
 					if rendered.Result == nil {
@@ -696,7 +686,7 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 				writeCluster(t, root, "same", "same")
 				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 				assert.NoError(t, err)
-				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: headOnly}
+				cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: headOnly, Tree: Tree{}}
 				for side := range 2 {
 					current := input.FS
 					filtered := scenario == "filtered_addition" && side == 0 || scenario == "filtered_deletion" && side == 1
@@ -742,12 +732,12 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 				case "explicit_empty":
 					cfg.ExternalChanges = change.NewSet(nil)
 				}
-				base, head, err := orchestrator.RenderTrees(t.Context(),
-					orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: root}, cfg)
+				renderedTrees9, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+				base, head := renderedTrees9[0], renderedTrees9[1]
 				assert.NoError(t, err)
-				for side, rendered := range []orchestrator.Rendered{base, head} {
+				for side, rendered := range []Rendered{base, head} {
 					if headOnly && side == 0 {
-						assert.Equal(t, rendered == (orchestrator.Rendered{}), true)
+						assert.Equal(t, rendered == (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}), true)
 						continue
 					}
 					if rendered.Result == nil {
@@ -792,18 +782,19 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 				if empty {
 					paths = nil
 				}
-				cfg := orchestrator.Config{Input: input, BaseInput: input, ExternalChanges: change.NewSet(paths), CacheDir: t.TempDir(), Concurrency: 2}
+				cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Input: input, BaseInput: input, ExternalChanges: change.NewSet(paths)}
 				var previous [2]map[manifest.NamedResource][]map[string]any
 				for run := range 2 {
-					base, head, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: root}, orchestrator.Tree{RepoRoot: root}, cfg)
+					renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+					base, head := renderedTrees1[0], renderedTrees1[1]
 					assert.NoError(t, err)
-					for side, rendered := range []orchestrator.Rendered{base, head} {
+					for side, rendered := range []Rendered{base, head} {
 						if run == 0 && side == 0 {
 							directCfg := cfg
 							directCfg.Path = root
-							direct, err := orchestrator.New(t.Context(), directCfg)
+							direct, err := newTestOrchestrator(t, directCfg.Tree, directCfg.Config)
 							assert.NoError(t, err)
-							result, err := direct.Render(t.Context())
+							result, err := direct.render(t.Context())
 							assert.NoError(t, err)
 							assert.Diff(t, outputByParent(result.Manifests), outputByParent(rendered.Result.Manifests))
 						}
@@ -845,11 +836,15 @@ func TestRenderTrees_HeadOnly(t *testing.T) {
 				after["charts/demo/templates/cm.yaml"] = &fstest.MapFile{Data: []byte("{{ fail \"head reconciliation failed\" }}\n")}
 			}
 			baseInput.FS, headInput.FS = before, after
-			cfg := orchestrator.Config{BaseInput: baseInput, Input: headInput, Concurrency: 2, HeadOnly: true}
-			baseTree := orchestrator.Tree{RepoRoot: baseInput.LocalPath, Path: filepath.Join(baseInput.LocalPath, "flux")}
-			headTree := orchestrator.Tree{RepoRoot: headInput.LocalPath, Path: filepath.Join(headInput.LocalPath, "flux")}
-			base, head, err := orchestrator.RenderTrees(t.Context(), baseTree, headTree, cfg)
-			if base != (orchestrator.Rendered{}) || head.Orchestrator == nil || head.Result == nil {
+			cfg := Config{Concurrency: 2, HeadOnly: true}
+			baseTree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: baseInput, RepoRoot: baseInput.LocalPath, Path: filepath.Join(baseInput.LocalPath, "flux")}
+			headTree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: headInput, RepoRoot: headInput.LocalPath, Path: filepath.Join(headInput.LocalPath, "flux")}
+			runs, err := RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
+			if len(runs) != 2 {
+				t.Fatalf("missing results: %v", err)
+			}
+			base, head := runs[0], runs[1]
+			if base != (Rendered{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}) || head.Orchestrator == nil || head.Result == nil {
 				t.Fatalf("head-only completion = base=%+v head=%+v err=%v", base, head, err)
 			}
 			if headFailure {
@@ -860,7 +855,7 @@ func TestRenderTrees_HeadOnly(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Diff(t, configMapNames(head.Result), map[string]bool{"surviving": true})
 				cfg.HeadOnly = false
-				_, _, err = orchestrator.RenderTrees(t.Context(), baseTree, headTree, cfg)
+				_, err = RenderTrees(t.Context(), []Tree{baseTree, headTree}, cfg)
 				if err == nil || !strings.Contains(err.Error(), "baseline reconciliation ran") {
 					t.Fatalf("baseline failure control did not reconcile: %v", err)
 				}
@@ -870,12 +865,18 @@ func TestRenderTrees_HeadOnly(t *testing.T) {
 }
 
 type joinedTreeFS struct {
-	once    sync.Once
-	acquire func() error
-	err     error
+	fs.FS
+	payloadPath string
+	armed       atomic.Bool
+	once        sync.Once
+	acquire     func() error
+	err         error
 }
 
-func (f *joinedTreeFS) Open(_ string) (fs.File, error) {
+func (f *joinedTreeFS) Open(name string) (fs.File, error) {
+	if f.payloadPath != "" && (name != f.payloadPath || !f.armed.Load()) {
+		return f.FS.Open(name)
+	}
 	f.once.Do(func() { f.err = f.acquire() })
 	return nil, f.err
 }
@@ -890,12 +891,20 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 				return failure
 			}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}}}
 			headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
-			var base, head orchestrator.Rendered
+			var base, head Rendered
 			done := make(chan error, 1)
 			go func() {
 				var err error
-				base, head, err = orchestrator.RenderTrees(t.Context(), orchestrator.Tree{}, orchestrator.Tree{},
-					orchestrator.Config{BaseInput: baseInput, Input: headInput, ExternalChanges: change.NewSet(nil), Concurrency: 2, HeadOnly: true})
+				runs, runErr := RenderTrees(t.Context(), []Tree{
+					{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: baseInput, ExternalChanges: change.NewSet(nil)},
+					{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: headInput, ExternalChanges: change.NewSet(nil)},
+				}, Config{Concurrency: 2, HeadOnly: true})
+				err = runErr
+				if len(runs) != 2 {
+					t.Errorf("missing diagnostic sides: %v", err)
+				} else {
+					base, head = runs[0], runs[1]
+				}
 				done <- err
 			}()
 			synctest.Wait()
@@ -904,7 +913,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 			if !errors.Is(err, failure) || strings.Count(err.Error(), failure.Error()) != 1 {
 				t.Fatalf("discovery cause lost or duplicated: %v", err)
 			}
-			for _, side := range []orchestrator.Rendered{base, head} {
+			for _, side := range []Rendered{base, head} {
 				if side.Orchestrator != nil || side.Result == nil || len(side.Result.Manifests)+len(side.Result.Failed) != 0 {
 					t.Fatalf("failed preparation exposed content: %+v", side)
 				}
@@ -937,9 +946,13 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 					entered, canceled, completed := make(chan struct{}, 2), make(chan struct{}, 2), make(chan struct{}, 2)
 					inputs := [2]*store.SourceArtifact{}
 					for i := range inputs {
-						input := &joinedTreeFS{}
+						input := &joinedTreeFS{payloadPath: "app/payload.txt", FS: fstest.MapFS{
+							"flux.yaml":              {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
+							"app/kustomization.yaml": {Data: []byte("configMapGenerator: [{name: held, files: [payload.txt]}]\n")},
+							"app/payload.txt":        {Data: []byte("fixture")},
+						}}
 						input.acquire = func() error {
-							reader, _, _, err := owner.Blob(ctx, sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
+							_, _, _, err := owner.Blob(ctx, sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
 								func(ctx context.Context, _ sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 									entered <- struct{}{}
 									<-ctx.Done()
@@ -948,22 +961,20 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 									completed <- struct{}{}
 									return sourcecache.ProducerResult{}, ctx.Err()
 								})
-							if reader != nil {
-								err = errors.Join(err, reader.Close())
-							}
 							return err
 						}
 						inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
 					}
-					cfg := orchestrator.Config{CacheDir: root, Concurrency: 2, HeadOnly: headOnly, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
+					cfg := treeConfig{CacheDir: root, Concurrency: 2, HeadOnly: headOnly,
+						StatusListener: func(id manifest.TreeID, _ manifest.NamedResource, _ store.StatusInfo) {
+							inputs[id.Side].FS.(*joinedTreeFS).armed.Store(true)
+						}, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
 					if tc.injected {
 						cfg.Cache = owner
 					}
 					done := make(chan error, 1)
 					go func() {
-						_, _, err := orchestrator.RenderTrees(ctx,
-							orchestrator.Tree{RepoRoot: inputs[0].LocalPath}, orchestrator.Tree{RepoRoot: inputs[1].LocalPath},
-							cfg)
+						_, err := RenderTrees(ctx, []Tree{{RepoRoot: inputs[0].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: inputs[1].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 						done <- err
 					}()
 					for range 2 {
@@ -990,24 +1001,24 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						}
 					}
 					key := sourcecache.BlobKey{Content: "backing-survives"}
-					reader, _, _, err := owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					_, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := io.WriteString(w, "live")
 						return sourcecache.ProducerResult{}, err
 					})
 					assert.NoError(t, err)
-					assert.NoError(t, reader.Close())
+
 					release <- struct{}{}
 					release <- struct{}{}
-					if err := <-done; !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "base tree:") != 1 || strings.Count(err.Error(), "head tree:") != 1 {
+					if err := <-done; !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "orig snapshot:") != 1 || strings.Count(err.Error(), "current snapshot:") != 1 {
 						t.Fatalf("joined cancellation lost a side: %v", err)
 					}
 					for range 2 {
 						<-completed
 					}
 					if tc.injected {
-						reader, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+						_, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
 						assert.NoError(t, err)
-						assert.NoError(t, reader.Close())
+
 						assert.NoError(t, owner.Close())
 						externalShare = false
 					}
@@ -1033,14 +1044,14 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 					completed <- struct{}{}
 				}))
 				defer server.Close()
-				var trees [2]orchestrator.Tree
+				var trees [2]Tree
 				for i := range trees {
 					root := t.TempDir()
 					testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"))
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf("configMapGenerator: [{name: remote, envs: [%s/%d]}]\n", server.URL, i))
-					trees[i] = orchestrator.Tree{RepoRoot: root}
+					trees[i] = Tree{RepoRoot: root}
 				}
-				cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: tc.headOnly}
+				cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: tc.headOnly, Tree: Tree{}}
 				if tc.injected {
 					var err error
 					cfg.Cache, err = sourcecache.New(t.Context(), cfg.CacheDir)
@@ -1051,26 +1062,26 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 				defer cancel()
 				done := make(chan error, 1)
 				go func() {
-					_, _, err := orchestrator.RenderTrees(ctx, trees[0], trees[1], cfg)
+					_, err := RenderTrees(ctx, []Tree{{RepoRoot: trees[0].RepoRoot, Path: trees[0].Path, SelfURLs: trees[0].SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: trees[1].RepoRoot, Path: trees[1].Path, SelfURLs: trees[1].SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 					done <- err
 				}()
 				for range 2 {
 					<-entered
 				}
 				cancel()
-				if err := <-done; !errors.Is(err, context.Canceled) || errors.Is(err, fs.ErrClosed) || strings.Count(err.Error(), "base tree:") != 1 || strings.Count(err.Error(), "head tree:") != 1 {
+				if err := <-done; !errors.Is(err, context.Canceled) || errors.Is(err, fs.ErrClosed) || strings.Count(err.Error(), "orig snapshot:") != 1 || strings.Count(err.Error(), "current snapshot:") != 1 {
 					t.Fatalf("HTTP bootstrap teardown lost a side or closed backing early: %v", err)
 				}
 				for range 2 {
 					<-completed
 				}
 				if tc.injected {
-					r, _, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{Content: "after-http-bootstrap"}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					_, _, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{Content: "after-http-bootstrap"}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 						_, err := io.WriteString(w, "live")
 						return sourcecache.ProducerResult{}, err
 					})
 					assert.NoError(t, err)
-					assert.NoError(t, r.Close())
+
 					assert.NoError(t, cfg.Cache.Close())
 				}
 				res, err := sourcecache.Sweep(t.Context(), cfg.CacheDir, sourcecache.SweepOpts{})
@@ -1080,14 +1091,4 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 			})
 		}
 	})
-}
-
-func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource][]map[string]any {
-	out := make(map[manifest.NamedResource][]map[string]any, len(batches))
-	for _, batch := range batches {
-		if batch.Parent != nil {
-			out[batch.Parent.Named()] = batch.Documents
-		}
-	}
-	return out
 }

@@ -119,7 +119,10 @@ func appendRender(data []byte, value any) ([]byte, error) {
 // DecodeRender returns independently owned constructed render documents.
 func DecodeRender(data []byte) ([]map[string]any, error) {
 	d := renderDecoder{data: data, budget: len(data)}
-	docs := make([]map[string]any, d.reserve(1))
+	var docs []map[string]any
+	if count := d.reserve(1); count != 0 {
+		docs = make([]map[string]any, count)
+	}
 	for i := range docs {
 		value := d.value(0)
 		if d.err != nil {

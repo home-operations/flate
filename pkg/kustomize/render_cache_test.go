@@ -14,12 +14,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -35,6 +37,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/tree"
 )
 
@@ -73,15 +76,22 @@ func renderPersistenceEligible(tb testing.TB) bool {
 
 func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSnapshot, []map[string]any, bool) {
 	tb.Helper()
-	r, _, _, err := cache.owner.Blob(tb.Context(), sourcecache.BlobKey{Content: key, PersistOnly: true}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	var r fs.FS
+	var err error
+	for _, phase := range []sourcecache.RenderMode{sourcecache.RenderAccepted, sourcecache.RenderPending} {
+		r, _, _, err = cache.owner.Blob(tb.Context(), sourcecache.BlobKey{Content: key, Render: phase}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+		if !errors.Is(err, errdef.ErrNotFound) {
+			break
+		}
+	}
 	if errors.Is(err, errdef.ErrNotFound) {
 		return readSetSnapshot{}, nil, false
 	}
 	if err != nil {
 		tb.Fatal(err)
 	}
-	raw, err := io.ReadAll(r)
-	if err := errors.Join(err, r.Close()); err != nil {
+	raw, err := fs.ReadFile(r, "content")
+	if err != nil {
 		tb.Fatal(err)
 	}
 	snapFrame, err := decodeFrame(raw)
@@ -99,6 +109,9 @@ func readTestRenderFrame(tb testing.TB, cache *TreeCache, key string) (readSetSn
 
 func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.BlobKey, raw []byte) {
 	tb.Helper()
+	if key.Render == sourcecache.RenderPending && renderPersistenceEligible(tb) {
+		key.Render = sourcecache.RenderAccepted
+	}
 	if frame, err := decodeFrame(raw); err == nil {
 		frame.header.Key, _ = key.Content.(string)
 		raw, err = encodeFrame(frame.header, frame.output)
@@ -106,14 +119,11 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 			tb.Fatal(err)
 		}
 	}
-	r, _, _, err := owner.Blob(tb.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+	_, _, _, err := owner.Blob(tb.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 		_, err := w.Write(raw)
 		return sourcecache.ProducerResult{}, err
 	})
 	if err != nil {
-		tb.Fatal(err)
-	}
-	if err := r.Close(); err != nil {
 		tb.Fatal(err)
 	}
 }
@@ -146,7 +156,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, len(docs), 0)
 			_, stored, hit := readTestRenderFrame(t, c, renderKey(req, root, nil))
-			assert.Equal(t, hit, renderPersistenceEligible(t))
+			assert.Equal(t, hit, true)
 			assert.Equal(t, len(stored), 0)
 		}
 	})
@@ -202,11 +212,11 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	key := renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "selected"}, root, nil)
 	snap, _, ok := readTestRenderFrame(t, cache, key)
 	eligible := renderPersistenceEligible(t)
-	if ok != eligible {
-		t.Fatalf("persisted render = %v, want %v", ok, eligible)
+	if !ok {
+		t.Fatal("owner did not retain completed render")
 	}
 	if eligible {
-		publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
+		publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
 	}
 	cache.Close()
 	if err := cache.owner.Close(); err != nil {
@@ -332,7 +342,6 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 		out4 = out
 	}
-
 }
 
 // TestRender_SourceignoreContentInvalidates verifies policy content and path
@@ -430,35 +439,42 @@ func TestRender_MemoryOwnerUnchanged(t *testing.T) {
 		"kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - cm.yaml\n",
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\ndata:\n  k: v1\n",
 	}
-	ctx := context.Background()
-
-	rootA := testutil.WriteTree(t, files)
-	plain := newTestTreeCache(t, "")
-	outPlain, receipt14, err := Render(ctx, plain, RenderRequest{Source: localSource(t, rootA), Label: rootA, ApplyIgnore: false, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-	if err == nil {
-		if recordErr := plain.RecordRender(ctx, demoSpec.Named(), receipt14, emptyRenderInventory); recordErr != nil {
-			t.Fatal(recordErr)
+	var want []map[string]any
+	for _, disk := range []bool{false, true} {
+		root, storage := testutil.WriteTree(t, files), ""
+		if disk {
+			storage = t.TempDir()
 		}
-	}
-
-	if err != nil {
-		t.Fatalf("plain render: %v", err)
-	}
-
-	rootB := testutil.WriteTree(t, files)
-	cached := newTestTreeCache(t, t.TempDir())
-	outCached, receipt15, err := Render(ctx, cached, RenderRequest{Source: localSource(t, rootB), Label: rootB, ApplyIgnore: false, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-	if err == nil {
-		if recordErr := cached.RecordRender(ctx, demoSpec.Named(), receipt15, emptyRenderInventory); recordErr != nil {
-			t.Fatal(recordErr)
+		first := newTestTreeCache(t, storage)
+		second := NewTreeCache(first.owner, nil, task.NewBounded(2))
+		defer second.Close()
+		var builds atomic.Int64
+		lower := &pausedRenderFS{FS: os.DirFS(root), builds: &builds}
+		req := RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoSpec}
+		var outputs [2][]map[string]any
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i, cache := range []*TreeCache{first, second} {
+			wg.Go(func() {
+				<-start
+				var err error
+				outputs[i], _, err = Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+				assert.NoError(t, err)
+			})
 		}
-	}
-
-	if err != nil {
-		t.Fatalf("cached render: %v", err)
-	}
-	if !reflect.DeepEqual(outPlain, outCached) {
-		t.Errorf("render cache changed output:\nplain:\n%s\ncached:\n%s", outPlain, outCached)
+		close(start)
+		wg.Wait()
+		assert.Equal(t, builds.Load(), int64(1))
+		assert.Diff(t, outputs[0], outputs[1])
+		if !disk {
+			want = outputs[1]
+		}
+		assert.Diff(t, outputs[0], want)
+		outputs[0][0]["data"].(map[string]any)["k"] = "mutated"
+		again, _, err := Render(t.Context(), second, req, sourcecache.RetryConfig{})
+		assert.NoError(t, err)
+		assert.Diff(t, again, outputs[1])
+		assert.Equal(t, builds.Load(), int64(1))
 	}
 }
 
@@ -624,7 +640,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					}
 					key := renderKey(request(), root, nil)
 					snap, stored, hit := readTestRenderFrame(t, cache, key)
-					if hit != eligible || hit && (!reflect.DeepEqual(stored, out1) || len(snap.Remotes) == 0 || immutable && (len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0)) {
+					if !hit || !reflect.DeepEqual(stored, out1) || len(snap.Remotes) == 0 || immutable && (len(snap.Files) != 0 || len(snap.Dirs) != 0 || len(snap.Nodes) != 0) {
 						t.Fatalf("published=%t eligible=%t snapshot=%+v output=%s", hit, eligible, snap, stored)
 					}
 					fresh := newCache("")
@@ -640,7 +656,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					}
 					closeTestTreeCache(t, fresh)
 					if eligible {
-						publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
+						publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
 					}
 					closeTestTreeCache(t, cache)
 					before := len(trace.snapshot())
@@ -839,8 +855,8 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 		t.Fatalf("ordinary raw identity reused cached output: %s, %v", out, err)
 	}
 	_, stored, hit := readTestRenderFrame(t, cache, key)
-	if eligible := renderPersistenceEligible(t); hit != eligible || hit && !reflect.DeepEqual(stored, out) {
-		t.Fatalf("completed render = %s, %v; eligible = %v", stored, hit, eligible)
+	if !hit || !reflect.DeepEqual(stored, out) {
+		t.Fatalf("completed render = %s, %v", stored, hit)
 	}
 	bare := req
 	bare.Spec = nil
@@ -866,7 +882,6 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	if err != nil || hasRenderField(owned, manifest.FluxKustomizeDomain+"/name", "demo") || !hasRenderField(owned, "name", "owned-changed") {
 		t.Fatalf("owned render reused bare output: %s, %v", owned, err)
 	}
-
 }
 
 func TestRender_CacheFrames(t *testing.T) {
@@ -921,7 +936,7 @@ func TestRender_CacheFrames(t *testing.T) {
 			} else if tc.empty {
 				frame = testRenderFrame(t, tc.snapshot, testRenderEncoding(t, nil))
 			}
-			publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, frame)
+			publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, frame)
 			out, receipt22, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 			if err == nil {
 				if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt22, emptyRenderInventory); recordErr != nil {
@@ -951,11 +966,11 @@ func TestRender_CacheFrames(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Diff(t, again, fresh)
 			}
-			if eligible && tc.immutable {
+			if tc.immutable {
 				if !hasRenderField(out, "witness", "STALE") {
 					t.Fatalf("immutable pin replayed mutable validation: %s", out)
 				}
-			} else if eligible && tc.empty {
+			} else if tc.empty {
 				if len(out) != 0 {
 					t.Fatalf("complete empty frame missed: %s", out)
 				}
@@ -969,7 +984,7 @@ func TestRender_CacheFrames(t *testing.T) {
 			cache = newTestTreeCache(t, cacheDir)
 			_, stored, hit := readTestRenderFrame(t, cache, key)
 			if hit != eligible || hit && !reflect.DeepEqual(stored, out) {
-				t.Fatalf("completed frame = %s, %v; eligible = %v", stored, hit, eligible)
+				t.Fatalf("completed frame = %s, %v; eligible = %v", stored, hit, renderPersistenceEligible(t))
 			}
 			if tc.corrupt {
 				again, receipt24, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
@@ -994,111 +1009,80 @@ type pausedRenderFS struct {
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
+	builds  *atomic.Int64
 }
 
 func (p *pausedRenderFS) ReadFile(name string) ([]byte, error) {
 	if name == "cm.yaml" {
-		p.once.Do(func() { close(p.entered); <-p.release })
+		if p.entered != nil {
+			p.once.Do(func() { close(p.entered); <-p.release })
+		}
+		var pcs [64]uintptr
+		n := runtime.Callers(2, pcs[:])
+		frames := runtime.CallersFrames(pcs[:n])
+		for {
+			frame, more := frames.Next()
+			if frame.Function == "github.com/home-operations/flate/internal/kustomize.Build" {
+				if p.builds != nil {
+					p.builds.Add(1)
+				}
+				break
+			}
+			if !more {
+				break
+			}
+		}
 	}
 	return fs.ReadFile(p.FS, name)
 }
 
 func TestRender_CacheAcquisitionOverlap(t *testing.T) {
-	for _, validate := range []bool{false, true} {
-		t.Run(fmt.Sprintf("validation_%t", validate), func(t *testing.T) {
-			eligible := renderPersistenceEligible(t)
-			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
-			cache := newTestTreeCache(t, t.TempDir())
-			key := sourcecache.BlobKey{Content: renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."}, root, nil), PersistOnly: true}
-			frame := testRenderFrame(t, readSetSnapshot{Files: []localEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}}}, testRenderPayload(t, "VALIDATED"))
-			if validate {
-				publishTestFrame(t, cache.owner, key, frame)
+	t.Parallel()
+	for _, disk := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disk_%t", disk), func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("old")}
+			root, changed := testutil.WriteTree(t, files), testutil.WriteTree(t, files)
+			storage := ""
+			if disk {
+				storage = t.TempDir()
 			}
-			lower := &pausedRenderFS{FS: os.DirFS(root), entered: make(chan struct{}), release: make(chan struct{})}
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			var wg sync.WaitGroup
-			released := false
-			defer func() {
-				if !released {
-					close(lower.release)
+			owner := newTestTreeCache(t, storage).owner
+			firstCache, secondCache := NewTreeCache(owner, nil, task.NewBounded(2)), NewTreeCache(owner, nil, task.NewBounded(2))
+			defer firstCache.Close()
+			defer secondCache.Close()
+			var builds atomic.Int64
+			synctest.Test(t, func(t *testing.T) {
+				first := &pausedRenderFS{FS: os.DirFS(root), entered: make(chan struct{}), release: make(chan struct{}), builds: &builds}
+				second := &pausedRenderFS{FS: os.DirFS(changed), builds: &builds}
+				run := func(c *TreeCache, input fs.FS, want string) {
+					out, _, err := Render(t.Context(), c, RenderRequest{Source: &store.SourceArtifact{FS: input}, Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
+					assert.NoError(t, err)
+					assert.Equal(t, hasRenderField(out, "name", want), true)
 				}
-				wg.Wait()
-			}()
-			rendered := make(chan error, 1)
-			wg.Go(func() {
-				out, receipt25, err := Render(ctx, cache, RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
-				if err == nil {
-					if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt25, emptyRenderInventory); recordErr != nil {
-						t.Fatal(recordErr)
-					}
+				done := make(chan struct{})
+				go func() { defer close(done); run(firstCache, first, "old") }()
+				<-first.entered
+				var queued sync.WaitGroup
+				for range 2 {
+					queued.Go(func() { run(secondCache, second, "new") })
 				}
+				synctest.Wait()
+				// A different acquisition key MUST progress while this render owns its key.
+				_, _, _, err := owner.Blob(t.Context(), sourcecache.BlobKey{Content: "unrelated-source"}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					_, err := io.WriteString(w, "source")
+					return sourcecache.ProducerResult{}, err
+				})
+				assert.NoError(t, err)
 
-				if err == nil && validate && eligible && !hasRenderField(out, "witness", "VALIDATED") {
-					err = fmt.Errorf("validation did not return its acquired frame: %q", out)
-				}
-				if err == nil && (!validate || !eligible) && !hasRenderField(out, "name", "fresh") {
-					err = fmt.Errorf("real render = %q", out)
-				}
-				rendered <- err
+				testutil.WriteFile(t, changed, "cm.yaml", cmYAML("new"))
+				close(first.release)
+				<-done
+				queued.Wait()
+				assert.Equal(t, builds.Load(), int64(2))
+				run(secondCache, second, "new")
+				assert.Equal(t, builds.Load(), int64(2))
 			})
-			select {
-			case <-lower.entered:
-			case <-ctx.Done():
-				t.Fatal("render did not reach input-read barrier")
-			}
-			progress := make(chan error, 1)
-			wg.Go(func() {
-				progress <- func() error {
-					r, _, _, err := cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
-					if r != nil {
-						err = errors.Join(err, r.Close())
-					}
-					if validate && eligible && err != nil {
-						return err
-					}
-					if (!validate || !eligible) && !errors.Is(err, errdef.ErrNotFound) {
-						return fmt.Errorf("lookup before completed publication: %w", err)
-					}
-					r, _, _, err = cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-						_, err := w.Write(frame)
-						return sourcecache.ProducerResult{}, err
-					})
-					if err != nil {
-						return err
-					}
-					if err := r.Close(); err != nil {
-						return err
-					}
-					r, _, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{Content: struct{ Name string }{"ordinary-source"}}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-						_, err := io.WriteString(w, "source")
-						return sourcecache.ProducerResult{}, err
-					})
-					if err != nil {
-						return err
-					}
-					return r.Close()
-				}()
-			})
-			select {
-			case err := <-progress:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-ctx.Done():
-				t.Fatal("same-frame lookup/publication or source acquisition blocked behind input read")
-			}
-			// Release the filesystem only after all acquisitions completed.
-			close(lower.release)
-			released = true
-			select {
-			case err := <-rendered:
-				if err != nil {
-					t.Fatal(err)
-				}
-			case <-ctx.Done():
-				t.Fatal("render did not finish")
-			}
 		})
 	}
 }
@@ -1128,11 +1112,12 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 				}
 			}
 			if fault == "read" {
-				key := sourcecache.BlobKey{Content: renderKey(req, root, nil), PersistOnly: true}
+				key := sourcecache.BlobKey{Content: renderKey(req, root, nil), Render: sourcecache.RenderAccepted}
 				reader, _, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 				assert.NoError(t, err)
-				data, err := io.ReadAll(reader)
-				assert.NoError(t, errors.Join(err, reader.Close()))
+				data, err := fs.ReadFile(reader, "content")
+				assert.NoError(t, err)
+
 				sum := digest.FromBytes(data)
 				blob := filepath.Join(cacheDir, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
 				assert.NoError(t, os.Remove(blob))
@@ -1283,7 +1268,7 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			key := renderKey(request(), root, nil)
 			if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
 				snap = persisted
-				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
+				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
 			}
 			closeTestTreeCache(t, c)
 			hits.Store(0)
@@ -1468,7 +1453,7 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 			}
 			key := renderKey(request(), root, nil)
 			if persisted, _, hit := readTestRenderFrame(t, c, key); hit {
-				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, persisted, testRenderPayload(t, "SENTINEL")))
+				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, persisted, testRenderPayload(t, "SENTINEL")))
 			}
 			closeTestTreeCache(t, c)
 			if scenario == "source-link" {
@@ -1924,7 +1909,7 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 				t.Fatalf("unchanged real output: %s, %v", out, err)
 			}
 			if eligible {
-				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, persisted, testRenderPayload(t, "REMOTE-SELECTION")))
+				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, persisted, testRenderPayload(t, "REMOTE-SELECTION")))
 			}
 			closeTestTreeCache(t, c)
 			c = newCache()
@@ -1955,3 +1940,97 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 	}
 }
 func emptyRenderInventory(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}
+
+func TestRender_AcceptedCacheAcquisitionOverlap(t *testing.T) {
+	for _, validate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("validation_%t", validate), func(t *testing.T) {
+			eligible := renderPersistenceEligible(t)
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("fresh")})
+			cache := newTestTreeCache(t, t.TempDir())
+			key := sourcecache.BlobKey{Content: renderKey(RenderRequest{Source: &store.SourceArtifact{}, Spec: demoSpec, SubPath: "."}, root, nil), Render: sourcecache.RenderAccepted}
+			frame := testRenderFrame(t, readSetSnapshot{Files: []localEntry{{Path: "cm.yaml", Hash: manifest.SHA256Hex([]byte(cmYAML("fresh")))}}}, testRenderPayload(t, "VALIDATED"))
+			if validate {
+				publishTestFrame(t, cache.owner, key, frame)
+			}
+			lower := &pausedRenderFS{FS: os.DirFS(root), entered: make(chan struct{}), release: make(chan struct{})}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			var wg sync.WaitGroup
+			released := false
+			defer func() {
+				if !released {
+					close(lower.release)
+				}
+				wg.Wait()
+			}()
+			rendered := make(chan error, 1)
+			wg.Go(func() {
+				out, receipt25, err := Render(ctx, cache, RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
+				if err == nil {
+					if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt25, emptyRenderInventory); recordErr != nil {
+						t.Fatal(recordErr)
+					}
+				}
+
+				if err == nil && validate && eligible && !hasRenderField(out, "witness", "VALIDATED") {
+					err = fmt.Errorf("validation did not return its acquired frame: %q", out)
+				}
+				if err == nil && (!validate || !eligible) && !hasRenderField(out, "name", "fresh") {
+					err = fmt.Errorf("real render = %q", out)
+				}
+				rendered <- err
+			})
+			select {
+			case <-lower.entered:
+			case <-ctx.Done():
+				t.Fatal("render did not reach input-read barrier")
+			}
+			progress := make(chan error, 1)
+			wg.Go(func() {
+				progress <- func() error {
+					_, _, _, err := cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+					if validate && eligible && err != nil {
+						return err
+					}
+					if (!validate || !eligible) && !errors.Is(err, errdef.ErrNotFound) {
+						return fmt.Errorf("lookup before completed publication: %w", err)
+					}
+					_, _, _, err = cache.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+						_, err := w.Write(frame)
+						return sourcecache.ProducerResult{}, err
+					})
+					if err != nil {
+						return err
+					}
+					_, _, _, err = cache.owner.Blob(ctx, sourcecache.BlobKey{Content: struct{ Name string }{"ordinary-source"}}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+						_, err := io.WriteString(w, "source")
+						return sourcecache.ProducerResult{}, err
+					})
+					if err != nil {
+						return err
+					}
+					return nil
+				}()
+			})
+			select {
+			case err := <-progress:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("same-frame lookup/publication or source acquisition blocked behind input read")
+			}
+			// Release the filesystem only after all acquisitions completed.
+			close(lower.release)
+			released = true
+			select {
+			case err := <-rendered:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-ctx.Done():
+				t.Fatal("render did not finish")
+			}
+		})
+	}
+}

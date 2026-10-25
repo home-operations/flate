@@ -134,7 +134,11 @@ metadata: {namespace: apps}
 			assertNames(third, want)
 			if tc.cached {
 				cached := r.cache[path]
-				assertNames(cached.objects, []string{"first", "producer", "last"})
+				var children []store.Child
+				for _, child := range cached.objects {
+					children = append(children, child.Child)
+				}
+				assertNames(children, []string{"first", "producer", "last"})
 				if _, ok := cached.objects[1].Obj.(*manifest.RawObject); !ok {
 					t.Errorf("cached producer = %T, want raw object", cached.objects[1])
 				}

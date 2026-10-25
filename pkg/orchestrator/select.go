@@ -38,7 +38,7 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 	}
 	complete := true
 	for _, run := range runs {
-		complete = complete && run.Result != nil && run.Orchestrator != nil
+		complete = complete && (run.Absent || run.Result != nil && run.Orchestrator != nil)
 	}
 	if !complete {
 		for _, run := range runs {
@@ -59,7 +59,7 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 		} else if run.Orchestrator != nil && run.filter.Enabled() {
 			sides[i].namespaces = run.filter.KeepNamespaces()
 		}
-		if complete {
+		if complete && !run.Absent {
 			sides[i].collect(roots, labels, len(runs) == 2)
 		} else {
 			sides[i].result = &selection.Selection{}
@@ -73,8 +73,11 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 	candidates := selectionCandidates(sides)
 	for i := range sides {
 		side := &sides[i]
+		if side.run.Absent {
+			continue
+		}
 		var other *selectionSide
-		if len(sides) == 2 {
+		if len(sides) == 2 && !sides[1-i].run.Absent {
 			other = &sides[1-i]
 		}
 		side.prepareFailures(roots, other)

@@ -569,17 +569,17 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						ctx, cancel := context.WithCancel(t.Context())
 						defer cancel()
 						dir := t.TempDir()
-						o, err := New(ctx, Config{Path: dir, RepoRoot: dir, Concurrency: workers})
+						o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{Concurrency: workers})
 						if err != nil {
 							t.Fatal(err)
 						}
 						defer func() {
-							if err := o.Stop(); err != nil {
-								t.Error(err)
-							}
+							o.stop()
+
 						}()
 						f := &sharedRepositoryFetcher{calls: map[manifest.NamedResource]int{}}
-						o.WithFetcher(manifest.KindHelmRepository, f).WithFetcher(manifest.KindHelmChart, f)
+						o.src.Fetchers[manifest.KindHelmRepository] = f
+						o.src.Fetchers[manifest.KindHelmChart] = f
 						s := o.store
 						p := testutil.KustomizationID("flux-system", "publisher")
 						s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
@@ -907,16 +907,15 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	testutil.WriteFile(t, root, "pin.yaml", ksYAML("pin", "pin", ""))
 	testutil.WriteFile(t, root, "pin/kustomization.yaml", "resources: [hello.yaml]\n")
 	testutil.WriteFile(t, root, "pin/hello.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: flux-system}\ndata: {value: provisional}\n")
-	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2, ExternalChanges: change.NewSet([]string{"shared/consumer.yaml"})})
+	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root, ExternalChanges: change.NewSet([]string{"shared/consumer.yaml"})}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Error(err)
-		}
+		o.stop()
+
 	})
-	if err := o.Bootstrap(t.Context()); err != nil {
+	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	o.configureControllers()

@@ -62,26 +62,36 @@ func (w *barWriter) Write(p []byte) (int, error) {
 
 const progressDelay = 250 * time.Millisecond
 
-func (w *barWriter) progress(ctx context.Context, s *store.Store) func() {
+func (w *barWriter) progress(ctx context.Context) (func(manifest.TreeID, manifest.NamedResource, store.StatusInfo), func()) {
 	m := newBarModel(w.color)
 	events := m.events
 	restore := captureStderr(func(line string) { slog.Debug(line) })
-	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		events.publish(id, payload.(store.StatusInfo).Status, time.Now())
-	}, false)
 	completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(done)
 		w.runProgress(ctx, m, completed, finish)
 	}()
-	return func() {
+	return events.observe, func() {
 		close(completed)
-		unsub()
 		restore()
 		close(finish)
 		<-done
 		events.head.Store(nil)
 	}
+}
+
+func (e *progressEvents) observe(tree manifest.TreeID, id manifest.NamedResource, info store.StatusInfo) {
+	if id.ReportHidden() {
+		return
+	}
+	if tree.Cluster != "." || tree.Side != manifest.TreeHead {
+		side := "current"
+		if tree.Side == manifest.TreeBase {
+			side = "orig"
+		}
+		id.Name = string(tree.Cluster) + "/" + side + ":" + id.Name
+	}
+	e.publish(id, info.Status, time.Now())
 }
 
 func (w *barWriter) runProgress(ctx context.Context, m barModel, completed, finish <-chan struct{}) {

@@ -215,11 +215,20 @@ func TestFetcher_ExactPinBeforeRecursion(t *testing.T) {
 			client.InstallProtocol("pin", counter)
 			t.Cleanup(func() { client.InstallProtocol("pin", nil) })
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
-			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
+			spec := &manifest.GitRepository{
 				Name: "pin", URL: "pin://" + parent, Reference: &sourcev1.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
-			}, (testInputs{}).readSet(&manifest.GitRepository{
-				Name: "pin", URL: "pin://" + parent, Reference: &sourcev1.GitRepositoryRef{Commit: pin.String()}, RecurseSubmodules: tc.name != "gitlink",
-			}), sourcecache.Policy{})
+			}
+			art, err := f.Fetch(t.Context(), spec, (testInputs{}).readSet(spec), sourcecache.Policy{})
+			if err == nil {
+				other := *spec
+				other.Name = "other"
+				shared := &Fetcher{Cache: f.Cache}
+				reused, reuseErr := shared.Fetch(t.Context(), &other, (testInputs{}).readSet(&other), sourcecache.Policy{})
+				if reuseErr != nil || reused.Key != art.Key {
+					t.Fatalf("compatible invocation acquisition: %v", reuseErr)
+				}
+			}
+
 			if len(counter.requests) != tc.calls {
 				t.Fatalf("parent requests=%d, want %d; %v", len(counter.requests), tc.calls, err)
 			}

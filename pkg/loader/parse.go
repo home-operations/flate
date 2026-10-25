@@ -15,15 +15,23 @@ import (
 )
 
 func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([]store.Child, error) {
+	if r.parsed != nil {
+		r.restore(path)
+	}
 	out := r.cache[path].objects
+	var tracked []store.Child
 	var err error
 	if out == nil {
 		cached := r.cache[path]
-		err = r.decodeFileObjects(path, opts, r.cache != nil, func(child store.Child) {
-			out = append(out, child)
+		err = r.decodeFileObjects(path, opts, r.cache != nil, func(child store.Child, ordinal int, version string) {
+			if r.cache == nil {
+				tracked = append(tracked, child)
+			} else {
+				out = append(out, parsedObject{child, ordinal, version})
+			}
 		})
 		if r.cache == nil {
-			return out, err
+			return tracked, err
 		}
 		if err == nil {
 			cached.objects = out
@@ -33,10 +41,10 @@ func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([
 	if out == nil {
 		return nil, err
 	}
-	tracked := make([]store.Child, 0, len(out))
-	for _, child := range out {
-		if manifest.KindOf(child.Obj).Tracked {
-			tracked = append(tracked, child)
+	tracked = make([]store.Child, 0, len(out))
+	for i := range out {
+		if manifest.KindOf(out[i].Obj).Tracked {
+			tracked = append(tracked, out[i].Child)
 		}
 	}
 	return tracked, err
@@ -44,7 +52,7 @@ func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([
 
 // Raw objects must be retained for producer scans when keepRaw is set.
 // API-version admission errors retain their source path for deferred ownership policy.
-func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(store.Child)) error {
+func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOptions, keepRaw bool, yield func(store.Child, int, string)) error {
 	input, name := r.input(path)
 	path = r.localPath(path)
 	var f fs.File
@@ -58,11 +66,13 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 		return fmt.Errorf("open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-	docs, err := manifest.DecodeDocs(f)
+	docs, err := manifest.DecodeDocOccurrences(f)
 	if err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
-	for i, doc := range docs {
+	for i, occurrence := range docs {
+		doc := occurrence.Document
+		version := manifest.DocAPIVersion(doc)
 		obj, authoritative, _, err := manifest.ParseDoc(doc, opts)
 		if err != nil {
 			if _, invalid := errors.AsType[*field.Error](err); !invalid {
@@ -71,7 +81,7 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 				continue
 			}
 			for _, pending := range docs[i:] {
-				manifest.ReleaseDoc(pending)
+				manifest.ReleaseDoc(pending.Document)
 			}
 			return fmt.Errorf("parse %s: %w", path, err)
 		}
@@ -91,7 +101,7 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 			manifest.ReleaseDoc(doc)
 			authoritative = nil
 		}
-		yield(store.Child{Obj: obj, Doc: authoritative})
+		yield(store.Child{Obj: obj, Doc: authoritative}, occurrence.Ordinal, version)
 	}
 	return nil
 }

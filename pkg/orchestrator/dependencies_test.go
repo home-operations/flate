@@ -21,21 +21,21 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 			testutil.WriteGeneratedValuesCluster(t, dir)
 			const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 			testutil.WriteFile(t, dir, "charts/app/templates/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-secret\n  namespace: flux-system\nstringData:\n  token: '"+cipher+"'\n")
-			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: tc.wipeSecrets, Concurrency: tc.workers})
+			o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{CacheDir: t.TempDir(), WipeSecrets: tc.wipeSecrets, Concurrency: tc.workers})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if o.hrc.Store != o.store || o.hrc.Tasks != o.tasks {
 				t.Fatal("HelmRelease base controller wiring changed")
 			}
-			if err := o.Bootstrap(t.Context()); err != nil {
+			if err := o.bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			a := testutil.HelmReleaseID("flux-system", "a")
 			if o.store.GetObject(a) != nil || parentsForTest(o.index)[a] != testutil.KustomizationID("flux-system", "apps") {
 				t.Fatalf("raw HR arrived or parent gate missing: %s parent=%s", a, parentsForTest(o.index)[a])
 			}
-			res, err := o.Render(t.Context())
+			res, err := o.collectResult(o.run(t.Context()))
 			if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 {
 				t.Fatalf("Render err=%v failures=%v blockers=%v", err, res.Failed, res.Blocked)
 			}
@@ -98,8 +98,8 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				testutil.WriteFile(t, dir, "apps/monitor-b/kustomization.yaml", "resources: [missing.yaml, hr.yaml, invalid.yaml]\n")
 				testutil.WriteFile(t, dir, "apps/monitor-b/invalid.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: example.test/, kind: Widget, name: missing}]\n")
 			}
-			base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
-				Config{WipeSecrets: true, Concurrency: 4, CacheDir: t.TempDir()})
+			renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4, CacheDir: t.TempDir()})
+			base, head := renderedTrees1[0], renderedTrees1[1]
 			if (err != nil) != broken {
 				t.Fatalf("RenderTrees error=%v, want failure=%v", err, broken)
 			}
@@ -206,11 +206,12 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 		testutil.WriteFile(t, dir, "broken/kustomization.yaml", "resources: [missing.yaml, ../apps/invalid.yaml]\n")
 		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [invalid.yaml]\n")
 		testutil.WriteFile(t, dir, "apps/invalid.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: invalid, namespace: flux-system}\nspec:\n  dependsOn: [{apiVersion: example.test/, kind: Widget, name: missing}]\n")
-		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, Concurrency: 2, CacheDir: t.TempDir()})
-		if err != nil {
-			t.Fatal(err)
+		renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2, CacheDir: t.TempDir()})
+		if len(renderedSingleton1) != 1 {
+			t.Fatalf("missing render: %v", err)
 		}
-		res, err := o.Render(t.Context())
+		o := renderedSingleton1[0].Orchestrator
+		res := renderedSingleton1[0].Result
 		if err == nil || !strings.Contains(err.Error(), "invalid.yaml") || strings.Count(err.Error(), "ResourceSet spec.dependsOn[0].apiVersion") != 1 {
 			t.Fatalf("selected malformed reference lost its source: %v", err)
 		}
@@ -234,8 +235,8 @@ func TestRenderTrees_UnknownOrderingTargetStillFails(t *testing.T) {
 	for _, dir := range []string{baseDir, headDir} {
 		testutil.WriteFile(t, dir, "flux/selected.yaml", ksYAML("selected", "apps/selected", "unknown"))
 	}
-	base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
-		Config{WipeSecrets: true, Concurrency: 2, CacheDir: t.TempDir()})
+	renderedTrees2, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2, CacheDir: t.TempDir()})
+	base, head := renderedTrees2[0], renderedTrees2[1]
 	if err == nil {
 		t.Fatal("selected unknown ordering target was ignored")
 	}

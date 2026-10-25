@@ -13,10 +13,12 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"github.com/fluxcd/pkg/apis/kustomize"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -291,14 +293,15 @@ data:
 		if key == "" {
 			t.Fatal("subchart fixture produced an empty completed-output key")
 		}
-		return cache.BlobKey{Content: key, PersistOnly: true}
+		return cache.BlobKey{Content: key, Render: cache.RenderAccepted}
 	}
 	readBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey) []map[string]any {
 		t.Helper()
 		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 		assert.NoError(t, err)
-		data, err := io.ReadAll(r)
-		assert.NoError(t, errors.Join(err, r.Close()))
+		data, err := fs.ReadFile(r, "content")
+		assert.NoError(t, err)
+
 		var record renderRecord
 		assert.NoError(t, decodeTestRecord(data, &record))
 		docs, err := manifest.DecodeRender(record.Output)
@@ -312,12 +315,11 @@ data:
 		ch, err := captured.load()
 		assert.NoError(t, err)
 		analysis := &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}
-		r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+		_, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			err := writeTestRecord(w, key, renderRecord{Output: encodedRender(t, data), Analysis: analysis})
 			return cache.ProducerResult{}, err
 		})
 		assert.NoError(t, err)
-		assert.NoError(t, r.Close())
 	}
 	root := t.TempDir()
 	owner := cachetest.New(t, root, cache.New)
@@ -368,10 +370,7 @@ data:
 	owner = cachetest.New(t, root, cache.New)
 	cli, cliSources = newClient(t, owner, true)
 	reopenedKey := keyFor(t, cli, cliSources)
-	reader, _, _, lookupErr := owner.Blob(t.Context(), reopenedKey, cache.Policy{MaxAge: cache.Forever}, nil)
-	if lookupErr == nil {
-		assert.NoError(t, reader.Close())
-	}
+	_, _, _, lookupErr := owner.Blob(t.Context(), reopenedKey, cache.Policy{MaxAge: cache.Forever}, nil)
 	t.Logf("fresh-owner direct lookup: %v", lookupErr)
 	reopened, receipt8, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err == nil {
@@ -632,6 +631,12 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	})
 }
 
+type templateActionProbe chan struct{}
+
+func (p templateActionProbe) MarshalJSON() ([]byte, error) { return []byte(`"fresh"`), nil }
+
+func (p templateActionProbe) String() string { p <- struct{}{}; return "fresh" }
+
 func TestTemplateCache_TemplateIntegration(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -678,22 +683,22 @@ items:
 				assert.NoError(t, err)
 				loaded.values, loaded.valuesErr = cli.observeValuesFiles(t.Context(), loaded, newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
 				assert.NoError(t, loaded.valuesErr)
-				key := cache.BlobKey{Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()), PersistOnly: true}
+				key := cache.BlobKey{Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()), Render: cache.RenderAccepted}
 				if tc.invalid {
 					raw, err := manifest.SplitDocs([]byte(tc.input))
 					assert.NoError(t, err)
 					record := renderRecord{Output: encodedRender(t, raw), Analysis: loaded.analyze()}
-					r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					_, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 						return cache.ProducerResult{}, writeTestRecord(w, key, record)
 					})
 					assert.NoError(t, err)
-					assert.NoError(t, r.Close())
+
 				}
 				r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 				assert.NoError(t, err)
 				var record renderRecord
 				assert.NoError(t, readTestRecord(r, &record))
-				assert.NoError(t, r.Close())
+
 				raw, err := manifest.DecodeRender(record.Output)
 				assert.NoError(t, err)
 				wantRaw, err := manifest.SplitDocs([]byte(tc.input))
@@ -701,11 +706,10 @@ items:
 				assert.Diff(t, raw, wantRaw)
 				values := map[string]any{"fail": true}
 				key.Content = computeTemplateKey(loaded, values, Options{}, newHR())
-				r, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+				_, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					return cache.ProducerResult{}, writeTestRecord(w, key, record)
 				})
 				assert.NoError(t, err)
-				assert.NoError(t, r.Close())
 				assert.NoError(t, owner.Close())
 				fresh := NewClient(cachetest.New(t, root, cache.New))
 				out, _, err := fresh.Template(t.Context(), newHR(), values, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
@@ -719,6 +723,92 @@ items:
 				}
 				t.Log("verified persisted raw-list hit; Helm action would fail on a miss")
 			})
+		})
+	}
+	t.Run("cold coalescing", func(t *testing.T) {
+		t.Parallel()
+		for _, disk := range []bool{false, true} {
+			t.Run(fmt.Sprintf("disk_%t", disk), func(t *testing.T) {
+				t.Parallel()
+				root := ""
+				if disk {
+					root = t.TempDir()
+				}
+				dir := t.TempDir()
+				testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+				testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata:\n  action: {{ .Values.probe | quote }}\n")
+				cli := NewClient(cachetest.New(t, root, cache.New))
+				probe := make(templateActionProbe, 4)
+				var outputs [2][]map[string]any
+				var wg sync.WaitGroup
+				start := make(chan struct{})
+				for i := range outputs {
+					wg.Go(func() {
+						<-start
+						var err error
+						outputs[i], _, err = cli.Template(t.Context(), newHR(), map[string]any{"probe": probe}, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+						assert.NoError(t, err)
+					})
+				}
+				close(start)
+				wg.Wait()
+				assert.Equal(t, len(probe), 1)
+				assert.Diff(t, outputs[0], outputs[1])
+				outputs[0][0]["data"].(map[string]any)["action"] = "mutated"
+				again, _, err := cli.Template(t.Context(), newHR(), map[string]any{"probe": probe}, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				assert.NoError(t, err)
+				assert.Diff(t, again, outputs[1])
+				assert.Equal(t, len(probe), 1)
+			})
+		}
+	})
+	for _, failure := range []string{"template", "post-renderer"} {
+		t.Run(failure+" diagnostics", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+			body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata:\n  action: {{ .Values.probe | quote }}\n"
+			hr := newHR()
+			hr.DisableSchemaValidation = true
+			want := "producer diagnostic"
+			if failure == "template" {
+				body += `{{ fail "producer diagnostic" }}`
+			} else {
+				want = "error while running post render"
+				hr.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{Patches: []kustomize.Patch{{
+					Patch:  "- op: replace\n  path: /data/missing/child\n  value: changed\n",
+					Target: &kustomize.Selector{Kind: "ConfigMap", Name: "demo"},
+				}}}}}
+			}
+			testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", body)
+			cli := NewClient(cachetest.New(t, "", cache.New))
+			cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
+			probe := make(templateActionProbe, 4)
+			var previous error
+			for i, keyed := range []bool{false, true} {
+				values := map[string]any{"probe": probe}
+				if !keyed {
+					values["unused"] = func() {}
+				}
+				var key string
+				out, _, err := cli.Template(t.Context(), hr, values, RenderOptions{Sources: cliSources, Admit: func(value string) (bool, error) {
+					key = value
+					return false, nil
+				}})
+				assert.Equal(t, key != "", keyed)
+				assert.Equal(t, len(probe), i+1)
+				if len(out) != 0 || err == nil || !strings.HasPrefix(err.Error(), "helm template default/demo: ") || !strings.Contains(err.Error(), want) {
+					t.Fatalf("keyed=%t: output %v, error %v", keyed, out, err)
+				}
+				if _, storage := errors.AsType[*cache.CacheError](err); storage {
+					t.Fatalf("keyed=%t: producer failure classified as storage: %v", keyed, err)
+				}
+				assert.Equal(t, errors.Is(err, manifest.ErrFlux), keyed)
+				if previous != nil {
+					assert.Equal(t, err.Error(), previous.Error())
+				}
+				previous = err
+			}
 		})
 	}
 	t.Run("empty stream", func(t *testing.T) {
@@ -742,12 +832,12 @@ items:
 				assert.NoError(t, err)
 				loaded.values, loaded.valuesErr = cli.observeValuesFiles(t.Context(), loaded, newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
 				assert.NoError(t, loaded.valuesErr)
-				key := cache.BlobKey{Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()), PersistOnly: true}
+				key := cache.BlobKey{Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()), Render: cache.RenderAccepted}
 				r, _, _, err := cli.cache.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 				assert.NoError(t, err)
 				var record renderRecord
 				assert.NoError(t, readTestRecord(r, &record))
-				assert.NoError(t, r.Close())
+
 				decoded, err := manifest.DecodeRender(record.Output)
 				assert.NoError(t, err)
 				assert.Equal(t, len(decoded), 0)
@@ -859,17 +949,15 @@ extra: {sequence: [{value: original}]}
 			values := map[string]any{"greeting": "hi", "fail": true}
 			loaded.values, loaded.valuesErr = cli.observeValuesFiles(t.Context(), loaded, newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
 			assert.NoError(t, loaded.valuesErr)
-			key := cache.BlobKey{Content: computeTemplateKey(loaded, values, Options{}, newHR()), PersistOnly: true}
-			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			key := cache.BlobKey{Content: computeTemplateKey(loaded, values, Options{}, newHR()), Render: cache.RenderAccepted}
+			_, _, _, err = owner.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				err := writeTestRecord(w, key, renderRecord{Output: encodedRender(t, first), Analysis: loaded.analyze()})
 				return cache.ProducerResult{}, err
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := r.Close(); err != nil {
-				t.Fatal(err)
-			}
+
 			if err := owner.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -931,14 +1019,14 @@ extra: {sequence: [{value: original}]}
 				alternate["variant"] = true
 				loaded.values, loaded.valuesErr = cli.observeValuesFiles(t.Context(), loaded, newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
 				assert.NoError(t, loaded.valuesErr)
-				alternateKey := cache.BlobKey{Content: computeTemplateKey(loaded, alternate, Options{}, newHR()), PersistOnly: true}
+				alternateKey := cache.BlobKey{Content: computeTemplateKey(loaded, alternate, Options{}, newHR()), Render: cache.RenderAccepted}
 				r, _, _, err := cli.cache.Blob(t.Context(), alternateKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					err := writeTestRecord(w, alternateKey, *initial.record)
 					return cache.ProducerResult{}, err
 				})
 				assert.NoError(t, err)
 				assert.Equal(t, cache.AcquisitionIdentity(r) != initial.record.identity, true)
-				assert.NoError(t, r.Close())
+
 				var receipt21 *manifest.RenderReceipt
 				_, receipt21, err = cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources})
 				if err == nil {
@@ -955,7 +1043,7 @@ extra: {sequence: [{value: original}]}
 				}
 				for _, replacement := range []string{"changed output", "corrupt payload", "{", `{"Output":"bWlzc2luZyBhbmFseXNpcw=="}`} {
 					replacementDocs := []map[string]any{{"witness": replacement}}
-					r, _, _, err := cli.cache.Blob(t.Context(), alternateKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					_, _, _, err := cli.cache.Blob(t.Context(), alternateKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 						var err error
 						switch replacement {
 						case "corrupt payload":
@@ -968,7 +1056,7 @@ extra: {sequence: [{value: original}]}
 						return cache.ProducerResult{}, err
 					})
 					assert.NoError(t, err)
-					assert.NoError(t, r.Close())
+
 					out, receipt22, err := cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources})
 					if err == nil {
 						if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt22, emptyRenderInventory); recordErr != nil {
@@ -997,13 +1085,13 @@ extra: {sequence: [{value: original}]}
 					}
 				}
 				recoveryValues := map[string]any{"greeting": "hi"}
-				recoveryKey := cache.BlobKey{Content: computeTemplateKey(loaded, recoveryValues, Options{}, newHR()), PersistOnly: true}
-				r, _, _, err = cli.cache.Blob(t.Context(), recoveryKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+				recoveryKey := cache.BlobKey{Content: computeTemplateKey(loaded, recoveryValues, Options{}, newHR()), Render: cache.RenderAccepted}
+				_, _, _, err = cli.cache.Blob(t.Context(), recoveryKey, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					err := writeTestRecord(w, recoveryKey, renderRecord{Output: []byte("corrupt"), Analysis: loaded.analyze()})
 					return cache.ProducerResult{}, err
 				})
 				assert.NoError(t, err)
-				assert.NoError(t, r.Close())
+
 				beforeRecovery, err := cli.describeChart(t.Context(), newHR(), cliSources)
 				assert.NoError(t, err)
 				recovered, receipt23, err := cli.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources})
@@ -1017,14 +1105,17 @@ extra: {sequence: [{value: original}]}
 				assert.Diff(t, recovered, first)
 				afterRecovery, err := cli.describeChart(t.Context(), newHR(), cliSources)
 				assert.NoError(t, err)
-				if afterRecovery.record != beforeRecovery.record {
-					t.Fatal("corrupt payload was remembered as a typed record")
+				if afterRecovery.record == beforeRecovery.record || afterRecovery.record == nil {
+					t.Fatal("recovered generation did not replace the typed record")
 				}
+				recoveredOutput, err := manifest.DecodeRender(afterRecovery.record.Output)
+				assert.NoError(t, err)
+				assert.Diff(t, recoveredOutput, first)
 				r, _, _, err = cli.cache.Blob(t.Context(), recoveryKey, cache.Policy{MaxAge: cache.Forever}, nil)
 				assert.NoError(t, err)
 				var replacement renderRecord
 				assert.NoError(t, readTestRecord(r, &replacement))
-				assert.NoError(t, r.Close())
+
 				decoded, err := manifest.DecodeRender(replacement.Output)
 				assert.NoError(t, err)
 				assert.Diff(t, decoded, first)
@@ -1193,10 +1284,11 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 					t.Fatal("lookup fault fixture did not warm a typed record")
 				}
 				if fault == "read" {
-					r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: d.record.key, PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+					r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: d.record.key, Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
 					assert.NoError(t, err)
-					data, err := io.ReadAll(r)
-					assert.NoError(t, errors.Join(err, r.Close()))
+					data, err := fs.ReadFile(r, "content")
+					assert.NoError(t, err)
+
 					sum := digest.FromBytes(data)
 					blob := filepath.Join(root, "oci", "blobs", sum.Algorithm().String(), sum.Encoded())
 					assert.NoError(t, os.Remove(blob))
@@ -1371,22 +1463,23 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		if key == "" {
 			t.Fatal("fixture has no completed-output key")
 		}
-		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: key, Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
 		assert.NoError(t, err)
-		data, err := io.ReadAll(r)
-		assert.NoError(t, errors.Join(err, r.Close()))
+		data, err := fs.ReadFile(r, "content")
+		assert.NoError(t, err)
+
 		var record renderRecord
 		assert.NoError(t, decodeTestRecord(data, &record))
 		decoded, err := manifest.DecodeRender(record.Output)
 		assert.NoError(t, err)
 		assert.Diff(t, decoded, first)
 		cached := append(slices.Clone(first), map[string]any{"witness": "persistent hit witness"})
-		r, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			err := writeTestRecord(w, cache.BlobKey{Content: key, PersistOnly: true}, renderRecord{Output: encodedRender(t, cached), Analysis: initial.analyze()})
+		_, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: key, Render: cache.RenderAccepted}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			err := writeTestRecord(w, cache.BlobKey{Content: key, Render: cache.RenderAccepted}, renderRecord{Output: encodedRender(t, cached), Analysis: initial.analyze()})
 			return cache.ProducerResult{}, err
 		})
 		assert.NoError(t, err)
-		assert.NoError(t, r.Close())
+
 		fresh := NewClient(cachetest.New(t, cacheRoot, cache.New))
 		freshSources := NewSources(st)
 		hit, receipt36, err := fresh.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: freshSources})
@@ -1433,10 +1526,11 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		if key == "" {
 			t.Fatal("fixture has no completed-output key")
 		}
-		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: key, Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
 		assert.NoError(t, err)
-		data, err := io.ReadAll(r)
-		assert.NoError(t, errors.Join(err, r.Close()))
+		data, err := fs.ReadFile(r, "content")
+		assert.NoError(t, err)
+
 		var record renderRecord
 		assert.NoError(t, decodeTestRecord(data, &record))
 		decoded, err := manifest.DecodeRender(record.Output)

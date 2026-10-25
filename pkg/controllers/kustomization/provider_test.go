@@ -1,6 +1,7 @@
 package kustomization
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -132,7 +133,8 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	}
 	ks := obj.(*manifest.Kustomization)
 	st.AddObject(ks)
-	err = c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone)
+	tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { err = c.newExecution(ks.Named()).reconcile(ctx, ks, manifest.DrainNone) })
+	tasks.BlockTillDone()
 	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
 		t.Fatalf("strict engine failure lost classification: %v", err)
 	}

@@ -52,7 +52,7 @@ spec: {}
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	e := &orchestratorExistence{o: &Orchestrator{
-		store: idx.Store, index: idx.Index, cfg: Config{WipeSecrets: true},
+		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{WipeSecrets: true}},
 		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
 	}}
 	if !e.Promote(t.Context(), nil, id) || st.GetObject(id) == nil {
@@ -122,7 +122,7 @@ spec: {url: https://example.test/excluded.git}
 	controller := base.New(st, nil)
 	controller.Configure(base.Options{Filter: filter, Index: idx.Index})
 	e := &orchestratorExistence{o: &Orchestrator{
-		store: idx.Store, index: idx.Index, cfg: Config{WipeSecrets: true}, filter: filter,
+		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{WipeSecrets: true}}, filter: filter,
 		ksc: &kustomization.Controller{Controller: controller},
 	}}
 	size := len(filter.KeepNames())

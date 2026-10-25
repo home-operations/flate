@@ -46,14 +46,12 @@ func TestDAG_SourceWithoutFetcherIsNotSeeded(t *testing.T) {
 	}{{false, 0}, {true, 1}} {
 		t.Run(fmt.Sprint(tc.fetcher), func(t *testing.T) {
 			dir := t.TempDir()
-			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: 2})
+			o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
+				o.stop()
 			}()
 			delete(o.src.Fetchers, manifest.KindExternalArtifact)
 			if tc.fetcher {
@@ -108,24 +106,27 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	testutil.WriteFile(t, dir, "flux/consumer.yaml", ksYAML("consumer", "consumer", "ghost"))
 	testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer}\ndata: {k: v}\n")
-	o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := o.Bootstrap(t.Context()); err != nil {
+	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	o.configureControllers()
 	d := dagDispatcher{o}
 	victim, ghost := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "ghost")
-	result := d.Dispatch(t.Context(), victim, manifest.DrainCascade)
+	var result schedule.Result
+	o.tasks.Go(t.Context(), "dispatch fixture", func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainCascade) })
+	o.tasks.BlockTillDone()
 	info, _ := o.store.GetStatus(victim)
 	if result.Assessment.Outcome() == schedule.Blocked || !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{ghost}) {
 		t.Fatalf("derived failure = %+v, want ghost blocker", info)
 	}
 	o.store.AddObject(&manifest.Kustomization{Name: ghost.Name, Namespace: ghost.Namespace})
 	o.store.UpdateStatus(ghost, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	result = d.Dispatch(t.Context(), victim, manifest.DrainNone)
+	o.tasks.Go(t.Context(), "dispatch fixture", func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) })
+	o.tasks.BlockTillDone()
 	info, _ = o.store.GetStatus(victim)
 	if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusReady || len(info.BlockedBy()) != 0 || len(o.store.FailedResources()) != 0 {
 		t.Fatalf("recovery status=%+v blockers=%v failures=%v", info, info.BlockedBy(), o.store.FailedResources())
@@ -135,17 +136,18 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 	ks.Path = "./missing-directory"
 	o.store.AddObject(ks)
 	o.store.UpdateFailure(victim, &manifest.DependencyFailedError{Parent: victim, Failed: []manifest.NamedResource{ghost}})
-	result = d.Dispatch(t.Context(), victim, manifest.DrainNone)
+	o.tasks.Go(t.Context(), "dispatch fixture", func(ctx context.Context) { result = d.Dispatch(ctx, victim, manifest.DrainNone) })
+	o.tasks.BlockTillDone()
 	info, _ = o.store.GetStatus(victim)
 	if result.Assessment.Outcome() == schedule.Blocked || info.Status != store.StatusFailed || len(info.BlockedBy()) != 0 {
 		t.Fatalf("primary failure misclassified: status=%+v blockers=%v", info, info.BlockedBy())
 	}
 	t.Run("released pin recovery", func(t *testing.T) {
-		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+		o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer o.Stop()
+		defer o.stop()
 		o.configureControllers()
 		d := dagDispatcher{o}
 		consumer := ks.Clone()
@@ -207,9 +209,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 		}
 		assert.Diff(t, art.Manifests[0]["data"], map[string]any{"k": "v"})
 	})
-	if err := o.Stop(); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
+	o.stop()
 }
 
 func TestDAG_RedispatchErrorPropagates(t *testing.T) {
@@ -217,7 +217,7 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	testutil.WriteFile(t, dir, "flux/app.yaml", ksYAML("app", "app", ""))
 	testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\ndata: {k: v}\n")
-	o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,24 +237,24 @@ func TestDAG_RedispatchErrorPropagates(t *testing.T) {
 	defer unsub()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	_, err = o.Render(ctx)
+	_, err = o.render(ctx)
 	if err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil {
 		t.Fatalf("Render error=%v context=%v, want scheduler redispatch error", err, ctx.Err())
 	}
 }
 
-func TestWithFetcher_ExistenceOnlyDisabled(t *testing.T) {
+func TestSourceFetchers_ExistenceOnlyDisabled(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+	t.Cleanup(func() { o.stop() })
 	repo := &manifest.HelmRepository{Name: "repo", Namespace: "ns", URL: "https://charts.example"}
 	o.store.AddObject(repo)
 	if f, registered := o.src.Fetchers[manifest.KindHelmRepository]; !registered || f != nil || !o.schedulable(repo) || !slices.Contains(o.seedNodes(), repo.Named()) {
 		t.Fatal("default nil reservation did not enable scheduling")
 	}
-	o.WithFetcher(manifest.KindHelmRepository, nil)
+	delete(o.src.Fetchers, manifest.KindHelmRepository)
 	if o.schedulable(repo) || slices.Contains(o.seedNodes(), repo.Named()) {
 		t.Fatal("unregistered existence-only source still scheduled")
 	}

@@ -26,12 +26,15 @@ import (
 
 	"github.com/home-operations/flate/pkg/helm/deterministic"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/values"
 )
 
 var envSettings = sync.OnceValue(cli.New)
 
 const sourceHeader = "# Source: "
+
+var errUncacheableRender = errors.New("uncacheable helm render")
 
 // Template renders a HelmRelease and returns independently owned documents.
 // The immutable receipt may be persisted after complete accepted publication.
@@ -47,119 +50,176 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			return nil, nil, err
 		}
 	}
-	var cacheErr error
-	if key != "" && loaded.valuesErr == nil && capabilityErr == nil {
-		record, lookupErr := c.lookupRender(ctx, &loaded, key)
-		cacheErr = lookupErr
-		if record != nil {
-			docs, decodeErr := manifest.DecodeRender(record.Output)
-			if decodeErr == nil {
-				if !record.binding.same(prepared.binding) || record.receipt == nil {
-					fresh := *record
-					fresh.binding = prepared.binding
-					frame := record.frame
-					frame.binding = prepared.binding
-					binding := manifest.Fingerprint(prepared.binding)
-					if frame.header.Binding != binding {
-						frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-						frame.accepted, frame.acceptedKey, frame.identity = nil, "", ""
-					}
-					fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
-					record = &fresh
-				}
-				if record != loaded.record {
-					c.rememberDescription(loaded, record)
-				}
-				docs, err = normalizeLists(docs)
-				return docs, record.receipt, err
+	render := func(ctx context.Context, cacheErr error) ([]map[string]any, *manifest.RenderReceipt, error) {
+		err := c.decodeChart(ctx, &loaded)
+		if err != nil {
+			return nil, nil, err
+		}
+		var trackedVersion string
+		if hr.TracksDigest() {
+			version, err := ociChartVersion(loaded.chart.Metadata.Version, loaded.artifact.Revision)
+			if err != nil {
+				return nil, nil, fmt.Errorf("track oci chart version: %w", err)
+			}
+			if !opts.DisableChartDigestTracking {
+				trackedVersion = version
 			}
 		}
-	}
+		if capabilityErr != nil {
+			return nil, nil, capabilityErr
+		}
+		finalValues := hrValues
+		if len(hr.ChartValuesFiles) > 0 {
+			base, err := c.mergeChartValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+			if err != nil {
+				return nil, nil, fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
+			}
+			finalValues = values.DeepMergeInto(base, hrValues)
+		}
+		if cacheErr != nil {
+			return nil, nil, cacheErr
+		}
 
-	err = c.decodeChart(ctx, &loaded)
-	if err != nil {
-		return nil, nil, err
-	}
-	var trackedVersion string
-	if hr.TracksDigest() {
-		version, err := ociChartVersion(loaded.chart.Metadata.Version, loaded.artifact.Revision)
+		ch := cloneChartForRender(loaded.chart)
+		if trackedVersion != "" {
+			ch.Metadata.Version = trackedVersion
+		}
+
+		cfg := new(action.Configuration)
+		if err := cfg.Init(envSettings().RESTClientGetter(), hr.ReleaseNamespace(), ""); err != nil {
+			return nil, nil, fmt.Errorf("helm init: %w", err)
+		}
+		cfg.Capabilities = caps
+		// Helm applies CustomTemplateFuncs last. Each render needs its own stateful
+		// random stream, seeded by the release name and namespace in the cache key.
+		cfg.CustomTemplateFuncs = deterministic.Funcs(
+			deterministic.SeedFor(hr.ReleaseName(), hr.ReleaseNamespace()),
+		)
+
+		inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
+		inst.SkipSchemaValidation = schemaValidationSkipped(opts, hr, hrValues)
+
+		rel, err := inst.RunWithContext(ctx, ch, finalValues)
 		if err != nil {
-			return nil, nil, fmt.Errorf("track oci chart version: %w", err)
+			return nil, nil, fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
 		}
-		if !opts.DisableChartDigestTracking {
-			trackedVersion = version
+		relV1, ok := rel.(*release.Release)
+		if !ok {
+			return nil, nil, fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
 		}
-	}
-	if capabilityErr != nil {
-		return nil, nil, capabilityErr
-	}
-	finalValues := hrValues
-	if len(hr.ChartValuesFiles) > 0 {
-		base, err := c.mergeChartValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+
+		// Disabled dependencies must be pruned before validating their CRDs.
+		if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
+			if err := validateCRDs(ch); err != nil {
+				return nil, nil, err
+			}
+		}
+
+		skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
+		out := releaseManifest(relV1, opts, disableHooks, skipTests)
+		docs, err := manifest.SplitDocs([]byte(out))
 		if err != nil {
-			return nil, nil, fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
-		}
-		finalValues = values.DeepMergeInto(base, hrValues)
-	}
-	if cacheErr != nil {
-		return nil, nil, cacheErr
-	}
-
-	ch := cloneChartForRender(loaded.chart)
-	if trackedVersion != "" {
-		ch.Metadata.Version = trackedVersion
-	}
-
-	cfg := new(action.Configuration)
-	if err := cfg.Init(envSettings().RESTClientGetter(), hr.ReleaseNamespace(), ""); err != nil {
-		return nil, nil, fmt.Errorf("helm init: %w", err)
-	}
-	cfg.Capabilities = caps
-	// Helm applies CustomTemplateFuncs last. Each render needs its own stateful
-	// random stream, seeded by the release name and namespace in the cache key.
-	cfg.CustomTemplateFuncs = deterministic.Funcs(
-		deterministic.SeedFor(hr.ReleaseName(), hr.ReleaseNamespace()),
-	)
-
-	inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
-	inst.SkipSchemaValidation = schemaValidationSkipped(opts, hr, hrValues)
-
-	rel, err := inst.RunWithContext(ctx, ch, finalValues)
-	if err != nil {
-		return nil, nil, fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
-	}
-	relV1, ok := rel.(*release.Release)
-	if !ok {
-		return nil, nil, fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
-	}
-
-	// Disabled dependencies must be pruned before validating their CRDs.
-	if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
-		if err := validateCRDs(ch); err != nil {
 			return nil, nil, err
 		}
+		var receipt *manifest.RenderReceipt
+		if key != "" && utf8.ValidString(out) && validChartTemplates(loaded.chart) {
+			payload, err := manifest.EncodeRender(docs)
+			if err != nil {
+				return nil, nil, err
+			}
+			frame := renderFrame{header: renderHeader{Key: key, Analysis: loaded.analysis}, binding: prepared.binding, chart: loaded.chart, output: payload}
+			receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+		}
+		docs, err = normalizeLists(docs)
+		if err != nil {
+			return nil, nil, err
+		}
+		return docs, receipt, nil
 	}
-
-	skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
-	out := releaseManifest(relV1, opts, disableHooks, skipTests)
-	docs, err := manifest.SplitDocs([]byte(out))
-	if err != nil {
-		return nil, nil, err
+	if key == "" || loaded.valuesErr != nil || capabilityErr != nil {
+		return render(ctx, nil)
 	}
+	var docs []map[string]any
 	var receipt *manifest.RenderReceipt
-	if key != "" && utf8.ValidString(out) && validChartTemplates(loaded.chart) {
-		payload, err := manifest.EncodeRender(docs)
+	blobKey := cache.BlobKey{Content: key, Render: cache.RenderPending, Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
+		identity := cache.AcquisitionIdentity(generation)
+		record := loaded.record
+		if record == nil || record.key != key || record.identity != identity {
+			data, err := fs.ReadFile(generation, "content")
+			if err != nil {
+				return false, fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
+			}
+			frame, err := decodeFrame(data)
+			if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
+				return false, nil
+			}
+			frame.identity = identity
+			record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
+		}
+		var err error
+		docs, err = manifest.DecodeRender(record.Output)
 		if err != nil {
+			return false, nil
+		}
+		if record.Analysis.RequiresLoader {
+			if err := c.decodeChart(ctx, &loaded); err != nil {
+				return false, err
+			}
+		}
+		if loaded.oci != nil {
+			if _, err := ociChartVersion(record.Analysis.Version, loaded.artifact.Revision); err != nil {
+				return false, err
+			}
+		}
+		if !record.binding.same(prepared.binding) || record.receipt == nil {
+			fresh := *record
+			fresh.binding = prepared.binding
+			frame := record.frame
+			frame.binding = prepared.binding
+			binding := manifest.Fingerprint(prepared.binding)
+			if frame.header.Binding != binding {
+				frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
+				frame.accepted, frame.acceptedKey, frame.identity = nil, "", ""
+			}
+			fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+			record = &fresh
+		}
+		if record != loaded.record {
+			c.rememberDescription(loaded, record)
+		}
+		receipt = record.receipt
+		return true, nil
+	}}
+	_, _, _, err = c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+		var err error
+		docs, receipt, err = render(ctx, nil)
+		if err != nil {
+			return cache.ProducerResult{}, err
+		}
+		if receipt == nil {
+			return cache.ProducerResult{}, errUncacheableRender
+		}
+		frame := receipt.Value().(renderFrame)
+		if frame.header.Analysis == nil {
+			frame.header.Analysis = loaded.analyze()
+		}
+		data, err := encodeFrame(frame.header, frame.output)
+		if err == nil {
+			_, err = w.Write(data)
+		}
+		return cache.ProducerResult{}, err
+	})
+	if err != nil {
+		if _, storage := errors.AsType[*cache.CacheError](err); !storage {
+			if errors.Is(err, errUncacheableRender) {
+				return docs, nil, nil
+			}
 			return nil, nil, err
 		}
-		frame := renderFrame{header: renderHeader{Key: key, Analysis: loaded.analysis}, binding: prepared.binding, chart: loaded.chart, output: payload}
-		receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+		return render(ctx, err)
 	}
 	docs, err = normalizeLists(docs)
-	if err != nil {
-		return nil, nil, err
-	}
-	return docs, receipt, nil
+	return docs, receipt, err
 }
 
 type templateRequest struct {

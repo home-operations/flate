@@ -1,13 +1,16 @@
 package kustomization
 
 import (
+	"context"
+	"slices"
+	"testing"
+
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
-	"slices"
-	"testing"
 )
 
 func TestReconcile_OptionalMaterializerAbsence(t *testing.T) {
@@ -36,13 +39,16 @@ func TestReconcile_OptionalMaterializerAbsence(t *testing.T) {
 				ks.PostBuild.SubstituteFrom = append(ks.PostBuild.SubstituteFrom, manifest.SubstituteReference{Kind: required.Kind, Name: required.Name})
 			}
 			s.AddObject(ks)
-			assessment := c.ReconcileNode(t.Context(), ks.Named(), manifest.DrainNone)
+			var assessment *base.Execution
+			c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { assessment = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone) })
+			c.Tasks.BlockTillDone()
 			defer assessment.Close()
 			if tc.status == store.StatusPending || tc.required {
 				if assessment.Outcome() != schedule.Blocked || s.GetArtifact(ks.Named()) != nil {
 					t.Fatal("reader did not wait for its unresolved input")
 				}
-				assessment.Settle(t.Context(), manifest.DrainForce)
+				c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { assessment.Settle(ctx, manifest.DrainForce) })
+				c.Tasks.BlockTillDone()
 			}
 			info, _ := s.GetStatus(ks.Named())
 			if tc.required {

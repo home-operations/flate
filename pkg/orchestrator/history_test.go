@@ -43,21 +43,22 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 `))
 	testutil.WriteFile(t, root, "apps/red/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "apps/red/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n")
-	cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: cacheDir, Concurrency: 2}
-	warm, err := New(t.Context(), cfg)
+	tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}
+	cfg := Config{CacheDir: cacheDir, Concurrency: 2}
+	warm, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	assert.NoError(t, warm.Bootstrap(t.Context()))
-	assert.NoError(t, warm.Run(t.Context()))
+	assert.NoError(t, warm.bootstrap(t.Context()))
+	assert.NoError(t, warm.run(t.Context()))
 	owner := testutil.KustomizationID("apps", "emitter")
 	child := testutil.KustomizationID("apps", "child")
 	assert.Equal(t, warm.store.GetObject(child).(*manifest.Kustomization).Path, "./apps/red")
 	testutil.WriteFile(t, root, "apps/red/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: after}\n")
-	cfg.ExternalChanges = change.NewSet([]string{"apps/red/cm.yaml"})
-	fresh, err := New(t.Context(), cfg)
+	tree.ExternalChanges = change.NewSet([]string{"apps/red/cm.yaml"})
+	fresh, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, fresh.Stop()) })
+	t.Cleanup(func() { fresh.stop() })
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
-	assert.NoError(t, fresh.Bootstrap(t.Context()))
+	assert.NoError(t, fresh.bootstrap(t.Context()))
 	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
 	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
 	assert.Equal(t, fresh.store.GetArtifact(owner) == nil, true)
@@ -66,11 +67,11 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	for range fresh.store.Sweep() {
 		t.Fatal("Bootstrap left probe registrations waiting for retirement")
 	}
-	assert.NoError(t, fresh.Stop())
-	canceled, err := New(t.Context(), cfg)
+	fresh.stop()
+	canceled, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, canceled.Stop()) })
-	result, err := canceled.prepareBootstrap(t.Context())
+	t.Cleanup(func() { canceled.stop() })
+	err = canceled.discover(t.Context())
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -78,25 +79,29 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	input := *canceled.store.GetArtifact(ref).(*store.SourceArtifact)
 	input.FS = cancelRootFS{FS: input.FS, cancel: cancel}
 	canceled.store.SetArtifact(ref, &input)
-	err = canceled.completeBootstrap(ctx, result, cfg.ExternalChanges)
+	canceled.completeBootstrap()
+	canceled.cfg.ExternalChanges = tree.ExternalChanges
+	err = canceled.buildChangeFilter(ctx)
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, canceled.bootstrapped, false)
+	assert.Equal(t, canceled.filter == nil, true)
 }
 
 func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
-	o, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-	prepared, err := o.prepareBootstrap(t.Context())
+	t.Cleanup(func() { o.stop() })
+	err = o.discover(t.Context())
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	err = o.completeBootstrap(ctx, prepared, change.NewSet(nil))
+	o.completeBootstrap()
+	o.cfg.ExternalChanges = change.NewSet(nil)
+	err = o.buildChangeFilter(ctx)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, o.bootstrapped, false)
+	assert.Equal(t, o.filter == nil, true)
 	for range o.store.Sweep() {
 		t.Fatal("canceled preparation left probe registrations")
 	}
@@ -128,21 +133,22 @@ spec:
 `))
 	testutil.WriteFile(t, root, "apps/blue/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "apps/blue/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: before}\n")
-	cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2, SelfURLs: []string{"https://fixture.invalid/repo"}}
-	warm, err := New(t.Context(), cfg)
+	tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
+	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
+	warm, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	assert.NoError(t, warm.Bootstrap(t.Context()))
-	assert.NoError(t, warm.Run(t.Context()))
+	assert.NoError(t, warm.bootstrap(t.Context()))
+	assert.NoError(t, warm.run(t.Context()))
 	owner := (&manifest.HelmRelease{Namespace: "apps", Name: "emitter"}).Named()
 	child := testutil.KustomizationID("apps", "child")
 	assert.Equal(t, warm.store.GetObject(child).(*manifest.Kustomization).Path, "./apps/blue")
 	testutil.WriteFile(t, root, "apps/blue/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {value: after}\n")
-	cfg.ExternalChanges = change.NewSet([]string{"apps/blue/cm.yaml"})
-	fresh, err := New(t.Context(), cfg)
+	tree.ExternalChanges = change.NewSet([]string{"apps/blue/cm.yaml"})
+	fresh, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, fresh.Stop()) })
+	t.Cleanup(func() { fresh.stop() })
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
-	assert.NoError(t, fresh.Bootstrap(t.Context()))
+	assert.NoError(t, fresh.bootstrap(t.Context()))
 	assert.Equal(t, fresh.filter.ShouldReconcile(child), true)
 	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
@@ -170,20 +176,22 @@ func (f cancelProbeFS) Open(name string) (fs.File, error) {
 func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
-	o, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-	prepared, err := o.prepareBootstrap(t.Context())
+	t.Cleanup(func() { o.stop() })
+	err = o.discover(t.Context())
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	input := *o.store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
 	input.FS = cancelProbeFS{FS: input.FS, cancel: cancel}
 	o.store.SetArtifact(manifest.BootstrapSourceID, &input)
-	err = o.completeBootstrap(ctx, prepared, change.NewSet(nil))
+	o.completeBootstrap()
+	o.cfg.ExternalChanges = change.NewSet(nil)
+	err = o.buildChangeFilter(ctx)
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, o.bootstrapped, false)
+	assert.Equal(t, o.filter == nil, true)
 	owner := testutil.KustomizationID("apps", "emitter")
 	declaration := o.store.GetObject(owner).(*manifest.Kustomization).Clone()
 	declaration.Path = "./different"
@@ -225,14 +233,15 @@ spec:
 				testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
 			}
 
-			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
-				SelfURLs:       []string{"https://fixture.invalid/repo"},
+			tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
+
+			cfg := Config{CacheDir: t.TempDir(), Concurrency: 2,
 				SubstituteFrom: []SubstitutionSource{{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ROOT": "apps/red"}}}},
 				Substitute:     map[string]string{"ROOT": "apps/red"}, StrictSubstitutions: true,
 			}
-			warm, err := New(t.Context(), cfg)
+			warm, err := newTestOrchestrator(t, tree, cfg)
 			assert.NoError(t, err)
-			assert.NoError(t, warm.Bootstrap(t.Context()))
+			assert.NoError(t, warm.bootstrap(t.Context()))
 			warm.configureControllers()
 			owner := testutil.KustomizationID("apps", "emitter")
 			if mode == "helm_values_from" {
@@ -269,12 +278,12 @@ spec:
 			reads.Retire()
 			for range warm.store.Sweep() {
 			}
-			assert.NoError(t, warm.Stop())
-			cfg.ExternalChanges = change.NewSet([]string{"flux/consumer.yaml"})
-			fresh, err := New(t.Context(), cfg)
+			warm.stop()
+			tree.ExternalChanges = change.NewSet([]string{"flux/consumer.yaml"})
+			fresh, err := newTestOrchestrator(t, tree, cfg)
 			assert.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, fresh.Stop()) })
-			assert.NoError(t, fresh.Bootstrap(t.Context()))
+			t.Cleanup(func() { fresh.stop() })
+			assert.NoError(t, fresh.bootstrap(t.Context()))
 			assert.Equal(t, fresh.filter.ShouldReconcile(owner), mode == "substitute_from")
 			assert.Equal(t, fresh.filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")), true)
 			assert.Equal(t, fresh.store.GetArtifact(owner) == nil, true)
@@ -346,17 +355,17 @@ func TestRenderTrees_HistoryCancellation(t *testing.T) {
 		assert.NoError(t, err)
 		input.FS = &pairedHistoryCancelFS{FS: input.FS, enabled: &enabled, arrived: &arrived, cancel: cancel, done: ctx.Done()}
 		inputs[side] = input
-		warm, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input, CacheDir: cacheDir, Concurrency: 2})
+		warm, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}, Config{CacheDir: cacheDir, Concurrency: 2})
 		assert.NoError(t, err)
-		assert.NoError(t, warm.Bootstrap(t.Context()))
-		assert.NoError(t, warm.Run(t.Context()))
-		assert.NoError(t, warm.Stop())
+		assert.NoError(t, warm.bootstrap(t.Context()))
+		assert.NoError(t, warm.run(t.Context()))
+		warm.stop()
 	}
 	enabled.Store(true)
-	left, right, err := RenderTrees(ctx, Tree{RepoRoot: roots[0], Path: filepath.Join(roots[0], "flux")}, Tree{RepoRoot: roots[1], Path: filepath.Join(roots[1], "flux")}, Config{BaseInput: inputs[0], Input: inputs[1], CacheDir: cacheDir, ExternalChanges: change.NewSet([]string{"flux/emitter.yaml"}), Concurrency: 2})
+	results, err := RenderTrees(ctx, []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: roots[0], Path: filepath.Join(roots[0], "flux"), Input: inputs[0], ExternalChanges: change.NewSet([]string{"flux/emitter.yaml"})}, {ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: roots[1], Path: filepath.Join(roots[1], "flux"), Input: inputs[1], ExternalChanges: change.NewSet([]string{"flux/emitter.yaml"})}}, Config{CacheDir: cacheDir, Concurrency: 2})
 	assert.Equal(t, arrived.Load(), int32(2))
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	for _, side := range []Rendered{left, right} {
+	for _, side := range results {
 		if side.Orchestrator != nil || side.Result == nil || len(side.Result.Manifests) != 0 || !errors.Is(side.Err, context.Canceled) {
 			t.Fatalf("canceled history escaped failed-bootstrap result: %+v", side)
 		}
@@ -375,18 +384,19 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 			testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n")
-			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: cacheDir, Concurrency: 2}
+			tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}
+			cfg := Config{CacheDir: cacheDir, Concurrency: 2}
 			if mode == "hit" {
-				warm, err := New(t.Context(), cfg)
+				warm, err := newTestOrchestrator(t, tree, cfg)
 				assert.NoError(t, err)
-				assert.NoError(t, warm.Bootstrap(t.Context()))
-				assert.NoError(t, warm.Run(t.Context()))
-				assert.NoError(t, warm.Stop())
+				assert.NoError(t, warm.bootstrap(t.Context()))
+				assert.NoError(t, warm.run(t.Context()))
+				warm.stop()
 			}
-			current, err := New(t.Context(), cfg)
+			current, err := newTestOrchestrator(t, tree, cfg)
 			assert.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, current.Stop()) })
-			_, err = current.prepareBootstrap(t.Context())
+			t.Cleanup(func() { current.stop() })
+			err = current.discover(t.Context())
 			assert.NoError(t, err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -403,7 +413,8 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 				declaration := current.store.GetObject(owner).(*manifest.Kustomization)
 				done := make(chan struct{})
 				runtime.AddCleanup(declaration, func(done chan struct{}) { close(done) }, done)
-				err := current.buildChangeFilter(ctx, root, change.NewSet(nil))
+				current.cfg.ExternalChanges = change.NewSet(nil)
+				err := current.buildChangeFilter(ctx)
 				if mode == "cancel" {
 					assert.Equal(t, errors.Is(err, context.Canceled), true)
 				} else {

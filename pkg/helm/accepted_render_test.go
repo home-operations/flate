@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -53,11 +54,8 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	raw, err := manifest.DecodeRender(frame.output)
 	assert.NoError(t, err)
 	assert.Equal(t, hasRenderField(raw, "name", "original"), true)
-	key := cache.BlobKey{Content: frame.header.Key, PersistOnly: true}
-	if reader, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil); !errors.Is(err, errdef.ErrNotFound) {
-		if reader != nil {
-			assert.NoError(t, reader.Close())
-		}
+	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
+	if _, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil); !errors.Is(err, errdef.ErrNotFound) {
 		t.Fatalf("standalone template wrote durable output: %v", err)
 	}
 	assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), receipt, nil))
@@ -98,12 +96,12 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 				assert.NoError(t, err)
 				accepted, err := encodeAccepted(hr.Named(), invalidFrame, maps.All(records))
 				assert.NoError(t, err)
-				reader, _, _, err := isolated.cache.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+				_, _, _, err = isolated.cache.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					_, err := io.Copy(w, io.MultiReader(bytes.NewReader(invalidReceipt), bytes.NewReader(accepted)))
 					return cache.ProducerResult{}, err
 				})
 				assert.NoError(t, err)
-				assert.NoError(t, reader.Close())
+
 				prepared, err := isolated.prepareTemplate(t.Context(), hr, nil, input)
 				assert.NoError(t, err)
 				defer func() {
@@ -135,8 +133,8 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			prepared.loaded.record = remembered
 			reader, _, _, err := isolated.cache.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 			assert.NoError(t, err)
-			data, err := io.ReadAll(reader)
-			assert.NoError(t, errors.Join(err, reader.Close()))
+			data, err := fs.ReadFile(reader, "content")
+			assert.NoError(t, err)
 			foreign := key
 			foreign.Content = "foreign"
 			reader, _, _, err = isolated.cache.Blob(t.Context(), foreign, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
@@ -145,7 +143,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			})
 			assert.NoError(t, err)
 			assert.Equal(t, cache.AcquisitionIdentity(reader), remembered.identity)
-			assert.NoError(t, reader.Close())
+
 			found, err := isolated.lookupRender(t.Context(), &prepared.loaded, "foreign")
 			assert.NoError(t, err)
 			if found != nil {
@@ -214,8 +212,8 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 				t.Helper()
 				reader, descriptor, _, err := renderer.cache.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 				assert.NoError(t, err)
-				data, err := io.ReadAll(reader)
-				assert.NoError(t, errors.Join(err, reader.Close()))
+				data, err := fs.ReadFile(reader, "content")
+				assert.NoError(t, err)
 				stored, err := decodeFrame(data)
 				assert.NoError(t, err)
 				content := descriptor.Annotations[acceptedRenderAnnotation]
@@ -258,14 +256,14 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			check()
 			reader, _, _, err := renderer.cache.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 			assert.NoError(t, err)
-			data, err := io.ReadAll(reader)
-			assert.NoError(t, errors.Join(err, reader.Close()))
-			reader, _, _, err = renderer.cache.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			data, err := fs.ReadFile(reader, "content")
+			assert.NoError(t, err)
+			_, _, _, err = renderer.cache.Blob(t.Context(), key, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				_, err := w.Write(data)
 				return cache.ProducerResult{}, err
 			})
 			assert.NoError(t, err)
-			assert.NoError(t, reader.Close())
+
 			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
 			assert.Equal(t, storedKey(), initialKey)
 			assert.NoError(t, renderer.cache.Close())
@@ -425,12 +423,12 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	header.Analysis = &analysis
 	payload, err := encodeFrame(header, resident.Output)
 	assert.NoError(t, err)
-	reader, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: resident.key, PersistOnly: true}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+	_, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: resident.key, Render: cache.RenderAccepted}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		_, err := w.Write(payload)
 		return cache.ProducerResult{}, err
 	})
 	assert.NoError(t, err)
-	assert.NoError(t, reader.Close())
+
 	if _, _, err := client.Template(t.Context(), hr, nil, input); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("replaced OCI generation escaped version validation: %v", err)
 	}
@@ -502,12 +500,12 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 			accepted, err := encodeAccepted(changed.Named(), stored, emptyRenderInventory)
 			assert.NoError(t, err)
-			reader, _, _, err := renderer.cache.Blob(t.Context(), cache.BlobKey{Content: prepared.key, PersistOnly: true}, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			_, _, _, err = renderer.cache.Blob(t.Context(), cache.BlobKey{Content: prepared.key, Render: cache.RenderAccepted}, cache.Policy{MaxAge: 0}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				_, err := io.Copy(w, io.MultiReader(bytes.NewReader(wire), bytes.NewReader(accepted)))
 				return cache.ProducerResult{}, err
 			})
 			assert.NoError(t, err)
-			assert.NoError(t, reader.Close())
+
 			if _, complete := renderer.PreviousRender(t.Context(), changed, nil, current); complete {
 				t.Fatal("foreign source coordinate borrowed history")
 			}

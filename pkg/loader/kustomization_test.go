@@ -225,6 +225,10 @@ spec: {path: ./apps, sourceRef: {kind: GitRepository, name: source}}
 ---
 plain: data
 ---
+{}
+---
+# empty document
+---
 apiVersion: v1
 kind: ConfigMap
 metadata: 7
@@ -252,10 +256,13 @@ metadata: {name: pending}
 `)
 		var objects []manifest.BaseManifest
 		opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
-		err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(child store.Child) {
+		var ordinals []int
+		err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(child store.Child, ordinal int, _ string) {
 			obj := child.Obj
 			objects = append(objects, obj)
+			ordinals = append(ordinals, ordinal)
 		})
+		assert.Diff(t, ordinals, []int{0, 7})
 		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || len(objects) != 2 {
 			t.Fatalf("objects=%v err=%v", objects, err)
 		}

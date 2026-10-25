@@ -22,7 +22,7 @@ import (
 type document struct {
 	body          *types.Kustomization
 	file          string
-	objects       []store.Child
+	objects       []parsedObject
 	built         []store.Child
 	selected      bool
 	eligible      fileEligibility
@@ -33,9 +33,16 @@ type document struct {
 	loaded        bool
 	bootstrap     bool
 	traversed     bool
+	adHoc         bool
 	buildExcluded bool
 	pathState     pathState
 	searched      bool
+}
+
+type parsedObject struct {
+	store.Child
+	ordinal int
+	version string
 }
 
 type pathState uint8
@@ -53,6 +60,7 @@ type documentReader struct {
 	cache     map[string]document
 	views     map[string]fs.FS
 	artifacts map[string]*store.SourceArtifact
+	parsed    *ParsedInputs
 	regular   bool
 }
 
@@ -130,6 +138,10 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 }
 
 func (l *Loader) mountSources() {
+	l.documents.parsed = nil
+	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets {
+		l.documents.parsed = inputs
+	}
 	changed := l.documents.mountSources(l.Store, l.Index)
 	if len(changed) == 0 {
 		return
@@ -199,6 +211,7 @@ func (r documentReader) mountedRoot(file string) string {
 }
 
 func (r *documentReader) read(dir string) (*types.Kustomization, string) {
+	r.restore(dir)
 	cached, seen := r.cache[dir]
 	if seen && (cached.body != nil || cached.searched || cached.pathState == pathFile || cached.pathState == pathMissing) {
 		return cached.body, cached.file

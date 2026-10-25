@@ -51,9 +51,9 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 	testutil.WriteFile(t, root, "reader/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: flux-system}\ndata: {greeting: '${GREETING:=fallback}'}\n")
 	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 	testutil.WriteFile(t, root, "chart/templates/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: flux-system}\ndata: {greeting: {{ .Values.greeting | default \"fallback\" | quote }}}\n")
-	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+	t.Cleanup(func() { o.stop() })
 	location, err := gitrepo.Locate(t.Context(), root, "")
 	assert.NoError(t, err)
 	input, err := gittree.AdmitDirectory(t.Context(), location)
@@ -410,13 +410,13 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 				testutil.WriteFile(t, root, "supplier.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: supplier, namespace: apps}\nspec:\n  resources:\n    - apiVersion: v1\n      kind: "+kind+"\n      metadata: {name: input}\n      "+field+": {GREETING: exact}\n")
 				var previous map[manifest.NamedResource][]map[string]any
 				for range 2 {
-					cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2}
+					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
 					if changed {
 						cfg.ExternalChanges = change.NewSet([]string{"reader/output.yaml"})
 					}
-					o, err := New(t.Context(), cfg)
+					o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 					assert.NoError(t, err)
-					t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+					t.Cleanup(func() { o.stop() })
 					reader := testutil.KustomizationID("apps", "reader")
 					supplier := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "supplier"}
 					target := manifest.NamedResource{Kind: kind, Namespace: "apps", Name: "input"}
@@ -484,14 +484,14 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			testutil.WriteFile(t, root, "producer/kustomization.yaml", "namespace: apps\nresources: [generator.yaml, reader.yaml]\n")
 			testutil.WriteFile(t, root, "producer/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator}\nspec:\n  pathPattern: '@repo/{app}'\n  artifacts: [{name: 'app-{app}'}]\n")
 			testutil.WriteFile(t, root, "producer/reader.yaml", testutil.KustomizationYAML("reader", "apps", "  path: ./workload\n  sourceRef: {kind: ExternalArtifact, name: app-api}\n"))
-			cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2}
+			cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
 			if changed {
 				cfg.ExternalChanges = change.NewSet([]string{"producer/reader.yaml"})
 			}
-			o, err := New(t.Context(), cfg)
+			o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 			assert.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-			assert.NoError(t, o.Bootstrap(t.Context()))
+			t.Cleanup(func() { o.stop() })
+			assert.NoError(t, o.bootstrap(t.Context()))
 			o.configureControllers()
 			d := dagDispatcher{o}
 			producer := testutil.KustomizationID("apps", "producer")

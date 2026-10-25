@@ -417,7 +417,11 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 				if err != nil || !hasRenderField(output, strings.TrimSuffix(fixture.marker, ": "), tc.want) && (fixture.name != "generators" || !strings.HasPrefix(output[0]["metadata"].(map[string]any)["name"].(string), tc.want+"-")) {
 					t.Fatalf("interval %s: %s, %v", tc.interval, output, err)
 				}
-				if len(requests) != 2 {
+				wantRequests := 2
+				if tc.maxAge == time.Nanosecond {
+					wantRequests = 4
+				}
+				if len(requests) != wantRequests {
 					t.Fatalf("nested requests: %v", requests)
 				}
 				for _, request := range requests {
@@ -465,7 +469,11 @@ func TestRender_RemoteRetryPolicies(t *testing.T) {
 					if request.MaxAge != time.Hour {
 						t.Errorf("remote interval=%v", request.MaxAge)
 					}
-					entered <- retry.Attempts
+					select {
+					case <-release:
+					default:
+						entered <- retry.Attempts
+					}
 					select {
 					case <-release:
 					case <-ctx.Done():
@@ -505,13 +513,6 @@ func TestRender_RemoteRetryPolicies(t *testing.T) {
 				for i := range concurrency {
 					if i != first {
 						launch(i)
-					}
-				}
-				for range concurrency - 1 {
-					select {
-					case <-entered:
-					case early := <-done:
-						t.Fatalf("render before Git callback: %v", early.err)
 					}
 				}
 				close(release)

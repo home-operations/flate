@@ -15,13 +15,14 @@ func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const workers = 3
 		s := NewBounded(workers)
+		trees := []*Service{s, s.Fork(), s.Fork()}
 
 		var inFlight, peak atomic.Int64
 		gate := make(chan struct{})
 
 		const submits = 12
-		for range submits {
-			s.Go(t.Context(), "w", func(_ context.Context) {
+		for i := range submits {
+			trees[i%len(trees)].Go(t.Context(), "w", func(_ context.Context) {
 				n := inFlight.Add(1)
 				for {
 					p := peak.Load()
@@ -39,7 +40,9 @@ func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
 			t.Errorf("expected exactly %d bodies active behind the semaphore, got %d", workers, got)
 		}
 		close(gate)
-		s.BlockTillDone()
+		for _, tree := range trees {
+			tree.BlockTillDone()
+		}
 		if got := peak.Load(); got > workers {
 			t.Errorf("peak in-flight = %d, want <= %d", got, workers)
 		}
@@ -61,78 +64,67 @@ func TestNewBounded_Unbounded(t *testing.T) {
 
 func TestService_BlockTillDone(t *testing.T) {
 	t.Parallel()
-	s := NewBounded(0)
-	var n atomic.Int64
-	for range 50 {
-		s.Go(context.Background(), "w", func(_ context.Context) {
-			time.Sleep(time.Millisecond)
-			n.Add(1)
-		})
-	}
-	s.BlockTillDone()
-	assert.Equal(t, n.Load(), int64(50))
+	synctest.Test(t, func(t *testing.T) {
+		parent := NewBounded(2)
+		first, second := parent.Fork(), parent.Fork()
+		release := make(chan struct{})
+		second.Go(t.Context(), "held", func(context.Context) { <-release })
+		first.Go(t.Context(), "complete", func(context.Context) {})
+		firstDone, secondDone := make(chan struct{}), make(chan struct{})
+		go func() { first.BlockTillDone(); close(firstDone) }()
+		go func() { second.BlockTillDone(); close(secondDone) }()
+		synctest.Wait()
+		select {
+		case <-firstDone:
+		default:
+			t.Fatal("completed tree waited for its sibling")
+		}
+		select {
+		case <-secondDone:
+			t.Fatal("held tree drained before its body completed")
+		default:
+		}
+		parent.BlockTillDone()
+		close(release)
+		<-secondDone
+	})
 }
 
 func TestService_PanicCountedAndRecovered(t *testing.T) {
 	t.Parallel()
-	s := NewBounded(0)
-	s.Go(context.Background(), "boom", func(_ context.Context) {
-		panic("oops")
-	})
-	s.BlockTillDone()
-	assert.Equal(t, s.Failures(), int64(1))
+	parent := NewBounded(2)
+	first, second := parent.Fork(), parent.Fork()
+	first.Go(t.Context(), "boom", func(context.Context) { panic("oops") })
+	second.Go(t.Context(), "complete", func(context.Context) {})
+	first.BlockTillDone()
+	second.BlockTillDone()
+	assert.Equal(t, first.Failures(), int64(1))
+	assert.Equal(t, second.Failures(), int64(0))
+	assert.Equal(t, parent.Failures(), int64(0))
 }
 
-// TestYieldSlot_AllowsChildrenWhenParentsFillPool simulates the
-// parent/child Kustomization deadlock: two parents each take a slot in
-// a 2-worker pool, then block waiting on a child. Without YieldSlot
-// the children can never acquire a slot and the whole run hangs.
 func TestYieldSlot_AllowsChildrenWhenParentsFillPool(t *testing.T) {
-	s := NewBounded(2)
-	childrenStarted := make(chan struct{}, 2)
-	childrenDone := make(chan struct{})
-
-	// Two children that will run once they get a slot.
-	for range 2 {
-		s.Go(context.Background(), "child", func(_ context.Context) {
-			childrenStarted <- struct{}{}
-			<-childrenDone
-		})
-	}
-
-	// Two parents that occupy the slots and wait for the children.
-	parentsDone := make(chan struct{})
-	for range 2 {
-		s.Go(context.Background(), "parent", func(_ context.Context) {
-			s.YieldSlot(func() {
-				// Wait until both children have started — which can only
-				// happen if YieldSlot actually released our slot.
-				<-childrenStarted
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		parent := NewBounded(2)
+		parents, children := parent.Fork(), parent.Fork()
+		childrenDone := make(chan struct{})
+		for range 2 {
+			parents.Go(t.Context(), "parent", func(context.Context) {
+				parents.YieldSlot(func() { <-childrenDone })
 			})
-		})
-	}
-
-	go func() {
-		s.BlockTillDone()
-		close(parentsDone)
-	}()
-
-	// Both children must have started under YieldSlot.
-	select {
-	case <-time.After(2 * time.Second):
-		t.Fatal("children never started — YieldSlot did not release slots")
-	case <-parentsDone:
-		t.Fatal("parents finished before children started — unexpected ordering")
-	default:
-	}
-
-	// Release children; parents should reclaim slots and finish.
-	close(childrenDone)
-	select {
-	case <-parentsDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("parents never finished after children completed")
-	}
+		}
+		synctest.Wait()
+		var completed atomic.Int64
+		for range 2 {
+			children.Go(t.Context(), "child", func(context.Context) { completed.Add(1) })
+		}
+		children.BlockTillDone()
+		assert.Equal(t, completed.Load(), int64(2))
+		close(childrenDone)
+		parents.BlockTillDone()
+		assert.Equal(t, len(parent.sem), 0)
+	})
 }
 
 // TestYieldSlot_UnboundedIsNoOp asserts the no-pool path runs fn

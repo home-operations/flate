@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
@@ -525,5 +526,51 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 	id := testutil.KustomizationID("authored", "dual")
 	if _, ok := l.Index.Lookup(id); !ok || l.candidates[id].Obj == nil || st.GetObject(id) == nil || len(l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects) != 1 {
 		t.Fatal("terminal role suppressed a separately declared resource")
+	}
+}
+
+func TestOccurrences_InputSourceViews(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"mounted", "alias", "pinned"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			local := filepath.Join(root, ".artifacts", mode)
+			input := fstest.MapFS{
+				"entry/nested/kustomization.yaml": {Data: []byte("resources: [../../shared]\n")},
+				"shared/kustomization.yaml":       {Data: []byte("resources: [resource.yaml]\npatches: [{path: ../inputs/patch}]\n")},
+				"shared/resource.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mounted}\n")},
+			}
+			testutil.WriteFile(t, local, "shared/kustomization.yaml", "patches: [{path: ../inputs/host-only}]\n")
+			s := store.New()
+			source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}
+			s.AddObject(source)
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name, Namespace: source.Namespace}}
+			s.AddObject(owner)
+			art := &store.SourceArtifact{LocalRoot: local, LocalPath: local, FS: input}
+			if mode == "alias" {
+				art.InputAlias, art.LocalRoot = true, filepath.Join(root, "subtree")
+			}
+			if mode == "pinned" {
+				art.Key = "pinned"
+			}
+			s.SetArtifact(source.Named(), art)
+			l := New(s)
+			l.SourceRoot = root
+			admitForTest(s, root)
+			_, err := l.Load(t.Context(), filepath.Join(local, "entry"))
+			assert.NoError(t, err)
+			occurrences, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
+			assert.NoError(t, err)
+			if len(occurrences) != 1 || occurrences[0].Identity.Name != "mounted" || occurrences[0].Identity.Namespace != "projected" {
+				t.Fatalf("source-view occurrence projection: %+v", occurrences)
+			}
+			wantSource, wantFile := local, "shared/resource.yaml"
+			if mode == "alias" {
+				wantSource, wantFile = root, "subtree/shared/resource.yaml"
+			}
+			assert.Diff(t, occurrences[0].Declaration, OccurrenceID{Source: wantSource, File: wantFile, Document: 0})
+			assert.Equal(t, occurrences[0].Object.Named().Namespace, "")
+		})
 	}
 }

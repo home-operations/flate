@@ -40,6 +40,32 @@ type TestReport struct {
 	Matched int
 }
 
+// TestGroup holds one cluster's prepared test report.
+type TestGroup struct {
+	Cluster string
+	Report  TestReport
+}
+
+// TestGroups writes cluster rosters and totals followed by invocation totals.
+func (e Encoder) TestGroups(groups []TestGroup, elapsed time.Duration) error {
+	if len(groups) == 1 {
+		return e.Test(groups[0].Report, elapsed)
+	}
+	var total TestReport
+	var blocks []string
+	for _, g := range groups {
+		r := g.Report
+		blocks = append(blocks, "Cluster: "+g.Cluster, r.rosterBlock(e.Color), r.verdict(e.Color, 0))
+		total.Passed += r.Passed
+		total.Skipped += r.Skipped
+		total.Failed += r.Failed
+		total.Blocked = append(total.Blocked, r.Blocked...)
+	}
+	blocks = append(blocks, "Invocation totals\n"+total.verdict(e.Color, elapsed))
+	_, err := io.WriteString(e.Writer, Document(blocks...))
+	return err
+}
+
 // AnyFailed includes blocked-only runs, even without a primary failure in scope.
 func (r TestReport) AnyFailed() bool { return r.Failed > 0 || len(r.Blocked) > 0 }
 

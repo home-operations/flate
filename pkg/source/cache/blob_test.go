@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"testing/fstest"
@@ -57,11 +58,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		assertBlobRoots(t, c)
 		key := BlobKey{Content: "sha256-only"}
 		payload := []byte("SHA256 payload")
-		r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
+		_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		assert.NoError(t, r.Close())
+
 		checkUnused()
 		assert.NoError(t, c.Close())
 		c = cachetest.New(t, root, New)
@@ -71,12 +72,12 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err := io.ReadAll(r)
+		data, err := fs.ReadFile(r, "content")
 		assert.NoError(t, err)
 		assert.Diff(t, data, payload)
 		assert.Equal(t, restoredID, id)
 		assert.Equal(t, AcquisitionIdentity(r), digest.FromBytes(payload).String())
-		view := FileFS("unconventional.payload", r)
+		view := NameBlob("unconventional.payload", r)
 		assert.Equal(t, AcquisitionIdentity(view), manifest.Fingerprint([2]string{digest.FromBytes(payload).String(), "unconventional.payload"}))
 		assert.Equal(t, FileName(view), "unconventional.payload")
 		assert.Equal(t, FileName(struct{ fs.FS }{view}), "")
@@ -90,7 +91,6 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, FileName(tree), "")
 
-		assert.NoError(t, r.Close())
 		checkUnused()
 		if c.blobRoots[0].Root == nil {
 			t.Fatal("SHA256 read did not open its root")
@@ -102,21 +102,21 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		testutil.WriteFile(t, root, filepath.Join(blobDir(), digest.SHA384.String()), "not a directory")
 		c := cachetest.New(t, root, New)
 		key := BlobKey{Content: "unused-invalid-path"}
-		r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), ocispec.Descriptor{}))
+		_, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		assert.NoError(t, r.Close())
+
 		assert.NoError(t, c.Close())
 		c = cachetest.New(t, root, New)
-		r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err := io.ReadAll(r)
+		data, err := fs.ReadFile(r, "content")
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), "payload")
-		assert.NoError(t, r.Close())
+
 		assertBlobRoots(t, c, digest.SHA256)
 	})
 	t.Run("root-reuse", func(t *testing.T) {
@@ -125,11 +125,10 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		c := cachetest.New(t, root, New)
 		keys := []BlobKey{{Content: "reuse-first"}, {Content: "reuse-second"}}
 		for _, key := range keys {
-			r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte(key.Content.(string)), ocispec.Descriptor{}))
+			_, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte(key.Content.(string)), ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.NoError(t, r.Close())
 		}
 		assert.NoError(t, c.Close())
 		c = cachetest.New(t, root, New)
@@ -139,10 +138,10 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := io.ReadAll(r)
+			data, err := fs.ReadFile(r, "content")
 			assert.NoError(t, err)
 			assert.Equal(t, string(data), key.Content.(string))
-			assert.NoError(t, r.Close())
+
 			assertBlobRoots(t, c, digest.SHA256)
 			if retained != nil && c.blobRoots[0].Root != retained {
 				t.Fatal("distinct warm keys reopened the SHA256 root")
@@ -161,11 +160,10 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		keys := []BlobKey{{Content: "first"}, {Content: "second"}}
 		upstream := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"revision": "v1"}}
 		for _, key := range keys {
-			r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte(key.Content.(string)), upstream))
+			_, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte(key.Content.(string)), upstream))
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.NoError(t, r.Close())
 		}
 		assert.NoError(t, c.Close())
 		c = cachetest.New(t, root, New)
@@ -183,10 +181,9 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					return
 				}
 				assert.Diff(t, desc, upstream)
-				data, err := io.ReadAll(r)
-				closeErr := r.Close()
-				if err != nil || closeErr != nil || string(data) != key.Content.(string) {
-					t.Errorf("first read=%q, read=%v, close=%v", data, err, closeErr)
+				data, err := fs.ReadFile(r, "content")
+				if err != nil || string(data) != key.Content.(string) {
+					t.Errorf("first read=%q, read=%v", data, err)
 				}
 			})
 		}
@@ -212,11 +209,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		for _, algorithm := range blobAlgorithms {
 			key := BlobKey{Content: algorithm.String()}
 			payload := []byte(algorithm.String())
-			r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
+			_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.NoError(t, r.Close())
+
 			stored, err := c.store.Resolve(t.Context(), id)
 			if err != nil {
 				t.Fatal(err)
@@ -242,10 +239,9 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				data, err := io.ReadAll(r)
-				closeErr := r.Close()
-				if err != nil || closeErr != nil || string(data) != algorithm.String() {
-					t.Errorf("%s first read=%q, read=%v, close=%v", algorithm, data, err, closeErr)
+				data, err := fs.ReadFile(r, "content")
+				if err != nil || string(data) != algorithm.String() {
+					t.Errorf("%s first read=%q, read=%v", algorithm, data, err)
 				}
 			})
 		}
@@ -264,19 +260,19 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		t.Parallel()
 		c := cachetest.New(t, t.TempDir(), New)
 		key := BlobKey{Content: "recreated-parent"}
-		r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("first"), ocispec.Descriptor{}))
+		_, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("first"), ocispec.Descriptor{}))
 		assert.NoError(t, err)
-		assert.NoError(t, r.Close())
+
 		assert.NoError(t, os.RemoveAll(filepath.Join(c.root.Name(), blobDir())))
-		r, _, _, err = c.Blob(t.Context(), key, Policy{}, producer([]byte("second"), ocispec.Descriptor{}))
+		r, _, _, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("second"), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err := io.ReadAll(r)
+		data, err := fs.ReadFile(r, "content")
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), "second")
-		view := FileFS("payload", r)
-		assert.NoError(t, r.Close())
+		view := NameBlob("payload", r)
+
 		data, err = fs.ReadFile(view, "payload")
 		assert.NoError(t, err)
 		assert.Equal(t, string(data), "second")
@@ -292,11 +288,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 			key := BlobKey{Content: "indexed-digest"}
 			payload := []byte("independent readers")
 			upstream := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 123, MediaType: "upstream/type", Annotations: map[string]string{"revision": "v1"}}
-			r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, upstream))
+			_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer(payload, upstream))
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.NoError(t, r.Close())
+
 			stored, err := c.store.Resolve(t.Context(), id)
 			if err != nil {
 				t.Fatal(err)
@@ -307,11 +303,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 			}
 			assert.NoError(t, c.store.Tag(t.Context(), stored, id))
 			warmKey := BlobKey{Content: "independent-sha256"}
-			r, _, _, err = c.Blob(t.Context(), warmKey, Policy{}, producer([]byte("warm SHA256"), ocispec.Descriptor{}))
+			_, _, _, err = c.Blob(t.Context(), warmKey, Policy{}, producer([]byte("warm SHA256"), ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.NoError(t, r.Close())
+
 			assert.NoError(t, c.Close())
 			c = cachetest.New(t, root, New)
 			for range 2 {
@@ -319,10 +315,9 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				data, err := io.ReadAll(r)
+				data, err := fs.ReadFile(r, "content")
 				assert.NoError(t, err)
 				assert.Equal(t, string(data), "warm SHA256")
-				assert.NoError(t, r.Close())
 			}
 			assertBlobRoots(t, c, digest.SHA256)
 			var view fs.FS
@@ -333,9 +328,8 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				}
 				assert.Diff(t, desc, upstream)
 				assert.Equal(t, restoredID, id)
-				view = FileFS("payload", r)
+				view = NameBlob("payload", r)
 				assert.Equal(t, AcquisitionIdentity(view), manifest.Fingerprint([2]string{stored.Digest.String(), "payload"}))
-				assert.NoError(t, r.Close())
 			}
 			assertBlobRoots(t, c, digest.SHA256, algorithm)
 			var readers [2]fs.File
@@ -373,8 +367,12 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 			}
 			assert.NoError(t, c.root.Remove(parent))
 			assert.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, parent)))
-			if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, manifest.ErrFlux) {
-				t.Fatalf("coalesced acquisition accepted a replaced parent: reader=%v, error=%v", r, err)
+			generation, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+			if err == nil {
+				_, err = fs.ReadFile(generation, "content")
+			}
+			if !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("coalesced generation accepted a replaced parent: %v", err)
 			}
 			if reader, err := view.Open("payload"); reader != nil || err == nil {
 				t.Fatalf("held view accepted a replaced parent: reader=%v, error=%v", reader, err)
@@ -396,13 +394,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 						return ProducerResult{}, connReset()
 					}
 					policy := Policy{MaxAge: maxAge, Retry: fastRetry(3)}
-					r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("original"), ocispec.Descriptor{}))
+					_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("original"), ocispec.Descriptor{}))
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := r.Close(); err != nil {
-						t.Fatal(err)
-					}
+
 					lastGood, err := c.store.Resolve(t.Context(), id)
 					if err != nil {
 						t.Fatal(err)
@@ -463,13 +459,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 						t.Fatalf("second outcome=%+v, error=%v", next, err)
 					}
 					time.Sleep(1500 * time.Millisecond)
-					r, _, _, err = c.Blob(t.Context(), key, policy, producer([]byte("recovered"), ocispec.Descriptor{}))
+					_, _, _, err = c.Blob(t.Context(), key, policy, producer([]byte("recovered"), ocispec.Descriptor{}))
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := r.Close(); err != nil {
-						t.Fatal(err)
-					}
+
 					good, err := c.store.Resolve(t.Context(), id)
 					if err != nil || good.MediaType != "application/octet-stream" {
 						t.Fatalf("recovery descriptor=%+v, error=%v", good, err)
@@ -498,8 +492,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		identities[payload] = AcquisitionIdentity(FileFS("chart.tgz", r))
-		assert.NoError(t, r.Close())
+		identities[payload] = AcquisitionIdentity(NameBlob("chart.tgz", r))
 	}
 	for _, backing := range []string{"memory", "disk"} {
 		t.Run(backing, func(t *testing.T) {
@@ -524,14 +517,14 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				view := FileFS("chart.tgz", r)
+				view := NameBlob("chart.tgz", r)
 				assert.Equal(t, FileName(view), "chart.tgz")
 				readerPin := AcquisitionIdentity(r)
 				assert.Equal(t, readerPin, digest.FromString(payload).String())
-				assert.Equal(t, AcquisitionIdentity(struct{ io.ReadCloser }{r}), "")
+				assert.Equal(t, AcquisitionIdentity(struct{ fs.FS }{r}), "")
 				pin := AcquisitionIdentity(view)
 				assert.Equal(t, pin, identities[payload])
-				if pin == "" || pin == AcquisitionIdentity(FileFS("other.tgz", r)) || AcquisitionIdentity(struct{ fs.FS }{view}) != "" {
+				if pin == "" || pin == AcquisitionIdentity(NameBlob("other.tgz", r)) || AcquisitionIdentity(struct{ fs.FS }{view}) != "" {
 					t.Fatal("blob identity lost generation, filename or confinement")
 				}
 				if held != nil {
@@ -540,10 +533,11 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 						t.Fatalf("held generation changed: %q, %v", data, err)
 					}
 				}
-				if err := r.Close(); err != nil {
-					t.Fatal(err)
-				}
-				assert.Equal(t, AcquisitionIdentity(r), "")
+
+				stream, err := r.Open("content")
+				assert.NoError(t, err)
+				assert.NoError(t, stream.Close())
+				assert.Equal(t, AcquisitionIdentity(r), readerPin)
 				if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, nil); !errors.Is(err, errdef.ErrNotFound) || r != nil {
 					t.Fatalf("stale lookup: reader=%v, error=%v", r, err)
 				}
@@ -565,7 +559,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				restored := FileFS("chart.tgz", first)
+				restored := NameBlob("chart.tgz", first)
 				assert.Equal(t, AcquisitionIdentity(first), readerPin)
 				if AcquisitionIdentity(restored) != pin {
 					t.Fatal("blob restoration changed identity")
@@ -585,24 +579,22 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 						t.Error(err)
 						return
 					}
-					got, err := io.ReadAll(other)
-					closeErr := other.Close()
-					if err != nil || closeErr != nil || string(got) != payload {
-						t.Errorf("independent reader=%q, read=%v, close=%v", got, err, closeErr)
+					got, err := fs.ReadFile(other, "content")
+					if err != nil || string(got) != payload {
+						t.Errorf("independent reader=%q, read=%v", got, err)
 					}
 				})
 				wg.Wait()
-				got, err := io.ReadAll(first)
-				closeErr := first.Close()
-				if err != nil || closeErr != nil || string(got) != payload {
-					t.Fatalf("held reader=%q, read=%v, close=%v", got, err, closeErr)
+				got, err := fs.ReadFile(first, "content")
+				if err != nil || string(got) != payload {
+					t.Fatalf("held reader=%q, read=%v", got, err)
 				}
 			}
 		})
 	}
 }
 
-func TestBlob_PersistOnlyLifetime(t *testing.T) {
+func TestBlob_RenderLifetime(t *testing.T) {
 	original := processIdentity
 	t.Cleanup(func() { processIdentity = original })
 	for _, identity := range []string{"", "identified"} {
@@ -615,115 +607,311 @@ func TestBlob_PersistOnlyLifetime(t *testing.T) {
 						root = t.TempDir()
 					}
 					c := cachetest.New(t, root, New)
-					key := BlobKey{Content: "render-test-v1-payload", PersistOnly: true}
+					raw := BlobKey{Content: "raw-source"}
+					_, _, _, err := c.Blob(t.Context(), raw, Policy{MaxAge: Forever}, producer([]byte("source"), ocispec.Descriptor{}))
+					assert.NoError(t, err)
+
+					diskFiles := func() map[string]string {
+						files := map[string]string{}
+						if root != "" {
+							assert.NoError(t, fs.WalkDir(os.DirFS(root), ".", func(name string, d fs.DirEntry, err error) error {
+								if err != nil || d.IsDir() {
+									return err
+								}
+								data, err := os.ReadFile(filepath.Join(root, name))
+								files[name] = string(data)
+								return err
+							}))
+						}
+						return files
+					}
+					before := diskFiles()
+					key := BlobKey{Content: "render-test-v1-payload", Render: RenderPending}
+					if backing == "disk" && identity != "" {
+						key.Render = RenderAccepted
+					}
 					for _, content := range []any{"", struct{ Key string }{"render-test-v1-payload"}} {
-						if r, _, id, err := c.Blob(t.Context(), BlobKey{Content: content, PersistOnly: true}, Policy{MaxAge: Forever}, nil); r != nil || id != "" || !errors.Is(err, manifest.ErrInput) {
+						if r, _, id, err := c.Blob(t.Context(), BlobKey{Content: content, Render: RenderPending}, Policy{MaxAge: Forever}, nil); r != nil || id != "" || !errors.Is(err, manifest.ErrInput) {
 							t.Fatalf("invalid render identity: id=%q, %v", id, err)
 						}
 					}
 					if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 						t.Fatalf("cold lookup: %v", err)
 					}
-					persisted := backing == "disk" && identity != ""
 					calls := 0
-					r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+					produce := func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 						calls++
-						_, err := io.WriteString(w, "completed")
+						previous, err := w.Previous(ctx)
+						assert.NoError(t, err)
+						if calls > 1 {
+							if previous == nil {
+								t.Fatal("memory generation lost previous payload")
+							}
+							return ProducerResult{Unchanged: true}, nil
+						}
+						_, err = io.WriteString(w, "completed")
 						return ProducerResult{}, err
-					})
-					if err != nil {
-						t.Fatal(err)
 					}
-					want, wantCalls := "", 0
-					if persisted {
-						want, wantCalls = "completed", 1
+					for _, age := range []time.Duration{Forever, Forever, 0} {
+						r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: age}, produce)
+						assert.NoError(t, err)
+						data, _ := fs.ReadFile(r, "content")
+
+						assert.Equal(t, string(data), "completed")
 					}
-					data, err := io.ReadAll(r)
-					if err != nil || string(data) != want || calls != wantCalls {
-						t.Fatalf("publication=%q, calls=%d, error=%v", data, calls, err)
+					assert.Equal(t, calls, 2)
+					persisted := backing == "disk" && identity != ""
+					if !persisted {
+						assert.Diff(t, diskFiles(), before)
 					}
-					if err := r.Close(); err != nil {
-						t.Fatal(err)
-					}
-					if err := c.Close(); err != nil {
-						t.Fatal(err)
-					}
+					assert.NoError(t, c.Close())
 					c = cachetest.New(t, root, New)
-					r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+					r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 					if persisted {
-						if err != nil {
-							t.Fatal(err)
-						}
-						data, readErr := io.ReadAll(r)
-						if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "completed" {
-							t.Fatalf("reopened frame=%q, error=%v", data, err)
-						}
-						return
+						assert.NoError(t, err)
+						data, _ := fs.ReadFile(r, "content")
+
+						assert.Equal(t, string(data), "completed")
+					} else if r != nil || !errors.Is(err, errdef.ErrNotFound) {
+						t.Fatalf("reopened transient render: %v", err)
 					}
-					produce := func(context.Context, ProducerInput) (ProducerResult, error) {
-						t.Fatal("disabled PersistOnly ran failing producer")
-						return ProducerResult{}, connReset()
-					}
-					ctx := t.Context()
-					allocs := testing.AllocsPerRun(100, func() {
-						r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(3)}, produce)
-						if err != nil {
-							t.Fatal(err)
-						}
-						if err := r.Close(); err != nil {
-							t.Fatal(err)
-						}
-					})
-					if allocs > 2 {
-						t.Fatalf("disabled publication allocated %.0f times, want at most 2", allocs)
-					}
-					ctx, cancel := context.WithCancel(ctx)
-					cancel()
-					for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, producer(nil, ocispec.Descriptor{})} {
-						if r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, produce); r != nil || !errors.Is(err, context.Canceled) || !errors.Is(err, manifest.ErrFlux) {
-							t.Fatalf("disabled cancellation: %v", err)
-						}
-					}
-					if r != nil || !errors.Is(err, errdef.ErrNotFound) {
-						t.Fatalf("retained transient output: %v", err)
-					}
-					c.entries.Range(func(_, _ any) bool { t.Error("transient output installed an owner entry"); return true })
-					if backing == "disk" {
-						tags := []string{}
-						if err := c.store.Tags(t.Context(), "", func(page []string) error { tags = append(tags, page...); return nil }); err != nil {
-							t.Fatal(err)
-						}
-						if len(tags) != 0 {
-							t.Fatalf("transient output published tags: %v", tags)
-						}
-						if err := fs.WalkDir(os.DirFS(filepath.Join(c.root.Name(), ociDir)), ".", func(path string, entry fs.DirEntry, err error) error {
-							if err != nil {
-								return err
-							}
-							if !entry.IsDir() && path != "oci-layout" && path != "index.json" {
-								t.Errorf("transient output wrote %s", path)
-							}
-							return nil
-						}); err != nil {
-							t.Fatal(err)
-						}
-					}
-					source, _, _, err := c.Blob(t.Context(), BlobKey{Content: "blob-ordinary"}, Policy{MaxAge: Forever}, producer([]byte("source"), ocispec.Descriptor{}))
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := source.Close(); err != nil {
-						t.Fatal(err)
-					}
-					source, _, _, err = c.Blob(t.Context(), BlobKey{Content: "blob-ordinary"}, Policy{MaxAge: Forever}, nil)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if err := source.Close(); err != nil {
-						t.Fatal(err)
+					r, _, _, err = c.Blob(t.Context(), raw, Policy{MaxAge: Forever}, nil)
+					if root != "" {
+						assert.NoError(t, err)
+						data, _ := fs.ReadFile(r, "content")
+
+						assert.Equal(t, string(data), "source")
+					} else if !errors.Is(err, errdef.ErrNotFound) {
+						t.Fatalf("reopened memory source: %v", err)
 					}
 				})
 			}
+		})
+	}
+}
+
+func TestBlob_RenderAcquisition(t *testing.T) {
+	original := processIdentity
+	processIdentity = "identified"
+	t.Cleanup(func() { processIdentity = original })
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		accepted := BlobKey{Content: "render-acquisition", Render: RenderAccepted}
+		generation, _, _, err := c.Blob(t.Context(), accepted, Policy{}, producer([]byte("accepted"), ocispec.Descriptor{}))
+		assert.NoError(t, err)
+		var current atomic.Value
+		current.Store("accepted")
+		pending := BlobKey{Content: accepted.Content, Render: RenderPending, Validate: func(_ context.Context, input fs.FS) (bool, error) {
+			data, err := fs.ReadFile(input, "content")
+			return string(data) == current.Load().(string), err
+		}}
+		hit, _, _, err := c.Blob(t.Context(), pending, Policy{MaxAge: Forever}, nil)
+		assert.NoError(t, err)
+		data, err := fs.ReadFile(hit, "content")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "accepted")
+		current.Store("pending")
+		entered, release := make(chan struct{}), make(chan struct{})
+		var calls atomic.Int64
+		var wg sync.WaitGroup
+		run := func() {
+			input, _, _, err := c.Blob(t.Context(), pending, Policy{MaxAge: Forever}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+				calls.Add(1)
+				close(entered)
+				<-release
+				_, err := io.WriteString(w, "pending")
+				return ProducerResult{}, err
+			})
+			assert.NoError(t, err)
+			data, err := fs.ReadFile(input, "content")
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), "pending")
+		}
+		wg.Go(run)
+		<-entered
+		wg.Go(run)
+		synctest.Wait()
+		close(release)
+		wg.Wait()
+		assert.Equal(t, calls.Load(), int64(1))
+		data, err = fs.ReadFile(generation, "content")
+		assert.NoError(t, err)
+		assert.Equal(t, string(data), "accepted")
+		assert.NoError(t, c.Close())
+		c = cachetest.New(t, root, New)
+		if input, _, _, err := c.Blob(t.Context(), pending, Policy{MaxAge: Forever}, nil); input != nil || !errors.Is(err, errdef.ErrNotFound) {
+			t.Fatalf("unaccepted work survived owner close: %v", err)
+		}
+	})
+}
+
+func TestBlob_RenderValidation(t *testing.T) {
+	original := processIdentity
+	t.Cleanup(func() { processIdentity = original })
+	for _, backing := range []string{"memory", "unidentified disk", "identified disk", "identified disk due"} {
+		t.Run(backing, func(t *testing.T) {
+			processIdentity = ""
+			root := ""
+			if backing != "memory" {
+				root = t.TempDir()
+			}
+			if strings.HasPrefix(backing, "identified disk") {
+				processIdentity = "identified"
+			}
+			c := cachetest.New(t, root, New)
+			mode := RenderPending
+			if processIdentity != "" && root != "" {
+				mode = RenderAccepted
+			}
+			synctest.Test(t, func(t *testing.T) {
+				if backing == "identified disk due" {
+					_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared-render", Render: mode}, Policy{MaxAge: Forever}, func(context.Context, ProducerInput) (ProducerResult, error) { return ProducerResult{}, connReset() })
+					if !errors.Is(err, syscall.ECONNRESET) {
+						t.Fatalf("initial failure: %v", err)
+					}
+					time.Sleep(time.Second)
+				}
+				var calls, validations atomic.Int64
+				var current atomic.Value
+				current.Store("old")
+				entered, release := make(chan struct{}), make(chan struct{})
+				run := func(view func() string, pause bool) {
+					key := BlobKey{Content: "shared-render", Render: mode, Validate: func(_ context.Context, r fs.FS) (bool, error) {
+						validations.Add(1)
+						data, err := fs.ReadFile(r, "content")
+						return string(data) == view(), err
+					}}
+					r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+						calls.Add(1)
+						if pause {
+							close(entered)
+							<-release
+						}
+						_, err := io.WriteString(w, view())
+						return ProducerResult{}, err
+					})
+					assert.NoError(t, err)
+					data, _ := fs.ReadFile(r, "content")
+
+					assert.Equal(t, string(data), view())
+				}
+				var wg sync.WaitGroup
+				wg.Go(func() { run(func() string { return "old" }, true) })
+				<-entered
+				for range 2 {
+					wg.Go(func() { run(func() string { return current.Load().(string) }, false) })
+				}
+				synctest.Wait()
+				current.Store("new")
+				close(release)
+				wg.Wait()
+				assert.Equal(t, calls.Load(), int64(2))
+				wantValidations := int64(4)
+				if backing == "identified disk due" {
+					wantValidations = 5
+				}
+				assert.Equal(t, validations.Load(), wantValidations)
+				run(func() string { return "new" }, false)
+				assert.Equal(t, calls.Load(), int64(2))
+				failure := errors.New("caller validation failed")
+				key := BlobKey{Content: "shared-render", Render: mode, Validate: func(context.Context, fs.FS) (bool, error) { return false, failure }}
+				r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+				if r != nil || !errors.Is(err, failure) {
+					t.Fatalf("validator failure: %v", err)
+				}
+				key.Validate = func(context.Context, fs.FS) (bool, error) { return false, nil }
+				r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+				if r != nil || !errors.Is(err, errdef.ErrNotFound) {
+					t.Fatalf("invalid lookup: %v", err)
+				}
+			})
+		})
+	}
+}
+
+func TestBlob_NonReusableGeneration(t *testing.T) {
+	original := processIdentity
+	processIdentity = "identified"
+	t.Cleanup(func() { processIdentity = original })
+	for _, backing := range []string{"memory", "disk", "disk due"} {
+		t.Run(backing, func(t *testing.T) {
+			root := ""
+			if backing != "memory" {
+				root = t.TempDir()
+			}
+			c := cachetest.New(t, root, New)
+			synctest.Test(t, func(t *testing.T) {
+				key := BlobKey{Content: "changing-input", Render: RenderPending}
+				if root != "" {
+					key.Render = RenderAccepted
+				}
+				if backing == "disk due" {
+					_, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, ProducerInput) (ProducerResult, error) { return ProducerResult{}, connReset() })
+					if !errors.Is(err, syscall.ECONNRESET) {
+						t.Fatalf("initial failure: %v", err)
+					}
+					time.Sleep(time.Second)
+				}
+				var reads atomic.Int64
+				readInput := func() string { return fmt.Sprint(reads.Add(1)) }
+				entered, release := make(chan struct{}), make(chan struct{})
+				var generations [2]fs.FS
+				var payloads [2]string
+				run := func(i int) {
+					calls, validations := 0, 0
+					request := key
+					request.Validate = func(_ context.Context, generation fs.FS) (bool, error) {
+						validations++
+						data, err := fs.ReadFile(generation, "content")
+						return string(data) == readInput(), err
+					}
+					generation, _, _, err := c.Blob(t.Context(), request, Policy{MaxAge: Forever}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+						calls++
+						if calls > 1 {
+							return ProducerResult{}, fmt.Errorf("produced more than once in call %d", i)
+						}
+						payloads[i] = readInput()
+						if i == 0 {
+							close(entered)
+							<-release
+						}
+						_, err := io.WriteString(w, payloads[i])
+						return ProducerResult{}, err
+					})
+					if err != nil || calls != 1 || validations != 1 {
+						t.Errorf("call %d: productions=%d validations=%d error=%v", i, calls, validations, err)
+						return
+					}
+					generations[i] = generation
+				}
+				var wg sync.WaitGroup
+				wg.Go(func() { run(0) })
+				<-entered
+				wg.Go(func() { run(1) })
+				synctest.Wait()
+				close(release)
+				wg.Wait()
+				for i, generation := range generations {
+					if generation == nil {
+						continue
+					}
+					data, err := fs.ReadFile(generation, "content")
+					if err != nil || string(data) != payloads[i] {
+						t.Errorf("call %d: payload=%q want=%q error=%v", i, data, payloads[i], err)
+					}
+				}
+				if generation, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); generation != nil || !errors.Is(err, errdef.ErrNotFound) {
+					t.Fatalf("reused rejected generation: %v", err)
+				}
+				if root != "" {
+					assert.NoError(t, c.Close())
+					c = cachetest.New(t, root, New)
+					if generation, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); generation != nil || !errors.Is(err, errdef.ErrNotFound) {
+						t.Fatalf("persisted rejected generation: %v", err)
+					}
+				}
+			})
 		})
 	}
 }
@@ -734,11 +922,12 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 	t.Cleanup(func() { processIdentity = original })
 	for _, root := range []string{"", t.TempDir()} {
 		c := cachetest.New(t, root, New)
-		for _, persistOnly := range []bool{false, true} {
-			if persistOnly && root == "" {
-				continue
-			}
-			key := BlobKey{Content: "blob-error", PersistOnly: persistOnly}
+		modes := []RenderMode{0, RenderPending}
+		if root != "" {
+			modes = append(modes, RenderAccepted)
+		}
+		for _, render := range modes {
+			key := BlobKey{Content: "blob-error", Render: render}
 			failure := errors.New("failed completed producer")
 			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				_, _ = io.WriteString(w, "partial")
@@ -760,22 +949,34 @@ func TestBlob_FailuresRemainErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle := r.(*blobHandle)
-	if err := handle.ReadCloser.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Close(); !errors.Is(err, fs.ErrClosed) {
+	stream, err := r.Open("content")
+	assert.NoError(t, err)
+	assert.NoError(t, stream.Close())
+	if err := stream.Close(); !errors.Is(err, fs.ErrClosed) {
 		t.Fatalf("backing Close error was lost: %v", err)
 	}
-	if handle.ReadCloser != nil || handle.input.open != nil {
-		t.Fatal("failed Close retained the backing reader")
+	input := fileFS{name: "content", size: 7, open: func() (io.ReadCloser, error) { return stream, nil }}
+	_, readErr := fs.ReadFile(input, "content")
+	joined, ok := readErr.(interface{ Unwrap() []error })
+	if !ok || len(joined.Unwrap()) != 2 {
+		t.Fatalf("read and close failures were not joined: %v", readErr)
+	}
+	for i, op := range []string{"read", "close"} {
+		pathErr, ok := errors.AsType[*fs.PathError](joined.Unwrap()[i])
+		if !ok || pathErr.Op != op || !errors.Is(pathErr, fs.ErrClosed) {
+			t.Fatalf("%s failure was lost: %v", op, joined.Unwrap()[i])
+		}
 	}
 	e, _ := c.entries.Load(id)
 	if err := os.Remove(filepath.Join(c.root.Name(), blobPath(e.(*entry).stored.Digest))); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, fs.ErrNotExist) || errors.Is(err, errdef.ErrNotFound) || !errors.Is(err, manifest.ErrFlux) {
+		generation, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+		if err == nil {
+			_, err = fs.ReadFile(generation, "content")
+		}
+		if !errors.Is(err, fs.ErrNotExist) || errors.Is(err, errdef.ErrNotFound) || !errors.Is(err, manifest.ErrFlux) {
 			t.Fatalf("missing payload became miss: %v", err)
 		}
 	}
@@ -794,24 +995,20 @@ func TestBlob_ConcurrentPayloads(t *testing.T) {
 			<-start
 			payload := bytes.Repeat([]byte{byte(i)}, 2<<20)
 			key := BlobKey{Content: string(rune('a' + i))}
-			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
+			_, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			if err := r.Close(); err != nil {
-				t.Error(err)
-				return
-			}
-			r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+
+			r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			got, err := io.ReadAll(r)
-			closeErr := r.Close()
-			if err != nil || closeErr != nil || !bytes.Equal(got, payload) {
-				t.Errorf("concurrent payload %d differs: read=%v, close=%v", i, err, closeErr)
+			got, err := fs.ReadFile(r, "content")
+			if err != nil || !bytes.Equal(got, payload) {
+				t.Errorf("concurrent payload %d differs: read=%v", i, err)
 			}
 		})
 	}
@@ -837,9 +1034,9 @@ func TestBlob_Revalidation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				view := FileFS("content", r)
+				view := NameBlob("content", r)
 				identity := AcquisitionIdentity(view)
-				assert.NoError(t, r.Close())
+
 				loaded, _ := c.entries.Load(id)
 				first := loaded.(*entry)
 				resolved := first.resolved
@@ -867,11 +1064,12 @@ func TestBlob_Revalidation(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if gotID != id || AcquisitionIdentity(FileFS("content", r)) != identity || desc.Annotations["validator"] != "updated" {
+				if gotID != id || AcquisitionIdentity(NameBlob("content", r)) != identity || desc.Annotations["validator"] != "updated" {
 					t.Fatalf("unchanged id=%q, descriptor=%+v", gotID, desc)
 				}
-				body, err := io.ReadAll(r)
-				assert.NoError(t, errors.Join(err, r.Close()))
+				body, readErr := fs.ReadFile(r, "content")
+				assert.NoError(t, readErr)
+
 				assert.Equal(t, string(body), "payload")
 				loaded, _ = c.entries.Load(id)
 				next := loaded.(*entry)
@@ -887,11 +1085,11 @@ func TestBlob_Revalidation(t *testing.T) {
 					assert.NoError(t, c.Close())
 					c = cachetest.New(t, root, New)
 				}
-				r, desc, _, err = c.Blob(t.Context(), key, Policy{MaxAge: time.Second}, nil)
+				_, desc, _, err = c.Blob(t.Context(), key, Policy{MaxAge: time.Second}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
-				assert.NoError(t, r.Close())
+
 				if desc.Annotations["validator"] != "updated" {
 					t.Fatalf("validation metadata not persisted: %+v", desc)
 				}
@@ -899,7 +1097,6 @@ func TestBlob_Revalidation(t *testing.T) {
 				if !loaded.(*entry).resolved.Equal(next.resolved) {
 					t.Fatal("resolution time not persisted")
 				}
-
 			})
 		})
 	}
@@ -921,8 +1118,8 @@ func TestBlob_Revalidation(t *testing.T) {
 		upstream := ocispec.Descriptor{Digest: digest.FromString("upstream"), Size: 7, Annotations: map[string]string{"validator": "opaque"}}
 		r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), upstream))
 		assert.NoError(t, err)
-		identity := AcquisitionIdentity(FileFS("content", r))
-		assert.NoError(t, r.Close())
+		identity := AcquisitionIdentity(NameBlob("content", r))
+
 		stored, err := c.store.Resolve(t.Context(), id)
 		assert.NoError(t, err)
 		assert.NoError(t, c.Close())
@@ -937,10 +1134,11 @@ func TestBlob_Revalidation(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Diff(t, desc, upstream)
 		assert.Equal(t, gotID, id)
-		view := FileFS("content", r)
+		view := NameBlob("content", r)
 		assert.Equal(t, AcquisitionIdentity(view), identity)
-		body, err := io.ReadAll(r)
-		assert.NoError(t, errors.Join(err, r.Close()))
+		body, readErr := fs.ReadFile(r, "content")
+		assert.NoError(t, readErr)
+
 		assert.Equal(t, string(body), "payload")
 		current, err := c.store.Resolve(t.Context(), id)
 		assert.NoError(t, err)
@@ -965,9 +1163,9 @@ func TestBlob_Revalidation(t *testing.T) {
 			root := t.TempDir()
 			c := cachetest.New(t, root, New)
 			key := BlobKey{Content: "missing"}
-			r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("old"), ocispec.Descriptor{}))
+			_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("old"), ocispec.Descriptor{}))
 			assert.NoError(t, err)
-			assert.NoError(t, r.Close())
+
 			e, _ := c.entries.Load(id)
 			path := blobPath(e.(*entry).stored.Digest)
 			assert.NoError(t, c.root.Remove(path))
@@ -976,7 +1174,7 @@ func TestBlob_Revalidation(t *testing.T) {
 			}
 			assert.NoError(t, c.Close())
 			c = cachetest.New(t, root, New)
-			r, _, _, err = c.Blob(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+			r, _, _, err := c.Blob(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				previous, err := w.Previous(ctx)
 				if err != nil || previous != nil {
 					t.Fatalf("invalid previous=%+v, error=%v", previous, err)
@@ -985,8 +1183,9 @@ func TestBlob_Revalidation(t *testing.T) {
 				return ProducerResult{}, err
 			})
 			assert.NoError(t, err)
-			body, err := io.ReadAll(r)
-			assert.NoError(t, errors.Join(err, r.Close()))
+			body, readErr := fs.ReadFile(r, "content")
+			assert.NoError(t, readErr)
+
 			assert.Equal(t, string(body), "old")
 			info, err := c.root.Stat(path)
 			assert.NoError(t, err)
@@ -1125,8 +1324,8 @@ func TestBlob_RevalidationFailures(t *testing.T) {
 					key := BlobKey{Content: "failed-validation"}
 					r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("payload"), ocispec.Descriptor{Annotations: map[string]string{"validator": "original"}}))
 					assert.NoError(t, err)
-					view := FileFS("content", r)
-					assert.NoError(t, r.Close())
+					view := NameBlob("content", r)
+
 					var index []byte
 					r, _, _, err = c.Blob(t.Context(), key, Policy{}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 						previous, err := w.Previous(ctx)
@@ -1180,8 +1379,9 @@ func TestBlob_RevalidationFailures(t *testing.T) {
 					}
 					r, _, _, err = c.Blob(t.Context(), key, Policy{}, producer([]byte("complete"), ocispec.Descriptor{}))
 					assert.NoError(t, err)
-					body, err = io.ReadAll(r)
-					assert.NoError(t, errors.Join(err, r.Close()))
+					body, err = fs.ReadFile(r, "content")
+					assert.NoError(t, err)
+
 					assert.Equal(t, string(body), "complete")
 				})
 			})
@@ -1196,10 +1396,10 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 	}
 	synctest.Test(t, func(t *testing.T) {
 		c := cachetest.New(t, t.TempDir(), New)
-		key := BlobKey{Content: "render-metadata", PersistOnly: true}
-		r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("first"), ocispec.Descriptor{Annotations: map[string]string{"generation": "first"}}))
+		key := BlobKey{Content: "render-metadata", Render: RenderAccepted}
+		_, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("first"), ocispec.Descriptor{Annotations: map[string]string{"generation": "first"}}))
 		assert.NoError(t, err)
-		assert.NoError(t, r.Close())
+
 		previous, _ := c.entries.Load(id)
 		e := previous.(*entry)
 		stamp := time.Now()
@@ -1217,15 +1417,12 @@ func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
 		started, publish := make(chan struct{}), make(chan struct{})
 		finished := make(chan error, 1)
 		go func() {
-			r, _, _, err := c.Blob(t.Context(), key, Policy{}, func(_ context.Context, input ProducerInput) (ProducerResult, error) {
+			_, _, _, err := c.Blob(t.Context(), key, Policy{}, func(_ context.Context, input ProducerInput) (ProducerResult, error) {
 				close(started)
 				<-publish
 				_, err := input.Write([]byte("second"))
 				return ProducerResult{Annotations: map[string]string{"generation": "second"}}, err
 			})
-			if err == nil {
-				err = r.Close()
-			}
 			finished <- err
 		}()
 		<-started
@@ -1266,12 +1463,12 @@ func TestRenderMetadata_CurrentDirectory(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			c := cachetest.New(t, t.TempDir(), New)
-			key := BlobKey{Content: "current-directory", PersistOnly: true}
+			key := BlobKey{Content: "current-directory", Render: RenderAccepted}
 			payload := []byte("current-directory-payload")
 			r, _, lookup, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
 			assert.NoError(t, err)
 			identity := AcquisitionIdentity(r)
-			assert.NoError(t, r.Close())
+
 			stored, _ := c.entries.Load(lookup)
 			path := blobPath(stored.(*entry).stored.Digest)
 			parent := filepath.Dir(path)
@@ -1308,8 +1505,8 @@ func TestRenderMetadata_CurrentDirectory(t *testing.T) {
 				}
 				r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, nil)
 				assert.NoError(t, err)
-				data, err := io.ReadAll(r)
-				assert.NoError(t, errors.Join(err, r.Close()))
+				data, err := fs.ReadFile(r, "content")
+				assert.NoError(t, err)
 				assert.Equal(t, bytes.Equal(data, payload), true)
 				return
 			}

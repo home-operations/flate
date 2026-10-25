@@ -44,26 +44,27 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 	cache := cachetest.New(t, "", sourcecache.New)
 	selected, err := baseline.AutoResolve(t.Context(), root, baseHash.String(), cache)
 	assert.NoError(t, err)
-	cfg := Config{Cache: cache, Concurrency: 2, Input: selected.Source, BaseInput: selected.BaseInput, ExternalChanges: selected.Changes, SelfURLs: []string{url}}
+	cfg := treeConfig{Cache: cache, Concurrency: 2, Input: selected.Source, BaseInput: selected.BaseInput, ExternalChanges: selected.Changes, SelfURLs: []string{url}}
 	for side := range 2 {
 		one := cfg
 		if side == 0 {
 			one.Input, one.BaseInput = cfg.BaseInput, cfg.Input
 		}
 		one.Path = one.Input.LocalPath
-		o, err := New(t.Context(), one)
+		o, err := newTestOrchestrator(t, one.Tree, one.Config)
 		assert.NoError(t, err)
-		assert.NoError(t, o.Bootstrap(t.Context()))
+		assert.NoError(t, o.bootstrap(t.Context()))
 		if side == 0 {
 			assert.Diff(t, o.filter.KeepNames(), []string{})
 		} else {
 			assert.Diff(t, o.filter.KeepNames(), want)
 		}
 		t.Logf("current-only side=%d exact keep=%v", side, o.filter.KeepNames())
-		assert.NoError(t, o.Stop())
+		o.stop()
 	}
 	for run := range 2 {
-		base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: cfg.BaseInput.LocalPath, SelfURLs: []string{url}}, Tree{RepoRoot: root, SelfURLs: []string{url}}, cfg)
+		renderedTrees1, err := RenderTrees(t.Context(), []Tree{Tree{RepoRoot: cfg.BaseInput.LocalPath, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, Tree{RepoRoot: root, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+		base, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
 		for side, rendered := range []Rendered{base, head} {
 			assert.Diff(t, rendered.filter.KeepNames(), []string{})

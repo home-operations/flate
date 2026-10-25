@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"iter"
 	"maps"
 	"slices"
@@ -238,12 +239,12 @@ func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner
 	if err != nil {
 		return nil, false
 	}
-	reader, _, _, err := c.owner.Blob(ctx, sourcecache.BlobKey{Content: prepared.key, PersistOnly: true}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	reader, _, _, err := c.owner.Blob(ctx, sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil {
 		return nil, false
 	}
-	data, readErr := io.ReadAll(reader)
-	if errors.Join(readErr, reader.Close()) != nil {
+	data, err := fs.ReadFile(reader, "content")
+	if err != nil {
 		return nil, false
 	}
 	frame, err := decodeFrame(data)
@@ -315,18 +316,15 @@ func (c *TreeCache) RecordRender(ctx context.Context, owner manifest.NamedResour
 			return fmt.Errorf("%w: encode render frame: %w", manifest.ErrFlux, err)
 		}
 	}
-	key := sourcecache.BlobKey{Content: frame.header.Key, PersistOnly: true}
+	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}
 	raw := frame.encoded
 	result := sourcecache.ProducerResult{Annotations: map[string]string{acceptedRenderAnnotation: content}}
-	reader, _, _, err := c.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0, Retry: sourcecache.RetryConfig{Attempts: 1}}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+	_, _, _, err = c.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0, Retry: sourcecache.RetryConfig{Attempts: 1}}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 		_, err := io.Copy(w, io.MultiReader(bytes.NewReader(raw), bytes.NewReader(data)))
 		return result, err
 	})
 	if err != nil {
 		return fmt.Errorf("kustomize render cache publish: %w", err)
-	}
-	if err := reader.Close(); err != nil {
-		return fmt.Errorf("%w: close kustomize render frame: %w", manifest.ErrFlux, err)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-package orchestrator_test
+package orchestrator
 
 import (
 	"encoding/json"
@@ -24,7 +24,6 @@ import (
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -45,7 +44,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 	for _, scenario := range []string{"scoped_peer", "equal_selected_alias", "selected_payload_only", "source_declaration_equal", "equal_labels", "synthetic_labels", "authored_pins", "committed_detection", "equal_selected_pin", "unavailable_host_decoy"} {
 		t.Run(scenario, func(t *testing.T) {
 			baseRoot, headRoot := t.TempDir(), t.TempDir()
-			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2}
+			cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Tree: Tree{}}
 			changed := testutil.KustomizationID("flux-system", "app-a")
 			same := changed
 			same.Name = "app-b"
@@ -99,12 +98,12 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 							var previous map[manifest.NamedResource][]map[string]any
 							for run := range 2 {
 								peerReader.unrelated.Store(0)
-								directCfg := orchestrator.Config{Path: filepath.Join(roots[1], "clusters/a"), Input: inputs[1], BaseInput: inputs[0], Cache: cache, Concurrency: 2}
-								direct, err := orchestrator.New(t.Context(), directCfg)
+								directCfg := treeConfig{Cache: cache, Concurrency: 2, Path: filepath.Join(roots[1], "clusters/a"), Input: inputs[1], BaseInput: inputs[0]}
+								direct, err := newTestOrchestrator(t, directCfg.Tree, directCfg.Config)
 								assert.NoError(t, err)
-								assert.NoError(t, direct.Bootstrap(t.Context()))
-								assert.NoError(t, direct.Bootstrap(t.Context()))
-								result, err := direct.Render(t.Context())
+								assert.NoError(t, direct.bootstrap(t.Context()))
+								assert.NoError(t, direct.bootstrap(t.Context()))
+								result, err := direct.render(t.Context())
 								assert.NoError(t, err)
 								assert.Diff(t, configMapNames(result), map[string]bool{"cfg-a": true})
 								if synthetic {
@@ -121,7 +120,8 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 								}
 								pairedCfg := directCfg
 								pairedCfg.Path = ""
-								_, head, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{Path: filepath.Join(roots[0], "clusters/a")}, orchestrator.Tree{Path: filepath.Join(roots[1], "clusters/a")}, pairedCfg)
+								renderedTrees1, err := RenderTrees(t.Context(), []Tree{{Path: filepath.Join(roots[0], "clusters/a"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: pairedCfg.ExternalChanges, Input: pairedCfg.BaseInput, BaseInput: pairedCfg.Input}, {Path: filepath.Join(roots[1], "clusters/a"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: pairedCfg.Input, BaseInput: pairedCfg.BaseInput, ExternalChanges: pairedCfg.ExternalChanges}}, pairedCfg.Config)
+								_, head := renderedTrees1[0], renderedTrees1[1]
 								assert.NoError(t, err)
 								assert.Diff(t, outputByParent(result.Manifests), outputByParent(head.Result.Manifests))
 								if run == 1 {
@@ -170,8 +170,8 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				baseRoot = cfg.BaseInput.LocalPath
 				var previous [2]map[manifest.NamedResource][]map[string]any
 				for run := range 2 {
-					base, head, err := orchestrator.RenderTrees(t.Context(),
-						orchestrator.Tree{Path: baseRoot, SelfURLs: []string{url}}, orchestrator.Tree{Path: headRoot, SelfURLs: []string{url}}, cfg)
+					renderedTrees2, err := RenderTrees(t.Context(), []Tree{{Path: baseRoot, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {Path: headRoot, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, ExternalChanges: cfg.ExternalChanges, Input: cfg.Input, BaseInput: cfg.BaseInput}}, cfg.Config)
+					base, head := renderedTrees2[0], renderedTrees2[1]
 					assert.NoError(t, err)
 					source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
 					left := base.Store().GetArtifact(source).(*store.SourceArtifact)
@@ -183,7 +183,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 						assert.Equal(t, left.InputAlias, false)
 						assert.Equal(t, right.InputAlias, true)
 					}
-					for side, rendered := range []orchestrator.Rendered{base, head} {
+					for side, rendered := range []Rendered{base, head} {
 						want := map[string]bool{}
 						if scenario != "equal_selected_alias" {
 							want["cfg-a"] = true
@@ -217,9 +217,9 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 							directCfg := cfg
 							directCfg.Input, directCfg.BaseInput = []*store.SourceArtifact{cfg.BaseInput, cfg.Input}[side], []*store.SourceArtifact{cfg.Input, cfg.BaseInput}[side]
 							directCfg.Path, directCfg.SelfURLs = directCfg.Input.LocalPath, []string{url}
-							direct, err := orchestrator.New(t.Context(), directCfg)
+							direct, err := newTestOrchestrator(t, directCfg.Tree, directCfg.Config)
 							assert.NoError(t, err)
-							result, err := direct.Render(t.Context())
+							result, err := direct.render(t.Context())
 							assert.NoError(t, err)
 							assert.Diff(t, outputByParent(result.Manifests), outputByParent(rendered.Result.Manifests))
 						}
@@ -307,16 +307,14 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				}
 				cfg.Path, cfg.Input = headRoot, &store.SourceArtifact{LocalPath: headRoot, LocalRoot: headRoot, FS: files}
 				cfg.ExternalChanges = change.NewSet([]string{"ks-a.yaml"})
-				o, err := orchestrator.New(t.Context(), cfg)
+				o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 				assert.NoError(t, err)
 				t.Cleanup(func() {
-					if err := o.Stop(); err != nil {
-						t.Errorf("Stop: %v", err)
-					}
+					o.stop()
 				})
-				o.WithFetcher(manifest.KindGitRepository, nil)
+				delete(o.src.Fetchers, manifest.KindGitRepository)
 				o.Store().SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: headRoot, FS: os.DirFS(headRoot)})
-				assert.NoError(t, o.Bootstrap(t.Context()))
+				assert.NoError(t, o.bootstrap(t.Context()))
 				if o.Store().GetArtifact(manifest.BootstrapSourceID) != cfg.Input {
 					t.Fatal("preseeded input replaced supplied input")
 				}
@@ -324,7 +322,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				o.Store().AddObject(source)
 				o.Store().SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: headRoot})
 				o.Store().UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "fixture unavailable payload"})
-				result, err := o.Render(t.Context())
+				result, err := o.collectResult(o.run(t.Context()))
 				if err == nil || result == nil || result.Failed[changed].Status != store.StatusFailed {
 					t.Fatalf("selected producer must fail after discovery: result=%+v err=%v", result, err)
 				}
@@ -338,12 +336,11 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				}
 				return
 			}
-			base, head, err := orchestrator.RenderTrees(t.Context(),
-				orchestrator.Tree{Path: baseRoot, SelfURLs: []string{url}},
-				orchestrator.Tree{Path: headRoot, SelfURLs: []string{url}}, cfg)
+			renderedTrees1, err := RenderTrees(t.Context(), []Tree{{Path: baseRoot, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {Path: headRoot, SelfURLs: []string{url}, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges, Input: cfg.Input}}, cfg.Config)
+			base, head := renderedTrees1[0], renderedTrees1[1]
 			assert.NoError(t, err)
 			if scenario == "equal_selected_pin" {
-				for side, rendered := range []orchestrator.Rendered{base, head} {
+				for side, rendered := range []Rendered{base, head} {
 					if len(outputByParent(rendered.Result.Manifests)[changed]) != 0 || len(outputByParent(rendered.Result.Manifests)[same]) != 0 {
 						t.Fatalf("side %d rendered dirty checkout changes behind equal selected pin: %v", side, rendered.Result.Manifests)
 					}
@@ -358,7 +355,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				}
 				return
 			}
-			for side, rendered := range []orchestrator.Rendered{base, head} {
+			for side, rendered := range []Rendered{base, head} {
 				docs := outputByParent(rendered.Result.Manifests)[changed]
 				if len(docs) != 1 || len(outputByParent(rendered.Result.Manifests)[same]) != 0 {
 					t.Fatalf("side %d lost producer ownership or unchanged selection: %v", side, rendered.Result.Manifests)
@@ -414,9 +411,10 @@ func TestRenderTrees_PreparesEachSideOnce(t *testing.T) {
 		readers[side] = &preparationReader{FS: os.DirFS(root)}
 		inputs[side] = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: readers[side]}
 	}
-	base, head, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: roots[0]}, orchestrator.Tree{RepoRoot: roots[1]}, orchestrator.Config{BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"}), Concurrency: 2})
+	renderedTrees3, err := RenderTrees(t.Context(), []Tree{{RepoRoot: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: inputs[0], BaseInput: inputs[1], ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"})}, {RepoRoot: roots[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: inputs[1], BaseInput: inputs[0], ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"})}}, Config{Concurrency: 2})
+	base, head := renderedTrees3[0], renderedTrees3[1]
 	assert.NoError(t, err)
-	for side, rendered := range []orchestrator.Rendered{base, head} {
+	for side, rendered := range []Rendered{base, head} {
 		assert.Equal(t, readers[side].fingerprints.Load(), int64(2))
 		assert.Equal(t, readers[side].parsed.Load(), int64(3))
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-a": true})
@@ -468,7 +466,7 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		}
 		done := make(chan error, 1)
 		go func() {
-			_, _, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: roots[0]}, orchestrator.Tree{RepoRoot: roots[1]}, orchestrator.Config{BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"}), Concurrency: 2})
+			_, err := RenderTrees(t.Context(), []Tree{{RepoRoot: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: inputs[0], BaseInput: inputs[1], ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"})}, {RepoRoot: roots[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: inputs[1], BaseInput: inputs[0], ExternalChanges: change.NewSet([]string{"apps/app-a/cm.yaml"})}}, Config{Concurrency: 2})
 			done <- err
 		}()
 		<-entered
@@ -477,7 +475,7 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		close(release)
 		assert.NoError(t, <-done)
 		for side, reader := range readers {
-			assert.Equal(t, reader.inputOpens.Load(), int64(10))
+			assert.Equal(t, reader.inputOpens.Load(), int64(12))
 			t.Logf("side=%d render input opens=%d", side, reader.inputOpens.Load())
 		}
 	})

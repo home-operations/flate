@@ -33,11 +33,12 @@ spec:
     namespace: seaweedfs
 `)
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	if len(renderedSingleton1) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	o := renderedSingleton1[0].Orchestrator
+	res := renderedSingleton1[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -109,11 +110,11 @@ spec:
   insecure: true
 `)
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := o.Render(context.Background()); err == nil {
+	if _, err := o.render(context.Background()); err == nil {
 		t.Fatal("expected the unreachable Flux Bucket's fetch to fail")
 	}
 	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindBucket, Namespace: "flux-system", Name: "minio"}

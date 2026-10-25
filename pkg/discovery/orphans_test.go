@@ -46,6 +46,7 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: view})
 			l := loader.New(st)
+			l.SourceRoot = root
 			if tc.chartPath != "" {
 				view[path.Join(tc.chartPath, "Chart.yaml")] = &fstest.MapFile{Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")}
 				source := &manifest.GitRepository{Name: "source", Namespace: "default"}
@@ -59,6 +60,23 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				readers := l.Index.Readers[path.Join(tc.chartPath, "a.yaml")]
 				if !slices.Contains(readers, manifest.FileReader{Reader: release.Named(), Source: source.Named(), Exact: true}) {
 					t.Fatalf("chart did not read independent declarations: %+v", readers)
+				}
+			} else {
+				if _, err := l.Load(t.Context(), root); err != nil {
+					t.Fatal(err)
+				}
+				occurrences, err := l.Occurrences(t.Context(), root, "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				var sharedDeclarations []loader.OccurrenceID
+				for _, o := range occurrences {
+					if o.Identity == shared {
+						sharedDeclarations = append(sharedDeclarations, o.Declaration)
+					}
+				}
+				if len(sharedDeclarations) != 2 || sharedDeclarations[0] == sharedDeclarations[1] {
+					t.Fatalf("identity collapse erased distinct orphan occurrences: %+v", sharedDeclarations)
 				}
 			}
 			for _, id := range []manifest.NamedResource{x, shared, sibling} {

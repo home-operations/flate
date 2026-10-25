@@ -301,8 +301,8 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		firstIdentity := sourcecache.AcquisitionIdentity(sourcecache.FileFS("content", reader))
-		assert.NoError(t, reader.Close())
+		firstIdentity := sourcecache.AcquisitionIdentity(sourcecache.NameBlob("content", reader))
+
 		closeTestHTTPInputs(t, c)
 		c = newTestHTTPInputs(t, root)
 		input, err := c.Acquire(t.Context(), url, sourcecache.RetryConfig{}, nil)
@@ -486,7 +486,6 @@ func TestAcquire_ConditionalValidation(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestAcquire_CancelDoesNotPoisonCache(t *testing.T) {
@@ -987,10 +986,9 @@ func TestAcquire_CloseJoinsAcquisition(t *testing.T) {
 								}
 								return
 							}
-							body, readErr := io.ReadAll(reader)
-							closeErr := reader.Close()
-							if stage != "publication" || string(body) != "complete" || errors.Join(readErr, closeErr) != nil {
-								t.Fatalf("interrupted publication: %q %v %v", body, readErr, closeErr)
+							body, readErr := fs.ReadFile(reader, "content")
+							if stage != "publication" || string(body) != "complete" || readErr != nil {
+								t.Fatalf("interrupted publication: %q %v", body, readErr)
 							}
 						}
 						check(c.owner)
@@ -1023,14 +1021,11 @@ func TestAcquire_CloseJoinsKeyWait(t *testing.T) {
 					key := sourcecache.BlobKey{Content: struct{ URL string }{url}}
 					entered, release, held := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 					go func() {
-						r, _, _, err := c.owner.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+						_, _, _, err := c.owner.Blob(t.Context(), key, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 							close(entered)
 							<-release
 							return sourcecache.ProducerResult{}, nil
 						})
-						if err == nil {
-							err = r.Close()
-						}
 						held <- err
 					}()
 					<-entered

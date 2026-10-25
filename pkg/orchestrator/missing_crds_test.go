@@ -190,16 +190,12 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("enabled_%t/%s", tc.enabled, tc.mode), func(t *testing.T) {
 			dir := crdFixture(t, tc.mode)
-			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: 2, AllowMissingCRDs: tc.enabled})
-			if err != nil {
-				t.Fatal(err)
+			renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingCRDs: tc.enabled})
+			if len(renderedSingleton1) != 1 {
+				t.Fatalf("missing render: %v", err)
 			}
-			t.Cleanup(func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
-			})
-			res, err := o.Render(t.Context())
+			o := renderedSingleton1[0].Orchestrator
+			res := renderedSingleton1[0].Result
 			if (tc.mode == "absent" || tc.mode == "unreferenced") && !tc.enabled {
 				if err == nil || !strings.Contains(err.Error(), "dependency not found") {
 					t.Fatalf("strict absent error=%v", err)
@@ -251,7 +247,7 @@ func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManif
 func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
+	o := &Orchestrator{store: s, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}, Tree: Tree{}}}
 	crdA := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "a.example.com"}
 	crdB := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "b.example.com"}
 	ungatedCRD := manifest.NamedResource{Group: crdA.Group, Kind: crdA.Kind, Namespace: "ns"}
@@ -348,7 +344,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 				}
 			}
 			assert.Diff(t, slices.SortedFunc(st.RequiredInputs(owner.Named()), manifest.NamedResource.Compare), tc.required)
-			(&Orchestrator{store: st, cfg: Config{AllowMissingCRDs: true}}).warnMissingCRDs()
+			(&Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}}}).warnMissingCRDs()
 			var want []manifest.Warning
 			for _, crd := range tc.warned {
 				want = append(want, manifest.Warning{
@@ -370,7 +366,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			st.SetArtifact(rs.Named(), &store.Emission{})
-			cfg := Config{AllowMissingCRDs: true}
+			cfg := treeConfig{AllowMissingCRDs: true, Tree: Tree{}}
 			switch state {
 			case "foreign object":
 				st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: crdA.Kind, Name: crdA.Name})
@@ -410,7 +406,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			tasks := task.NewBounded(2)
-			o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
+			o := &Orchestrator{store: s, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}, Tree: Tree{}}}
 			parent := testutil.KustomizationID("flux-system", "parent")
 			s.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			opts := base.Options{AllowMissingCRDs: true}
@@ -561,16 +557,12 @@ spec:
 `, name, dependencies, name, name)
 		}
 		testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
-		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: cache, Concurrency: 2, AllowMissingCRDs: true})
-		if err != nil {
-			t.Fatal(err)
+		renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: cache, Concurrency: 2, AllowMissingCRDs: true})
+		if len(renderedSingleton2) != 1 {
+			t.Fatalf("missing render: %v", err)
 		}
-		t.Cleanup(func() {
-			if err := o.Stop(); err != nil {
-				t.Errorf("Stop: %v", err)
-			}
-		})
-		res, err := o.Render(t.Context())
+		o := renderedSingleton2[0].Orchestrator
+		res := renderedSingleton2[0].Result
 		if err != nil {
 			t.Fatal(err)
 		}

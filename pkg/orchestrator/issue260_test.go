@@ -1,4 +1,4 @@
-package change_test
+package orchestrator
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -74,19 +73,15 @@ func TestIssue260_OCIRepoFetchedWhenConsumerJoinsKeepSetAtRuntime(t *testing.T) 
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/default/homepage/app/kustomization.yaml"), "resources: []\n")
 	testutil.WriteFileAt(t, filepath.Join(dir, "kubernetes/apps/networking/echo.yaml"), echoCM)
 
-	o, err := orchestrator.New(t.Context(), orchestrator.Config{
-		Path:        dir,
-		WipeSecrets: true,
-		ExternalChanges: change.NewSet([]string{
-			"kubernetes/apps/networking/echo.yaml",
-		}),
-	})
+	o, err := newTestOrchestrator(t, Tree{Path: dir,
+		ExternalChanges: change.NewSet([]string{"kubernetes/apps/networking/echo.yaml"}),
+	}, Config{WipeSecrets: true, Concurrency: 2})
 	if err != nil {
-		t.Fatalf("orchestrator.New: %v", err)
+		t.Fatalf("New: %v", err)
 	}
-	o.WithFetcher(manifest.KindOCIRepository, fakeOCIFetcher{localPath: dir})
+	o.src.Fetchers[manifest.KindOCIRepository] = fakeOCIFetcher{localPath: dir}
 
-	res, err := o.Render(context.Background())
+	res, err := o.render(t.Context())
 	if err != nil {
 		t.Logf("Render returned err: %v", err)
 	}

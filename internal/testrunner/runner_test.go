@@ -399,15 +399,15 @@ func TestRun_BlockedByCycle(t *testing.T) {
 
 func newRunner(t *testing.T) (*orchestrator.Orchestrator, *store.Store) {
 	t.Helper()
-	o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), Concurrency: 2})
+	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}}, orchestrator.Config{Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
-	})
+	if len(runs) != 1 || runs[0].Orchestrator == nil {
+		t.Fatal("missing completed store")
+	}
+	o := runs[0].Orchestrator
+
 	return o, o.Store()
 }
 

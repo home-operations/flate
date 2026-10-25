@@ -2,9 +2,12 @@ package output
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"iter"
+	"strings"
 
 	"github.com/homeport/dyff/pkg/dyff"
 	"github.com/pmezard/go-difflib/difflib"
@@ -31,6 +34,69 @@ type LineChange struct {
 	ParentPath       string
 	From, To         string
 	Status           string
+}
+
+// DiffGroup holds one cluster's prepared diff and presence on each side.
+type DiffGroup struct {
+	Cluster        string
+	Added, Removed bool
+	Body           []byte
+}
+
+// DiffGroups writes cluster sections around prepared diff bodies.
+func (e Encoder) DiffGroups(groups []DiffGroup) error {
+	if len(groups) == 1 && !groups[0].Added && !groups[0].Removed {
+		_, err := e.Writer.Write(groups[0].Body)
+		return err
+	}
+	if e.Format == FormatJSON {
+		values := make([]map[string]json.RawMessage, len(groups))
+		for i, g := range groups {
+			value := make(map[string]json.RawMessage)
+			if len(g.Body) > 0 {
+				if err := json.Unmarshal(g.Body, &value); err != nil {
+					return fmt.Errorf("decode cluster diff: %w", err)
+				}
+			}
+			value["cluster"], _ = json.Marshal(g.Cluster)
+			if g.Added {
+				value["added"] = json.RawMessage("true")
+			}
+			if g.Removed {
+				value["removed"] = json.RawMessage("true")
+			}
+			values[i] = value
+		}
+		return e.JSON(values)
+	}
+	var b strings.Builder
+	if e.Format == FormatHTML {
+		b.WriteString("<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\"><title>flate diff</title><body>\n")
+	}
+	for _, g := range groups {
+		label := clusterLabel(g.Cluster, g.Added, g.Removed)
+		switch e.Format {
+		case FormatHTML:
+			fmt.Fprintf(&b, "<section><h2>%s</h2>", html.EscapeString(label))
+			if len(g.Body) > 0 {
+				fmt.Fprintf(&b, "<iframe title=\"%s\" style=\"width:100%%;height:75vh;border:0\" srcdoc=\"%s\"></iframe>", html.EscapeString(label), html.EscapeString(string(g.Body)))
+			}
+			b.WriteString("</section>\n")
+		case FormatGitHub, FormatGitLab, FormatGitea:
+			fmt.Fprintf(&b, "## %s\n\n", label)
+			b.Write(g.Body)
+			b.WriteByte('\n')
+		default:
+			fmt.Fprintf(&b, "%s\n", label)
+			b.Write(g.Body)
+			b.WriteByte('\n')
+		}
+	}
+	if e.Format == FormatHTML {
+		b.WriteString("</body></html>\n")
+	}
+	_, err := io.WriteString(e.Writer, b.String())
+	return err
 }
 
 // Lines consumes prepared resource differences once in unified or HTML format.

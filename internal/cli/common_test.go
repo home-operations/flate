@@ -21,10 +21,12 @@ import (
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/spf13/cobra"
@@ -246,20 +248,17 @@ func TestResolveBaseline_ExplicitIdentity(t *testing.T) {
 				}
 			}
 			c := commonFlags{path: path, pathOrig: scan, pathOrigSelfURLs: []string{"stale"}}
-			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer func() {
-				if err := cleanup(); err != nil {
-					t.Errorf("baseline cleanup: %v", err)
-				}
-			}()
+			if c.owner == nil {
+				c.owner = cachetest.New(t, "", sourcecache.New)
+			}
+			err := resolveBaseline(t.Context(), &c, false)
 			if err != nil {
 				t.Fatal(err)
 			}
 			assert.Diff(t, c.pathOrigSelfURLs, tc.want)
 			assert.Equal(t, c.pathRoot, current)
 			assert.Equal(t, c.pathOrigRoot, orig)
-			cfg := buildOrchCfg(c)
-			assert.Equal(t, [2]string{cfg.RepoRoot, cfg.PathOrig}, [2]string{current, orig})
+			assert.Equal(t, [2]string{inputTrees(c)[1].RepoRoot, inputTrees(c)[0].RepoRoot}, [2]string{current, orig})
 		})
 	}
 }
@@ -270,12 +269,10 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	testutil.WriteFile(t, root, ".git/config", "[invalid\n")
 	c := commonFlags{path: root, pathRoot: "stale",
 		pathOrigRoot: "stale", pathOrigSelfURLs: []string{"stale"}}
-	noopCleanup, err := resolveBaseline(t.Context(), &c, false)
-	defer func() {
-		if err := noopCleanup(); err != nil {
-			t.Errorf("baseline cleanup: %v", err)
-		}
-	}()
+	if c.owner == nil {
+		c.owner = cachetest.New(t, "", sourcecache.New)
+	}
+	err := resolveBaseline(t.Context(), &c, false)
 	assert.Equal(t, err, nil)
 	assert.Equal(t, c.pathRoot, "")
 	assert.Equal(t, c.pathOrigRoot, "")
@@ -284,12 +281,10 @@ func TestResolveBaseline_FullTree(t *testing.T) {
 	testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{AllowEmptyCommits: true,
 		Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
 	c.base = "HEAD"
-	cleanup, err := resolveBaseline(t.Context(), &c, false)
-	defer func() {
-		if err := cleanup(); err != nil {
-			t.Errorf("baseline cleanup: %v", err)
-		}
-	}()
+	if c.owner == nil {
+		c.owner = cachetest.New(t, "", sourcecache.New)
+	}
+	err = resolveBaseline(t.Context(), &c, false)
 	assert.Equal(t, err, nil)
 	assert.Equal(t, c.pathRoot, root)
 	assert.Equal(t, c.baseInput.LocalPath, filepath.Join(root, ".flate-base", c.baseInput.Revision))
@@ -315,9 +310,11 @@ func TestResolveBaseline_DebugRevision(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(logger) })
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	c := commonFlags{path: root, base: "HEAD", concurrency: 2}
-	cleanup, err := resolveBaseline(t.Context(), &c, false)
+	if c.owner == nil {
+		c.owner = cachetest.New(t, "", sourcecache.New)
+	}
+	err := resolveBaseline(t.Context(), &c, false)
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, cleanup()) })
 	assert.Equal(t, c.baseInput.Revision, pin.String())
 	var record map[string]any
 	assert.NoError(t, json.Unmarshal(output.Bytes(), &record))
@@ -363,12 +360,10 @@ func TestResolveBaseline_SelectedRepositoryErrors(t *testing.T) {
 				testutil.WriteFile(t, selected, tc.file, tc.data)
 			}
 			c := commonFlags{path: current, pathOrig: orig, pathOrigSelfURLs: []string{"stale"}}
-			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer func() {
-				if err := cleanup(); err != nil {
-					t.Errorf("baseline cleanup: %v", err)
-				}
-			}()
+			if c.owner == nil {
+				c.owner = cachetest.New(t, "", sourcecache.New)
+			}
+			err := resolveBaseline(t.Context(), &c, false)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("error = %v, want wrapped %q error", err, tc.want)
 			}
@@ -445,24 +440,25 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	assert.NoError(t, os.Symlink(currentScan, currentLink))
 	assert.NoError(t, os.Symlink(originalScan, originalLink))
 	c := commonFlags{path: currentLink, pathOrig: originalLink, cacheDir: t.TempDir(), concurrency: 2}
-	cleanup, err := resolveBaseline(t.Context(), &c, false)
+	if c.owner == nil {
+		c.owner = cachetest.New(t, "", sourcecache.New)
+	}
+	err := resolveBaseline(t.Context(), &c, false)
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, cleanup()) })
 	cfg := buildOrchCfg(c)
-	assert.Equal(t, cfg.Input, c.input)
-	assert.Equal(t, cfg.BaseInput, c.baseInput)
-	assert.Equal(t, cfg.Path, currentScan)
+	assert.Equal(t, inputTrees(c)[1].Input, c.input)
+	assert.Equal(t, inputTrees(c)[0].Input, c.baseInput)
+	assert.Equal(t, inputTrees(c)[1].Path, currentScan)
 	assert.Equal(t, c.pathOrig, originalScan)
-	assert.Equal(t, cfg.RepoRoot, current)
-	assert.Equal(t, cfg.PathOrig, original)
+	assert.Equal(t, inputTrees(c)[1].RepoRoot, current)
+	assert.Equal(t, inputTrees(c)[0].RepoRoot, original)
 	for _, input := range []*gittree.FS{c.input.FS.(*gittree.FS), c.baseInput.FS.(*gittree.FS)} {
 		location := input.Location()
 		assert.Diff(t, location.URLs, []string{url})
 		assert.NoError(t, os.Remove(filepath.Join(location.RepositoryRoot, ".git", "config")))
 	}
-	base, head, err := orchestrator.RenderTrees(t.Context(),
-		orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
-		orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs}, cfg)
+	runs, err := orchestrator.RenderTrees(t.Context(), inputTrees(c), cfg)
+	base, head := runs[0], runs[1]
 	assert.NoError(t, err)
 	id := testutil.KustomizationID("gitops-system", "apps")
 	for i, side := range []orchestrator.Rendered{base, head} {
@@ -473,18 +469,12 @@ func TestResolveBaseline_AdmittedIdentity(t *testing.T) {
 	}
 }
 
-func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
+func TestRunSelected_ProgressLifecycle(t *testing.T) {
 	for _, name := range []string{"success", "render-warning", "partial-render", "fatal-bootstrap", "fatal-construction"} {
 		t.Run(name, func(t *testing.T) {
 			oldBar, oldLogger, original := barSink, slog.Default(), os.Stderr
-			var o *orchestrator.Orchestrator
 			var raw *os.File
 			defer func() {
-				if o != nil {
-					if err := o.Stop(); err != nil {
-						t.Error(err)
-					}
-				}
 				captured := os.Stderr
 				os.Stderr = original
 				if captured != original && captured != raw {
@@ -523,26 +513,26 @@ func TestRunOrchestratorCfg_ProgressLifecycle(t *testing.T) {
 				os.Stderr = raw
 				expected = raw
 			}
-			run := runOrchestratorCfg(t.Context(), orchestrator.Config{Path: path, RepoRoot: path, Concurrency: 2, WipeSecrets: true})
-			o = run.Orchestrator
-			result, err := run.Result, run.Err
+			flags := commonFlags{path: path, concurrency: 2}
+			var selected *selectedInvocation
+			err := runSelected(t.Context(), selectedRequest{
+				flags: flags, roots: flags.roots("", runnableKinds...), stdout: io.Discard, stderr: io.Discard,
+			}, func(inv *selectedInvocation) selectedPayload {
+				selected = inv
+				return selectedPayload{}
+			})
 			switch name {
-			case "fatal-construction":
-				if err == nil || o != nil || result != nil {
-					t.Fatalf("fatal run returned orchestrator=%v result=%v err=%v", o, result, err)
+			case "fatal-construction", "fatal-bootstrap":
+				if err == nil || selected != nil {
+					t.Fatalf("fatal run exposed selection=%v, err=%v", selected, err)
 				}
-			case "fatal-bootstrap":
-				if err == nil || o != nil {
-					t.Fatalf("fatal run exposed orchestrator=%v, err=%v", o, err)
-				}
-				assert.Diff(t, result, &orchestrator.Result{})
 			case "partial-render":
-				if err == nil || o == nil || result == nil || len(result.Failed) == 0 {
-					t.Fatalf("partial run lost state: %+v", run)
+				if err == nil || selected == nil || len(selected.groups) != 1 || len(selected.groups[0].sides[0].Failed) == 0 {
+					t.Fatalf("partial run lost selection: %+v", selected)
 				}
 			default:
 				assert.NoError(t, err)
-				if o == nil || result == nil {
+				if selected == nil || len(selected.groups) != 1 || len(selected.groups[0].sides[0].Objects) == 0 {
 					t.Fatal("successful render returned nil")
 				}
 			}
@@ -617,7 +607,7 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	for run := range 2 {
 		var stderr bytes.Buffer
 		err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, pair: true, stderr: &stderr, presentation: presentData},
-			&selectedInvocation{sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}}, selectedPayload{})
+			&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}}}}, selectedPayload{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -647,15 +637,10 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			if mode != presentTest {
 				t.Parallel()
 			}
-			o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
+			o, err := completedOrchestrator(t)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() {
-				if err := o.Stop(); err != nil {
-					t.Error(err)
-				}
-			})
 			id := testutil.KustomizationID("apps", "selected")
 			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "selected render failed"}}}
@@ -671,10 +656,10 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			_, payloadErr := failingWriter{err: writeErr}.Write([]byte("partial"))
 			payload := selectedPayload{err: payloadErr}
 			if mode == presentTest {
-				payload.roster = &output.TestReport{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1}
+				payload.rosters = []output.TestGroup{{Cluster: ".", Report: output.TestReport{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1}}}
 			}
 			got := finishSelected(selectedRequest{roots: roots, stdout: &stdout, stderr: &stderr, presentation: mode},
-				&selectedInvocation{sides: sides, err: selectedErr, remainder: remainder}, payload)
+				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}}}, payload)
 			if !errors.Is(got, closeErr) || !errors.Is(got, writeErr) || !errors.Is(got, context.Canceled) || !errors.Is(got, selectedErr) {
 				t.Fatalf("lost selected, cleanup or payload error: %v", got)
 			}
@@ -747,12 +732,15 @@ func TestRun_DiagnosticOnlyComparison(t *testing.T) {
 	}
 }
 
-func TestRunOrchestratorCfg_BootstrapWarningOnly(t *testing.T) {
+func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	cfg := orchestrator.Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2}
-	run := runOrchestratorCfg(t.Context(), cfg)
+	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}}}, orchestrator.Config{Concurrency: 2})
+	if len(runs) != 1 {
+		t.Fatalf("missing diagnostic run: %v", err)
+	}
+	run := runs[0]
 	if run.Orchestrator != nil || run.Result == nil || !errors.Is(run.Err, manifest.ErrInput) || len(run.Result.Manifests)+len(run.Result.Failed) != 0 {
 		t.Fatalf("failed bootstrap exposed content: %+v", run)
 	}
@@ -769,9 +757,10 @@ func TestRunOrchestratorCfg_BootstrapWarningOnly(t *testing.T) {
 				base.FS = nil
 				wantErr = manifest.ErrInput
 			}
-			runs, err := runOrchestrators(t.Context(), commonFlags{
-				path: root, input: head, baseInput: base, changes: change.NewSet(nil), concurrency: 2,
-			}, false)
+			runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{
+				{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Path: root, Input: base, BaseInput: head, ExternalChanges: change.NewSet(nil)},
+				{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, Input: head, BaseInput: base, ExternalChanges: change.NewSet(nil)},
+			}, orchestrator.Config{Concurrency: 2, HeadOnly: true})
 			if !errors.Is(err, wantErr) {
 				t.Fatalf("baseline discovery error lost: %v", err)
 			}
@@ -794,7 +783,7 @@ func TestRunOrchestratorCfg_BootstrapWarningOnly(t *testing.T) {
 			}
 			var stderr bytes.Buffer
 			finished := finishSelected(selectedRequest{roots: roots, stderr: &stderr, presentation: presentData},
-				&selectedInvocation{sides: sides, err: selectedErr, remainder: remainder}, selectedPayload{})
+				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}}}, selectedPayload{})
 			if _, reported := errors.AsType[reportedError](finished); !reported {
 				assert.NoError(t, (output.Encoder{Writer: &stderr}).Errors(finished))
 			}
@@ -818,11 +807,11 @@ func TestFinishSelected_JoinsWriterErrors(t *testing.T) {
 			t.Parallel()
 			productErr, reportErr, renderErr := errors.New("product closed"), errors.New("report closed"), errors.New("render failed")
 			side := &selection.Selection{Warnings: []manifest.Warning{{Category: manifest.WarnEmptyScan, Message: "advisory"}}}
-			inv := &selectedInvocation{sides: []*selection.Selection{side, side}, err: renderErr, remainder: renderErr}
-			payload := selectedPayload{err: productErr, warnings: []manifest.Warning{{Category: manifest.WarnDiffSuppressed, Message: "payload warning"}}}
+			inv := &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: []*selection.Selection{side, side}, err: renderErr, remainder: renderErr}}}
+			payload := selectedPayload{err: productErr, warnings: [][]manifest.Warning{{{Category: manifest.WarnDiffSuppressed, Message: "payload warning"}}}}
 			if mode == presentTest {
 				payload.err = nil
-				payload.roster = &output.TestReport{}
+				payload.rosters = []output.TestGroup{{Cluster: "."}}
 			}
 			writer := &countFailWriter{err: reportErr}
 			err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindKustomization}}, stdout: failingWriter{err: productErr}, stderr: writer, presentation: mode, pair: true}, inv, payload)
@@ -853,4 +842,16 @@ func outputByParent(batches []manifest.DocumentBatch) map[manifest.NamedResource
 		}
 	}
 	return out
+}
+
+func completedOrchestrator(tb testing.TB) (*orchestrator.Orchestrator, error) {
+	tb.Helper()
+	runs, err := orchestrator.RenderTrees(tb.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: tb.TempDir()}}, orchestrator.Config{Concurrency: 2})
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) != 1 || runs[0].Orchestrator == nil {
+		tb.Fatal("missing completed store")
+	}
+	return runs[0].Orchestrator, nil
 }

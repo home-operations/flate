@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"iter"
 	"slices"
 
@@ -378,18 +379,15 @@ func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource,
 			return fmt.Errorf("%w: encode render frame: %w", manifest.ErrFlux, err)
 		}
 	}
-	key := cache.BlobKey{Content: frame.header.Key, PersistOnly: true}
+	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
 	raw := frame.encoded
 	result := cache.ProducerResult{Annotations: map[string]string{acceptedRenderAnnotation: content}}
-	reader, _, _, err := c.cache.Blob(ctx, key, cache.Policy{MaxAge: 0, Retry: cache.RetryConfig{Attempts: 1}}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+	_, _, _, err = c.cache.Blob(ctx, key, cache.Policy{MaxAge: 0, Retry: cache.RetryConfig{Attempts: 1}}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		_, err := io.Copy(w, io.MultiReader(bytes.NewReader(raw), bytes.NewReader(data)))
 		return result, err
 	})
 	if err != nil {
 		return fmt.Errorf("publish helm render cache: %w", err)
-	}
-	if err := reader.Close(); err != nil {
-		return fmt.Errorf("%w: close helm render cache: %w", manifest.ErrFlux, err)
 	}
 	return nil
 }
@@ -411,7 +409,7 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 		record = nil
 	}
 	if record == nil {
-		reader, _, lookup, err := c.cache.Blob(ctx, cache.BlobKey{Content: key, PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+		reader, _, lookup, err := c.cache.Blob(ctx, cache.BlobKey{Content: key, Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
 		if errors.Is(err, errdef.ErrNotFound) {
 			return nil, nil
 		}
@@ -419,8 +417,8 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 			return nil, fmt.Errorf("lookup helm render cache: %w", err)
 		}
 		identity := cache.AcquisitionIdentity(reader)
-		data, readErr := io.ReadAll(reader)
-		if err := errors.Join(readErr, reader.Close()); err != nil {
+		data, err := fs.ReadFile(reader, "content")
+		if err != nil {
 			return nil, fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
 		}
 		frame, err := decodeFrame(data)

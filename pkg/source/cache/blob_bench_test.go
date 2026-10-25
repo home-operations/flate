@@ -67,11 +67,8 @@ func BenchmarkBlob_Put(b *testing.B) {
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
-		r, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
+		_, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
 		if err != nil {
-			b.Fatal(err)
-		}
-		if err := r.Close(); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -85,13 +82,11 @@ func BenchmarkBlob_Get(b *testing.B) {
 	b.Cleanup(func() { _ = c.Close() })
 	payload := syntheticManifests(200)
 	key := BlobKey{Content: "render-benchmark"}
-	r, _, _, err := c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
+	_, _, _, err = c.Blob(b.Context(), key, Policy{MaxAge: 0}, producer(payload, ocispec.Descriptor{}))
 	if err != nil {
 		b.Fatal(err)
 	}
-	if err := r.Close(); err != nil {
-		b.Fatal(err)
-	}
+
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
 	for b.Loop() {
@@ -99,8 +94,12 @@ func BenchmarkBlob_Get(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = io.Copy(io.Discard, r)
-		closeErr := r.Close()
+		stream, err := r.Open("content")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = io.Copy(io.Discard, stream)
+		closeErr := stream.Close()
 		if err != nil || closeErr != nil {
 			b.Fatalf("read=%v, close=%v", err, closeErr)
 		}
@@ -133,13 +132,10 @@ func BenchmarkBlob_PutParallel(b *testing.B) {
 			joined.Go(func() {
 				ready.Done()
 				<-start
-				r, _, _, err := c.Blob(b.Context(), keys[i], Policy{MaxAge: 0}, producer(payloads[i], ocispec.Descriptor{}))
+				_, _, _, err := c.Blob(b.Context(), keys[i], Policy{MaxAge: 0}, producer(payloads[i], ocispec.Descriptor{}))
 				if err != nil {
 					b.Error(err)
 					return
-				}
-				if err := r.Close(); err != nil {
-					b.Error(err)
 				}
 			})
 		}

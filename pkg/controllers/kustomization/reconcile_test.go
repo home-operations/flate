@@ -562,7 +562,8 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	c.ReconcileNode(context.Background(), ks.Named(), 0)
+	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+	c.Tasks.BlockTillDone()
 	secondFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
@@ -582,7 +583,6 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 			t.Errorf("replay published duplicate bare child %s", name)
 		}
 	}
-
 }
 
 // TestReconcile_AlreadyReady_NoTransientPending pins Part A of the
@@ -631,7 +631,8 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
 	}
 	s.AddObject(stamped)
-	c.ReconcileNode(context.Background(), ks.Named(), 0)
+	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+	c.Tasks.BlockTillDone()
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -680,13 +681,11 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 		}
 	}, false)
 
-	// Re-emit with a genuine spec change (targetNamespace) → fingerprint
-	// differs → real re-render, not a dedup-skip. ReconcileNode runs the
-	// re-render synchronously, so the new artifact has landed on return.
 	changed := ks.Clone()
 	changed.TargetNamespace = "elsewhere"
 	s.AddObject(changed)
-	c.ReconcileNode(context.Background(), ks.Named(), 0)
+	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+	c.Tasks.BlockTillDone()
 
 	var secondFP string
 	if art, ok := s.GetArtifact(ks.Named()).(*store.Emission); ok && art.Fingerprint != firstFP {
@@ -1092,6 +1091,15 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			t.Cleanup(trees.Close)
 			c := New(s, tasks, trees, false)
 			c.Configure(Options{Index: l.Index}, sourcecache.RetryConfig{})
+			reconcile := func(obj *manifest.Kustomization) error {
+				var result error
+				tasks.Go(t.Context(), "reconcile", func(ctx context.Context) {
+					result = c.newExecution(obj.Named()).reconcile(ctx, obj, manifest.DrainNone)
+				})
+				tasks.BlockTillDone()
+				return result
+			}
+
 			if swapDuringRender {
 				guard.once = sync.Once{}
 				guard.onOpen = func() { s.SetArtifact(sourceID, &next) }
@@ -1121,7 +1129,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 				t.Fatal("coverage retired Q support")
 			}
 			s.SetArtifact(sourceID, &initial)
-			if err := c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
+			if err := reconcile(ks); err != nil {
 				t.Fatal(err)
 			}
 			if s.GetObject(exclusive) != nil {
@@ -1132,16 +1140,16 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			s.RecordEmitted(ks.Named(), &empty, nil)
 			empty.Finish()
 			s.SetArtifact(sourceID, &initial)
-			probe := sourcecache.BlobKey{Content: "source-coverage-persistence-probe", PersistOnly: true}
-			probeReader, _, _, err := owner.Blob(t.Context(), probe, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			probe := sourcecache.BlobKey{Content: "source-coverage-persistence-probe", Render: sourcecache.RenderAccepted}
+			_, _, _, err = owner.Blob(t.Context(), probe, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				return sourcecache.ProducerResult{}, nil
 			})
 			assert.NoError(t, err)
-			assert.NoError(t, probeReader.Close())
-			probeReader, _, _, probeErr := owner.Blob(t.Context(), probe, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+
+			_, _, _, probeErr := owner.Blob(t.Context(), probe, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 			persistent := probeErr == nil
 			if persistent {
-				assert.NoError(t, probeReader.Close())
+
 				guard.deny.Store(true)
 			} else {
 				t.Log("raw render persistence unavailable for this build identity")
@@ -1163,7 +1171,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 					data["value"] = "caller-mutation"
 				}
 			}
-			if err := c.newExecution((ks).Named()).reconcile(t.Context(), ks, manifest.DrainNone); err != nil {
+			if err := reconcile(ks); err != nil {
 				t.Fatalf("raw cache hit: %v", err)
 			}
 			if persistent && guard.opened.Load() != before {
@@ -1182,7 +1190,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			fresh.NamePrefix = "arbitrary-second-"
 
 			s.AddObject(fresh)
-			if err := c.newExecution((fresh).Named()).reconcile(t.Context(), fresh, manifest.DrainNone); err != nil {
+			if err := reconcile(fresh); err != nil {
 				t.Fatal(err)
 			}
 			old := shared
@@ -1197,7 +1205,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			failed.FS = &guardedSourceFS{FS: input.FS}
 			failed.FS.(*guardedSourceFS).deny.Store(true)
 			s.SetArtifact(sourceID, &failed)
-			if err := c.newExecution((fresh).Named()).reconcile(t.Context(), fresh, manifest.DrainNone); err == nil || s.GetObject(newID) == nil {
+			if err := reconcile(fresh); err == nil || s.GetObject(newID) == nil {
 				t.Fatal("failed successor withdrew completed output")
 			}
 			_, _, empty = s.GetEmission(ks.Named())
@@ -1290,7 +1298,8 @@ func TestReconcile_DeclarationChangeBeforeCapture(t *testing.T) {
 				t.Fatalf("stale source capture continued: valid=%t expansions=%d", run.Valid(), expansions.Load())
 			}
 			run.Close()
-			run = c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
+			c.Tasks.Go(t.Context(), "reconcile-current", func(ctx context.Context) { run = c.ReconcileNode(ctx, input.Named(), manifest.DrainNone) })
+			c.Tasks.BlockTillDone()
 
 			switch state {
 			case "withdrawn":

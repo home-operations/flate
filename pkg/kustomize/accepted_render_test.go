@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -47,11 +48,8 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 	raw, err := manifest.DecodeRender(frame.output)
 	assert.NoError(t, err)
 	assert.Equal(t, hasRenderField(raw, "name", "original"), true)
-	key := sourcecache.BlobKey{Content: frame.header.Key, PersistOnly: true}
-	if reader, _, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil); !errors.Is(err, errdef.ErrNotFound) {
-		if reader != nil {
-			assert.NoError(t, reader.Close())
-		}
+	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}
+	if _, _, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil); !errors.Is(err, errdef.ErrNotFound) {
 		t.Fatalf("standalone render wrote durable output: %v", err)
 	}
 	assert.NoError(t, cache.RecordRender(t.Context(), owner, receipt, nil))
@@ -85,12 +83,12 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			assert.NoError(t, err)
 			accepted, err := encodeAccepted(owner, foreignFrame, maps.All(records))
 			assert.NoError(t, err)
-			reader, _, _, err := isolated.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, _, _, err = isolated.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				_, err := io.Copy(w, io.MultiReader(bytes.NewReader(foreignReceipt), bytes.NewReader(accepted)))
 				return sourcecache.ProducerResult{}, err
 			})
 			assert.NoError(t, err)
-			assert.NoError(t, reader.Close())
+
 			if _, complete := isolated.PreviousRender(t.Context(), req, owner); complete {
 				t.Fatal("foreign request key supplied accepted history")
 			}
@@ -152,8 +150,8 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 				t.Helper()
 				reader, descriptor, _, err := renderer.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 				assert.NoError(t, err)
-				data, err := io.ReadAll(reader)
-				assert.NoError(t, errors.Join(err, reader.Close()))
+				data, err := fs.ReadFile(reader, "content")
+				assert.NoError(t, err)
 				stored, err := decodeFrame(data)
 				assert.NoError(t, err)
 				content := descriptor.Annotations[acceptedRenderAnnotation]
@@ -194,14 +192,14 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			check()
 			reader, _, _, err := renderer.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 			assert.NoError(t, err)
-			data, err := io.ReadAll(reader)
-			assert.NoError(t, errors.Join(err, reader.Close()))
-			reader, _, _, err = renderer.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			data, err := fs.ReadFile(reader, "content")
+			assert.NoError(t, err)
+			_, _, _, err = renderer.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				_, err := w.Write(data)
 				return sourcecache.ProducerResult{}, err
 			})
 			assert.NoError(t, err)
-			assert.NoError(t, reader.Close())
+
 			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
 			assert.Equal(t, storedKey(), initialKey)
 			closeTestTreeCache(t, renderer)
@@ -329,8 +327,8 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		}
 		reader, _, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 		assert.NoError(t, err)
-		_, err = io.Copy(io.Discard, reader)
-		assert.NoError(t, errors.Join(err, reader.Close()))
+		_, err = fs.ReadFile(reader, "content")
+		assert.NoError(t, err)
 	})
 }
 
@@ -384,12 +382,12 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 			accepted, err := encodeAccepted(owner, stored, emptyRenderInventory)
 			assert.NoError(t, err)
-			reader, _, _, err := renderer.owner.Blob(t.Context(), sourcecache.BlobKey{Content: prepared.key, PersistOnly: true}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, _, _, err = renderer.owner.Blob(t.Context(), sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 				_, err := io.Copy(w, io.MultiReader(bytes.NewReader(wire), bytes.NewReader(accepted)))
 				return sourcecache.ProducerResult{}, err
 			})
 			assert.NoError(t, err)
-			assert.NoError(t, reader.Close())
+
 			if _, complete := renderer.PreviousRender(t.Context(), changed, owner); complete {
 				t.Fatal("foreign source coordinate borrowed history")
 			}

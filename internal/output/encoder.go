@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"maps"
 	"slices"
 	"unicode/utf8"
 
@@ -36,6 +37,126 @@ type Encoder struct {
 	Writer io.Writer
 	Format Format
 	Color  bool
+}
+
+// DocumentGroup holds one cluster's prepared documents.
+type DocumentGroup struct {
+	Cluster   string           `json:"cluster"`
+	Documents []map[string]any `json:"documents"`
+}
+
+// ImageGroup holds one cluster's prepared images.
+type ImageGroup struct {
+	Cluster string   `json:"cluster"`
+	Images  []string `json:"images"`
+	Added   bool     `json:"added,omitempty"`
+	Removed bool     `json:"removed,omitempty"`
+}
+
+// SummaryGroup holds one cluster's prepared summary.
+type SummaryGroup struct {
+	Cluster string         `json:"cluster"`
+	Summary map[string]any `json:"summary"`
+}
+
+// ResourceGroup holds one cluster's prepared resource rows and documents.
+type ResourceGroup struct {
+	Cluster   string
+	Rows      []map[string]string
+	Documents []map[string]any
+}
+
+// DocumentGroups writes cluster framing around multiple document groups.
+func (e Encoder) DocumentGroups(groups []DocumentGroup) error {
+	if len(groups) == 1 {
+		return e.Documents(groups[0].Documents)
+	}
+	if e.Format == FormatJSON {
+		return e.JSON(groups)
+	}
+	for _, g := range groups {
+		if _, err := fmt.Fprintln(e.Writer, "# Cluster:", g.Cluster); err != nil {
+			return err
+		}
+		if err := e.Documents(g.Documents); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ImageGroups writes cluster framing around multiple image groups.
+func (e Encoder) ImageGroups(groups []ImageGroup) error {
+	if len(groups) == 1 && !groups[0].Added && !groups[0].Removed {
+		return e.Images(groups[0].Images)
+	}
+	switch e.Format {
+	case FormatJSON:
+		return e.JSON(groups)
+	case FormatYAML:
+		return e.YAML(groups)
+	}
+	return e.lines(func(yield func(string) bool) {
+		for _, g := range groups {
+			if (g.Added || g.Removed) && !yield(clusterLabel(g.Cluster, g.Added, g.Removed)) {
+				return
+			}
+			for _, image := range g.Images {
+				if !yield(g.Cluster + ": " + image) {
+					return
+				}
+			}
+		}
+	})
+}
+
+func clusterLabel(cluster string, added, removed bool) string {
+	label := "Cluster: " + cluster
+	if added {
+		label += " (added)"
+	}
+	if removed {
+		label += " (removed)"
+	}
+	return label
+}
+
+// ClusterGroups writes cluster framing around multiple summaries.
+func (e Encoder) ClusterGroups(groups []SummaryGroup) error {
+	if len(groups) == 1 {
+		return e.Cluster(groups[0].Summary)
+	}
+	if e.Format == FormatJSON {
+		return e.JSON(groups)
+	}
+	return e.YAML(groups)
+}
+
+// ResourceGroups writes cluster framing around multiple resource groups.
+func (e Encoder) ResourceGroups(cols []Column, groups []ResourceGroup) error {
+	if len(groups) == 1 {
+		g := groups[0]
+		return e.Resources(cols, g.Rows, g.Documents)
+	}
+	if e.Format == FormatJSON || e.Format == FormatYAML {
+		docs := make([]DocumentGroup, len(groups))
+		for i, g := range groups {
+			docs[i] = DocumentGroup{Cluster: g.Cluster, Documents: g.Documents}
+		}
+		return e.DocumentGroups(docs)
+	}
+	var rows []map[string]string
+	for _, g := range groups {
+		for _, row := range g.Rows {
+			r := maps.Clone(row)
+			r["cluster"] = g.Cluster
+			if e.Format == FormatName {
+				r["name"] = g.Cluster + ":" + row["name"]
+			}
+			rows = append(rows, r)
+		}
+	}
+	return e.Resources(slices.Concat([]Column{{Header: "CLUSTER", Key: "cluster"}}, cols), rows, nil)
 }
 
 // Documents writes a JSON array or a multi-document YAML stream.

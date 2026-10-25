@@ -873,18 +873,19 @@ spec:
  target: {name: app-secret}
  data: [{secretKey: HOST, remoteRef: {key: fixture}}]
 `)
-			testutil.WriteFile(t, dir, "secret.yaml", `apiVersion: v1
+			const authored = `apiVersion: v1
 kind: Secret
 metadata: {name: app-secret, namespace: secure}
 stringData: {HOST: fixture-value}
-`)
+`
+			testutil.WriteFile(t, dir, "secret.yaml", authored)
 			st := store.New()
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "secure", Name: "app-secret"}
 			preexisting := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"HOST": "preexisting-value"}}
 			if scenario == "preexisting" {
 				st.AddObject(preexisting)
 			}
-			_, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
+			result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: dir, RepoRoot: dir, Store: st, WipeSecrets: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -902,6 +903,15 @@ stringData: {HOST: fixture-value}
 			if scenario == "preexisting" && secret != preexisting {
 				t.Error("preexisting immutable Secret replaced")
 			}
+			for _, doc := range result.Documents {
+				if manifest.DocIdentity(doc) == id {
+					assert.Diff(t, doc["stringData"], map[string]any{"HOST": want})
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "secret.yaml"))
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), authored)
+			assert.Diff(t, preexisting.StringData, map[string]any{"HOST": "preexisting-value"})
 			declarations := testutil.Declarations(st.Productions(id, nil))
 			if !slices.Equal(declarations, []manifest.NamedResource{{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "secure", Name: "producer"}}) {
 				t.Fatalf("declarations=%v", declarations)

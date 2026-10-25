@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -12,7 +13,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func BenchmarkRunParentGates(b *testing.B) {
@@ -131,5 +137,65 @@ func BenchmarkRun_WideDirectory(b *testing.B) {
 		if _, err := Run(b.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: store.New(), WipeSecrets: true}); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkRun_BuiltPackage(b *testing.B) {
+	for _, existing := range []bool{false, true} {
+		b.Run(fmt.Sprint(existing), func(b *testing.B) {
+			root := b.TempDir()
+			const count = 1000
+			var docs strings.Builder
+			for i := range count {
+				fmt.Fprintf(&docs, "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: config-%04d, namespace: apps}\ndata: {value: fixture}\n", i)
+			}
+			input := fstest.MapFS{
+				"package/kustomization.yaml": {Data: []byte("resources: [objects.yaml, secret.yaml]\n")},
+				"package/objects.yaml":       {Data: []byte(docs.String())},
+				"package/secret.yaml":        {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps}\ntype: Opaque\nstringData: {token: authored}\n")},
+			}
+			trees := kustomize.NewTreeCache(cachetest.New(b, "", cache.New), nil, task.NewBounded(2))
+			b.Cleanup(trees.Close)
+			cfg := Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Trees: trees}
+			secret := &manifest.Secret{Name: "credentials", Namespace: "apps", StringData: map[string]any{"token": "preexisting"}}
+			run := func() *Result {
+				cfg.Store = store.New()
+				if existing {
+					cfg.Store.AddObject(secret)
+				}
+				result, err := Run(b.Context(), cfg)
+				if err != nil {
+					b.Fatal(err)
+				}
+				return result
+			}
+			result := run()
+			if len(result.Documents) != count+1 {
+				b.Fatalf("built documents = %d, want %d", len(result.Documents), count+1)
+			}
+			for _, doc := range result.Documents {
+				if manifest.DocIdentity(doc) != secret.Named() {
+					continue
+				}
+				want := "authored"
+				if existing {
+					want = "preexisting"
+					if cfg.Store.GetObject(secret.Named()) != secret {
+						b.Fatal("preexisting Secret replaced")
+					}
+				}
+				if doc["stringData"].(map[string]any)["token"] != want {
+					b.Fatalf("Secret payload = %v, want %s", doc, want)
+				}
+				_, hasType := doc["type"]
+				if hasType == existing {
+					b.Fatalf("Secret type present = %v, preexisting = %v", hasType, existing)
+				}
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				run()
+			}
+		})
 	}
 }

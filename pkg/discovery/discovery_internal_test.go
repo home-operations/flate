@@ -17,6 +17,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
@@ -433,40 +434,66 @@ configMapGenerator: [{name: generated, literals: [value=selected]}]
 
 func TestRun_BuiltEntrySecretPrecedence(t *testing.T) {
 	t.Parallel()
-	for _, existing := range []bool{false, true} {
-		t.Run(fmt.Sprint(existing), func(t *testing.T) {
+	for _, scenario := range []string{"sanitized", "preexisting", "current-built"} {
+		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			const root = "/virtual/built-secrets"
+			payload := "data: {old: c3RhbGU=}\nstringData: {token: 'ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]'}\n"
+			wantData := map[string]any{"old": "c3RhbGU="}
+			wantStringData := map[string]any{"token": manifest.ValuePlaceholder("token")}
+			if scenario == "current-built" {
+				payload = "data: {token: YXV0aG9yZWQ=}\n"
+				wantData, wantStringData = map[string]any{"token": "YXV0aG9yZWQ="}, nil
+			}
+			if scenario == "preexisting" {
+				wantData, wantStringData = map[string]any{"current": "cmVhbA=="}, map[string]any{"token": "real-value"}
+			}
+			contents := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps, labels: {selected: 'true'}, annotations: {note: authored}}\ntype: Opaque\n" + payload
 			input := fstest.MapFS{
 				"package/kustomization.yaml": {Data: []byte("resources: [secret.yaml]\n")},
-				"package/secret.yaml":        {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps, labels: {selected: 'true'}}\nstringData: {token: 'ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]'}\n")},
+				"package/secret.yaml":        {Data: []byte(contents)},
 			}
-			st := store.New()
-			value := manifest.ValuePlaceholder("token")
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Name: "credentials", Namespace: "apps"}
-			var saved *manifest.Secret
-			if existing {
-				value = "real-value"
-				saved = &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"token": value}}
-				st.AddObject(saved)
-			}
-			result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t), WipeSecrets: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(result.Documents) != 1 {
-				t.Fatalf("selected secret missing: %v", result.Documents)
-			}
-			doc := result.Documents[0]
-			if doc["stringData"].(map[string]any)["token"] != value {
-				t.Fatalf("output lost secret policy or precedence: %v", doc)
-			}
-			if obj := st.GetObject(id).(*manifest.Secret); obj.StringData["token"] != value || existing && obj != saved {
-				t.Fatalf("store lost secret precedence: %+v", obj)
-			}
-			labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
-			if labels["selected"] != "true" {
-				t.Fatalf("sanitization lost built metadata: %v", doc)
+			var previous []map[string]any
+			for range 2 {
+				st := store.New()
+				saved := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"current": "cmVhbA=="}, StringData: map[string]any{"token": "real-value"}}
+				if scenario == "preexisting" {
+					st.AddObject(saved)
+				}
+				result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t), WipeSecrets: scenario != "current-built"})
+				assert.NoError(t, err)
+				if len(result.Documents) != 1 {
+					t.Fatalf("selected secret missing: %v", result.Documents)
+				}
+				doc := result.Documents[0]
+				assert.Diff(t, doc["data"], wantData)
+				if scenario != "preexisting" {
+					assert.Equal(t, doc["type"], any("Opaque"))
+				} else {
+					_, present := doc["type"]
+					assert.Equal(t, present, false)
+				}
+				if scenario == "current-built" {
+					_, present := doc["stringData"]
+					assert.Equal(t, present, false)
+				} else {
+					assert.Diff(t, doc["stringData"], wantStringData)
+				}
+				obj := st.GetObject(id).(*manifest.Secret)
+				assert.Diff(t, obj.Data, wantData)
+				assert.Diff(t, obj.StringData, wantStringData)
+				if scenario == "preexisting" && obj != saved {
+					t.Fatal("store lost preexisting Secret pointer")
+				}
+				assert.Diff(t, doc["metadata"], map[string]any{"name": "credentials", "namespace": "apps", "labels": map[string]any{"selected": "true"}, "annotations": map[string]any{"note": "authored"}})
+				assert.Equal(t, string(input["package/secret.yaml"].Data), contents)
+				assert.Diff(t, saved.Data, map[string]any{"current": "cmVhbA=="})
+				assert.Diff(t, saved.StringData, map[string]any{"token": "real-value"})
+				if previous != nil {
+					assert.Diff(t, result.Documents, previous)
+				}
+				previous = result.Documents
 			}
 		})
 	}

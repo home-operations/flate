@@ -101,6 +101,7 @@ type BaseManifest interface {
 	ReferenceCapacity() (int, int)
 	kind() KindInfo
 	producerTargets([]NamedResource) []ProducerTarget
+	overlayPayload(map[string]any) map[string]any
 }
 
 // Equal compares manifest content without derived projection-cache state.

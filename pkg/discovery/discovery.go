@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"maps"
 	"path/filepath"
-	"slices"
 
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
@@ -126,18 +124,11 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		id := manifest.DocIdentity(doc)
 		record, ok := l.Index.Lookup(id)
 		current := cfg.Store.GetObject(id)
-		if !ok || record.Builder != d.documentFiles[i] || current == nil {
+		if !ok || record.Builder != d.documentOrigins[i].builder || current == nil {
 			continue
 		}
-		if secret, ok := current.(*manifest.Secret); ok && !slices.ContainsFunc(l.BuiltDocuments(id), func(child store.Child) bool { return child.Obj == current }) {
-			doc = maps.Clone(doc)
-			snapshot := secret.Snapshot()
-			for _, key := range []string{"data", "stringData", "type"} {
-				delete(doc, key)
-				if value, ok := snapshot[key]; ok {
-					doc[key] = value
-				}
-			}
+		if current != d.documentOrigins[i].object {
+			doc = manifest.OverlayPayload(current, doc)
 		}
 		documents = append(documents, doc)
 	}
@@ -154,13 +145,18 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 type discoverer struct {
 	documents       []map[string]any
-	documentFiles   []string
+	documentOrigins []documentOrigin
 	cfg             Config
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]entryResolution
 	remotes         map[string]struct{}
 	aliasViews      map[string]fs.FS
 	hasPins         bool
+}
+
+type documentOrigin struct {
+	builder string
+	object  manifest.BaseManifest
 }
 
 func (d *discoverer) loadManifests(ctx context.Context, repoRoot string) error {
@@ -295,7 +291,7 @@ func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) er
 			continue
 		}
 		record, _ := d.loader.Index.Lookup(obj.Named())
-		d.documentFiles = append(d.documentFiles, record.Builder)
+		d.documentOrigins = append(d.documentOrigins, documentOrigin{builder: record.Builder, object: obj})
 		d.documents = append(d.documents, child.Doc)
 	}
 	return nil

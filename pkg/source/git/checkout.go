@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 )
 
 func checkoutRef(repo *git.Repository, hash plumbing.Hash, sparse []string) error {
@@ -19,7 +20,7 @@ func checkoutRef(repo *git.Repository, hash plumbing.Hash, sparse []string) erro
 	if err != nil {
 		return err
 	}
-	return wt.Checkout(&git.CheckoutOptions{Hash: hash, SparseCheckoutDirectories: slices.Clone(sparse)})
+	return wt.Checkout(&git.CheckoutOptions{Hash: hash, SparseCheckoutDirectories: gittree.NormalizeSparsePaths(sparse)})
 }
 
 // Flux reuses the parent's credentials for submodules on every host.

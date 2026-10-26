@@ -277,7 +277,7 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			assert.Diff(t, res.Changes.Paths(), []string{".sourceignore", "apps/b.yaml"})
 			testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")
 			for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
-				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS})
+				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS, Sparse: []string{"./apps"}})
 				assert.NoError(t, err)
 				_, err = fs.Stat(view, "apps/b.yaml")
 				wantVisible := behavior == "exclude" && side == 0 || behavior == "reinclude" && side == 1

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -450,37 +451,59 @@ func TestFetcher_References(t *testing.T) {
 func TestFetcher_SparseCheckout(t *testing.T) {
 	t.Parallel()
 	src := t.TempDir()
-	mustInitRepoWithFiles(t, src, map[string]string{
-		"apps/a/manifest.yaml":     "kind: ConfigMap",
-		"apps/b/manifest.yaml":     "kind: ConfigMap",
-		"apps-extra/manifest.yaml": "kind: ConfigMap",
-		"infra/c/manifest.yaml":    "kind: ConfigMap",
-	})
+	files := map[string]string{
+		"apps/a/manifest.yaml":     "a",
+		"apps/b/manifest.yaml":     "b",
+		"apps-old/manifest.yaml":   "old",
+		"apps-extra/manifest.yaml": "extra",
+		"infra/c/manifest.yaml":    "infra",
+	}
+	mustInitRepoWithFiles(t, src, files)
 	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
-	for _, prefix := range []string{"apps/a", "apps"} {
-		t.Run(prefix, func(t *testing.T) {
-			t.Parallel()
-			art, err := f.Fetch(t.Context(), &manifest.GitRepository{
-				Name: "test", Namespace: "flux-system", URL: "file://" + src,
-				SparseCheckout: []string{prefix},
-			}, (testInputs{}).readSet(&manifest.GitRepository{
-				Name: "test", Namespace: "flux-system", URL: "file://" + src,
-				SparseCheckout: []string{prefix},
-			}), sourcecache.Policy{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, file := range []string{"apps/a/manifest.yaml", "apps/b/manifest.yaml", "apps-extra/manifest.yaml", "infra/c/manifest.yaml"} {
-				_, err := fs.Stat(art.FS, file)
-				if strings.HasPrefix(file, prefix) {
-					if err != nil {
-						t.Errorf("included %s: %v", file, err)
-					}
-				} else if !errors.Is(err, fs.ErrNotExist) {
-					t.Errorf("excluded %s: %v", file, err)
+	for _, tc := range []struct {
+		prefix string
+		want   []string
+	}{
+		{"apps/a", []string{"apps/a/manifest.yaml"}},
+		{"apps", []string{"apps/a/manifest.yaml", "apps/b/manifest.yaml", "apps-old/manifest.yaml", "apps-extra/manifest.yaml"}},
+		{"./apps", []string{"apps/a/manifest.yaml", "apps/b/manifest.yaml", "apps-old/manifest.yaml", "apps-extra/manifest.yaml"}},
+	} {
+		for _, recursive := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/recursive=%t", tc.prefix, recursive), func(t *testing.T) {
+				t.Parallel()
+				spec := &manifest.GitRepository{
+					Name: "test", Namespace: "flux-system", URL: "file://" + src,
+					SparseCheckout: []string{tc.prefix}, RecurseSubmodules: recursive,
 				}
-			}
-		})
+				before := *spec
+				before.SparseCheckout = slices.Clone(spec.SparseCheckout)
+				want := make(map[string]string, len(tc.want))
+				for _, file := range tc.want {
+					want[file] = files[file]
+				}
+				var previous map[string]string
+				for run := range 2 {
+					art, err := f.Fetch(t.Context(), spec, (testInputs{}).readSet(spec), sourcecache.Policy{MaxAge: time.Hour})
+					assert.NoError(t, err)
+					got := map[string]string{}
+					err = fs.WalkDir(art.FS, ".", func(file string, entry fs.DirEntry, err error) error {
+						if err != nil || entry.IsDir() {
+							return err
+						}
+						data, err := fs.ReadFile(art.FS, file)
+						got[file] = string(data)
+						return err
+					})
+					assert.NoError(t, err)
+					assert.Diff(t, got, want)
+					assert.Diff(t, *spec, before)
+					if run > 0 {
+						assert.Diff(t, got, previous)
+					}
+					previous = got
+				}
+			})
+		}
 	}
 }
 

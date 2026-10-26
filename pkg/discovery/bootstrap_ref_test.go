@@ -266,7 +266,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			}
 			repository.RecurseSubmodules = tc.submodules
 			if tc.sparse {
-				repository.SparseCheckout = []string{"apps"}
+				repository.SparseCheckout = []string{"./apps"}
 			}
 			d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
@@ -358,6 +358,11 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				if !errors.Is(err, fs.ErrNotExist) {
 					t.Fatalf("sparse source retained excluded file: %q, %v", content, err)
 				}
+				data, err := fs.ReadFile(artifact.FS, "apps/value.txt")
+				assert.NoError(t, err)
+				assert.Equal(t, string(data), want)
+				assert.Diff(t, repository.SparseCheckout, []string{"./apps"})
+				assert.Equal(t, len(st.Warnings()), 0)
 				return
 			}
 			if err != nil || string(content) != want {

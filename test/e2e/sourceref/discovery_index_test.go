@@ -85,7 +85,7 @@ func TestE2E_DiscoveryIndex_ChangedOnlyFileBackedProducers(t *testing.T) {
 				testutil.WriteFile(t, dir, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
-spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
+spec: {url: "https://example.test/cluster.git", ref: {branch: main}, sparseCheckout: [./apps, ./consumer]}
 `)
 				testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("consumer", "flux-system", `  interval: 10m
   path: ./consumer
@@ -125,7 +125,13 @@ data: {v: "${K}"}
 			if !strings.Contains(full, "name: out") || !strings.Contains(full, "v: v") {
 				t.Fatalf("full list consumer missing: %s\n%s", full, stderr)
 			}
-			again, _ := harness.RequireCLIOK(t, fullArgs...)
+			if strings.Contains(stderr, "[") && (strings.Count(stderr, "[") != 1 || !strings.Contains(stderr, "[RenderPersistenceDisabled]")) {
+				t.Fatalf("unexpected full warnings: %s", stderr)
+			}
+			again, repeatedStderr := harness.RequireCLIOK(t, fullArgs...)
+			if strings.Contains(repeatedStderr, "[") && (strings.Count(repeatedStderr, "[") != 1 || !strings.Contains(repeatedStderr, "[RenderPersistenceDisabled]")) {
+				t.Fatalf("unexpected repeated warnings: %s", repeatedStderr)
+			}
 			if again != full {
 				t.Fatal("identical list builds changed output")
 			}
@@ -136,6 +142,9 @@ data: {v: "${K}"}
 				wantValue = "v: changed"
 			}
 			stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
+			if strings.Contains(stderr, "[") && (strings.Count(stderr, "[") != 1 || !strings.Contains(stderr, "[RenderPersistenceDisabled]")) {
+				t.Fatalf("unexpected changed-only warnings: %s", stderr)
+			}
 			if code != 0 || !strings.Contains(stdout, "name: out2") || !strings.Contains(stdout, wantValue) {
 				t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}

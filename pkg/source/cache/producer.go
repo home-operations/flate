@@ -222,6 +222,9 @@ func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload,
 		<-cancelDone
 	}
 	if err := ctx.Err(); err != nil {
+		if readerFailure != nil && !errors.Is(readerFailure, err) {
+			return nil, errors.Join(err, readerFailure)
+		}
 		return nil, err
 	}
 	if result.Unchanged && producerFailure == nil {

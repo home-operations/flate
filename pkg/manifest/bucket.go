@@ -75,6 +75,11 @@ func (b *Bucket) ExistenceOnly() bool { return false }
 // SourceInterval returns the authored source refresh interval.
 func (b *Bucket) SourceInterval() time.Duration { return b.Interval.Duration }
 
+// OperationTimeout returns the authored operation timeout or the Flux default.
+func (b *Bucket) OperationTimeout() time.Duration {
+	return operationTimeout(b.Timeout)
+}
+
 // parseBucket decodes a Bucket CR via the source-controller typed
 // schema.
 func parseBucket(doc map[string]any) (*Bucket, error) {

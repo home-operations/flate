@@ -316,7 +316,7 @@ func TestHelmRepoTransport_SourceTimeout(t *testing.T) {
 					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: timeoutChartBody{req.Context()}, Request: req}, nil
 				})
 				start := time.Now()
-				_, err := prepared.get(ctx, r.URL+"/index.yaml", io.Discard)
+				_, err := f.fetchHTTPChart(ctx, prepared, helmChart(r.Name, "app-template", "1.0.0"), sourcecache.Policy{})
 				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want {
 					t.Errorf("body deadline: elapsed=%v error=%v, want %v and DeadlineExceeded", time.Since(start), err, want)
 				}

@@ -2,6 +2,7 @@ package bucket
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,7 +26,9 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/minio/minio-go/v7"
 )
 
@@ -429,8 +433,8 @@ func TestWalkBucket_LargeListedSize(t *testing.T) {
 					response.Header.Set("Content-Length", strconv.FormatInt(response.ContentLength, 10))
 					if probe {
 						downloadDeadline = deadline
-						if !downloadDeadline.After(listDeadline) {
-							t.Errorf("probe deadline=%v, want a new phase after listing deadline=%v", downloadDeadline, listDeadline)
+						if !downloadDeadline.Equal(listDeadline) {
+							t.Errorf("probe deadline=%v, want listing deadline=%v", downloadDeadline, listDeadline)
 						}
 						response.Body = io.NopCloser(strings.NewReader("x"))
 						return response, nil
@@ -467,11 +471,11 @@ func TestWalkBucket_LargeListedSize(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithCancel(t.Context())
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data", Timeout: &metav1.Duration{Duration: timeout}}, io.Discard)
+				_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
 				done <- err
 			}()
 			for range 2 {
@@ -791,52 +795,74 @@ func TestWalkBucket_Ranges(t *testing.T) {
 	}
 }
 
-type timeoutBucketTransport func(*http.Request) (*http.Response, error)
-
-func (tr timeoutBucketTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	return tr(req)
+func timeoutBucketFetcher(t *testing.T, respond func(*http.Request) (*http.Response, error)) *Fetcher {
+	t.Helper()
+	t.Setenv("NO_PROXY", "*")
+	t.Setenv("no_proxy", "*")
+	previous := http.DefaultTransport
+	transport := previous.(*http.Transport).Clone()
+	var workers sync.WaitGroup
+	transport.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+		client, server := net.Pipe()
+		workers.Go(func() {
+			defer server.Close()
+			req, err := http.ReadRequest(bufio.NewReader(server))
+			if err != nil {
+				return
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			workers.Go(func() {
+				_, _ = io.Copy(io.Discard, server)
+				cancel()
+			})
+			response, err := respond(req.WithContext(ctx))
+			if err == nil {
+				defer response.Body.Close()
+				_ = response.Write(server)
+			}
+		})
+		return client, nil
+	}
+	http.DefaultTransport = transport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
+	t.Cleanup(func() { f.Network.Close(); workers.Wait() })
+	return f
 }
 
 func TestWalkBucket_SourceTimeout(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name    string
-		timeout time.Duration
+		timeout *metav1.Duration
+		caller  time.Duration
+		want    time.Duration
 	}{
-		{name: "default"},
-		{name: "shorter", timeout: 10 * time.Second},
-		{name: "longer", timeout: 180 * time.Second},
+		{"default", nil, 0, time.Minute},
+		{"shorter", &metav1.Duration{Duration: 10 * time.Second}, 0, 10 * time.Second},
+		{"longer", &metav1.Duration{Duration: 180 * time.Second}, 0, 180 * time.Second},
+		{"caller", &metav1.Duration{Duration: 180 * time.Second}, 5 * time.Second, 5 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			want := tc.timeout
-			if want == 0 {
-				want = time.Minute
-			}
-			b := &manifest.Bucket{BucketName: "data"}
-			if tc.timeout != 0 {
-				b.Timeout = &metav1.Duration{Duration: tc.timeout}
-			}
-			var calls atomic.Int32
-			client, err := minio.New("bucket.invalid", &minio.Options{
-				Region: "us-east-1", BucketLookup: minio.BucketLookupPath,
-				Transport: timeoutBucketTransport(func(req *http.Request) (*http.Response, error) {
-					calls.Add(1)
-					deadline, ok := req.Context().Deadline()
-					remaining := time.Until(deadline)
-					if !ok || remaining <= want-time.Second || remaining > want {
-						t.Errorf("bucket listing deadline: present=%t remaining=%v, want %v", ok, remaining, want)
-					}
-					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>")), Request: req}, nil
-				}),
+			synctest.Test(t, func(t *testing.T) {
+				calls := 0
+				f := timeoutBucketFetcher(t, func(req *http.Request) (*http.Response, error) {
+					calls++
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: bucketTimeoutBody{req.Context()}, Request: req}, nil
+				})
+				b := &manifest.Bucket{BucketName: "data", Endpoint: "https://bucket.invalid", Region: "us-east-1", Timeout: tc.timeout}
+				ctx := t.Context()
+				if tc.caller > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tc.caller)
+					defer cancel()
+				}
+				start := time.Now()
+				artifact, err := f.Fetch(ctx, b, (testInputs{}).readSet(b), cache.Policy{})
+				if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || artifact != nil || calls != 1 || time.Since(start) != tc.want {
+					t.Fatalf("source deadline: artifact=%v calls=%d elapsed=%v error=%v", artifact, calls, time.Since(start), err)
+				}
 			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = walkBucket(t.Context(), client, b, io.Discard)
-			if err != nil || calls.Load() == 0 {
-				t.Fatalf("controlled bucket listing: calls=%d error=%v", calls.Load(), err)
-			}
 		})
 	}
 }
@@ -851,32 +877,21 @@ func (b bucketTimeoutBody) Read([]byte) (int, error) {
 func (bucketTimeoutBody) Close() error { return nil }
 
 func TestWalkBucket_PhaseTimeouts(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		objects int
-		elapsed time.Duration
-		fail    bool
 	}{
-		{"independent phases", 2, 6 * time.Second, false},
-		{"listing body", 2, 5 * time.Second, true},
-		{"download body", 2, 8 * time.Second, true},
-		{"complete download batch", 9, 8 * time.Second, true},
+		{"aggregate phases", 2},
+		{"listing body", 2},
+		{"download body", 2},
+		{"complete download batch", 9},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				start := time.Now()
-				b := &manifest.Bucket{BucketName: "data", Timeout: &metav1.Duration{Duration: 5 * time.Second}}
-				client, err := minio.New("bucket.invalid", &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Transport: timeoutBucketTransport(func(req *http.Request) (*http.Response, error) {
+				b := &manifest.Bucket{BucketName: "data", Endpoint: "https://bucket.invalid", Region: "us-east-1", Timeout: &metav1.Duration{Duration: 5 * time.Second}}
+				f := timeoutBucketFetcher(t, func(req *http.Request) (*http.Response, error) {
 					listing := req.URL.Query().Get("list-type") != ""
-					deadline := start.Add(8 * time.Second)
-					if listing {
-						deadline = start.Add(5 * time.Second)
-					}
-					if got, ok := req.Context().Deadline(); !ok || !got.Equal(deadline) {
-						t.Errorf("phase deadline=%v present=%t, want %v", got, ok, deadline)
-					}
 					data := "x"
 					if listing {
 						data = "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>"
@@ -898,27 +913,13 @@ func TestWalkBucket_PhaseTimeouts(t *testing.T) {
 					}
 					header := http.Header{"Content-Length": {strconv.Itoa(len(data))}, "Etag": {"\"x\""}, "Last-Modified": {"Mon, 02 Jan 2006 15:04:05 GMT"}}
 					return &http.Response{StatusCode: http.StatusOK, Header: header, Body: body, ContentLength: int64(len(data)), Request: req}, nil
-				})})
-				if err != nil {
-					t.Fatal(err)
-				}
-				var output bytes.Buffer
-				_, err = walkBucket(t.Context(), client, b, &output)
-				if errors.Is(err, context.DeadlineExceeded) != tc.fail || !tc.fail && err != nil || time.Since(start) != tc.elapsed {
+				})
+				artifact, err := f.Fetch(t.Context(), b, (testInputs{}).readSet(b), cache.Policy{})
+				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second {
 					t.Fatalf("phase result: elapsed=%v error=%v", time.Since(start), err)
 				}
-				if !tc.fail {
-					tr := tar.NewReader(&output)
-					for i := range tc.objects {
-						header, err := tr.Next()
-						if err != nil || header.Name != fmt.Sprintf("file%02d", i) {
-							t.Fatalf("sorted archive entry=%v error=%v", header, err)
-						}
-						data, err := io.ReadAll(tr)
-						if err != nil || string(data) != "x" {
-							t.Fatalf("archive body=%q error=%v", data, err)
-						}
-					}
+				if artifact != nil {
+					t.Fatal("expired operation published an artifact")
 				}
 			})
 		})

@@ -96,7 +96,9 @@ func TestHttpGetURL_RequestLifetime(t *testing.T) {
 				c := newTestHTTPInputs(t, "")
 				started := time.Now()
 				ctx := t.Context()
-				bound := 5 * time.Second
+				bound := 6 * time.Second
+				ctx, cancel := context.WithCancel(ctx)
+				defer cancel()
 				if stage == "caller-deadline" {
 					var cancel context.CancelFunc
 					bound = time.Second
@@ -116,8 +118,11 @@ func TestHttpGetURL_RequestLifetime(t *testing.T) {
 					}
 					requestCtx = r.Context()
 					deadline, ok := requestCtx.Deadline()
-					if !ok || deadline.Sub(started) != bound {
+					if stage == "caller-deadline" && (!ok || deadline.Sub(started) != bound) || stage != "caller-deadline" && ok {
 						t.Fatalf("request deadline = %v, present = %t, want %v", deadline.Sub(started), ok, bound)
+					}
+					if stage == "headers" || stage == "body" {
+						go func() { time.Sleep(bound); cancel() }()
 					}
 					if stage == "headers" {
 						<-requestCtx.Done()
@@ -141,7 +146,7 @@ func TestHttpGetURL_RequestLifetime(t *testing.T) {
 				_, err := c.httpGetURL(ctx, "https://example.invalid/resource", sourcecache.ProducerInput{Writer: io.Discard})
 				switch stage {
 				case "close":
-					if err != nil || closes != 1 || !errors.Is(requestCtx.Err(), context.Canceled) {
+					if err != nil || closes != 1 || requestCtx.Err() != nil {
 						t.Fatalf("completed lifetime: err=%v closes=%d context=%v", err, closes, requestCtx.Err())
 					}
 				case "previous":
@@ -149,7 +154,11 @@ func TestHttpGetURL_RequestLifetime(t *testing.T) {
 						t.Fatalf("Previous cancellation: err=%v request=%v", err, requestCtx)
 					}
 				default:
-					if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) != bound {
+					cause := context.Canceled
+					if stage == "caller-deadline" {
+						cause = context.DeadlineExceeded
+					}
+					if !errors.Is(err, cause) || time.Since(started) != bound {
 						t.Fatalf("request lifetime: err=%v elapsed=%v want=%v", err, time.Since(started), bound)
 					}
 					if stage != "headers" && closes != 1 {

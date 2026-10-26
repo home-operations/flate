@@ -56,6 +56,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		Submodules bool
 	}{request.URL, request.Ref, request.Submodules}
 	key := sourcecache.GitKey{Content: content, Ref: cmp.Or(request.Ref, "HEAD"), RecurseSubmodules: request.Submodules}
+	policy.Timeout = nil
 	var input *gittree.FS
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
@@ -70,9 +71,15 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 			return plumbing.ZeroHash, err
 		}
 		if !pinned {
-			fetchCtx, cancel := operationContext(ctx, request.Timeout)
+			fetchCtx := ctx
+			var cancel context.CancelFunc
+			if request.Timeout > 0 {
+				fetchCtx, cancel = context.WithTimeout(ctx, request.Timeout)
+			}
 			err := cloned.FetchContext(fetchCtx, &git.FetchOptions{RefSpecs: []config.RefSpec{"+refs/*:refs/*"}, Tags: git.NoTags})
-			cancel()
+			if cancel != nil {
+				cancel()
+			}
 			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				return plumbing.ZeroHash, err
 			}
@@ -85,9 +92,15 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 			if err := checkoutRef(cloned, hash, nil); err != nil {
 				return plumbing.ZeroHash, err
 			}
-			updateCtx, cancel := operationContext(ctx, request.Timeout)
+			updateCtx := ctx
+			var cancel context.CancelFunc
+			if request.Timeout > 0 {
+				updateCtx, cancel = context.WithTimeout(ctx, request.Timeout)
+			}
 			err := f.updateSubmodules(updateCtx, cloned, nil, git.DefaultSubmoduleRecursionDepth)
-			cancel()
+			if cancel != nil {
+				cancel()
+			}
 			if err != nil {
 				return plumbing.ZeroHash, err
 			}

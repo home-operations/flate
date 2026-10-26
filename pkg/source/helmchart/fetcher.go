@@ -156,7 +156,7 @@ func synthesizeOCIRepository(r *manifest.HelmRepository, hc *manifest.HelmChartS
 	syn.SecretRef = r.SecretRef
 	syn.CertSecretRef = r.CertSecretRef
 	syn.Insecure = r.Insecure
-	syn.Timeout = &metav1.Duration{Duration: (sourcev1.HelmRepository{Spec: r.HelmRepositorySpec}).GetTimeout()}
+	syn.Timeout = &metav1.Duration{Duration: r.OperationTimeout()}
 	return syn
 }
 

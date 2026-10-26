@@ -1151,8 +1151,12 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 				r.Timeout = &metav1.Duration{Duration: 5 * time.Second}
 				blocked := true
 				calls := 0
+				deadline := time.Now().Add(5 * time.Second)
 				tr := chartTransport(func(req *http.Request) (*http.Response, error) {
 					calls++
+					if got, ok := req.Context().Deadline(); !ok || !got.Equal(deadline) {
+						t.Errorf("operation deadline=%v present=%t, want %v", got, ok, deadline)
+					}
 					index := strings.HasSuffix(req.URL.Path, "/index.yaml")
 					data := chart
 					if index {
@@ -1175,9 +1179,6 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 				start := time.Now()
 				_, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
 				want := 5 * time.Second
-				if tc.stage == "chart" {
-					want += 3 * time.Second
-				}
 				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want {
 					t.Fatalf("request timeout: elapsed=%v error=%v", time.Since(start), err)
 				}
@@ -1193,6 +1194,7 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 				prepared = preparedHTTP(t, f, testInputs{}, &longer)
 				prepared.client.Transport = tr
 				start = time.Now()
+				deadline = start.Add(10 * time.Second)
 				acquired, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
 				if err != nil {
 					t.Fatalf("longer policy replayed timeout: %v", err)
@@ -1202,7 +1204,7 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 					want = 3 * time.Second
 				}
 				if time.Since(start) != want {
-					t.Fatalf("independent request budgets: elapsed=%v want=%v", time.Since(start), want)
+					t.Fatalf("recovered operation: elapsed=%v want=%v", time.Since(start), want)
 				}
 				if body, err := fs.ReadFile(acquired.FS, source.HelmChartArchiveFilename); err != nil || !bytes.Equal(body, chart) {
 					t.Fatalf("chart bytes differ: %v", err)
@@ -1212,7 +1214,7 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 				}
 				f = New(nil, Config{Network: network, Cache: cachetest.New(t, root, sourcecache.New)})
 				shorter := longer
-				shorter.Timeout = &metav1.Duration{Duration: time.Nanosecond}
+				shorter.Timeout = &metav1.Duration{Duration: 0}
 				prepared = preparedHTTP(t, f, testInputs{}, &shorter)
 				prepared.client.Transport = tr
 				before := calls
@@ -1223,4 +1225,32 @@ func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestFetchHTTPChart_NestedRetryDeadline(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := httpRepo("https://charts.invalid")
+		r.Timeout = &metav1.Duration{Duration: 5 * time.Second}
+		f, inputs := newHTTPFetcher(t, r)
+		prepared := preparedHTTP(t, f, inputs, r)
+		start := time.Now()
+		calls := 0
+		prepared.client.Transport = chartTransport(func(req *http.Request) (*http.Response, error) {
+			calls++
+			if deadline, ok := req.Context().Deadline(); !ok || !deadline.Equal(start.Add(5*time.Second)) {
+				t.Errorf("nested retry deadline=%v present=%t", deadline, ok)
+			}
+			select {
+			case <-time.After(2 * time.Second):
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			}
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+		})
+		_, err := f.fetchHTTPChart(t.Context(), prepared, helmChart(r.Name, "app-template", "1.0.0"), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Second}})
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, manifest.ErrFlux) || calls != 2 || time.Since(start) != 5*time.Second {
+			t.Fatalf("nested retries: calls=%d elapsed=%v error=%v", calls, time.Since(start), err)
+		}
+	})
 }

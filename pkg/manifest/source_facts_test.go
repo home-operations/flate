@@ -102,3 +102,41 @@ func TestSource_Declaration(t *testing.T) {
 		})
 	}
 }
+
+func TestSource_OperationTimeout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		timeout *metav1.Duration
+		want    time.Duration
+	}{
+		{"default", nil, time.Minute},
+		{"short", &metav1.Duration{Duration: 10 * time.Second}, 10 * time.Second},
+		{"long", &metav1.Duration{Duration: 3 * time.Minute}, 3 * time.Minute},
+		{"zero", &metav1.Duration{}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			for _, source := range []struct {
+				name      string
+				operation interface{ OperationTimeout() time.Duration }
+			}{
+				{"git", &GitRepository{Timeout: tc.timeout}},
+				{"oci", &OCIRepository{Timeout: tc.timeout}},
+				{"bucket", &Bucket{Timeout: tc.timeout}},
+				{"helm", &HelmRepository{Timeout: tc.timeout}},
+			} {
+				t.Run(source.name, func(t *testing.T) {
+					t.Parallel()
+					want := tc.want
+					if source.name == "helm" {
+						want = (sourcev1.HelmRepository{Spec: sourcev1.HelmRepositorySpec{Timeout: tc.timeout}}).GetTimeout()
+					}
+					if got := source.operation.OperationTimeout(); got != want {
+						t.Fatalf("operation timeout=%v, want %v", got, want)
+					}
+				})
+			}
+		})
+	}
+}

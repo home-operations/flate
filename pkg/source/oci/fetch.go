@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -60,15 +59,11 @@ func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, req
 	if ref.Pinned() {
 		policy.MaxAge = cache.Forever
 	}
+	timeout := repo.OperationTimeout()
+	policy.Timeout = &timeout
 	var input fs.FS
 	var descriptor ocispec.Descriptor
 	produce := func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		timeout := time.Minute
-		if repo.Timeout != nil {
-			timeout = repo.Timeout.Duration
-		}
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
 		selected, err := resolveRef(ctx, request.client, repo, ref)
 		if err != nil {
 			return cache.ProducerResult{}, err

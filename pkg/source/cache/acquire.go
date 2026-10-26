@@ -500,6 +500,11 @@ func fresh(at time.Time, maxAge time.Duration) bool {
 }
 
 func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callbacks acquisitionCallbacks) (result *entry, resultErr error) {
+	if key.policy.Timeout != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *key.policy.Timeout)
+		defer cancel()
+	}
 	staged := payload{key: key, previous: previous}
 	staged.writer = &staged.memory
 	var repairName string
@@ -536,6 +541,9 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 	if err != nil {
 		return nil, err
 	}
+	if key.policy.Timeout != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	e.resolved = time.Now().UTC()
 	var stored ocispec.Descriptor
 	if c.store != nil && !key.memoryOnly {
@@ -566,6 +574,9 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 		}
 	}
 	valid, err := c.validCandidate(ctx, callbacks.validate, e)
+	if key.policy.Timeout != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if !valid {
 		e.resolved = time.Time{}
 		return e, err

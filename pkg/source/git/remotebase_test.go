@@ -400,7 +400,8 @@ func TestFetchRemoteBase_CommandBudgets(t *testing.T) {
 		})
 		f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 		start := time.Now()
-		artifact, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "commands://" + src, Timeout: 5 * time.Second}, sourcecache.Policy{})
+		aggregate := time.Second
+		artifact, err := f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: "commands://" + src, Timeout: 5 * time.Second}, sourcecache.Policy{Timeout: &aggregate})
 		if err != nil || artifact == nil || calls < 2 || time.Since(start) < 6*time.Second {
 			t.Fatalf("independent commands: calls=%d elapsed=%v error=%v", calls, time.Since(start), err)
 		}

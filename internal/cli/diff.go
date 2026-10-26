@@ -82,14 +82,20 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 		flags: *c, roots: c.roots("", renderKinds...), pair: true,
 		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
 	}, func(inv *selectedInvocation) selectedPayload {
-		orig, current := inv.sides[0], inv.sides[1]
-		imgs, suppressed, err := diff.CompareImages(
-			diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
-			diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable},
-			nil, includeRemoved,
-		)
-		return selectedPayload{warnings: appendSuppressionWarnings(nil, suppressed), err: errors.Join(err,
-			(output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs))}
+		groups := make([]output.ImageGroup, len(inv.groups))
+		result := selectedPayload{warnings: make([][]manifest.Warning, len(groups))}
+		for i, group := range inv.groups {
+			orig, current := group.sides[0], group.sides[1]
+			imgs, suppressed, err := diff.CompareImages(
+				diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
+				diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable},
+				nil, includeRemoved,
+			)
+			groups[i] = output.ImageGroup{Cluster: group.cluster, Images: imgs, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead]}
+			result.warnings[i], result.err = appendSuppressionWarnings(nil, suppressed), errors.Join(result.err, err)
+		}
+		result.err = errors.Join(result.err, (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ImageGroups(groups))
+		return result
 	})
 }
 
@@ -102,14 +108,20 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 		flags: *c, roots: c.roots(root.Name, kinds...), pair: true,
 		stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentDiff,
 	}, func(inv *selectedInvocation) selectedPayload {
-		orig, current := inv.sides[0], inv.sides[1]
-		formatted, warnings, suppressed, err := diff.Compare(
-			diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
-			diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable},
-			nil, diff.Options{StripAttrs: d.stripAttrs, StripFields: d.stripFields, Format: diff.Format(c.output)},
-		)
-		_, writeErr := cmd.OutOrStdout().Write(formatted)
-		return selectedPayload{warnings: appendSuppressionWarnings(warnings, suppressed), err: errors.Join(err, writeErr)}
+		groups := make([]output.DiffGroup, len(inv.groups))
+		result := selectedPayload{warnings: make([][]manifest.Warning, len(groups))}
+		for i, group := range inv.groups {
+			orig, current := group.sides[0], group.sides[1]
+			formatted, warnings, suppressed, err := diff.Compare(
+				diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
+				diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable},
+				nil, diff.Options{StripAttrs: d.stripAttrs, StripFields: d.stripFields, Format: diff.Format(c.output)},
+			)
+			groups[i] = output.DiffGroup{Cluster: group.cluster, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead], Body: formatted}
+			result.warnings[i], result.err = appendSuppressionWarnings(warnings, suppressed), errors.Join(result.err, err)
+		}
+		result.err = errors.Join(result.err, (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).DiffGroups(groups))
+		return result
 	})
 }
 

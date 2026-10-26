@@ -136,10 +136,10 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 	testutil.WriteFile(t, root, "flux/parent.yaml", ksYAML("parent", "parent", ""))
 	testutil.WriteFile(t, root, "parent/kustomization.yaml", "resources: [trigger.yaml]\n")
 	testutil.WriteFile(t, root, "parent/trigger.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: trigger, namespace: ns}\n")
-	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
-	defer o.Stop()
-	assert.NoError(t, o.Bootstrap(t.Context()))
+	defer o.stop()
+	assert.NoError(t, o.bootstrap(t.Context()))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	manifest.KindOf(&manifest.RawObject{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet}).Namespaced()
@@ -169,7 +169,7 @@ func TestFailDependsOnCycles_RenderEmittedCycle(t *testing.T) {
 			}
 		}
 	}, false)
-	if err := o.Run(ctx); err == nil || !injected.Load() {
+	if err := o.run(ctx); err == nil || !injected.Load() {
 		t.Fatalf("render-emitted fixture: injected=%t error=%v", injected.Load(), err)
 	}
 }

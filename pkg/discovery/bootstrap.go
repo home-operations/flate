@@ -114,7 +114,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		for child := range d.loader.Sources() {
 			evidence[child.Obj.Named()] = child
 		}
-		for _, child := range d.loader.Kustomizations() {
+		for _, child := range d.loader.PathObjects() {
 			ref, _, _ := child.Obj.SourcePath()
 			if allowMissing || evidence[ref].Obj != nil || d.cfg.Store.GetObject(ref) != nil {
 				groups[ref] = append(groups[ref], child.Obj)
@@ -334,7 +334,7 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 	var input *gittree.FS
 	var err error
 	if cached := d.aliasViews[viewKey]; cached != nil {
-		input, _, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: cached})
+		input, err = cached, ctx.Err()
 	} else {
 		current := bootstrap.FS
 		if subtree != "." {
@@ -348,7 +348,7 @@ func (d *discoverer) entrySourceView(ctx context.Context, candidate entryResolut
 		return nil, err
 	}
 	if d.aliasViews == nil {
-		d.aliasViews = map[string]fs.FS{}
+		d.aliasViews = map[string]*gittree.FS{}
 	}
 	d.aliasViews[viewKey] = input
 	id := candidate.object.Named()

@@ -143,8 +143,7 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 					return cache.ProducerResult{}, err
 				})
 				assert.NoError(t, err)
-				artifact = cache.FileFS("chart.tgz", r)
-				assert.NoError(t, r.Close())
+				artifact = cache.NameBlob("chart.tgz", r)
 			}
 			st := store.New()
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: artifact, Revision: "1.0.0"})

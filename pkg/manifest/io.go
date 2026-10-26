@@ -46,6 +46,21 @@ func ReleaseDoc(m map[string]any) {
 // document or render artifact retains them; never copy retained maps
 // merely to recycle the originals.
 func DecodeDocs(r io.Reader) ([]map[string]any, error) {
+	return decodeDocs(r, func(doc map[string]any, _ int) map[string]any { return doc })
+}
+
+// DocOccurrence retains a decoded document and its original stream ordinal.
+type DocOccurrence struct {
+	Document map[string]any
+	Ordinal  int
+}
+
+// DecodeDocOccurrences retains original stream ordinals across skipped documents.
+func DecodeDocOccurrences(r io.Reader) ([]DocOccurrence, error) {
+	return decodeDocs(r, func(doc map[string]any, ordinal int) DocOccurrence { return DocOccurrence{doc, ordinal} })
+}
+
+func decodeDocs[T any](r io.Reader, record func(map[string]any, int) T) ([]T, error) {
 	dec := yaml.NewDecoder(r)
 	var priorAliases, priorConstructs, lastAliases, lastConstructs int
 	guard := limit.New()
@@ -59,8 +74,8 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 		lastAliases, lastConstructs = aliases, constructs
 		return guard.CheckAlias(priorAliases+aliases, priorConstructs+constructs)
 	})))
-	var out []map[string]any
-	for {
+	var out []T
+	for ordinal := 0; ; ordinal++ {
 		var node yaml.Node
 		var m map[string]any
 		err := dec.Decode(&node)
@@ -83,7 +98,7 @@ func DecodeDocs(r io.Reader) ([]map[string]any, error) {
 			ReleaseDoc(m)
 			continue
 		}
-		out = append(out, m)
+		out = append(out, record(m, ordinal))
 	}
 }
 

@@ -146,6 +146,60 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		assert.Equal(t, manifest.Equal(authored, snapshot), true)
 		assert.Equal(t, l.authoredObject(file, snapshot.Named()).Obj, manifest.BaseManifest(authored))
 	})
+	t.Run("path witness construction lifetime", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		for _, side := range []string{"left", "right"} {
+			testutil.WriteFile(t, root, side+".yaml", testutil.KustomizationYAML("same", "apps", "  path: ./"+side+"\n"))
+		}
+		l := New(store.New())
+		l.SourceRoot = root
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		witnesses := l.PathObjects()
+		assert.Equal(t, len(witnesses), 2)
+		l.Admit(root)
+		assert.Equal(t, len(l.PathObjects()), 1)
+		var paths []string
+		for _, child := range witnesses {
+			_, path, _ := child.Obj.SourcePath()
+			paths = append(paths, path)
+		}
+		assert.Diff(t, paths, []string{"./left", "./right"})
+	})
+
+	t.Run("effective names include Namespace transformation", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		for _, side := range []string{"one", "two"} {
+			testutil.WriteFile(t, root, side+"/kustomization.yaml", "namespace: "+side+"\nnamePrefix: pre-\nnameSuffix: -post\nresources: [objects.yaml]\n")
+			testutil.WriteFile(t, root, side+"/objects.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: _}\n---\napiVersion: foreign.example/v2\nkind: Namespace\nmetadata: {name: _}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: values}\n")
+		}
+		l := New(store.New())
+		l.SourceRoot = root
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		for _, side := range []string{"one", "two"} {
+			occurrences, err := l.Occurrences(t.Context(), filepath.Join(root, side), "")
+			assert.NoError(t, err)
+			var ids []manifest.NamedResource
+			for _, o := range occurrences {
+				ids = append(ids, o.Identity)
+				if o.Object.Named() != o.Authored {
+					t.Fatal("projection mutated an authored object")
+				}
+			}
+			assert.Diff(t, ids, []manifest.NamedResource{{Kind: "Namespace", Name: side}, {Group: "foreign.example", Kind: "Namespace", Namespace: side, Name: "_"}, {Kind: manifest.KindConfigMap, Namespace: side, Name: "pre-values-post"}})
+		}
+		l.Admit(root)
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		for id := range l.Index.Records {
+			if id.Kind == "Namespace" {
+				t.Fatalf("inventory-only resource entered the production index: %s", id)
+			}
+		}
+	})
+
 	t.Run("bootstrap_document_owners", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
@@ -913,6 +967,15 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
+	packages, err := l.Packages(t.Context())
+	assert.NoError(t, err)
+	for _, p := range packages {
+		for _, o := range p.Occurrences {
+			if o.Identity.Name == "sibling" {
+				t.Fatal("unlisted bootstrap sibling entered package evidence")
+			}
+		}
+	}
 	l.Admit(root)
 	sibling := testutil.KustomizationID("apps", "sibling")
 	if l.Store.GetObject(sibling) != nil {

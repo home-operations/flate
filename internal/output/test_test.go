@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
@@ -33,6 +34,36 @@ func TestEncoder_TestVerdictGlyphAndElapsed(t *testing.T) {
 	} else if strings.Contains(out, "0.0s") {
 		t.Errorf("elapsed=0 should be omitted, not rendered:\n%s", out)
 	}
+	var singleton bytes.Buffer
+	if err := (Encoder{Writer: &singleton}).TestGroups([]TestGroup{{Cluster: "entry", Report: pass}}, 1500*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	assert.Diff(t, singleton.String(), pb.String())
+}
+
+func TestEncoder_TestGroupedVerdicts(t *testing.T) {
+	t.Parallel()
+	groups := []TestGroup{
+		{Cluster: "a", Report: TestReport{Passed: 1, Skipped: 1, Cases: []Case{
+			{ID: testutil.KustomizationID("ns", "same"), Outcome: OutcomePassed},
+			{ID: testutil.KustomizationID("ns", "skip"), Outcome: OutcomeSkipped},
+		}}},
+		{Cluster: "b", Report: TestReport{Failed: 1, Cases: []Case{
+			{ID: testutil.KustomizationID("ns", "same"), Outcome: OutcomeFailed, Reason: "boom"},
+		}, Blocked: []Case{{ID: testutil.KustomizationID("ns", "child"), Outcome: OutcomeBlocked}}}},
+	}
+	var b bytes.Buffer
+	if err := (Encoder{Writer: &b}).TestGroups(groups, 1500*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	assert.Diff(t, b.String(), "\nCluster: a\n\n"+
+		"  ✓  Kustomization.kustomize.toolkit.fluxcd.io  ns/same\n"+
+		"  ‒  Kustomization.kustomize.toolkit.fluxcd.io  ns/skip\n\n"+
+		"  ✓ 1 passed · 1 skipped\n\nCluster: b\n\n"+
+		"  ✗  Kustomization.kustomize.toolkit.fluxcd.io  ns/same  boom\n"+
+		"  ⊘  Kustomization.kustomize.toolkit.fluxcd.io  ns/child\n\n"+
+		"  ✗ 0 passed · 1 failed · 1 blocked\n\nInvocation totals\n"+
+		"  ✗ 1 passed · 1 skipped · 1 failed · 1 blocked   1.5s\n")
 }
 
 func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {

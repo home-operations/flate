@@ -116,7 +116,7 @@ func TestOrchestrator_ParentOfAllocations(t *testing.T) {
 }
 
 func TestOrchestrator_ChildrenByParent(t *testing.T) {
-	o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{CacheDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,8 +476,9 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 			cache := t.TempDir()
 			var previous [2]string
 			for run, state := range []string{"cold", "warm"} {
-				cfg := Config{CacheDir: cache, Concurrency: 2}
-				base, head, err := RenderTrees(t.Context(), Tree{Path: dirs[0], RepoRoot: dirs[0]}, Tree{Path: dirs[1], RepoRoot: dirs[1]}, cfg)
+				cfg := treeConfig{CacheDir: cache, Concurrency: 2}
+				renderedTrees1, err := RenderTrees(t.Context(), []Tree{Tree{Path: dirs[0], RepoRoot: dirs[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, Tree{Path: dirs[1], RepoRoot: dirs[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+				base, head := renderedTrees1[0], renderedTrees1[1]
 				assert.NoError(t, err)
 				for side, rendered := range []Rendered{base, head} {
 					producer := testutil.KustomizationID("flux-system", "producer")

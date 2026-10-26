@@ -28,7 +28,7 @@ func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	builder := selfProduceBuilder{idx: index, store: s, emittedFiles: map[string][]manifest.NamedResource{}}
 	obj := &manifest.Kustomization{Name: "child", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "input"}}
-	children := []store.Child{{Obj: obj}}
+	children := []parsedObject{{Obj: obj}}
 	var visits []graphVisit
 	for _, name := range []string{"a", "z"} {
 		owner := &manifest.Kustomization{Name: name, Namespace: "apps"}
@@ -1122,7 +1122,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 
 func BenchmarkSelfProduceBuilder_ArtifactJoin(b *testing.B) {
 	obj := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}}}}
-	consumers := make([]store.Child, 100)
+	consumers := make([]parsedObject, 100)
 	for i := range consumers {
 		consumers[i].Obj = &manifest.Kustomization{Namespace: "apps", Name: fmt.Sprintf("consumer-%d", i), SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: fmt.Sprintf("app-%d", i)}}
 	}

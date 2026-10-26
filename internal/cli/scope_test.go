@@ -184,8 +184,12 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 				input = "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: values-producer, namespace: apps}\nspec:\n  target: {name: values}\n  dataFrom: [{extract: {key: values}}]\n"
 			}
 			testutil.WriteFile(t, root, inputFile, input)
-			cfg := orchestrator.Config{Path: filepath.Join(root, "cluster"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2, AllowMissingSecrets: tc.extra != ""}
-			run := runOrchestratorCfg(t.Context(), cfg)
+			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingSecrets: tc.extra != ""}
+			runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(root, "cluster"), RepoRoot: root}}, cfg)
+			if len(runs) != 1 {
+				t.Fatalf("missing run: %v", err)
+			}
+			run := runs[0]
 			res, runErr := run.Result, run.Err
 			if run.Orchestrator == nil || res == nil {
 				t.Fatal("full-mode fixture did not complete")
@@ -278,15 +282,19 @@ func TestRun_NamedScope_SubstituteOwners(t *testing.T) {
 					testutil.WriteFile(t, root, "selected/input.yaml", input)
 				}
 			}
-			cfg := buildOrchCfg(commonFlags{path: filepath.Join(root, "cluster"), cacheDir: t.TempDir(), concurrency: 2})
-			run := runOrchestratorCfg(t.Context(), cfg)
+			flags := commonFlags{path: filepath.Join(root, "cluster"), cacheDir: t.TempDir(), concurrency: 2}
+			runs, runErr := orchestrator.RenderTrees(t.Context(), inputTrees(flags), buildOrchCfg(flags))
+			if len(runs) != 1 {
+				t.Fatalf("missing run: %v", runErr)
+			}
+			run := runs[0]
 			res := run.Result
 			id := testutil.KustomizationID("flux-system", "selected")
 			requiredFailure := tc.broken && tc.required
 			if res == nil || (len(outputByParent(res.Manifests)[id]) == 0) != requiredFailure || (len(res.Blocked[id]) != 0) != requiredFailure {
 				t.Fatalf("consumer did not render independently: %+v", res)
 			}
-			out, stderr, code := runCLI(t, "build", "ks", "selected", "--path", cfg.Path, "--cache-dir", t.TempDir(), "--concurrency", "2")
+			out, stderr, code := runCLI(t, "build", "ks", "selected", "--path", flags.path, "--cache-dir", t.TempDir(), "--concurrency", "2")
 			if (code == 1) != requiredFailure || strings.Contains(out, "name: selected") == requiredFailure {
 				t.Fatalf("substitution owner policy: code=%d output=%s diagnostics=%s", code, out, stderr)
 			}
@@ -338,7 +346,7 @@ func TestRun_NamedScope_ParentChain(t *testing.T) {
 }
 
 func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
-	o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	o, err := completedOrchestrator(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,11 +354,6 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 	o.Store().AddObject(selected)
 	other := testutil.KustomizationID("apps", "other")
 	res := &orchestrator.Result{Manifests: []manifest.DocumentBatch{{Parent: selected, Documents: []map[string]any{{"kind": "ConfigMap", "metadata": map[string]any{"name": "partial"}}}}}, Failed: map[manifest.NamedResource]store.StatusInfo{other: {Status: store.StatusFailed, Message: "unrelated failure"}}}
-	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
-	})
 	cleanupErr := errors.New("backing close failed")
 	for _, fatal := range []error{context.Canceled, errors.New("unattributed panic"), errors.New("output write failed"), cleanupErr, errors.Join(context.Canceled, cleanupErr)} {
 		t.Run(fatal.Error(), func(t *testing.T) {
@@ -361,7 +364,7 @@ func TestScopedFailures_WarningsPreserveFatalErrors(t *testing.T) {
 				t.Fatalf("selection failed: %v", selectedErr)
 			}
 			var out bytes.Buffer
-			got := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out}, &selectedInvocation{sides: selection, err: selectedErr, remainder: remainder}, selectedPayload{})
+			got := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}}}, selectedPayload{})
 			if !errors.Is(got, fatal) || !strings.Contains(out.String(), fatal.Error()) || !strings.Contains(out.String(), "unrelated failure") {
 				t.Fatalf("warning-only footer hid fatal cause: %v %s", got, out.String())
 			}
@@ -476,15 +479,10 @@ spec:
 }
 
 func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
-	o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+	o, err := completedOrchestrator(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
-	})
 	id := func(name string) manifest.NamedResource {
 		return testutil.KustomizationID("apps", name)
 	}
@@ -512,7 +510,7 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 		t.Fatalf("selection failed: %v", selectedErr)
 	}
 	var out bytes.Buffer
-	if got := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out}, &selectedInvocation{sides: selection, err: selectedErr, remainder: remainder}, selectedPayload{}); got == nil {
+	if got := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Name: "selected"}}, stderr: &out}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}}}, selectedPayload{}); got == nil {
 		t.Fatal("fatal cycle became successful")
 	}
 	for _, want := range []string{"blocked by " + b.String(), "blocked by " + a.String(), "unrelated failure", "2 failed"} {
@@ -524,7 +522,11 @@ func TestReportFailures_FatalCycleWithWarnings(t *testing.T) {
 
 func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	root := writeNamedScopeFixture(t)
-	runs, runErr := runOrchestrators(t.Context(), commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2}, false)
+	flags := commonFlags{path: root, cacheDir: t.TempDir(), concurrency: 2}
+	runs, runErr := orchestrator.RenderTrees(t.Context(), inputTrees(flags), buildOrchCfg(flags))
+	if len(runs) != 1 {
+		t.Fatalf("missing run: %v", runErr)
+	}
 	assert.NoError(t, runErr)
 	run := runs[0]
 	o, res, err := run.Orchestrator, run.Result, run.Err
@@ -870,15 +872,10 @@ spec:
 func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 	for _, named := range []bool{false, true} {
 		t.Run(fmt.Sprint(named), func(t *testing.T) {
-			o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir()})
+			o, err := completedOrchestrator(t)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
-			})
 			id := testutil.KustomizationID("apps", "failed")
 			o.Store().AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 			res := &orchestrator.Result{Failed: map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "render failed"}}}
@@ -893,7 +890,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 			}
 			var out bytes.Buffer
 			extra := fmt.Errorf("reconcile: %w", context.Canceled)
-			got := finishSelected(selectedRequest{roots: []manifest.NamedResource{query}, stderr: &out}, &selectedInvocation{sides: selection, err: errors.Join(selectedErr, extra), remainder: errors.Join(remainder, extra)}, selectedPayload{})
+			got := finishSelected(selectedRequest{roots: []manifest.NamedResource{query}, stderr: &out}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: errors.Join(selectedErr, extra), remainder: errors.Join(remainder, extra)}}}, selectedPayload{})
 			if !errors.Is(got, context.Canceled) {
 				t.Fatalf("lost non-resource error: %v", got)
 			}
@@ -901,7 +898,7 @@ func TestReportFailures_NamedReportingPolicy(t *testing.T) {
 				t.Errorf("non-resource error missing from report: %s", &out)
 			}
 			writeErr := errors.New("report write failed")
-			got = finishSelected(selectedRequest{roots: []manifest.NamedResource{query}, stderr: failingWriter{err: writeErr}}, &selectedInvocation{sides: selection, err: selectedErr, remainder: remainder}, selectedPayload{})
+			got = finishSelected(selectedRequest{roots: []manifest.NamedResource{query}, stderr: failingWriter{err: writeErr}}, &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: selection, err: selectedErr, remainder: remainder}}}, selectedPayload{})
 			assert.Equal(t, errors.Is(got, writeErr), true)
 		})
 	}
@@ -1024,15 +1021,10 @@ func TestFailureModel(t *testing.T) {
 				for id, deps := range blocked {
 					blocked[id] = slices.Clone(deps)
 				}
-				o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
+				o, err := completedOrchestrator(t)
 				if err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() {
-					if err := o.Stop(); err != nil {
-						t.Errorf("Stop: %v", err)
-					}
-				})
 				selected, err, _ := orchestrator.Select([]orchestrator.Rendered{{Orchestrator: o, Result: tc.raw}},
 					&orchestrator.FailuresError{Message: "raw failures"}, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 				if len(selected) != 1 || err == nil || !strings.Contains(err.Error(), fmt.Sprintf("(+%d blocked", tc.want.Blocked)) {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -227,23 +226,18 @@ func TestRender_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 			}
 			key := renderKey(req, root, input.ignore)
 			snap, _, ok := readTestRenderFrame(t, cache, key)
-			eligible := renderPersistenceEligible(t)
-			if ok != eligible {
-				t.Fatalf("persisted render = %v, want %v", ok, eligible)
+			if !ok {
+				t.Fatal("owner did not retain filtered render")
 			}
-			if eligible {
-				publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
-			}
+			publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, testRenderFrame(t, snap, testRenderPayload(t, "SENTINEL")))
 			out2, _, err := Render(ctx, cache, RenderRequest{Source: admit(), Label: root, ApplyIgnore: true, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
 			if err != nil {
-				t.Fatalf("second render: %v", err)
+				t.Fatal(err)
 			}
-			if eligible && !hasRenderField(out2, "witness", "SENTINEL") {
-				t.Errorf("expected a cache hit against the filtered view; got a re-render:\n%s", out2)
+			if !hasRenderField(out2, "witness", "SENTINEL") {
+				t.Fatalf("filtered view missed its validated frame: %s", out2)
 			}
-			if !eligible && !reflect.DeepEqual(out2, out1) {
-				t.Errorf("ineligible owner changed filtered output: %s", out2)
-			}
+
 		})
 	}
 }

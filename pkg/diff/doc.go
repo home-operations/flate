@@ -38,25 +38,34 @@
 // both runs are completed. Render two trees, select the requested producer kinds,
 // then compare them:
 //
-//	base, head, runErr := orchestrator.RenderTrees(ctx,
-//		orchestrator.Tree{RepoRoot: baseDir}, orchestrator.Tree{RepoRoot: headDir}, cfg)
-//	selected, selectedErr, _ := orchestrator.Select(
-//		[]orchestrator.Rendered{base, head}, runErr,
-//		[]manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
-//	if len(selected) == 0 {
-//		return selectedErr
+//	runs, runErr := orchestrator.RenderTrees(ctx, []orchestrator.Tree{
+//		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: baseDir},
+//		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: headDir},
+//	}, cfg)
+//	for start := 0; start < len(runs); {
+//		end := start + 1
+//		for end < len(runs) && runs[end].ID.Cluster == runs[start].ID.Cluster {
+//			end++
+//		}
+//		pair := runs[start:end]
+//		start = end
+//		selected, selectedErr, _ := orchestrator.Select(
+//			pair, errors.Join(pair[0].Err, pair[1].Err),
+//			[]manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
+//		out, warnings, suppressed, err := diff.Compare(
+//			diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
+//			diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+//			selectedErr,
+//			diff.Options{
+//				StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
+//				Normalize: redact, // optional extra per-manifest scrub
+//			},
+//		)
+//		// Deliver out under pair[0].ID.Cluster; present warnings, suppressed and err
+//		// through the diagnostic writer, including when partial output is available.
 //	}
-//	out, warnings, suppressed, err := diff.Compare(
-//		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-//		diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
-//		selectedErr,
-//		diff.Options{
-//			StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,
-//			Normalize: redact, // optional extra per-manifest scrub
-//		},
-//	)
-//	// Deliver out to the product writer; present warnings and suppressed through
-//	// the diagnostic writer, including when err is non-nil.
+//	// Check the invocation error once after every cluster, including shared cleanup failures.
+//	return runErr
 //
 // [CompareImages] uses the same selected producer availability and returns a
 // sorted image list plus structured suppressions. [Changes] and [RenderDocs] retain

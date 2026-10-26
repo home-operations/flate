@@ -91,6 +91,10 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			if tc.broad {
 				scan = root
 			}
+			entries, err := Plan(t.Context(), Config{Path: scan, RepoRoot: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
+			if err != nil || len(entries) != 1 || entries[0].ID != "." || entries[0].Path != scan {
+				t.Fatalf("committed ownership partitioned working-tree declarations: %+v, %v", entries, err)
+			}
 			result, err := Run(t.Context(), Config{
 				Path: scan, RepoRoot: root, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 			})
@@ -150,6 +154,50 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 				t.Fatalf("producers = %v, want [%s]", got, parent)
 			}
 		})
+	}
+}
+
+func TestPlan_PinnedRootKeepsEntrySource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml, flux/entry.yaml, flux/repo.yaml]\n")
+	testutil.WriteFile(t, root, "flux/entry.yaml", testutil.KustomizationYAML("root", "control", "  path: ./\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+	source := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster', ref: {tag: v1}}\n"
+	testutil.WriteFile(t, root, "flux/repo.yaml", source)
+	for i, tag := range []string{"v1", "v2"} {
+		testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: "+tag+"}\n")
+		hash := testutil.GitCommitAll(t, repo, tag, &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(int64(i), 0)}})
+		assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName(tag), hash)))
+	}
+	testutil.WriteFile(t, root, "flux/repo.yaml", strings.Replace(source, "tag: v1", "tag: v2", 1))
+	entries, err := Plan(t.Context(), Config{Path: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
+	assert.NoError(t, err)
+	if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != root {
+		t.Fatalf("root pin replaced the entry's source view: %+v", entries)
+	}
+}
+
+func TestPlan_PinnedPathExcludesWorkingTreePackages(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "flux/entry.yaml", testutil.KustomizationYAML("root", "control", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+	testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}\n")
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: pinned}\n")
+	hash := testutil.GitCommitAll(t, repo, "pinned", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("pinned"), hash)))
+	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: same}\ndata: {value: dirty}\n")
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml, added.yaml]\n")
+	testutil.WriteFile(t, root, "apps/added.yaml", testutil.KustomizationYAML("phantom", "control", "  path: ./phantom\n  sourceRef: {kind: GitRepository, name: working}\n")+"---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: working, namespace: control}\nspec: {url: 'git://fixture.invalid/cluster'}\n")
+	testutil.WriteFile(t, root, "phantom/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "phantom/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: phantom}\n")
+	testutil.GitCommitAll(t, repo, "head", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}})
+	entries, err := Plan(t.Context(), Config{Path: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
+	assert.NoError(t, err)
+	if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != root {
+		t.Fatalf("suppressed working-tree package became a cluster: %+v", entries)
 	}
 }
 

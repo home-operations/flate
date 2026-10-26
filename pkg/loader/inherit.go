@@ -476,7 +476,7 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 			for _, child := range doc.objects {
 				obj := child.Obj
 				if doc.lookup[obj.Named()].Obj == nil {
-					doc.lookup[obj.Named()] = child
+					doc.lookup[obj.Named()] = child.Child
 				}
 			}
 			l.documents.cache[path] = doc
@@ -484,7 +484,7 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 		return doc.lookup[id]
 	}
 	if len(doc.objects) == 1 && doc.objects[0].Obj.Named() == id {
-		return doc.objects[0]
+		return doc.objects[0].Child
 	}
 	return store.Child{}
 }

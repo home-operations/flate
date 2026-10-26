@@ -168,8 +168,8 @@ func writeTestRecord(w io.Writer, key cache.BlobKey, record renderRecord) error 
 	return err
 }
 
-func readTestRecord(r io.Reader, record *renderRecord) error {
-	data, err := io.ReadAll(r)
+func readTestRecord(r fs.FS, record *renderRecord) error {
+	data, err := fs.ReadFile(r, "content")
 	if err != nil {
 		return err
 	}

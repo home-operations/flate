@@ -25,22 +25,20 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 				t.Run(fmt.Sprintf("%s/changed_%t/producer_first_%t", kind, changedOnly, producerFirst), func(t *testing.T) {
 					root := t.TempDir()
 					testutil.WriteSubstitutionProducerCluster(t, root, kind)
-					cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2}
+					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
 					if changedOnly {
 						cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
 					}
-					o, err := New(t.Context(), cfg)
+					o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 					if err != nil {
 						t.Fatal(err)
 					}
 					t.Cleanup(func() {
-						if err := o.Stop(); err != nil {
-							t.Errorf("Stop: %v", err)
-						}
+						o.stop()
 					})
 					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 					defer cancel()
-					if err := o.Bootstrap(ctx); err != nil {
+					if err := o.bootstrap(ctx); err != nil {
 						t.Fatal(err)
 					}
 					o.configureControllers()
@@ -96,8 +94,8 @@ func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 			testutil.WriteSubstitutionProducerCluster(t, root, kind)
 			testutil.WriteFile(t, root, "data/version.env", "VERSION=4.6.2\n")
 			testutil.WriteFile(t, root, "data/kustomization.yaml", "namespace: flux-system\nresources: [missing.yaml]\ngeneratorOptions: {disableNameSuffixHash: true}\n"+map[string]string{manifest.KindConfigMap: "configMapGenerator", manifest.KindSecret: "secretGenerator"}[kind]+":\n- name: settings\n  envs: [version.env]\n")
-			o := newSubstitutionOrchestrator(t, Config{Path: root})
-			res, err := o.Render(t.Context())
+			o := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: root})
+			res, err := o.render(t.Context())
 			consumer, producer := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "producer")
 			if err == nil || res.Failed[producer].Status != store.StatusFailed {
 				t.Fatalf("materializer failure missing: error=%v failures=%v", err, res.Failed)
@@ -149,14 +147,14 @@ spec:
 					}
 					testutil.WriteFile(t, root, "consumer/kustomization.yaml", "resources: [output.yaml]\n")
 					testutil.WriteFile(t, root, "consumer/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output, namespace: apps}\ndata: {value: '${VALUE}'}\n")
-					cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2}
+					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root, RepoRoot: root}
 					if skip {
 						cfg.HelmOptions = helm.Options{SkipKinds: []string{kind}}
 					}
-					o, err := New(t.Context(), cfg)
+					o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 					assert.NoError(t, err)
-					t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-					assert.NoError(t, o.Bootstrap(t.Context()))
+					t.Cleanup(func() { o.stop() })
+					assert.NoError(t, o.bootstrap(t.Context()))
 					o.configureControllers()
 					d := dagDispatcher{o}
 					parent := testutil.KustomizationID("apps", "parent")

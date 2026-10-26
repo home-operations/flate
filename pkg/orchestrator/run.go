@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"maps"
 	"slices"
 
@@ -67,9 +66,7 @@ func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
 	return ok && r.Path != ""
 }
 
-// Run starts the controllers and returns their settled failures.
-func (o *Orchestrator) Run(ctx context.Context) (err error) {
-	defer func() { err = errors.Join(err, o.Stop()) }()
+func (o *Orchestrator) run(ctx context.Context) error {
 	o.configureControllers()
 	// Cycle failures MUST publish before scheduler admission of emitted objects.
 	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -121,37 +118,7 @@ func (o *Orchestrator) configureControllers() {
 	o.agc.Configure(common)
 }
 
-// Render is the structured embed-friendly entry point: Bootstrap +
-// Run + collect everything an external caller needs to consume the
-// reconcile result. CLI / Run() ergonomics remain unchanged; callers
-// who want a single function that returns a typed Result use this.
-//
-// The returned Result is non-nil even when err is non-nil — failures
-// during reconcile populate Result.Failed without aborting collection,
-// so the caller sees both the partial output and the failure list.
-// An error from Bootstrap (the load phase) is fatal and returns
-// (nil, err); errors from Run yield (result, err).
-//
-// Render joins run teardown before returning, including on Bootstrap failure.
-//
-// Idempotent: a second call returns the cached Result/err pair from
-// the first. The controllers' Configure hooks panic if invoked after
-// StartLifecycle (reconcile-shaping config is frozen once dispatch begins), so
-// a re-Run would panic. Caching at this boundary lets embedders retry
-// Render without restarting controllers — pair with Bootstrap's same
-// guarantee guard above.
-func (o *Orchestrator) Render(ctx context.Context) (*Result, error) {
-	o.renderOnce.Do(func() {
-		o.renderResult, o.renderErr = o.render(ctx)
-	})
-	return o.renderResult, o.renderErr
-}
-
-func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
-	if err := o.Bootstrap(ctx); err != nil {
-		return nil, err
-	}
-	runErr := o.Run(ctx)
+func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 	res := &Result{
 		Failed:  map[manifest.NamedResource]store.StatusInfo{},
 		Orphans: map[manifest.NamedResource]string{},
@@ -254,20 +221,12 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 	return out
 }
 
-// Stop joins remote workers before releasing owned
-// backing. Repeated calls return the same cleanup error; Store stays readable.
-// Callers MUST cancel and join any active Run before Stop. An injected Cache
-// and Network remain caller-owned.
-func (o *Orchestrator) Stop() error {
-	o.stopOnce.Do(func() {
-		o.ksc.Trees.Close()
-		o.inputs.Close()
-		if o.ownNetwork {
-			o.cfg.Network.Close()
-		}
-		if o.cfg.Cache == nil && o.cache != nil {
-			o.stopErr = o.cache.Close()
-		}
-	})
-	return o.stopErr
+func (o *Orchestrator) stop() {
+	o.ksc.Trees.Close()
+	o.inputs.Close()
+	if o.unsubStatus != nil {
+		o.unsubStatus()
+		o.unsubStatus = nil
+	}
+	o.cfg.StatusListener = nil
 }

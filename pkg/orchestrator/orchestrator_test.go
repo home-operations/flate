@@ -7,14 +7,15 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -35,13 +36,15 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-func TestNew_MissingPath(t *testing.T) {
+func TestRenderTrees_MissingPath(t *testing.T) {
 	t.Parallel()
-	o, err := New(t.Context(), Config{})
-	if o != nil || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
-		t.Fatalf("missing path identity: orchestrator=%v err=%v", o, err)
+	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{})
+	if len(runs) != 1 || runs[0].Orchestrator != nil || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+		t.Fatalf("missing path identity: runs=%v err=%v", runs, err)
 	}
-	assert.Equal(t, manifest.TrimSentinelPrefix(err.Error()), "orchestrator: path is required")
+	if !strings.Contains(manifest.TrimSentinelPrefix(err.Error()), "tree path is required") {
+		t.Fatalf("missing path diagnostic: %v", err)
+	}
 }
 
 // TestDetectOrphans drives the orphan-detection logic in isolation —
@@ -192,78 +195,36 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 }
 
 func TestOrchestrator_StopBeforeBootstrapCompletion(t *testing.T) {
-	for _, stage := range []string{"before-bootstrap", "input-failure"} {
-		for _, injected := range []bool{false, true} {
-			t.Run(stage+"/injected="+strconv.FormatBool(injected), func(t *testing.T) {
-				root := filepath.Join(t.TempDir(), "cache")
-				cfg := Config{Path: t.TempDir(), CacheDir: root, Concurrency: 2}
-				if injected {
-					owner, err := sourcecache.New(t.Context(), "")
-					assert.NoError(t, err)
-					t.Cleanup(func() { _ = owner.Close() })
-					cfg.Cache = owner
-				}
-				key := sourcecache.BlobKey{Content: "blob-before-stop"}
-				if cfg.Cache != nil {
-					reader, _, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour},
-						func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-							_, err := io.WriteString(w, "caller-owned")
-							return sourcecache.ProducerResult{}, err
-						})
-					assert.NoError(t, err)
-					assert.NoError(t, reader.Close())
-				}
-				cfg.Input = &store.SourceArtifact{}
-				o, err := New(t.Context(), cfg)
-				assert.NoError(t, err)
-				if o.cache == nil || o.hrc.Helm == nil || o.ksc.Trees == nil || (cfg.Cache != nil && o.cache != cfg.Cache) {
-					t.Fatal("New did not wire both renderers through the selected owner")
-				}
-				entered, completed := make(chan struct{}), make(chan struct{})
-				server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-					close(entered)
-					<-r.Context().Done()
-					close(completed)
-				}))
-				t.Cleanup(server.Close)
-				t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-				done := make(chan error, 1)
-				go func() {
-					_, err := o.inputs.Acquire(t.Context(), server.URL, sourcecache.RetryConfig{}, nil)
-					done <- err
-				}()
-				<-entered
-				if stage == "input-failure" && !errors.Is(o.Bootstrap(t.Context()), manifest.ErrInput) {
-					t.Fatal("expected Bootstrap input failure")
-				}
-				if err := o.Stop(); err != nil {
-					t.Fatalf("Stop: %v", err)
-				}
-				if err := o.Stop(); err != nil {
-					t.Fatalf("Stop: %v", err)
-				}
-				if err := <-done; !errors.Is(err, context.Canceled) {
-					t.Fatalf("Stop did not cancel/join input work: %v", err)
-				}
-				<-completed
-				if injected {
-					if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
-						t.Fatalf("Stop allocated independent cache backing: %v", err)
-					}
-				} else {
-					res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-					if err != nil || len(res.Errors) != 0 {
-						t.Fatalf("Stop retained owner lock: result=%+v err=%v", res, err)
-					}
-				}
-				if cfg.Cache != nil {
-					reader, _, _, err := cfg.Cache.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
-					assert.NoError(t, err)
-					assert.NoError(t, reader.Close())
-				}
-			})
-		}
+	owner, err := sourcecache.New(t.Context(), "")
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+	o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{Cache: owner, Concurrency: 2})
+	assert.NoError(t, err)
+	entered, completed := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+		close(completed)
+	}))
+	t.Cleanup(server.Close)
+	done := make(chan error, 1)
+	go func() {
+		_, err := o.inputs.Acquire(t.Context(), server.URL, sourcecache.RetryConfig{}, nil)
+		done <- err
+	}()
+	<-entered
+	o.stop()
+	o.stop()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("local cleanup did not cancel/join input: %v", err)
 	}
+	<-completed
+	_, _, _, err = owner.Blob(t.Context(), sourcecache.BlobKey{Content: "after-tree-close"}, sourcecache.Policy{},
+		func(_ context.Context, input sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+			_, err := io.WriteString(input, "caller-owned")
+			return sourcecache.ProducerResult{}, err
+		})
+	assert.NoError(t, err)
 }
 
 func TestOrchestrator_SimpleCluster(t *testing.T) {
@@ -281,19 +242,17 @@ data: {k: v}
 	for _, key := range []string{"HOME", "XDG_CACHE_HOME", "TMPDIR", "TMP", "TEMP", "LOCALAPPDATA", "FLATE_CACHE_DIR"} {
 		t.Setenv(key, fallback)
 	}
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
+		o.stop()
 	})
-	if err := o.Bootstrap(t.Context()); err != nil {
+	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
-	if err := o.Run(t.Context()); err != nil {
+	if err := o.run(t.Context()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
@@ -331,16 +290,16 @@ metadata: {name: hello}
 data: {k: v}
 `)
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := o.Bootstrap(context.Background()); err != nil {
+	if err := o.bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := o.Run(ctx); err != nil {
+	if err := o.run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	for _, name := range []string{"config-a", "config-b", "consumer"} {
@@ -377,11 +336,12 @@ func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 				}
 				testutil.WriteFile(t, dir, "kubernetes/components/backup/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [backup.yaml]\n")
 				testutil.WriteFile(t, dir, "kubernetes/components/backup/backup.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: backup-cm}\n")
-				o, err := New(t.Context(), Config{Path: filepath.Join(dir, entry), WipeSecrets: true, Concurrency: 2})
-				if err != nil {
-					t.Fatal(err)
+				renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: filepath.Join(dir, entry), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+				if len(renderedSingleton1) != 1 {
+					t.Fatalf("missing render: %v", err)
 				}
-				result, err := o.Render(t.Context())
+				o := renderedSingleton1[0].Orchestrator
+				result := renderedSingleton1[0].Result
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -409,7 +369,7 @@ func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 	}
 }
 
-// TestOrchestrator_ExplicitRepoRootNoGit proves Config.RepoRoot replaces the
+// TestOrchestrator_ExplicitRepoRootNoGit proves Tree.RepoRoot replaces the
 // .git-ancestor walk: an extracted tree with NO .git, the scan entry point at a
 // subdir (kubernetes/flux/cluster), and a repo-root-relative KS spec.path
 // (./kubernetes/apps) renders correctly when RepoRoot is set — the spec.path
@@ -426,13 +386,13 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, namespace: default}\ndata: {k: v}\n")
 	}
 	clusterApps := testutil.KustomizationID("flux-system", "cluster-apps")
-	rendersDemo := func(t *testing.T, cfg Config) bool {
+	rendersDemo := func(t *testing.T, cfg treeConfig) bool {
 		t.Helper()
-		o, err := New(t.Context(), cfg)
-		if err != nil {
-			t.Fatalf("New: %v", err)
+		renderedSingleton2, err := RenderTrees(context.Background(), []Tree{{RepoRoot: cfg.RepoRoot, Path: cfg.Path, SelfURLs: cfg.SelfURLs, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, cfg.Config)
+		if len(renderedSingleton2) != 1 {
+			t.Fatalf("missing render: %v", err)
 		}
-		res, err := o.Render(context.Background())
+		res := renderedSingleton2[0].Result
 		if res == nil {
 			t.Fatalf("Render returned nil Result: %v", err)
 		}
@@ -450,7 +410,7 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 	t.Run("no anchor renders nothing", func(t *testing.T) {
 		dir := t.TempDir()
 		writeCluster(t, dir)
-		if rendersDemo(t, Config{Path: dir + "/kubernetes/flux/cluster", WipeSecrets: true, Concurrency: 4}) {
+		if rendersDemo(t, treeConfig{WipeSecrets: true, Concurrency: 4, Path: dir + "/kubernetes/flux/cluster"}) {
 			t.Error("no RepoRoot + no .git: spec.path doubles; cluster-apps should render nothing")
 		}
 	})
@@ -480,17 +440,17 @@ func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/components/substitutions/cluster-settings.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cluster-settings\ndata:\n  CLUSTER_NAME: home\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := o.Bootstrap(context.Background()); err != nil {
+	if err := o.bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	// The context timeout bounds a regressed self-deadlock.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := o.Run(ctx); err != nil {
+	if err := o.run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	ksID := testutil.KustomizationID("flux-system", "cluster-apps")
@@ -522,16 +482,16 @@ func TestOrchestrator_SelfSubstituteAbsentCMFailsLoud(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\ndata:\n  k: v\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := o.Bootstrap(context.Background()); err != nil {
+	if err := o.bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = o.Run(ctx) // reconcile failure is recorded in status, not returned
+	_ = o.run(ctx) // reconcile failure is recorded in status, not returned
 	ksID := testutil.KustomizationID("flux-system", "cluster-apps")
 	info, ok := o.Store().GetStatus(ksID)
 	if !ok || info.Status != store.StatusFailed {
@@ -603,11 +563,11 @@ metadata:
 data: {k: v}
 `)
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton3, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	if len(renderedSingleton3) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	res := renderedSingleton3[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -628,13 +588,12 @@ data: {k: v}
 	if len(res.Orphans) != 0 {
 		t.Errorf("expected no orphans; got %v", res.Orphans)
 	}
-	again, err := o.Render(t.Context())
-	if err != nil {
-		t.Fatalf("Render (2nd): %v", err)
+	again, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir}}, Config{WipeSecrets: true, Concurrency: 2})
+	assert.NoError(t, err)
+	if len(again) != 1 {
+		t.Fatal("second invocation lost tree")
 	}
-	if again != res {
-		t.Fatal("second Render changed Result identity")
-	}
+	assert.Diff(t, canonicalBatches(again[0].Result), canonicalBatches(res))
 }
 
 func TestOrchestrator_TypedNullErrors(t *testing.T) {
@@ -650,10 +609,11 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 				"apps/kustomization.yaml": "resources: [cm.yaml]\n",
 				"apps/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n",
 			})
-			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), Concurrency: 2})
-			assert.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-			res, err := o.Render(t.Context())
+			renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+			if len(renderedSingleton1) != 1 {
+				t.Fatalf("missing render: %v", err)
+			}
+			res := renderedSingleton1[0].Result
 			if _, ok := errors.AsType[*FailuresError](err); !ok {
 				t.Fatalf("render error = %v, want resource failure", err)
 			}
@@ -718,18 +678,18 @@ spec:
   defaultValues: {user: alice}
 `)
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 2})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := o.Bootstrap(t.Context()); err != nil {
+	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	rsID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "acl"}
 	if _, ok := o.index.Lookup(rsID); ok {
 		t.Fatal("fixture ResourceSet must only exist in render output")
 	}
-	res, err := o.Render(t.Context())
+	res, err := o.collectResult(o.run(t.Context()))
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -784,14 +744,12 @@ spec:
 `)
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("private-app", "default", "  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n"))
 
-	o, err := New(t.Context(), Config{
-		Path:                dir,
-		AllowMissingSecrets: true,
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingSecrets: true})
+	if len(renderedSingleton4) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	o := renderedSingleton4[0].Orchestrator
+	res := renderedSingleton4[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -851,14 +809,12 @@ spec:
     namespace: flux-system
 `)
 
-	o, err := New(t.Context(), Config{
-		Path:                dir,
-		AllowMissingSecrets: true,
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton5, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingSecrets: true})
+	if len(renderedSingleton5) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	o := renderedSingleton5[0].Orchestrator
+	res := renderedSingleton5[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -951,25 +907,25 @@ spec:
 	input := &countedProducerFS{FS: os.DirFS(dir)}
 	artifact := &store.SourceArtifact{FS: input, LocalPath: dir, Key: "fixture-pin"}
 	cacheDir := t.TempDir()
-	prime, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, Input: artifact, CacheDir: cacheDir, Concurrency: 2, WipeSecrets: true})
+	prime, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir, Input: artifact}, Config{CacheDir: cacheDir, Concurrency: 2, WipeSecrets: true})
 	assert.NoError(t, err)
-	assert.NoError(t, prime.Bootstrap(t.Context()))
-	assert.NoError(t, prime.Run(t.Context()))
-	assert.NoError(t, prime.Stop())
+	assert.NoError(t, prime.bootstrap(t.Context()))
+	assert.NoError(t, prime.run(t.Context()))
+	prime.stop()
 	coldReads := input.reads.Swap(0)
 
-	o, err := New(t.Context(), Config{
-		Path: dir, RepoRoot: dir, Input: artifact, CacheDir: cacheDir, Concurrency: 2,
-		WipeSecrets: true,
+	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir, Input: artifact,
+
 		ExternalChanges: change.NewSet([]string{
 			"kubernetes/apps/communication/ntfy/app/helmrelease.yaml",
-		}),
-	})
+		})}, Config{CacheDir: cacheDir, Concurrency: 2,
+		WipeSecrets: true},
+	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-	if err := o.Bootstrap(context.Background()); err != nil {
+	t.Cleanup(func() { o.stop() })
+	if err := o.bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
@@ -982,7 +938,7 @@ spec:
 		t.Fatalf("producer %s must be in keep set; keep=%v", producerID, f.KeepNames())
 	}
 
-	if err := o.Run(context.Background()); err != nil {
+	if err := o.run(context.Background()); err != nil {
 		if strings.Contains(err.Error(), "ConfigMap/flux-system/cluster-settings: dependency not found") {
 			t.Fatalf("changed-only skipped unchanged substituteFrom producer: %v", err)
 		}
@@ -1013,7 +969,6 @@ spec:
 	} else {
 		t.Logf("persisted publication proof ineligible: %s", reason)
 	}
-
 }
 
 type countedProducerFS struct {
@@ -1063,16 +1018,14 @@ data:
 	writeTree(origDir, "1")
 	writeTree(dir, "2")
 
-	o, err := New(t.Context(), Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
+	o, err := newTestOrchestrator(t, Tree{Path: dir, BaseInput: testDirectoryInput(t, origDir)}, Config{WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
+		o.stop()
 	})
-	if err := o.Bootstrap(context.Background()); err != nil {
+	if err := o.bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	f := o.filter
@@ -1085,24 +1038,7 @@ data:
 	}
 }
 
-// TestOrchestrator_BootstrapIsIdempotent locks the A.1 invariant:
-// Bootstrap mutates orchestrator state (sourceFiles, parentOf,
-// existence, depGraph, componentCache, filter). A second call must
-// be a no-op so any caller (Render, embedders, test harnesses) that
-// runs through Bootstrap twice doesn't replay discovery and double-
-// mutate those indexes.
-//
-// Probes via three signals that differ pre/post fix:
-//  1. Store object counts must not change. Discovery's AddObject is
-//     idempotent today but this is the hard fence against future
-//     accumulation logic.
-//  2. The change.Filter pointer must be stable. Pre-fix,
-//     buildChangeFilter ran twice and replaced o.filter with a brand-
-//     new instance — the second filter dropped any runtime keep/refire configuration the
-//     first pass wired into the store's listener set.
-//  3. o.bootstrapped must already be true before the second call,
-//     pinning the guard's read site.
-func TestOrchestrator_BootstrapIsIdempotent(t *testing.T) {
+func TestRenderTrees_IndependentInvocations(t *testing.T) {
 	dir := t.TempDir()
 	origDir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
@@ -1118,55 +1054,26 @@ data: {k: v}
 	// across the two Bootstrap calls.
 	testutil.WriteFile(t, origDir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./other\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n    namespace: flux-system\n"))
 
-	o, err := New(t.Context(), Config{Path: dir, PathOrig: origDir, WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	tree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir, BaseInput: testDirectoryInput(t, origDir)}
+	first, err := RenderTrees(t.Context(), []Tree{tree}, Config{WipeSecrets: true, Concurrency: 2})
+	assert.NoError(t, err)
+	second, err := RenderTrees(t.Context(), []Tree{tree}, Config{WipeSecrets: true, Concurrency: 2})
+	assert.NoError(t, err)
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("invocation results: %v %v", first, second)
 	}
-	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
+	for _, run := range []Rendered{first[0], second[0]} {
+		if run.filter == nil {
+			t.Fatal("changed-only filter missing")
 		}
-	})
-
-	if err := o.Bootstrap(context.Background()); err != nil {
-		t.Fatalf("Bootstrap (1st): %v", err)
+		if run.Store().GetObject(testutil.KustomizationID("flux-system", "apps")) == nil {
+			t.Fatal("apps Kustomization missing")
+		}
 	}
-	if !o.bootstrapped {
-		t.Fatal("orchestrator.bootstrapped must be true after first Bootstrap")
-	}
-	ksCount1 := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
-	cmCount1 := len(o.Store().ListObjects("", manifest.KindConfigMap))
-	filter1 := o.filter
-	if filter1 == nil {
-		t.Fatal("expected non-nil change filter when PathOrig differs from Path")
-	}
-
-	if err := o.Bootstrap(context.Background()); err != nil {
-		t.Fatalf("Bootstrap (2nd): %v", err)
-	}
-	ksCount2 := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
-	cmCount2 := len(o.Store().ListObjects("", manifest.KindConfigMap))
-	filter2 := o.filter
-
-	if ksCount1 != ksCount2 {
-		t.Errorf("Kustomization count differs across Bootstrap calls: %d -> %d", ksCount1, ksCount2)
-	}
-	if cmCount1 != cmCount2 {
-		t.Errorf("ConfigMap count differs across Bootstrap calls: %d -> %d", cmCount1, cmCount2)
-	}
-	if filter1 != filter2 {
-		t.Errorf("change filter pointer must be stable across Bootstrap calls; "+
-			"got %p -> %p (pre-fix buildChangeFilter re-ran and constructed a fresh filter)",
-			filter1, filter2)
-	}
-	// Sentinel: the apps KS must be present after both passes — never
-	// duplicated, never dropped. The Store is keyed by NamedResource
-	// so a true duplicate would be a no-op; this check pins that the
-	// canonical id is reachable post second-Bootstrap.
-	appsID := testutil.KustomizationID("flux-system", "apps")
-	if got := o.Store().GetObject(appsID); got == nil {
-		t.Errorf("apps KS missing after second Bootstrap")
-	}
+	assert.Equal(t, len(first[0].Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)), len(second[0].Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)))
+	assert.Equal(t, len(first[0].Store().ListObjects("", manifest.KindConfigMap)), len(second[0].Store().ListObjects("", manifest.KindConfigMap)))
+	assert.Diff(t, first[0].filter.KeepNames(), second[0].filter.KeepNames())
+	assert.Diff(t, canonicalBatches(first[0].Result), canonicalBatches(second[0].Result))
 }
 
 func writeDigestTrackingRelease(t *testing.T, root, rel, text string) {
@@ -1243,97 +1150,43 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
 				}
 				writeDigestTrackingRelease(t, root, rel, "true")
-				o, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input, Concurrency: 2,
+				o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}, Config{Concurrency: 2,
 					HelmOptions: helm.Options{DisableChartDigestTracking: disabled}})
 				assert.NoError(t, err)
-				t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-				assert.NoError(t, o.Bootstrap(t.Context()))
+				t.Cleanup(func() { o.stop() })
+				assert.NoError(t, o.bootstrap(t.Context()))
 				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, disabled)
 				id := testutil.HelmReleaseID("flux-system", "flux-instance")
 				assert.Equal(t, o.store.GetObject(id) == nil, covered)
 				_, indexed := o.index.Lookup(id)
 				assert.Equal(t, indexed, true)
 				writeDigestTrackingRelease(t, root, rel, "false")
-				assert.NoError(t, o.Bootstrap(t.Context()))
+				assert.NoError(t, o.bootstrap(t.Context()))
 				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, disabled)
 			})
 		}
 	}
 }
 
-func TestOrchestrator_BootstrapChartDigestTrackingFailureRetry(t *testing.T) {
-	for _, stage := range []string{"discovery", "change filter"} {
-		t.Run(stage, func(t *testing.T) {
-			root := t.TempDir()
-			writeDigestTrackingTree(t, root)
-			writeDigestTrackingRelease(t, root, "apps/hr.yaml", "true")
-			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2}
-			if stage == "discovery" {
-				if err := os.Remove(filepath.Join(root, "apps/kustomization.yaml")); err != nil {
-					t.Fatal(err)
-				}
-				file := filepath.Join(root, "apps/z-broken.yaml")
-				testutil.WriteFile(t, root, "apps/z-broken.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unreadable}\n")
-				if err := os.Chmod(file, 0); err != nil {
-					t.Skipf("cannot make file unreadable: %v", err)
-				}
-				if _, err := os.ReadFile(file); err == nil {
-					t.Skip("OS or current user permits reading a file with no permissions")
-				}
-			} else {
-				cfg.PathOrig = filepath.Join(root, "baseline-loop")
-				if err := os.Symlink("baseline-loop", cfg.PathOrig); err != nil {
-					t.Fatal(err)
-				}
-			}
-			o, err := New(t.Context(), cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
-			})
-			firstErr := o.Bootstrap(t.Context())
-			if firstErr == nil {
-				t.Fatal("expected Bootstrap failure")
-			}
-			owner, client, trees := o.cache, o.hrc.Helm, o.ksc.Trees
-			if owner == nil || client == nil || trees == nil {
-				t.Fatal("Bootstrap failure discarded owner or renderer wiring")
-			}
-			assert.Equal(t, o.bootstrapped, false)
-			assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, false)
-			writeDigestTrackingRelease(t, root, "apps/hr.yaml", "false")
-			if stage == "discovery" {
-				if err := os.Remove(filepath.Join(root, "apps/z-broken.yaml")); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				cfg.PathOrig = ""
-			}
-			if got := o.Bootstrap(t.Context()); !errors.Is(got, firstErr) {
-				t.Fatalf("terminal Bootstrap error changed: first=%v next=%v", firstErr, got)
-			}
-			if o.cache != owner || o.hrc.Helm != client || o.ksc.Trees != trees || o.bootstrapped {
-				t.Fatal("failed Bootstrap reopened its owner or rediscovered input")
-			}
-			if _, err := o.inputs.Acquire(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
-				t.Fatalf("failed Bootstrap left TreeCache open: %v", err)
-			}
-			fresh, err := New(t.Context(), cfg)
-			assert.NoError(t, err)
-			t.Cleanup(func() {
-				if err := fresh.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
-			})
-			assert.NoError(t, fresh.Bootstrap(t.Context()))
-			assert.Equal(t, fresh.bootstrapped, true)
-			assert.Equal(t, fresh.hrc.Options.DisableChartDigestTracking, false)
-		})
+func TestRenderTrees_ChartDigestTrackingFailureRetry(t *testing.T) {
+	root := t.TempDir()
+	input := writeDigestTrackingTree(t, root)
+	writeDigestTrackingRelease(t, root, "apps/hr.yaml", "true")
+	tree := Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}
+	tree.BaseInput = &store.SourceArtifact{LocalPath: filepath.Join(root, "absent"), FS: os.DirFS(filepath.Join(root, "absent"))}
+	cfg := Config{CacheDir: t.TempDir(), Concurrency: 2}
+	_, err := RenderTrees(t.Context(), []Tree{tree}, cfg)
+	if err == nil {
+		t.Fatal("expected unavailable baseline failure")
 	}
+	writeDigestTrackingRelease(t, root, "apps/hr.yaml", "false")
+	tree.BaseInput = nil
+	runs, err := RenderTrees(t.Context(), []Tree{tree}, cfg)
+	assert.NoError(t, err)
+	if len(runs) != 1 || runs[0].Orchestrator == nil {
+		t.Fatalf("retry lost render: %v", runs)
+	}
+	assert.Equal(t, runs[0].hrc.Options.DisableChartDigestTracking, false)
 }
 
 func TestOrchestrator_ChartDigestTrackingRenderedBoundary(t *testing.T) {
@@ -1370,13 +1223,13 @@ spec:
 			for _, disabled := range []bool{false, true} {
 				var previous []byte
 				for range 2 {
-					o, err := New(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input, Cache: owner, Concurrency: 2,
+					o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}, Config{Cache: owner, Concurrency: 2,
 						HelmOptions: helm.Options{DisableChartDigestTracking: disabled}})
 					assert.NoError(t, err)
-					t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-					assert.NoError(t, o.Bootstrap(t.Context()))
+					t.Cleanup(func() { o.stop() })
+					assert.NoError(t, o.bootstrap(t.Context()))
 					assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, disabled)
-					res, err := o.Render(t.Context())
+					res, err := o.render(t.Context())
 					assert.NoError(t, err)
 					assertDigestTrackingOutput(t, res, disabled, "stable")
 					hr, ok := o.store.Get[*manifest.HelmRelease](testutil.HelmReleaseID("flux-system", "flux-instance"))
@@ -1411,11 +1264,9 @@ func TestRenderTrees_ChartDigestTrackingIndependent(t *testing.T) {
 	for _, disabled := range []bool{false, true} {
 		var previous []byte
 		for range 2 {
-			base, head, err := RenderTrees(t.Context(),
-				Tree{Path: filepath.Join(baseRoot, "flux"), RepoRoot: baseRoot},
-				Tree{Path: filepath.Join(headRoot, "flux"), RepoRoot: headRoot},
-				Config{Cache: owner, Concurrency: 2, Input: headInput, BaseInput: baseInput,
-					HelmOptions: helm.Options{DisableChartDigestTracking: disabled}})
+			renderedTrees1, err := RenderTrees(t.Context(), []Tree{{Path: filepath.Join(baseRoot, "flux"), RepoRoot: baseRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, BaseInput: headInput, Input: baseInput}, {Path: filepath.Join(headRoot, "flux"), RepoRoot: headRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: headInput, BaseInput: baseInput}}, Config{Cache: owner, Concurrency: 2,
+				HelmOptions: helm.Options{DisableChartDigestTracking: disabled}})
+			base, head := renderedTrees1[0], renderedTrees1[1]
 			assert.NoError(t, err)
 			assertDigestTrackingOutput(t, base.Result, disabled, "base")
 			assertDigestTrackingOutput(t, head.Result, disabled, "head")
@@ -1448,19 +1299,18 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 				_, err := io.WriteString(w, "held")
 				return sourcecache.ProducerResult{}, err
 			}
-			reader, _, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+			_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = reader.Close()
 			baseDir, headDir := t.TempDir(), t.TempDir()
 			for _, dir := range []string{baseDir, headDir} {
 				writeSubstitutionCluster(t, dir, "values", "value")
 				testutil.WriteFile(t, dir, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
 			}
 			configuredRoot := t.TempDir()
-			base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir},
-				Config{Cache: c, CacheDir: configuredRoot, Concurrency: 2})
+			renderedTrees2, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Cache: c, CacheDir: configuredRoot, Concurrency: 2})
+			base, head := renderedTrees2[0], renderedTrees2[1]
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1471,17 +1321,17 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 			if err != nil || len(entries) != 0 {
 				t.Fatalf("diff sides created independent cache backing: entries=%v err=%v", entries, err)
 			}
-			reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
+			reader, _, _, err := c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, produce)
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := io.ReadAll(reader)
-			_ = reader.Close()
+			data, err := fs.ReadFile(reader, "content")
 			if err != nil || string(data) != "held" || calls != 1 {
 				t.Fatalf("caller cache after both sides stop: data=%q calls=%d err=%v", data, calls, err)
 			}
 			assert.NoError(t, os.Remove(filepath.Join(baseDir, "app/cm.yaml")))
-			base, head, err = RenderTrees(t.Context(), Tree{RepoRoot: baseDir}, Tree{RepoRoot: headDir}, Config{Cache: c, Concurrency: 2})
+			renderedTrees3, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: headDir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Cache: c, Concurrency: 2})
+			base, head = renderedTrees3[0], renderedTrees3[1]
 			if _, ok := errors.AsType[*FailuresError](err); !ok || base.Result == nil || len(base.Result.Failed) == 0 || head.Result == nil || len(head.Result.Manifests) == 0 || head.Err != nil {
 				t.Fatalf("resource failure canceled healthy sibling: base=%+v head=%+v err=%v", base, head, err)
 			}
@@ -1490,10 +1340,8 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 					t.Fatalf("partial side left TreeCache open: %v", err)
 				}
 			}
-			reader, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+			_, _, _, err = c.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
 			assert.NoError(t, err)
-			assert.NoError(t, reader.Close())
-
 		})
 	}
 }
@@ -1505,8 +1353,9 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
 			tree := Tree{RepoRoot: root}
-			cfg := Config{Cache: c, Concurrency: workers}
-			base, head, err := RenderTrees(t.Context(), tree, tree, cfg)
+			cfg := treeConfig{Cache: c, Concurrency: workers, Tree: Tree{}}
+			renderedTrees4, err := RenderTrees(t.Context(), []Tree{{RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, {RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+			base, head := renderedTrees4[0], renderedTrees4[1]
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1551,7 +1400,8 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 			if hits.Load() != 0 {
 				t.Fatalf("suppressed requests=%d", hits.Load())
 			}
-			next, other, err := RenderTrees(t.Context(), tree, tree, cfg)
+			renderedTrees5, err := RenderTrees(t.Context(), []Tree{{RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: tree.RepoRoot, Path: tree.Path, SelfURLs: tree.SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges, Input: cfg.Input}}, cfg.Config)
+			next, other := renderedTrees5[0], renderedTrees5[1]
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1585,10 +1435,11 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"))
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf("namespace: apps\nconfigMapGenerator: [{name: remote, envs: [%s]}]\ngeneratorOptions: {disableNameSuffixHash: true}\n", server.URL))
-		cfg := Config{Cache: cachetest.New(t, "", sourcecache.New), Concurrency: 2}
+		cfg := treeConfig{Cache: cachetest.New(t, "", sourcecache.New), Concurrency: 2, Tree: Tree{}}
 		for _, v := range []int32{1, 2} {
 			version.Store(v)
-			base, head, err := RenderTrees(t.Context(), Tree{RepoRoot: root}, Tree{RepoRoot: root}, cfg)
+			renderedTrees6, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, ExternalChanges: cfg.ExternalChanges, Input: cfg.Input, BaseInput: cfg.BaseInput}}, cfg.Config)
+			base, head := renderedTrees6[0], renderedTrees6[1]
 			assert.NoError(t, err)
 			for _, side := range []Rendered{base, head} {
 				obj, ok := side.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "remote"})
@@ -1605,114 +1456,29 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 	})
 }
 
-func TestOrchestrator_StopErrorPropagation(t *testing.T) {
-	for _, boundary := range []string{"stop", "bootstrap-error", "bootstrap-cancel", "run", "run-error", "run-cancel", "render", "render-error"} {
-		t.Run(boundary, func(t *testing.T) {
-			owner, err := sourcecache.New(t.Context(), t.TempDir())
-			assert.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, owner.Close()) })
-			root := t.TempDir()
-			writeSubstitutionCluster(t, root, "values", "value")
-			testutil.WriteFile(t, root, "healthy.yaml", substitutionKS("healthy", "healthy", ""))
-			testutil.WriteFile(t, root, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
-			testutil.WriteFile(t, root, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n")
-			testutil.WriteFile(t, root, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
-			o, err := New(t.Context(), Config{Path: root, Cache: owner, Concurrency: 2})
-			assert.NoError(t, err)
-			cleanupErr := errors.New("backing close failed")
-			o.stopErr = cleanupErr
-			t.Cleanup(func() {
-				if got := o.Stop(); !errors.Is(got, cleanupErr) {
-					t.Errorf("cached Stop error = %v", got)
-				}
-			})
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			var result *Result
-			switch boundary {
-			case "stop":
-				err = o.Stop()
-			case "bootstrap-error", "bootstrap-cancel":
-				if boundary == "bootstrap-error" {
-					o.cfg.Input = &store.SourceArtifact{}
-				} else {
-					cancel()
-				}
-				err = o.Bootstrap(ctx)
-				if next := o.Bootstrap(t.Context()); !errors.Is(next, err) {
-					t.Fatalf("Bootstrap lost terminal error identity: %v", next)
-				}
-				nextResult, next := o.Render(t.Context())
-				if !errors.Is(next, err) {
-					t.Fatalf("Render changed Bootstrap error: %v", next)
-				}
-				if nextResult != nil {
-					t.Fatalf("Render returned non-nil Result on Bootstrap error: %+v", nextResult)
-				}
-				cause := manifest.ErrInput
-				if boundary == "bootstrap-cancel" {
-					cause = context.Canceled
-				}
-				if !errors.Is(err, cause) {
-					t.Fatalf("Bootstrap operation error lost: %v", err)
-				}
-			default:
-				if strings.HasSuffix(boundary, "error") {
-					assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
-				}
-				assert.NoError(t, o.Bootstrap(ctx))
-				if strings.HasPrefix(boundary, "run") {
-					if boundary == "run-cancel" {
-						cancel()
-					}
-					err = o.Run(ctx)
-				} else {
-					result, err = o.Render(ctx)
-					next, nextErr := o.Render(t.Context())
-					if result == nil || len(result.Manifests) == 0 || next != result || !errors.Is(nextErr, err) {
-						t.Fatalf("Render lost cached partial result/error: %v %v", result, err)
-					}
-				}
-				if strings.HasSuffix(boundary, "error") {
-					if _, ok := errors.AsType[*FailuresError](err); !ok || strings.Index(err.Error(), "backing close failed") == 0 {
-						t.Fatalf("operation must precede cleanup: %v", err)
-					}
-				}
-				if boundary == "run-cancel" && !errors.Is(err, context.Canceled) {
-					t.Fatalf("Run cancellation lost: %v", err)
-				}
-			}
-			if !errors.Is(err, cleanupErr) || strings.Count(err.Error(), cleanupErr.Error()) != 1 {
-				t.Fatalf("cleanup must occur once: %v", err)
-			}
-			stops := make(chan error, 2)
-			for range 2 {
-				go func() { stops <- o.Stop() }()
-			}
-			for range 2 {
-				if got := <-stops; !errors.Is(got, cleanupErr) {
-					t.Fatalf("Stop changed cached error: %v", got)
-				}
-			}
-			if _, err := o.inputs.Acquire(t.Context(), "://closed", sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
-				t.Fatalf("TreeCache not terminal: %v", err)
-			}
-			if result != nil && len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) == 0 {
-				t.Fatal("Stop discarded readable store")
-			}
-		})
+func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
+	root := t.TempDir()
+	writeSubstitutionCluster(t, root, "values", "value")
+	testutil.WriteFile(t, root, "healthy.yaml", substitutionKS("healthy", "healthy", ""))
+	testutil.WriteFile(t, root, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n")
+	testutil.WriteFile(t, root, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
+	assert.NoError(t, os.Remove(filepath.Join(root, "app/cm.yaml")))
+	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}}, Config{Concurrency: 2})
+	if err == nil || len(runs) != 1 || runs[0].Orchestrator == nil || len(runs[0].Result.Manifests) == 0 {
+		t.Fatalf("partial output lost: runs=%v error=%v", runs, err)
 	}
-	t.Run("owned-backing", func(t *testing.T) {
-		o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: t.TempDir(), Concurrency: 2})
-		assert.NoError(t, err)
-		t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-		assert.NoError(t, o.Stop())
-		assert.NoError(t, o.Stop())
-		res, err := sourcecache.Sweep(t.Context(), o.cfg.CacheDir, sourcecache.SweepOpts{})
-		if err != nil || len(res.Errors) != 0 {
-			t.Fatalf("owned backing not released after cleanup: %+v, %v", res, err)
+	cleanupErr := errors.New("backing close failed")
+	joined := errors.Join(err, cleanupErr)
+	_, selected, remainder := Select(runs, joined, []manifest.NamedResource{testutil.KustomizationID("", "healthy")}, nil)
+	for _, projected := range []error{selected, remainder} {
+		if !errors.Is(projected, cleanupErr) || strings.Count(projected.Error(), cleanupErr.Error()) != 1 {
+			t.Fatalf("cleanup error must survive once: %v", projected)
 		}
-	})
+		if _, ok := errors.AsType[*FailuresError](projected); ok {
+			t.Fatalf("unrelated resource failure retained: %v", projected)
+		}
+	}
 }
 
 func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
@@ -1723,7 +1489,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 				if backing == "disk" {
 					root = t.TempDir()
 				}
-				o, err := New(t.Context(), Config{Path: t.TempDir(), CacheDir: root, Concurrency: workers})
+				o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{CacheDir: root, Concurrency: workers})
 				assert.NoError(t, err)
 				entered, completed := make(chan struct{}), make(chan struct{})
 				srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -1732,7 +1498,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 					close(completed)
 				}))
 				t.Cleanup(srv.Close)
-				t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+				t.Cleanup(func() { o.stop() })
 				callers := make(chan error, workers)
 				for range workers {
 					go func() {
@@ -1741,7 +1507,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 					}()
 				}
 				<-entered
-				result, err := o.Render(t.Context())
+				result, err := o.render(t.Context())
 				assert.NoError(t, err)
 				if result == nil {
 					t.Fatal("cleanup discarded successful result")
@@ -1755,6 +1521,7 @@ func TestOrchestrator_RunJoinsRemoteWorkers(t *testing.T) {
 				if _, err := o.inputs.Acquire(t.Context(), srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
 					t.Fatalf("run left TreeCache live: %v", err)
 				}
+				assert.NoError(t, o.cache.Close())
 				if root != "" {
 					res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
 					if err != nil || len(res.Errors) != 0 {
@@ -1902,20 +1669,19 @@ metadata: {name: rendered, namespace: apps}
 data: {greeting: {{ .Values.greeting | quote }}}
 `)
 			testutil.WriteFile(t, root, "config/prod.yaml", "greeting: production\n")
-			o, err := New(t.Context(), Config{
-				Path: filepath.Join(root, "flux"), RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2,
-				ExternalChanges: change.NewSet([]string{"config/prod.yaml"}),
-			})
+			o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root,
+				ExternalChanges: change.NewSet([]string{"config/prod.yaml"})}, Config{CacheDir: t.TempDir(), Concurrency: 2},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-			assert.NoError(t, o.Bootstrap(t.Context()))
+			t.Cleanup(func() { o.stop() })
+			assert.NoError(t, o.bootstrap(t.Context()))
 			release := testutil.HelmReleaseID("apps", "demo")
 			owner := testutil.KustomizationID("flux-system", "demo")
 			assert.Equal(t, o.store.GetObject(release) == nil, true)
 			assert.Equal(t, o.filter.ShouldReconcile(owner), true)
-			result, err := o.Render(t.Context())
+			result, err := o.collectResult(o.run(t.Context()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1933,69 +1699,120 @@ data: {greeting: {{ .Values.greeting | quote }}}
 	}
 }
 
-func TestOrchestrator_NetworkOwnership(t *testing.T) {
+func TestRenderTrees_NetworkBootstrapOwnership(t *testing.T) {
 	for _, injected := range []bool{false, true} {
 		for _, failure := range []bool{false, true} {
 			t.Run(fmt.Sprintf("injected=%t/bootstrap_failure=%t", injected, failure), func(t *testing.T) {
-				closed := make(chan struct{}, 2)
-				var opened atomic.Int32
-				srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }))
-				srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-					if state == http.StateNew {
-						opened.Add(1)
-					}
-					if state == http.StateClosed {
-						closed <- struct{}{}
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				type connection struct {
+					idle   chan struct{}
+					closed chan struct{}
+				}
+				var mu sync.Mutex
+				connections := make(map[string]*connection)
+				track := func(c net.Conn, state http.ConnState) {
+					mu.Lock()
+					defer mu.Unlock()
+					address := c.LocalAddr().String() + "/" + c.RemoteAddr().String()
+					switch state {
+					case http.StateNew:
+						connections[address] = &connection{idle: make(chan struct{}), closed: make(chan struct{})}
+					case http.StateIdle:
+						select {
+						case <-connections[address].idle:
+						default:
+							close(connections[address].idle)
+						}
+					case http.StateClosed:
+						close(connections[address].closed)
 					}
 				}
+				bootstrapRequests := make(chan string, 2)
+				srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("X-Connection", r.Host+"/"+r.RemoteAddr)
+					if r.URL.Path == "/bad.env" {
+						http.NotFound(w, r)
+						return
+					}
+					bootstrapRequests <- r.Host + "/" + r.RemoteAddr
+					_, _ = io.WriteString(w, "VALUE=ok\n")
+				}))
+				srv.Config.ConnState = track
 				srv.Start()
 				t.Cleanup(srv.Close)
-				cfg := Config{Path: t.TempDir(), Concurrency: 2}
+				cfg := Config{Concurrency: 2}
+				var probeURL, callerConnection, bootstrapConnection string
+				get := func(url string) string {
+					t.Helper()
+					req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+					assert.NoError(t, err)
+					response, err := (&http.Client{Transport: cfg.Network}).Do(req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = io.Copy(io.Discard, response.Body)
+					assert.NoError(t, errors.Join(err, response.Body.Close()))
+					address := response.Header.Get("X-Connection")
+					mu.Lock()
+					c := connections[address]
+					mu.Unlock()
+					select {
+					case <-c.idle:
+					case <-ctx.Done():
+						t.Fatal("caller connection did not become idle")
+					}
+					return address
+				}
 				if injected {
 					cfg.Network = new(source.Network)
 					t.Cleanup(cfg.Network.Close)
+					// A failed bootstrap response can still be draining on its origin.
+					probe := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.Header().Set("X-Connection", r.Host+"/"+r.RemoteAddr)
+						_, _ = io.WriteString(w, "probe\n")
+					}))
+					probe.Config.ConnState = track
+					probe.Start()
+					t.Cleanup(probe.Close)
+					probeURL = probe.URL
+					callerConnection = get(probeURL)
+					bootstrapConnection = get(srv.URL + "/vars.env")
+					<-bootstrapRequests
 				}
-				o, err := New(t.Context(), cfg)
-				assert.NoError(t, err)
-				t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-				defer cancel()
-				tr, err := o.cfg.Network.HTTPTransport(source.HTTPTransportConfig{})
-				assert.NoError(t, err)
-				response, err := (&http.Client{Transport: tr}).Get(srv.URL)
-				assert.NoError(t, err)
-				_, err = io.Copy(io.Discard, response.Body)
-				assert.NoError(t, errors.Join(err, response.Body.Close()))
+				root := t.TempDir()
+				envs := srv.URL + "/vars.env"
 				if failure {
-					o.cfg.Input = &store.SourceArtifact{}
-					if err := o.Bootstrap(ctx); err == nil {
-						t.Fatal("bootstrap unexpectedly succeeded")
-					}
-				} else {
-					assert.NoError(t, o.Stop())
+					envs += ", " + srv.URL + "/bad.env"
 				}
-				if _, err := o.inputs.Acquire(ctx, srv.URL, sourcecache.RetryConfig{}, nil); !errors.Is(err, fs.ErrClosed) {
-					t.Fatalf("workers not closed before network cleanup: %v", err)
-				}
-				if injected {
-					select {
-					case <-closed:
-						t.Fatal("borrower closed injected network")
-					default:
-					}
-					response, err := (&http.Client{Transport: tr}).Get(srv.URL)
-					assert.NoError(t, err)
-					_, err = io.Copy(io.Discard, response.Body)
-					assert.NoError(t, errors.Join(err, response.Body.Close()))
-					if opened.Load() != 1 {
-						t.Fatal("borrower discarded the caller's reusable connection")
-					}
-					o.cfg.Network.Close()
+				testutil.WriteFile(t, root, "kustomization.yaml", "configMapGenerator:\n- name: generated\n  envs: ["+envs+"]\n")
+				runs, err := RenderTrees(ctx, []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}}, cfg)
+				if (err != nil) != failure || len(runs) != 1 || (runs[0].Orchestrator == nil) != failure {
+					t.Fatalf("render result=%+v error=%v", runs, err)
 				}
 				select {
-				case <-closed:
+				case address := <-bootstrapRequests:
+					if injected && address != bootstrapConnection {
+						t.Fatal("bootstrap did not reuse the supplied network")
+					}
 				case <-ctx.Done():
-					t.Fatal("owned network retained idle connection")
+					t.Fatal("bootstrap made no request")
+				}
+				if injected {
+					if get(probeURL) != callerConnection {
+						t.Fatal("borrower discarded caller connection")
+					}
+					cfg.Network.Close()
+				}
+				mu.Lock()
+				observed := maps.Clone(connections)
+				mu.Unlock()
+				for _, address := range slices.Sorted(maps.Keys(observed)) {
+					select {
+					case <-observed[address].closed:
+					case <-ctx.Done():
+						t.Fatalf("owner retained connection %s", address)
+					}
 				}
 			})
 		}
@@ -2020,7 +1837,7 @@ func TestRenderTrees_NetworkOwnership(t *testing.T) {
 			}
 			srv.Start()
 			t.Cleanup(srv.Close)
-			cfg := Config{Concurrency: 2}
+			cfg := treeConfig{Concurrency: 2, Tree: Tree{}}
 			if injected {
 				cfg.Network = new(source.Network)
 				t.Cleanup(cfg.Network.Close)
@@ -2030,9 +1847,10 @@ func TestRenderTrees_NetworkOwnership(t *testing.T) {
 			testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: ["+srv.URL+"/cm.yaml]\n")
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			base, head, err := RenderTrees(ctx, Tree{RepoRoot: root}, Tree{RepoRoot: root}, cfg)
+			renderedTrees7, err := RenderTrees(ctx, []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+			base, head := renderedTrees7[0], renderedTrees7[1]
 			assert.NoError(t, err)
-			if base.cfg.Network != head.cfg.Network || base.ownNetwork || head.ownNetwork {
+			if base.cfg.Network != head.cfg.Network {
 				t.Fatal("diff sides did not borrow the outer Network")
 			}
 			if opened.Load() == 0 {
@@ -2127,9 +1945,11 @@ data: {marker: aaa-explicit}
 			}
 			var previous map[manifest.NamedResource][]map[string]any
 			for range 2 {
-				o, err := New(t.Context(), Config{Path: root, Concurrency: 2})
-				assert.NoError(t, err)
-				result, err := o.Render(t.Context())
+				renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2})
+				if len(renderedSingleton2) != 1 {
+					t.Fatalf("missing render: %v", err)
+				}
+				result := renderedSingleton2[0].Result
 				assert.NoError(t, err)
 				assert.Equal(t, len(result.Failed), 0)
 				var got []map[string]any
@@ -2170,9 +1990,12 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 	testutil.CopyTree(t, source, path)
 	var previous map[manifest.NamedResource][]map[string]any
 	for range 2 {
-		o, err := New(t.Context(), Config{Path: path, WipeSecrets: true, Concurrency: 2})
-		assert.NoError(t, err)
-		result, err := o.Render(t.Context())
+		renderedSingleton3, err := RenderTrees(t.Context(), []Tree{{Path: path, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+		if len(renderedSingleton3) != 1 {
+			t.Fatalf("missing render: %v", err)
+		}
+		o := renderedSingleton3[0].Orchestrator
+		result := renderedSingleton3[0].Result
 		assert.NoError(t, err)
 		assert.Equal(t, len(result.Failed), 0)
 		effective := manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "flux-system", Name: "raw"}

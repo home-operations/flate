@@ -76,9 +76,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	}
 }
 
-// BenchmarkTemplate_AppTemplateChartUncached uses a memory owner, so each
-// iteration runs action.Install.RunWithContext without retained completed output.
-func BenchmarkTemplate_AppTemplateChartUncached(b *testing.B) {
+func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 	chartDir := stageBenchChartDir(b)
 	cli := NewClient(cachetest.New(b, "", sourcecache.New))
 	cliSources := benchChartResolver(b, chartDir, os.DirFS(chartDir))
@@ -168,14 +166,11 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 				witness := manifest.DeepCopyMap(first[0])
 				witness["cacheWitness"] = "selected source values persisted hit"
 				output := encodedRender(b, []map[string]any{witness})
-				reader, _, _, err := owner.Blob(b.Context(), sourcecache.BlobKey{Content: loaded.record.key, PersistOnly: true}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-					err := writeTestRecord(w, sourcecache.BlobKey{Content: loaded.record.key, PersistOnly: true}, renderRecord{Output: output, Analysis: loaded.record.Analysis})
+				_, _, _, err := owner.Blob(b.Context(), sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+					err := writeTestRecord(w, sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted}, renderRecord{Output: output, Analysis: loaded.record.Analysis})
 					return sourcecache.ProducerResult{}, err
 				})
 				if err != nil {
-					b.Fatal(err)
-				}
-				if err := reader.Close(); err != nil {
 					b.Fatal(err)
 				}
 				out, receipt5, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
@@ -422,8 +417,8 @@ func BenchmarkTemplate_AppTemplateChartConstructed_Acquired(b *testing.B) {
 	benchmarkTemplateAppTemplateChart(b, true)
 }
 
-func BenchmarkTemplate_AppTemplateChartUncachedConstructed(b *testing.B) {
-	BenchmarkTemplate_AppTemplateChartUncached(b)
+func BenchmarkTemplate_AppTemplateChartMemoryConstructed(b *testing.B) {
+	BenchmarkTemplate_AppTemplateChartMemory(b)
 }
 
 func BenchmarkTemplate_CommonMetadataVariantsConstructed(b *testing.B) {

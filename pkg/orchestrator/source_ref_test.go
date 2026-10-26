@@ -31,26 +31,24 @@ func TestRun_DefaultGitCache(t *testing.T) {
 			for _, name := range []string{"first", "second"} {
 				testutil.WriteFile(t, root, name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  {path: ./app, sourceRef: {kind: GitRepository, name: remote}}\n"))
 			}
-			cfg := Config{Path: root, Concurrency: 2}
+			cfg := treeConfig{Concurrency: 2, Path: root}
 			if mode == "disk" {
 				cfg.CacheDir = t.TempDir()
 			}
 			if mode == "injected" {
 				cfg.Cache = cachetest.New(t, t.TempDir(), sourcecache.New)
 			}
-			o, err := New(t.Context(), cfg)
+			o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
+				o.stop()
 			})
-			if err := o.Bootstrap(t.Context()); err != nil {
+			if err := o.bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if err := o.Run(t.Context()); err != nil {
+			if err := o.run(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range []string{"first", "second"} {
@@ -86,8 +84,8 @@ spec:
 				}
 			}
 			selectedRoot := t.TempDir()
-			cfg := Config{Path: filepath.Join(root, "flux"), RepoRoot: root,
-				SelfURLs: []string{"git://fixture.invalid/cluster"}, CacheDir: selectedRoot, Concurrency: 2}
+			cfg := treeConfig{CacheDir: selectedRoot, Concurrency: 2, Path: filepath.Join(root, "flux"), RepoRoot: root,
+				SelfURLs: []string{"git://fixture.invalid/cluster"}}
 			if kind != "configured-directory" {
 				ownerRoot := ""
 				if kind == "injected-disk" {
@@ -95,16 +93,14 @@ spec:
 				}
 				cfg.Cache = cachetest.New(t, ownerRoot, sourcecache.New)
 			}
-			o, err := New(t.Context(), cfg)
+			o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
+				o.stop()
 			})
-			if err := o.Bootstrap(t.Context()); err != nil {
+			if err := o.bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if o.hrc.Helm == nil || o.ksc.Trees == nil || (cfg.Cache != nil && o.cache != cfg.Cache) {

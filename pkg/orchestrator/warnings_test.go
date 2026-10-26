@@ -26,20 +26,18 @@ func TestRender_ScanAndPathWarnings(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			cfg := Config{Path: root, CacheDir: t.TempDir(), Concurrency: 2}
+			cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, Path: root}
 			if tt.sameRoot {
-				cfg.PathOrig = root
+				cfg.Input = testDirectoryInput(t, root)
+				cfg.BaseInput = cfg.Input
 			}
-			o, err := New(t.Context(), cfg)
-			if err != nil {
-				t.Fatal(err)
+			cfg.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
+			runs, err := RenderTrees(t.Context(), []Tree{cfg.Tree}, cfg.Config)
+			if len(runs) != 1 {
+				t.Fatalf("missing run: %v", err)
 			}
-			defer func() {
-				if err := o.Stop(); err != nil {
-					t.Errorf("Stop: %v", err)
-				}
-			}()
-			res, err := o.Render(t.Context())
+			res := runs[0].Result
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,11 +120,11 @@ spec:
 	testutil.WriteFile(t, dir, "charts/opaque/templates/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  v: |\n    {{- toYaml .Values | nindent 4 }}\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	if len(renderedSingleton1) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	res := renderedSingleton1[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -177,12 +175,11 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 	testutil.WriteFile(t, dir, "kubernetes/apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\ndata:\n  k: v\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 2})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+	if len(renderedSingleton2) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-	res, err := o.Render(t.Context())
+	res := renderedSingleton2[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -247,11 +244,12 @@ spec:
 	testutil.WriteFile(t, dir, "apps/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: tunnel\ndata:\n  target: \"${CLOUDFLARE_TUNNEL_ID}.cfargotunnel.com\"\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	if len(renderedSingleton4) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	o := renderedSingleton4[0].Orchestrator
+	res := renderedSingleton4[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}

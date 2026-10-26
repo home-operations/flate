@@ -158,12 +158,11 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 				h.remoteFetches.CompareAndDelete(key, rf)
 				return
 			}
-			reader, _, _, err := h.owner.Blob(workerCtx, cache.BlobKey{Content: struct{ URL string }{urlStr}}, cache.Policy{Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			generation, _, _, err := h.owner.Blob(workerCtx, cache.BlobKey{Content: struct{ URL string }{urlStr}}, cache.Policy{Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				return h.httpGetURL(ctx, urlStr, w)
 			})
 			if err == nil {
-				rf.input = cache.FileFS("content", reader)
-				err = reader.Close()
+				rf.input = cache.NameBlob("content", generation)
 			}
 			rf.err = err
 			if err != nil && fetcherr.Classes(err)&fetcherr.Client == 0 {

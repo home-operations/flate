@@ -97,10 +97,10 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 	var outputs [2][]byte
 	for run := range 2 {
 		dir := t.TempDir()
-		o, err := New(ctx, Config{Path: dir, RepoRoot: dir, CacheDir: root, Concurrency: 2})
+		o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{CacheDir: root, Concurrency: 2})
 		assert.NoError(t, err)
-		t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-		o.WithFetcher(manifest.KindOCIRepository, source.Wrap(manifest.KindOCIRepository, &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network}))
+		t.Cleanup(func() { o.stop() })
+		o.src.Fetchers[manifest.KindOCIRepository] = source.Wrap(manifest.KindOCIRepository, &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network})
 		s := o.store
 		parent := &manifest.Kustomization{Name: "materializer", Namespace: effective.Namespace}
 		raw := *effective
@@ -168,7 +168,7 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 		if o.tasks.Failures() != 0 || len(s.FailedResources()) != 0 || attempts.Load() != 0 || requests.Load() != 0 {
 			t.Fatalf("warm source: attempts=%d requests=%d failures=%v", attempts.Load(), requests.Load(), s.FailedResources())
 		}
-		assert.NoError(t, o.Stop())
+		o.stop()
 	}
 	if !bytes.Equal(outputs[0], outputs[1]) || !bytes.Contains(outputs[0], []byte("effective-output")) {
 		t.Fatalf("warm blocked source changed stdout: %q %q", outputs[0], outputs[1])
@@ -192,9 +192,9 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					dir := t.TempDir()
-					o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, Concurrency: 2})
+					o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{Concurrency: 2})
 					assert.NoError(t, err)
-					t.Cleanup(func() { assert.NoError(t, o.Stop()) })
+					t.Cleanup(func() { o.stop() })
 					s := o.store
 					parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
 					raw := &manifest.OCIRepository{Name: "covered", Namespace: "apps", URL: "oci://raw.example"}
@@ -213,7 +213,7 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 						}
 					}
 					f := &sharedRepositoryFetcher{calls: map[manifest.NamedResource]int{}}
-					o.WithFetcher(manifest.KindOCIRepository, f)
+					o.src.Fetchers[manifest.KindOCIRepository] = f
 					s.SetDiscoveryIndex(o.index)
 					o.configureControllers()
 					o.src.StartLifecycle()

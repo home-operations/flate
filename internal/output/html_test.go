@@ -2,9 +2,11 @@ package output
 
 import (
 	"bytes"
+	"html"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -19,6 +21,20 @@ func TestEncoderLines_PreservesStatus(t *testing.T) {
 	}
 	if out := buf.String(); !strings.Contains(out, "1 changed") || !strings.Contains(out, `<span class="status status-"></span>`) || !strings.Contains(out, "Widget.example.test ns/same") || !strings.Contains(out, "Producer.parents.test ns/same") {
 		t.Fatalf("HTML must preserve prepared empty status for unequal YAML: %s", out)
+	}
+	var singleton, grouped bytes.Buffer
+	body := bytes.Clone(buf.Bytes())
+	if err := (Encoder{Writer: &singleton, Format: FormatHTML}).DiffGroups([]DiffGroup{{Cluster: "a", Body: body}}); err != nil {
+		t.Fatal(err)
+	}
+	assert.Diff(t, singleton.String(), buf.String())
+	if err := (Encoder{Writer: &grouped, Format: FormatHTML}).DiffGroups([]DiffGroup{{Cluster: `a"<&`, Body: body}, {Cluster: "b", Added: true}, {Cluster: "c", Removed: true}}); err != nil {
+		t.Fatal(err)
+	}
+	out := grouped.String()
+	if strings.Count(out, "<!doctype html>") != 1 || !strings.Contains(out, `srcdoc="`+html.EscapeString(string(body))+`"`) ||
+		!strings.Contains(out, "<h2>Cluster: a&#34;&lt;&amp;</h2>") || !strings.Contains(out, "<h2>Cluster: b (added)</h2>") || !strings.Contains(out, "<h2>Cluster: c (removed)</h2>") {
+		t.Fatalf("grouped HTML lost escaped cluster sections or original body: %s", out)
 	}
 }
 

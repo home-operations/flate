@@ -13,8 +13,10 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
 func TestAppendSuppressionWarnings_Presentation(t *testing.T) {
@@ -667,12 +669,10 @@ spec: {url: "https://example.invalid/unrelated.git", interval: 1h}
 				currentScan, origScan = filepath.Join(current, "flux"), filepath.Join(orig, "flux")
 			}
 			c := commonFlags{path: currentScan, pathOrig: origScan}
-			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer func() {
-				if err := cleanup(); err != nil {
-					t.Errorf("baseline cleanup: %v", err)
-				}
-			}()
+			if c.owner == nil {
+				c.owner = cachetest.New(t, "", sourcecache.New)
+			}
+			err = resolveBaseline(t.Context(), &c, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -723,12 +723,10 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 			writeBaselineGit(t, orig, tc.urls...)
 			testutil.WriteFile(t, orig, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\ndata: {greeting: hola}\n")
 			c := commonFlags{path: current, pathOrig: orig}
-			cleanup, err := resolveBaseline(t.Context(), &c, false)
-			defer func() {
-				if err := cleanup(); err != nil {
-					t.Errorf("baseline cleanup: %v", err)
-				}
-			}()
+			if c.owner == nil {
+				c.owner = cachetest.New(t, "", sourcecache.New)
+			}
+			err := resolveBaseline(t.Context(), &c, false)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -53,7 +53,7 @@ func (e *TerminalError) Unwrap() []error { return []error{manifest.ErrFlux, e.Er
 
 type attemptCeilingKey struct{}
 
-func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy) (*entry, string, error) {
+func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, callbacks acquisitionCallbacks) (*entry, string, error) {
 	key.id = key.producer.identity()
 	if key.id == "" {
 		return nil, "", &CacheError{fmt.Errorf("%w: acquisition content cannot be fingerprinted", manifest.ErrInput)}
@@ -65,7 +65,8 @@ func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy) (*en
 	for attempt := 1; ; attempt++ {
 		remaining := policy
 		remaining.Retry.Attempts -= attempt - 1
-		e, err := c.acquireOnce(ctx, key, remaining)
+		key.policy = remaining
+		e, err := c.acquireOnce(ctx, key, callbacks)
 		if err == nil {
 			if !e.ready.Load() {
 				e.ready.Store(true)

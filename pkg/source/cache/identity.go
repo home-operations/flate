@@ -50,10 +50,11 @@ func buildIdentity(info *debug.BuildInfo) (string, string) {
 }
 
 type renderIdentity struct {
+	Phase  RenderMode
 	Build  string
 	Render string
 }
 
-func blobID(identity, id string) string {
-	return "render-" + manifest.Fingerprint(renderIdentity{Build: identity, Render: id})
+func blobID(identity, id string, phase RenderMode) string {
+	return "render-" + manifest.Fingerprint(renderIdentity{Build: identity, Render: id, Phase: phase})
 }

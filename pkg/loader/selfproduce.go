@@ -226,6 +226,7 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 
 type graphContext struct {
 	root, dir, namespace, fallback string
+	namePrefix, nameSuffix         string
 	pluginRoot                     string
 	role                           kustomizeinput.Role
 	deferMaterialization           bool
@@ -454,6 +455,8 @@ func (w *graphWalker) walk(v graphVisit, yield func(graphVisit) bool) bool {
 	}
 	v.deferDecode = false
 	v.namespace = cmp.Or(v.namespace, d.Namespace)
+	v.namePrefix += d.NamePrefix
+	v.nameSuffix = d.NameSuffix + v.nameSuffix
 	if v.namespace == "" {
 		v.namespace = w.documents.transformerInjectedNamespace(v.root, v.dir).ns
 	}
@@ -555,10 +558,13 @@ type selfProduceBuilder struct {
 	wipeSecrets  bool
 }
 
-func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []store.Child, declarations []producerDeclaration) []producerDeclaration {
+func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject, declarations []producerDeclaration) []producerDeclaration {
 	coordinate := cmp.Or(v.localCoordinate(), v.coordinate)
 	record := func(child store.Child) {
 		obj, info := child.Obj, manifest.KindOf(child.Obj)
+		if !info.Tracked && b.reader.cache[v.file].loaded && len(manifest.ProducerTargets(obj)) == 0 {
+			return
+		}
 		resolved := manifest.Resolve(obj.Named(), v.namespace, v.fallback)
 		id := resolved
 		if owner, _ := b.idx.Lookup(v.owner); v.owner == obj.Named() || owner.Authored == obj.Named() {
@@ -608,11 +614,11 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []store.Child,
 	}
 	if objects != nil {
 		for _, obj := range objects {
-			record(obj)
+			record(obj.Child)
 		}
 		return declarations
 	}
-	_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets, DefaultNamespace: ""}, true, record)
+	_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets, DefaultNamespace: ""}, true, func(child store.Child, _ int, _ string) { record(child) })
 	return declarations
 }
 
@@ -658,10 +664,10 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 		}
 		if objects := b.reader.cache[v.file].objects; objects != nil {
 			for _, obj := range objects {
-				record(obj)
+				record(obj.Child)
 			}
 		} else {
-			_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets, DefaultNamespace: ""}, true, record)
+			_ = b.reader.decodeFileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets, DefaultNamespace: ""}, true, func(child store.Child, _ int, _ string) { record(child) })
 		}
 	}
 	slices.SortFunc(candidates, manifest.NamedResource.Compare)

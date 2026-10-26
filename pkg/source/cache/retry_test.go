@@ -269,10 +269,9 @@ func TestAcquire_RetrySequence(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					body, readErr := io.ReadAll(r)
-					closeErr := r.Close()
-					if string(body) != "complete" || readErr != nil || closeErr != nil {
-						t.Fatalf("body=%q, errors=%v/%v", body, readErr, closeErr)
+					body, readErr := fs.ReadFile(r, "content")
+					if string(body) != "complete" || readErr != nil {
+						t.Fatalf("body=%q, error=%v", body, readErr)
 					}
 				} else {
 					if !errors.Is(err, tc.failure) || !errors.Is(err, manifest.ErrFlux) {
@@ -301,13 +300,11 @@ func TestAcquire_NestedTerminal(t *testing.T) {
 						fail := func(context.Context, ProducerInput) (ProducerResult, error) {
 							return ProducerResult{}, connReset()
 						}
-						r, _, outerID, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{}, producer(nil, ocispec.Descriptor{}))
+						_, _, outerID, err := c.Blob(t.Context(), BlobKey{Content: "outer"}, Policy{}, producer(nil, ocispec.Descriptor{}))
 						if err != nil {
 							t.Fatal(err)
 						}
-						if err := r.Close(); err != nil {
-							t.Fatal(err)
-						}
+
 						for _, id := range []string{"outer", "inner"} {
 							if id == "inner" && child != "due" {
 								continue
@@ -538,23 +535,18 @@ func TestAcquire_BackoffReleasesKey(t *testing.T) {
 		done := make(chan error, 1)
 		calls := 0
 		go func() {
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}}, func(context.Context, ProducerInput) (ProducerResult, error) {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}}, func(context.Context, ProducerInput) (ProducerResult, error) {
 				calls++
 				return ProducerResult{}, connReset()
 			})
-			if r != nil {
-				err = errors.Join(err, r.Close())
-			}
 			done <- err
 		}()
 		synctest.Wait()
-		r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever}, producer([]byte("other fill"), ocispec.Descriptor{}))
+		_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "shared"}, Policy{MaxAge: Forever}, producer([]byte("other fill"), ocispec.Descriptor{}))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Close(); err != nil {
-			t.Fatal(err)
-		}
+
 		if err := <-done; err != nil || calls != 1 {
 			t.Fatalf("calls=%d, error=%v", calls, err)
 		}
@@ -750,7 +742,7 @@ func TestAcquire_BackoffResets(t *testing.T) {
 		for range 2 {
 			calls := 0
 			start := time.Now()
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "reset"}, Policy{Retry: RetryConfig{Attempts: 3}}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+			_, _, _, err := c.Blob(t.Context(), BlobKey{Content: "reset"}, Policy{Retry: RetryConfig{Attempts: 3}}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				if calls == 1 {
 					return ProducerResult{}, connReset()
@@ -760,9 +752,7 @@ func TestAcquire_BackoffResets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := r.Close(); err != nil {
-				t.Fatal(err)
-			}
+
 			if calls != 2 || time.Since(start) != 750*time.Millisecond {
 				t.Fatalf("calls=%d, wait=%v", calls, time.Since(start))
 			}

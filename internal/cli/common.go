@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
@@ -178,42 +179,33 @@ func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResour
 	return roots
 }
 
-// resolveBaseline admits --base inputs through the command's cache owner.
-// autoFallback selects automatic baseline resolution for diff commands.
-// Callers MUST run cleanup after both orchestrators' readers have joined.
-func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (func() error, error) {
-	noop := func() error { return nil }
+func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) error {
 	c.pathRoot, c.pathOrigRoot, c.pathOrigSelfURLs = "", "", nil
 	if c.pathOrig != "" && c.base != "" {
-		return noop, errors.New("--path-orig and --base are mutually exclusive")
+		return errors.New("--path-orig and --base are mutually exclusive")
 	}
 	if c.pathOrig == "" && c.base == "" && !autoFallback {
-		return noop, nil
+		return nil
 	}
 	if c.pathOrig != "" {
 		res, err := baseline.ResolvePaths(ctx, c.path, c.pathOrig)
 		if err != nil {
-			return noop, err
+			return err
 		}
 		c.input, c.baseInput = res.Source, res.BaseInput
 		c.path, c.pathOrig = res.ScanPath, res.BaseScanPath
 		c.pathRoot, c.pathOrigRoot = res.Source.LocalPath, res.BaseInput.LocalPath
 		c.pathOrigSelfURLs = res.SelfURLs
-		return noop, nil
+		return nil
 	}
-	ssrfguard.Restrict(c.restrictEgress)
-	owner, err := sourcecache.New(ctx, c.cacheDir)
-	if err != nil {
-		return noop, err
-	}
-	res, err := baseline.AutoResolve(ctx, c.path, c.base, owner)
+	res, err := baseline.AutoResolve(ctx, c.path, c.base, c.owner)
 	if res != nil {
 		c.input, c.baseInput = res.Source, res.BaseInput
 	}
 	if err != nil {
-		return noop, errors.Join(err, owner.Close())
+		return err
 	}
-	c.owner, c.input, c.baseInput, c.changes = owner, res.Source, res.BaseInput, res.Changes
+	c.input, c.baseInput, c.changes = res.Source, res.BaseInput, res.Changes
 	c.path, c.pathOrig = res.ScanPath, res.BaseScanPath
 	c.pathRoot = res.Source.LocalPath
 	c.pathOrigRoot = res.BaseInput.LocalPath
@@ -221,7 +213,23 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) (fu
 	c.selfURLs = res.SelfURLs
 	rev := res.BaseInput.Revision
 	slog.Debug("baseline", "source", res.Source.Metadata["baseline-selection"], "rev", rev[:min(len(rev), 7)], "path_orig", c.pathOrig)
-	return owner.Close, nil
+	return nil
+}
+
+func inputTrees(c commonFlags) []orchestrator.Tree {
+	trees := []orchestrator.Tree{{
+		ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+		RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs,
+		Input: c.input, BaseInput: c.baseInput, ExternalChanges: c.changes,
+	}}
+	if c.pathOrig != "" {
+		trees = append([]orchestrator.Tree{{
+			ID:       manifest.TreeID{Cluster: ".", Side: manifest.TreeBase},
+			RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs,
+			Input: c.baseInput, BaseInput: c.input, ExternalChanges: c.changes,
+		}}, trees...)
+	}
+	return trees
 }
 
 func buildOrchCfg(c commonFlags) orchestrator.Config {
@@ -231,10 +239,7 @@ func buildOrchCfg(c commonFlags) orchestrator.Config {
 		return kind == manifest.KindCustomResourceDefinition
 	})
 	return orchestrator.Config{
-		Path: c.path, RepoRoot: c.pathRoot,
-		Input: c.input, BaseInput: c.baseInput, ExternalChanges: c.changes, Cache: c.owner,
-		SelfURLs:       c.selfURLs,
-		PathOrig:       c.pathOrigRoot,
+		Cache:          c.owner,
 		HelmOptions:    c.helm,
 		WipeSecrets:    true,
 		RegistryConfig: c.registryConfig,
@@ -257,70 +262,6 @@ func buildOrchCfg(c commonFlags) orchestrator.Config {
 	}
 }
 
-func runOrchestrators(ctx context.Context, c commonFlags, pair bool) ([]orchestrator.Rendered, error) {
-	count := 1
-	if pair {
-		count = 2
-	}
-	runs := make([]orchestrator.Rendered, count)
-	if !pair {
-		if c.path == "" {
-			return runs, errors.New("path is required")
-		}
-		if err := validatePathFlag("--path", c.path); err != nil {
-			return runs, err
-		}
-		if c.pathOrig != "" {
-			if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
-				return runs, err
-			}
-		}
-	}
-	if err := c.loadSubstitutions(ctx); err != nil {
-		return runs, err
-	}
-	cleanup, err := resolveBaseline(ctx, &c, pair)
-	if err != nil {
-		for i, input := range []*store.SourceArtifact{c.baseInput, c.input} {
-			if input == nil {
-				continue
-			}
-			side := 0
-			if pair {
-				side = i
-			}
-			if runs[side].Result == nil {
-				runs[side].Result = &orchestrator.Result{}
-			}
-			runs[side].Result.Warnings = append(runs[side].Result.Warnings, input.Warnings...)
-		}
-		return runs, err
-	}
-	cfg := buildOrchCfg(c)
-	if c.baseInput == nil {
-		runs[0] = runOrchestratorCfg(ctx, cfg)
-		err = runs[0].Err
-	} else {
-		cfg.HeadOnly = !pair
-		var base, head orchestrator.Rendered
-		base, head, err = orchestrator.RenderTrees(ctx,
-			orchestrator.Tree{RepoRoot: c.pathOrigRoot, Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
-			orchestrator.Tree{RepoRoot: c.pathRoot, Path: c.path, SelfURLs: c.selfURLs}, cfg)
-		if pair {
-			runs[0], runs[1] = base, head
-		} else {
-			if head.Orchestrator == nil && base.Result != nil {
-				if head.Result == nil {
-					head.Result = &orchestrator.Result{}
-				}
-				head.Result.Warnings = append(slices.Clone(base.Result.Warnings), head.Result.Warnings...)
-			}
-			runs[0] = head
-		}
-	}
-	return runs, errors.Join(err, cleanup())
-}
-
 // validatePathFlag rejects a flag value that doesn't point at a real
 // directory, surfacing a clean typed error before the orchestrator
 // digs deep enough to fail with a generic `flate error: ...`. Both
@@ -338,22 +279,6 @@ func validatePathFlag(flag, p string) error {
 		return fmt.Errorf("%s %q is not a directory", flag, p)
 	}
 	return nil
-}
-
-func runOrchestratorCfg(ctx context.Context, cfg orchestrator.Config) orchestrator.Rendered {
-	o, err := orchestrator.New(ctx, cfg)
-	if err != nil {
-		return orchestrator.Rendered{Err: err}
-	}
-	if barSink != nil {
-		defer barSink.progress(ctx, o.Store())()
-	}
-	res, err := o.Render(ctx)
-	// Bootstrap failures MUST NOT expose a partially populated Store.
-	if res == nil {
-		return orchestrator.Rendered{Result: &orchestrator.Result{Warnings: o.Store().Warnings()}, Err: err}
-	}
-	return orchestrator.Rendered{Orchestrator: o, Result: res, Err: err}
 }
 
 // reportedError retains a fatal cause already presented to the user.
@@ -411,37 +336,128 @@ type selectedRequest struct {
 }
 
 type selectedInvocation struct {
-	sides          []*selection.Selection
+	groups         []selectedGroup
 	err, remainder error
 	elapsed        time.Duration
 }
 
+type selectedGroup struct {
+	cluster        string
+	sides          []*selection.Selection
+	absent         [2]bool
+	err, remainder error
+	complete       bool
+}
+
 type selectedPayload struct {
 	err      error
-	warnings []manifest.Warning
-	roster   *output.TestReport
+	warnings [][]manifest.Warning
+	rosters  []output.TestGroup
 }
 
 func runSelected(ctx context.Context, req selectedRequest, payload func(*selectedInvocation) selectedPayload) error {
 	start := time.Now()
-	runs, runErr := runOrchestrators(ctx, req.flags, req.pair)
-	inv := selectedInvocation{elapsed: time.Since(start)}
-	inv.sides, inv.err, inv.remainder = orchestrator.Select(runs, runErr, req.roots, req.labels)
-	if len(inv.sides) == 0 {
-		return inv.err
-	}
-	var result selectedPayload
-	for _, run := range runs {
-		if run.Orchestrator == nil || run.Result == nil {
-			return finishSelected(req, &inv, result)
+	c := &req.flags
+	if !req.pair {
+		if c.path == "" {
+			return errors.New("path is required")
+		}
+		if err := validatePathFlag("--path", c.path); err != nil {
+			return err
+		}
+		if c.pathOrig != "" {
+			if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
+				return err
+			}
 		}
 	}
-	root := req.roots[0]
-	count := 0
-	for _, side := range inv.sides {
-		count += side.Counts[root.Kind]
+	if err := c.loadSubstitutions(ctx); err != nil {
+		return err
 	}
-	if root.Name != "" && count == 0 {
+	ssrfguard.Restrict(c.restrictEgress)
+	owner, err := sourcecache.New(ctx, c.cacheDir)
+	if err != nil {
+		return err
+	}
+	c.owner = owner
+	cfg := buildOrchCfg(*c)
+	cfg.HelmClient, cfg.Network = helm.NewClient(owner), new(source.Network)
+	defer cfg.Network.Close()
+	inv := selectedInvocation{}
+	if err := resolveBaseline(ctx, c, req.pair); err != nil {
+		inv.err, inv.remainder = err, err
+		group := selectedGroup{cluster: "."}
+		for _, input := range []*store.SourceArtifact{c.baseInput, c.input} {
+			if req.pair || len(group.sides) == 0 {
+				group.sides = append(group.sides, &selection.Selection{})
+			}
+			if input != nil {
+				side := group.sides[len(group.sides)-1]
+				side.Warnings = append(side.Warnings, input.Warnings...)
+			}
+		}
+		inv.groups = append(inv.groups, group)
+	} else {
+		cfg.HeadOnly = !req.pair && c.baseInput != nil
+		var stop func()
+		if barSink != nil {
+			cfg.StatusListener, stop = barSink.progress(ctx)
+		}
+		runs, runErr := orchestrator.RenderTrees(ctx, inputTrees(*c), cfg)
+		if stop != nil {
+			stop()
+		}
+		if len(runs) == 0 {
+			inv.err, inv.remainder = runErr, runErr
+		}
+		for i := 0; i < len(runs); {
+			j := i + 1
+			for j < len(runs) && runs[j].ID.Cluster == runs[i].ID.Cluster {
+				j++
+			}
+			group := selectedGroup{cluster: string(runs[i].ID.Cluster), complete: true}
+			selected := runs[i:j]
+			i = j
+			var groupErr error
+			for _, run := range selected {
+				groupErr = errors.Join(groupErr, run.Err)
+			}
+			if !req.pair {
+				base := selected[0]
+				selected = selected[len(selected)-1:]
+				if selected[0].ID.Side != manifest.TreeHead || selected[0].Absent {
+					inv.err, inv.remainder = errors.Join(inv.err, groupErr), errors.Join(inv.remainder, groupErr)
+					continue
+				}
+				if selected[0].Orchestrator == nil && base.ID.Side == manifest.TreeBase && base.Result != nil {
+					result := orchestrator.Result{}
+					if selected[0].Result != nil {
+						result = *selected[0].Result
+					}
+					result.Warnings = append(slices.Clone(base.Result.Warnings), result.Warnings...)
+					selected[0].Result = &result
+				}
+			}
+			for _, run := range selected {
+				group.absent[run.ID.Side] = run.Absent
+				group.complete = group.complete && (run.Absent || run.Orchestrator != nil && run.Result != nil)
+			}
+			group.sides, group.err, group.remainder = orchestrator.Select(selected, groupErr, req.roots, req.labels)
+			inv.groups = append(inv.groups, group)
+		}
+	}
+	inv.elapsed = time.Since(start)
+	root := req.roots[0]
+	count, complete, incomplete := 0, false, false
+	for _, group := range inv.groups {
+		complete = complete || group.complete
+		incomplete = incomplete || !group.complete
+		for _, side := range group.sides {
+			count += side.Counts[root.Kind]
+		}
+	}
+	var result selectedPayload
+	if root.Name != "" && count == 0 && complete && !incomplete {
 		path := "--path"
 		if req.pair {
 			path = "--path or --path-orig"
@@ -449,9 +465,16 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 		missing := noNamedError(root.Kind, root.Name, path)
 		inv.err = errors.Join(missing, inv.err)
 		inv.remainder = errors.Join(missing, inv.remainder)
-	} else {
+	} else if complete {
+		if root.Name != "" {
+			inv.groups = slices.DeleteFunc(inv.groups, func(group selectedGroup) bool {
+				return group.complete && !slices.ContainsFunc(group.sides, func(side *selection.Selection) bool { return side.Counts[root.Kind] != 0 })
+			})
+		}
 		result = payload(&inv)
 	}
+	closeErr := owner.Close()
+	inv.err, inv.remainder = errors.Join(inv.err, closeErr), errors.Join(inv.remainder, closeErr)
 	return finishSelected(req, &inv, result)
 }
 
@@ -459,38 +482,59 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 	final := errors.Join(payload.err, inv.err)
 	named := req.roots[0].Name != ""
 	encoder := output.Encoder{Writer: req.stderr, Color: output.ColorEnabled(req.stderr)}
-	if req.presentation == presentTest && payload.roster != nil {
+	if req.presentation == presentTest && payload.rosters != nil {
 		out := output.Encoder{Writer: req.stdout, Color: output.ColorEnabled(req.stdout)}
-		err := out.Test(*payload.roster, inv.elapsed)
+		err := out.TestGroups(payload.rosters, inv.elapsed)
 		payload.err = errors.Join(payload.err, err)
 		final = errors.Join(final, err)
-		if payload.roster.AnyFailed() && (!named || inv.err == nil) {
+		if slices.ContainsFunc(payload.rosters, func(group output.TestGroup) bool { return group.Report.AnyFailed() }) && (!named || inv.err == nil && !slices.ContainsFunc(inv.groups, func(group selectedGroup) bool { return group.err != nil })) {
 			final = errors.Join(errors.New("test failures detected"), final)
 		}
 	}
 	var writeErr error
 	reported := req.presentation == presentTest
-	failures := req.presentation == presentBuild || req.presentation == presentTest && named && inv.err != nil
-	for i, side := range inv.sides {
-		var model output.Model
-		if failures {
-			model = failureModel(side)
-		}
-		model.Warnings = selectedWarnings(side)
-		if model.Empty() {
-			continue
-		}
-		if req.pair {
-			_, err := io.WriteString(req.stderr, []string{"orig", "current"}[i]+" snapshot:")
-			writeErr = errors.Join(writeErr, err)
-		}
-		writeErr = errors.Join(writeErr, encoder.Report(model))
-		reported = reported || failures
-	}
-	if len(payload.warnings) > 0 {
-		writeErr = errors.Join(writeErr, encoder.Report(output.Model{Warnings: payload.warnings}))
-	}
 	diagnostic := errors.Join(payload.err, inv.remainder)
+	for i, group := range inv.groups {
+		groupErr, remainder := group.err, group.remainder
+		if len(inv.groups) > 1 {
+			if groupErr != nil {
+				groupErr = fmt.Errorf("cluster %s: %w", group.cluster, groupErr)
+			}
+			if remainder != nil {
+				remainder = fmt.Errorf("cluster %s: %w", group.cluster, remainder)
+			}
+		}
+		final, diagnostic = errors.Join(final, groupErr), errors.Join(diagnostic, remainder)
+		failures := req.presentation == presentBuild || req.presentation == presentTest && named && group.err != nil
+		headed := false
+		for j, side := range group.sides {
+			var model output.Model
+			if failures {
+				model = failureModel(side)
+			}
+			model.Warnings = selectedWarnings(side)
+			if model.Empty() {
+				continue
+			}
+			if len(inv.groups) > 1 && !headed {
+				_, err := fmt.Fprintln(req.stderr, "Cluster:", group.cluster)
+				writeErr, headed = errors.Join(writeErr, err), true
+			}
+			if req.pair {
+				_, err := io.WriteString(req.stderr, []string{"orig", "current"}[j]+" snapshot:")
+				writeErr = errors.Join(writeErr, err)
+			}
+			writeErr = errors.Join(writeErr, encoder.Report(model))
+			reported = reported || failures
+		}
+		if i < len(payload.warnings) && len(payload.warnings[i]) > 0 {
+			if len(inv.groups) > 1 && !headed {
+				_, err := fmt.Fprintln(req.stderr, "Cluster:", group.cluster)
+				writeErr = errors.Join(writeErr, err)
+			}
+			writeErr = errors.Join(writeErr, encoder.Report(output.Model{Warnings: payload.warnings[i]}))
+		}
+	}
 	if req.presentation == presentDiff {
 		reported, diagnostic = final != nil, final
 	}

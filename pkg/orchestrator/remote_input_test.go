@@ -38,10 +38,10 @@ secretGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 `, server.URL))
-	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2, SourceRetry: sourcecache.RetryConfig{Attempts: 2}})
+	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2, SourceRetry: sourcecache.RetryConfig{Attempts: 2}})
 	assert.NoError(t, err)
-	defer func() { assert.NoError(t, o.Stop()) }()
-	assert.NoError(t, o.Bootstrap(t.Context()))
+	defer func() { o.stop() }()
+	assert.NoError(t, o.bootstrap(t.Context()))
 	for name, want := range map[string]map[string]any{
 		"env": {"VALUE": "stable"}, "file": {"payload": "VALUE=stable\n"},
 	} {

@@ -142,17 +142,16 @@ spec:
     kind: OCIRepository
     name: charts
 `)
-			o, err := New(t.Context(), Config{
-				Path: dir, CacheDir: t.TempDir(), WipeSecrets: true,
-				Concurrency: 4,
-			})
+			o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{CacheDir: t.TempDir(), WipeSecrets: true,
+				Concurrency: 4},
+			)
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			o.WithFetcher(manifest.KindOCIRepository, &secretChartFetcher{chart: chart})
+			o.src.Fetchers[manifest.KindOCIRepository] = &secretChartFetcher{chart: chart}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			res, err := o.Render(ctx)
+			res, err := o.render(ctx)
 			if err != nil {
 				t.Fatalf("Render: %v", err)
 			}
@@ -203,16 +202,15 @@ spec:
   certSecretRef:
     name: ca
 `, strings.TrimPrefix(server.URL, "https://")))
-	o, err := New(t.Context(), Config{
-		Path: dir, CacheDir: t.TempDir(), WipeSecrets: true,
-		AllowMissingSecrets: true, Concurrency: 4,
-	})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{CacheDir: t.TempDir(), WipeSecrets: true,
+		AllowMissingSecrets: true, Concurrency: 4},
+	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	_, err = o.Render(ctx)
+	_, err = o.render(ctx)
 	// The registry returns 404. Reaching its handler proves the OCI fetcher
 	// read the rendered CA Secret and passed TLS verification.
 	if requests.Load() == 0 {

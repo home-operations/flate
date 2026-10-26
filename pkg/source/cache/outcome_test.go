@@ -259,7 +259,6 @@ func TestOutcome_Exclusions(t *testing.T) {
 	if newOutcome(outcomeFailure(&fetcherr.ResponseError{StatusCode: 503, Err: &errcode.ErrorResponse{StatusCode: 503, Errors: codes}}), time.Now().UTC(), 1, ocispec.Descriptor{}) != nil {
 		t.Fatal("oversize ORAS cause tree accepted")
 	}
-
 }
 
 func TestOutcome_CanceledCallerIsNotRecorded(t *testing.T) {
@@ -549,15 +548,12 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 				t.Fatal(err)
 			}
 			calls := 0
-			r, _, _, err := c.Blob(t.Context(), BlobKey{Content: "invalid"}, Policy{MaxAge: Forever}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+			_, _, _, err = c.Blob(t.Context(), BlobKey{Content: "invalid"}, Policy{MaxAge: Forever}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 				calls++
 				return producer([]byte("replacement"), ocispec.Descriptor{})(ctx, w)
 			})
 			if err != nil || calls != 1 {
 				t.Fatalf("invalid record suppressed acquisition: calls=%d, error=%v", calls, err)
-			}
-			if err := r.Close(); err != nil {
-				t.Fatal(err)
 			}
 		})
 	}
@@ -672,7 +668,7 @@ func TestOutcome_LastGoodRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = r.Close() }()
+
 	last, err := c.store.Resolve(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
@@ -693,12 +689,10 @@ func TestOutcome_LastGoodRedaction(t *testing.T) {
 			t.Fatalf("direct payload: %+v, %v", o, err)
 		}
 	}
-	if data, err := io.ReadAll(r); err != nil || string(data) != "held" {
+	if data, err := fs.ReadFile(r, "content"); err != nil || string(data) != "held" {
 		t.Fatalf("held blob: %q, %v", data, err)
 	}
-	if err := r.Close(); err != nil {
-		t.Fatal(err)
-	}
+
 	desc, err := c.store.Resolve(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)

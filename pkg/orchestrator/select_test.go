@@ -271,7 +271,7 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 					}
 					runs, runErr := []Rendered{run}, run.Err
 					if sides == 2 {
-						runs, runErr = []Rendered{run, run}, joinTreeErrors(run.Err, run.Err)
+						runs, runErr = []Rendered{run, run}, errors.Join(run.Err, run.Err)
 					}
 					selected, err, remainder := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("media", "")}, nil)
 					if (err != nil) != (tc.visible || tc.extra != nil) || len(selected) != sides {
@@ -345,7 +345,7 @@ func TestSelect_MissingAndCycles(t *testing.T) {
 			if named {
 				root.Name = selected.Name
 			}
-			results, err, _ := Select([]Rendered{run, run}, joinTreeErrors(run.Err, run.Err), []manifest.NamedResource{root}, nil)
+			results, err, _ := Select([]Rendered{run, run}, errors.Join(run.Err, run.Err), []manifest.NamedResource{root}, nil)
 			res := results[0]
 			assert.Diff(t, res.Causes, map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}, a: {consumer}, b: nil})
 			assert.Diff(t, res.Blocked, blocked)
@@ -425,7 +425,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
 	t.Run("head_only", func(t *testing.T) {
 		t.Parallel()
-		raw := errors.Join(joinTreeErrors(inputErr, failed.Err), closeErr)
+		raw := errors.Join(errors.Join(inputErr, failed.Err), closeErr)
 		selected, err, remainder := Select([]Rendered{failed}, raw, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 		if len(selected) != 1 || len(selected[0].Failed) != 1 {
 			t.Fatalf("head-only selection lost partial failures: %+v %v", selected, err)
@@ -454,7 +454,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 		{name: "current", current: failed.Err, want: "current snapshot:"},
 		{name: "both", orig: failed.Err, current: failed.Err, want: "both snapshots"},
 		{name: "close", shared: closeErr},
-		{name: "joined close", shared: errors.Join(joinTreeErrors(nil, nil), closeErr)},
+		{name: "joined close", shared: errors.Join(errors.Join(nil, nil), closeErr)},
 		{name: "composed", orig: failed.Err, shared: closeErr, want: "orig snapshot:"},
 		{name: "orig input sibling", orig: errors.Join(failed.Err, inputErr), want: "orig snapshot:"},
 		{name: "current domain sibling", current: errors.Join(failed.Err, domainErr), want: "current snapshot:"},
@@ -469,7 +469,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				}
 				runs[i].Err = err
 			}
-			_, err, remainder := Select(runs, errors.Join(joinTreeErrors(tc.orig, tc.current), tc.shared), []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+			_, err, remainder := Select(runs, errors.Join(errors.Join(tc.orig, tc.current), tc.shared), []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 			if (err != nil) != (tc.orig != nil || tc.current != nil || tc.shared != nil) || (tc.want != "" && !strings.Contains(err.Error(), tc.want)) {
 				t.Fatalf("snapshot attribution changed: %v", err)
 			}
@@ -495,7 +495,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			baseFailure := &FailuresError{Message: "raw base failure"}
 			runs := []Rendered{failed, selectedRun(&Result{})}
 			runs[0].Err, runs[1].Err = baseFailure, context.Canceled
-			nested := fmt.Errorf("outer: %w", joinTreeErrors(baseFailure, context.Canceled))
+			nested := fmt.Errorf("outer: %w", errors.Join(baseFailure, context.Canceled))
 			children := []error{teardownA, nested, teardownB}
 			if reversed {
 				slices.Reverse(children)
@@ -553,7 +553,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 					t.Fatalf("completion = %d, want %d", got, i)
 				}
 			}
-			raw := errors.Join(joinTreeErrors(runs[0].Err, runs[1].Err), closeErr)
+			raw := errors.Join(errors.Join(runs[0].Err, runs[1].Err), closeErr)
 			selected, err, remainder := Select(runs, raw, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 			if len(selected) != 2 {
 				t.Fatalf("lost partial sides: %v", selected)
@@ -570,9 +570,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 			}
 		})
 	}
-	if joinTreeErrors(errors.New("base"), errors.New("head")).Error() != "both trees had reconcile failures\nbase tree: base\nhead tree: head" {
-		t.Fatal("raw tree aggregate wording changed")
-	}
+
 }
 
 func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
@@ -1172,11 +1170,11 @@ func TestSelect_DiagnosticOnlyRuns(t *testing.T) {
 			runErr := teardown
 			if scenario == "orig" {
 				runs = []Rendered{failed, complete}
-				runErr = errors.Join(joinTreeErrors(failure, nil), teardown)
+				runErr = errors.Join(errors.Join(failure, nil), teardown)
 			}
 			if scenario == "current" {
 				runs = []Rendered{complete, failed}
-				runErr = errors.Join(joinTreeErrors(nil, failure), teardown)
+				runErr = errors.Join(errors.Join(nil, failure), teardown)
 			}
 			selected, err, diagnostic := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("ns", "named")}, nil)
 			if !errors.Is(err, failure) || !errors.Is(err, teardown) || !errors.Is(diagnostic, failure) || !errors.Is(diagnostic, teardown) || len(selected) != len(runs) {
@@ -1211,7 +1209,8 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 	raw := manifest.Warning{Resource: manifest.BootstrapSourceID, Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"app/module"}}
 	current.Warnings = []manifest.Warning{status, raw}
 	for range 2 {
-		orig, head, err := RenderTrees(t.Context(), Tree{RepoRoot: root}, Tree{RepoRoot: root}, Config{BaseInput: original, Input: current, Concurrency: 2})
+		renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: original, BaseInput: current}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: current, BaseInput: original}}, Config{Concurrency: 2})
+		orig, head := renderedTrees1[0], renderedTrees1[1]
 		assert.NoError(t, err)
 		for _, name := range []string{"one", "two"} {
 			artifact := head.store.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}).(*store.SourceArtifact)
@@ -1245,17 +1244,19 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 	assert.Diff(t, current.Warnings, []manifest.Warning{status, raw})
 }
 
-func TestOrchestrator_BootstrapWarningOnly(t *testing.T) {
+func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	warning := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "before failure", Count: 1}
-	o, err := New(t.Context(), Config{Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}, Concurrency: 2})
-	assert.NoError(t, err)
-	result, err := o.Render(t.Context())
-	if result != nil || !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("failed bootstrap exposed content: %+v, %v", result, err)
+	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, Input: &store.SourceArtifact{LocalPath: root, Warnings: []manifest.Warning{warning}}}}, Config{Concurrency: 2})
+	if len(runs) != 1 {
+		t.Fatalf("missing diagnostic run: %v", err)
 	}
-	assert.Diff(t, o.store.Warnings(), []manifest.Warning{warning})
+	o, result := runs[0].Orchestrator, runs[0].Result
+	if o != nil || result == nil || !errors.Is(err, manifest.ErrInput) || len(result.Manifests)+len(result.Failed) != 0 {
+		t.Fatalf("failed bootstrap exposed content: %v, %+v, %v", o, result, err)
+	}
+	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
 }
 
 func TestSelect_OwnerlessDocuments(t *testing.T) {

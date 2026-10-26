@@ -203,28 +203,35 @@ The Store is the single source of truth. Every stored manifest is immutable; mut
 ```go
 import (
     "context"
+    "github.com/home-operations/flate/pkg/manifest"
     "github.com/home-operations/flate/pkg/orchestrator"
 )
 
 ctx := context.Background()
-o, _ := orchestrator.New(ctx, orchestrator.Config{Path: "/path/to/cluster"})
-res, err := o.Render(ctx)
-// res is non-nil even when err != nil — partial output stays usable.
-for _, batch := range res.Manifests {
-    // batch.Documents contains rendered YAML; batch.Parent is nil for ownerless entry documents.
+runs, err := orchestrator.RenderTrees(ctx, []orchestrator.Tree{{
+    ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead},
+    Path: "/path/to/repository",
+}}, orchestrator.Config{Concurrency: 4})
+for _, run := range runs {
+    if run.Orchestrator == nil {
+        continue
+    }
+    for _, batch := range run.Result.Manifests {
+        // batch.Documents contains rendered YAML; batch.Parent is nil for ownerless entry documents.
+    }
+    for id, info := range run.Result.Failed {
+        // structured failure list keyed by NamedResource
+    }
 }
-for id, info := range res.Failed {
-    // structured failure list keyed by NamedResource
-}
+_ = err // Completed trees retain partial output alongside render errors.
 ```
 
-SDK callers that inject `source.Network` own its lifetime: join renders and close TreeCache workers before calling `Network.Close`. Orchestrators borrow injected networks; an internally created network closes after its render or both `RenderTrees` sides finish.
+SDK callers own injected `Cache`, `Network` and `HelmClient` resources. `RenderTrees` joins every tree before returning; keep a borrowed cache alive through later lazy source reads and join those reads before closing it. Internally created resources close after all trees finish.
 
 Low-level OCI, Bucket and HelmChart fetchers require a caller-owned, non-nil `source.Network`: set `oci.Fetcher.Network` and `bucket.Fetcher.Network`, or pass it through `helmchart.Config.Network` to `helmchart.New`. These fetchers borrow the network; the caller must join all fetches before calling `Network.Close`.
 
 Other entry points worth knowing:
 
-- `Orchestrator.WithFetcher(kind, f)` — swap any source fetcher (in-memory fakes for tests, custom kinds).
 - `Store.AddListener(kind, fn, replay)` - the only store observer; payloads are `manifest.BaseManifest`, `StatusInfo` or `Artifact` by `EventKind`.
 - `helm.Prepare(hr, lookup, provider)` then `helmClient.Template(...)` and `manifest.SplitDocs(...)` — render one HelmRelease without the orchestrator. `lookup` is a `manifest.HelmChartLookup` (`func(manifest.NamedResource) *manifest.HelmChartSource`). `kustomize.Prepare(ks, provider, nil)` is the symmetric helper for Kustomizations.
 - `discovery.Run(ctx, Config{Path, Store, WipeSecrets})` — load phase as a standalone unit.

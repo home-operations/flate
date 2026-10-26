@@ -32,6 +32,11 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 				t.Fatal(err)
 			}
 			assert.Diff(t, b.String(), tc.want)
+			b.Reset()
+			if err := (Encoder{Writer: &b, Format: tc.format}).DocumentGroups([]DocumentGroup{{Cluster: "entry", Documents: tc.docs}}); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
 		})
 	}
 }
@@ -67,6 +72,11 @@ func TestEncoder_Images_Bytes(t *testing.T) {
 				t.Fatal(err)
 			}
 			assert.Diff(t, b.String(), tc.want)
+			b.Reset()
+			if err := (Encoder{Writer: &b, Format: tc.format}).ImageGroups([]ImageGroup{{Cluster: "entry", Images: images}}); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
 		})
 	}
 }
@@ -85,6 +95,11 @@ func TestEncoder_Cluster_Bytes(t *testing.T) {
 			t.Parallel()
 			var b bytes.Buffer
 			if err := (Encoder{Writer: &b, Format: tc.format}).Cluster(summary); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
+			b.Reset()
+			if err := (Encoder{Writer: &b, Format: tc.format}).ClusterGroups([]SummaryGroup{{Cluster: "entry", Summary: summary}}); err != nil {
 				t.Fatal(err)
 			}
 			assert.Diff(t, b.String(), tc.want)
@@ -130,6 +145,136 @@ func TestEncoder_Resources_Bytes(t *testing.T) {
 				t.Fatal(err)
 			}
 			assert.Diff(t, b.String(), tc.want)
+			b.Reset()
+			if err := (Encoder{Writer: &b, Format: tc.format}).ResourceGroups(cols, []ResourceGroup{{Cluster: "entry", Rows: rows, Documents: docs}}); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
+		})
+	}
+}
+
+func TestEncoder_Documents_GroupBytes(t *testing.T) {
+	t.Parallel()
+	groups := []DocumentGroup{{Cluster: "a", Documents: []map[string]any{{"kind": "B"}, {"kind": "A"}}}, {Cluster: "b", Documents: []map[string]any{}}}
+	for _, tc := range []struct {
+		name   string
+		format Format
+		want   string
+	}{
+		{name: "yaml", format: FormatYAML, want: "# Cluster: a\n---\nkind: B\n---\nkind: A\n# Cluster: b\n"},
+		{name: "json", format: FormatJSON, want: "[\n  {\n    \"cluster\": \"a\",\n    \"documents\": [\n      {\n        \"kind\": \"B\"\n      },\n      {\n        \"kind\": \"A\"\n      }\n    ]\n  },\n  {\n    \"cluster\": \"b\",\n    \"documents\": []\n  }\n]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			if err := (Encoder{Writer: &b, Format: tc.format}).DocumentGroups(groups); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
+		})
+	}
+}
+
+func TestEncoder_Images_GroupBytes(t *testing.T) {
+	t.Parallel()
+	groups := []ImageGroup{{Cluster: "a", Images: []string{"z:v1", "a:v1"}}, {Cluster: "b", Images: []string{"z:v1"}}}
+	for _, tc := range []struct {
+		name   string
+		format Format
+		want   string
+	}{
+		{name: "plain", want: "a: z:v1\na: a:v1\nb: z:v1\n"},
+		{name: "yaml", format: FormatYAML, want: "- cluster: a\n  images:\n  - z:v1\n  - a:v1\n- cluster: b\n  images:\n  - z:v1\n"},
+		{name: "json", format: FormatJSON, want: "[\n  {\n    \"cluster\": \"a\",\n    \"images\": [\n      \"z:v1\",\n      \"a:v1\"\n    ]\n  },\n  {\n    \"cluster\": \"b\",\n    \"images\": [\n      \"z:v1\"\n    ]\n  }\n]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			if err := (Encoder{Writer: &b, Format: tc.format}).ImageGroups(groups); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
+		})
+	}
+}
+
+func TestEncoder_Images_GroupPresenceBytes(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		format Format
+		groups []ImageGroup
+		want   string
+	}{
+		{name: "empty_added", groups: []ImageGroup{{Cluster: "a", Added: true}}, want: "Cluster: a (added)\n"},
+		{name: "removed_with_survivor", groups: []ImageGroup{{Cluster: "a", Removed: true, Images: []string{"old:v1"}}, {Cluster: "b", Images: []string{"new:v2"}}}, want: "Cluster: a (removed)\na: old:v1\nb: new:v2\n"},
+		{name: "yaml_removed", format: FormatYAML, groups: []ImageGroup{{Cluster: "a", Removed: true, Images: []string{}}}, want: "- cluster: a\n  images: []\n  removed: true\n"},
+		{name: "json_added", format: FormatJSON, groups: []ImageGroup{{Cluster: "a", Added: true, Images: []string{}}}, want: "[\n  {\n    \"cluster\": \"a\",\n    \"images\": [],\n    \"added\": true\n  }\n]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			if err := (Encoder{Writer: &b, Format: tc.format}).ImageGroups(tc.groups); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
+		})
+	}
+	want := errors.New("write failed")
+	if err := (Encoder{Writer: errorWriter{want}}).ImageGroups([]ImageGroup{{Cluster: "a", Added: true}}); !errors.Is(err, want) {
+		t.Fatalf("image presence header error = %v, want %v", err, want)
+	}
+}
+
+func TestEncoder_Cluster_GroupBytes(t *testing.T) {
+	t.Parallel()
+	groups := []SummaryGroup{{Cluster: "a", Summary: map[string]any{"name": "same"}}, {Cluster: "b", Summary: map[string]any{"name": "same"}}}
+	for _, tc := range []struct {
+		name   string
+		format Format
+		want   string
+	}{
+		{name: "yaml", format: FormatYAML, want: "- cluster: a\n  summary:\n    name: same\n- cluster: b\n  summary:\n    name: same\n"},
+		{name: "json", format: FormatJSON, want: "[\n  {\n    \"cluster\": \"a\",\n    \"summary\": {\n      \"name\": \"same\"\n    }\n  },\n  {\n    \"cluster\": \"b\",\n    \"summary\": {\n      \"name\": \"same\"\n    }\n  }\n]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			if err := (Encoder{Writer: &b, Format: tc.format}).ClusterGroups(groups); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
+		})
+	}
+}
+
+func TestEncoder_Resources_GroupBytes(t *testing.T) {
+	t.Parallel()
+	cols := []Column{{Header: "NAME", Key: "name"}}
+	row := map[string]string{"name": "same"}
+	doc := map[string]any{"kind": "A"}
+	groups := []ResourceGroup{{Cluster: "a", Rows: []map[string]string{row}, Documents: []map[string]any{doc}}, {Cluster: "b", Rows: []map[string]string{row}, Documents: []map[string]any{doc}}}
+	for _, tc := range []struct {
+		name   string
+		format Format
+		want   string
+	}{
+		{name: "table", format: FormatTable, want: "CLUSTER    NAME\na          same\nb          same\n"},
+		{name: "name", format: FormatName, want: "a:same\nb:same\n"},
+		{name: "yaml", format: FormatYAML, want: "# Cluster: a\n---\nkind: A\n# Cluster: b\n---\nkind: A\n"},
+		{name: "json", format: FormatJSON, want: "[\n  {\n    \"cluster\": \"a\",\n    \"documents\": [\n      {\n        \"kind\": \"A\"\n      }\n    ]\n  },\n  {\n    \"cluster\": \"b\",\n    \"documents\": [\n      {\n        \"kind\": \"A\"\n      }\n    ]\n  }\n]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			if err := (Encoder{Writer: &b, Format: tc.format}).ResourceGroups(cols, groups); err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, b.String(), tc.want)
+			assert.Diff(t, row, map[string]string{"name": "same"})
+			assert.Diff(t, doc, map[string]any{"kind": "A"})
+			assert.Diff(t, cols, []Column{{Header: "NAME", Key: "name"}})
 		})
 	}
 }

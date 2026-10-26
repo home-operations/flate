@@ -136,7 +136,7 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 							"kustomization.yaml": fmt.Sprintf("resources:\n- https://example.invalid%s\n- git::https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n", path),
 						})
 						out, _, err := Render(t.Context(), c, RenderRequest{
-							Source: &store.SourceArtifact{FS: input}, Spec: demoSpec, HeldSlot: held,
+							Source: &store.SourceArtifact{FS: input}, Spec: demoSpec, HeldSlot: held, Label: fmt.Sprintf("/source-%d", index),
 						}, sourcecache.RetryConfig{})
 						results <- result{out: out, err: err}
 					}
@@ -179,7 +179,11 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 				tasks.BlockTillDone()
 				assert.Equal(t, active.Load(), int32(0))
 				assert.Equal(t, tasks.Failures(), int64(0))
-				for name, want := range map[string]int32{"/a": 1, "/b": 1, "/shared": 1, "git": 2} {
+				gitCalls := int32(2)
+				if mode != "validation" {
+					gitCalls = 4
+				}
+				for name, want := range map[string]int32{"/a": 1, "/b": 1, "/shared": 1, "git": gitCalls} {
 					value, ok := counts.Load(name)
 					if !ok {
 						t.Errorf("missing acquisition %s", name)

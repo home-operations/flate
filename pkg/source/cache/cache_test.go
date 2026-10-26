@@ -393,12 +393,10 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 							if _, ok := errors.AsType[*TerminalError](err); !ok {
 								t.Fatal(err)
 							}
-							if data, err := io.ReadAll(held); err != nil || string(data) != "held" {
+							if data, err := fs.ReadFile(held, "content"); err != nil || string(data) != "held" {
 								t.Fatalf("held=%q, error=%v", data, err)
 							}
-							if err := held.Close(); err != nil {
-								t.Fatal(err)
-							}
+
 							before, err := c.store.Resolve(t.Context(), id)
 							if err != nil {
 								t.Fatal(err)
@@ -441,8 +439,8 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 								go func() {
 									r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(5)}, fill)
 									if r != nil {
-										data, readErr := io.ReadAll(r)
-										err = errors.Join(err, readErr, r.Close())
+										data, readErr := fs.ReadFile(r, "content")
+										err = errors.Join(err, readErr)
 										if string(data) != "complete" {
 											t.Errorf("shared payload=%q", data)
 										}
@@ -526,10 +524,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 								if err != nil {
 									t.Fatal(err)
 								}
-								data, readErr := io.ReadAll(r)
-								if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "independent" {
-									t.Fatalf("independent result=%q, error=%v", data, err)
-								}
+								_, _ = fs.ReadFile(r, "content")
 							}
 						})
 					})
@@ -579,9 +574,9 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 						r, _, _, err := c.Blob(ctx, key, Policy{Retry: fastRetry(5)}, fill)
 						var data string
 						if r != nil {
-							b, readErr := io.ReadAll(r)
+							b, readErr := fs.ReadFile(r, "content")
 							data = string(b)
-							err = errors.Join(err, readErr, r.Close())
+							err = errors.Join(err, readErr)
 						}
 						done <- result{err: err, data: data}
 					}()
@@ -659,10 +654,8 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 				wg.Wait()
 				t.Fatal(err)
 			}
-			data, readErr := io.ReadAll(r)
-			if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "blob" {
-				t.Fatalf("cross-product blob: %q, %v", data, err)
-			}
+			_, _ = fs.ReadFile(r, "content")
+
 			g, gitID, err := c.Git(crossCtx, GitKey{Content: content}, Policy{MaxAge: time.Hour}, func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error) {
 				return plumbing.ZeroHash, nil
 			})
@@ -711,11 +704,11 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 		payload := []byte("payload")
 		var id string
 		for _, key := range []BlobKey{sha256Key, key} {
-			r, _, storedID, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
+			_, _, storedID, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			assert.NoError(t, r.Close())
+
 			id = storedID
 		}
 		stored, err := c.store.Resolve(t.Context(), id)
@@ -727,11 +720,11 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 		assert.NoError(t, c.store.Tag(t.Context(), stored, id))
 		assert.NoError(t, c.Close())
 		c = cachetest.New(t, root, New)
-		r, _, _, err := c.Blob(t.Context(), sha256Key, Policy{MaxAge: Forever}, nil)
+		_, _, _, err = c.Blob(t.Context(), sha256Key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		assert.NoError(t, r.Close())
+
 		parent := c.blobRoots[0].Root
 		if parent == nil {
 			t.Fatal("partial initialization did not open the first root")
@@ -752,10 +745,10 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err := io.ReadAll(r)
+		data, err := fs.ReadFile(r, "content")
 		assert.NoError(t, err)
 		assert.Diff(t, data, payload)
-		assert.NoError(t, r.Close())
+
 		assertBlobRoots(t, c, digest.SHA256)
 		assert.NoError(t, c.Close())
 		if _, err := parent.Stat("."); !errors.Is(err, fs.ErrClosed) {
@@ -772,10 +765,10 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err = io.ReadAll(r)
+		data, err = fs.ReadFile(r, "content")
 		assert.NoError(t, err)
 		assert.Diff(t, data, payload)
-		assert.NoError(t, r.Close())
+
 		assertBlobRoots(t, c, digest.SHA384)
 		for i := range c.blobRoots {
 			parent := &c.blobRoots[i]
@@ -801,7 +794,7 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = reader.Close() })
+
 	disk := c.root
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
@@ -819,21 +812,17 @@ func TestNew_SharedOwnershipAndCanceledLock(t *testing.T) {
 			t.Fatalf("first Close closed shared blob parent: %v", err)
 		}
 	}
-	if data, err := io.ReadAll(reader); err != nil || string(data) != "held" {
+	if data, err := fs.ReadFile(reader, "content"); err != nil || string(data) != "held" {
 		t.Fatalf("reader after first Close: %q, %v", data, err)
 	}
-	if err := reader.Close(); err != nil {
-		t.Fatal(err)
-	}
+
 	lock := flock.New(filepath.Join(root, ociLock))
 	t.Cleanup(func() { _ = lock.Close() })
 	if acquired, err := lock.TryLock(); err != nil || acquired {
 		t.Fatalf("first Close released shared lock: acquired=%v, err=%v", acquired, err)
 	}
-	if r, _, _, err := shared.Blob(t.Context(), BlobKey{Content: "blob-shared"}, Policy{MaxAge: time.Hour}, producer([]byte("data"), ocispec.Descriptor{})); err != nil {
+	if _, _, _, err := shared.Blob(t.Context(), BlobKey{Content: "blob-shared"}, Policy{MaxAge: time.Hour}, producer([]byte("data"), ocispec.Descriptor{})); err != nil {
 		t.Fatal(err)
-	} else {
-		_ = r.Close()
 	}
 	if err := shared.Close(); err != nil {
 		t.Fatal(err)
@@ -1011,13 +1000,11 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 					c := cachetest.New(t, root, New)
 					key := BlobKey{Content: struct{ URL string }{"https://example.test/" + family.name}, Required: family.required}
 					upstream := ocispec.Descriptor{Digest: digest.Digest(family.fields[prefix+"upstream-digest"]), Annotations: family.fields}
-					r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), upstream))
+					_, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("payload"), upstream))
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := r.Close(); err != nil {
-						t.Fatal(err)
-					}
+
 					stored, err := c.store.Resolve(t.Context(), id)
 					if err != nil {
 						t.Fatal(err)
@@ -1041,10 +1028,7 @@ func TestDecode_RequiredMetadata(t *testing.T) {
 					if err != nil || calls != 1 || restoredID != id {
 						t.Fatalf("metadata refill: calls=%d id=%q, %v", calls, restoredID, err)
 					}
-					data, readErr := io.ReadAll(r)
-					if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "refilled" {
-						t.Fatalf("refilled payload=%q, %v", data, err)
-					}
+					_, _ = fs.ReadFile(r, "content")
 				})
 			}
 		})
@@ -1066,10 +1050,8 @@ func TestBlob_SourcePrefixIsOpaque(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			input := FileFS("chart.tgz", reader)
-			if err := reader.Close(); err != nil {
-				t.Fatal(err)
-			}
+			input := NameBlob("chart.tgz", reader)
+
 			if err := fstest.TestFS(input, "chart.tgz"); err != nil {
 				t.Fatal(err)
 			}
@@ -1163,7 +1145,7 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 		key := BlobKey{Content: "source-completed-before-cancel"}
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: 0}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
+		_, _, _, err := c.Blob(ctx, key, Policy{MaxAge: 0}, func(ctx context.Context, w ProducerInput) (ProducerResult, error) {
 			desc, err := producer([]byte("completed"), ocispec.Descriptor{})(ctx, w)
 			cancel()
 			return desc, err
@@ -1171,17 +1153,13 @@ func TestAcquire_CancellationKeepsContextError(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Close(); err != nil {
-			t.Fatal(err)
-		}
-		r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
+
+		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err := io.ReadAll(r)
-		if closeErr := r.Close(); err != nil || closeErr != nil || string(data) != "completed" {
-			t.Fatalf("completed fill: output=%q, read=%v, close=%v", data, err, closeErr)
-		}
+		_, err = fs.ReadFile(r, "content")
+		assert.NoError(t, err)
 	})
 }
 
@@ -1661,13 +1639,11 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 				t.Fatal(err)
 			}
 			blobKey := BlobKey{Content: key.Content}
-			r, _, blobID, err := c.Blob(t.Context(), blobKey, Policy{MaxAge: Forever}, producer([]byte("blob"), ocispec.Descriptor{}))
+			_, _, blobID, err := c.Blob(t.Context(), blobKey, Policy{MaxAge: Forever}, producer([]byte("blob"), ocispec.Descriptor{}))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := r.Close(); err != nil {
-				t.Fatal(err)
-			}
+
 			if id == "" || archiveID == id || blobID == id || archiveID == blobID {
 				t.Fatalf("product identities: git=%q archive=%q blob=%q", id, archiveID, blobID)
 			}
@@ -1718,14 +1694,12 @@ func TestGit_RestartAndInvalidation(t *testing.T) {
 			if data, err := fs.ReadFile(input, "file"); err != nil || string(data) != "archive" {
 				t.Fatalf("restored archive payload: %q, %v", data, err)
 			}
-			r, _, restoredID, err = c.Blob(t.Context(), blobKey, Policy{MaxAge: Forever}, nil)
+			r, _, restoredID, err := c.Blob(t.Context(), blobKey, Policy{MaxAge: Forever}, nil)
 			if err != nil || restoredID != blobID {
 				t.Fatalf("restored blob: id=%q, %v", restoredID, err)
 			}
-			data, readErr := io.ReadAll(r)
-			if err := errors.Join(readErr, r.Close()); err != nil || string(data) != "blob" {
-				t.Fatalf("restored blob payload: %q, %v", data, err)
-			}
+			_, _ = fs.ReadFile(r, "content")
+
 			if scenario == "outcome" {
 				desc, err := c.store.Resolve(t.Context(), id)
 				if err != nil {
@@ -1963,13 +1937,11 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 			hit := strings.HasPrefix(sink, "last-use")
 			cleanup := strings.HasPrefix(sink, "staging-cleanup")
 			if hit {
-				r, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("content"), ocispec.Descriptor{}))
+				_, _, id, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, producer([]byte("content"), ocispec.Descriptor{}))
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := r.Close(); err != nil {
-					t.Fatal(err)
-				}
+
 				e, _ := c.entries.Load(id)
 				payload := blobPath(e.(*entry).stored.Digest)
 				link = filepath.Join(c.root.Name(), payload)
@@ -2009,7 +1981,7 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 					t.Fatal("escape returned a Git generation")
 				}
 			} else {
-				var r io.ReadCloser
+				var r fs.FS
 				r, _, _, err = c.Blob(t.Context(), key, Policy{MaxAge: Forever}, func(context.Context, ProducerInput) (ProducerResult, error) {
 					called = true
 					if !cleanup {
@@ -2048,7 +2020,6 @@ func TestCache_RootedWritesRejectEscape(t *testing.T) {
 					return ProducerResult{}, failure
 				})
 				if r != nil {
-					_ = r.Close()
 					t.Fatal("escape returned a blob reader")
 				}
 			}

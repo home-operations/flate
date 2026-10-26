@@ -39,8 +39,7 @@ type GitGeneration struct {
 }
 
 type gitProducer struct {
-	key   GitKey
-	fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)
+	key GitKey
 }
 
 func (p gitProducer) identity() string {
@@ -50,14 +49,17 @@ func (p gitProducer) identity() string {
 // Git acquires a private generation through the common freshness and publication path.
 // Its acquisition identity is empty on failure.
 func (c *Cache) Git(ctx context.Context, key GitKey, policy Policy, produce func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*GitGeneration, string, error) {
-	e, id, err := c.acquire(ctx, acquireKey{producer: gitProducer{key: key, fetch: produce}}, policy)
+	producer := gitProducer{key: key}
+	e, id, err := c.acquire(ctx, acquireKey{producer: producer}, policy, acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+		return producer.produce(ctx, c, staged, produce)
+	}})
 	if err != nil {
 		return nil, "", err
 	}
 	return e.git, id, nil
 }
 
-func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload, fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error)) (*entry, error) {
 	g := &GitGeneration{id: uuid.NewString()}
 	e := &entry{git: g}
 	if c.store == nil {
@@ -87,7 +89,7 @@ func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload) (*e
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, storer.Close())
 	}
-	hash, err := p.fetch(ctx, storer, g.Worktree)
+	hash, err := fetch(ctx, storer, g.Worktree)
 	closeErr := storer.Close()
 	if err != nil {
 		if closeErr != nil {

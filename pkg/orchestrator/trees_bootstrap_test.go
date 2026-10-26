@@ -26,7 +26,8 @@ func TestRenderTrees_BootstrapWarnings(t *testing.T) {
 	for side, root := range roots {
 		inputs[side] = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: failedPreparationFS{fstest.MapFS{}}, Warnings: []manifest.Warning{warning}}
 	}
-	base, head, err := orchestrator.RenderTrees(t.Context(), orchestrator.Tree{RepoRoot: roots[0]}, orchestrator.Tree{RepoRoot: roots[1]}, orchestrator.Config{BaseInput: inputs[0], Input: inputs[1], Concurrency: 2})
+	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: roots[0], Input: inputs[0]}, {ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: roots[1], Input: inputs[1]}}, orchestrator.Config{Concurrency: 2})
+	base, head := runs[0], runs[1]
 	if !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("preparation error: %v", err)
 	}

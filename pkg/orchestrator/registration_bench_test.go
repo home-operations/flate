@@ -1,14 +1,20 @@
 package orchestrator
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"sync/atomic"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/baseline"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 // The late provider depends on both optional readers completing. The emitted
@@ -70,15 +76,23 @@ spec:
 `)
 	for _, workers := range []int{2, 16, runtime.NumCPU() * 4} {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
-			cfg := Config{Path: root, RepoRoot: root, CacheDir: b.TempDir(), WipeSecrets: true, Concurrency: workers}
+			cfg := treeConfig{CacheDir: b.TempDir(), WipeSecrets: true, Concurrency: workers, Path: root, RepoRoot: root}
 			var renders int64
 			b.ReportAllocs()
 			for b.Loop() {
-				o, err := New(b.Context(), cfg)
+				input, path, err := baseline.AdmitDirectory(b.Context(), cfg.Path, cfg.RepoRoot)
 				if err != nil {
 					b.Fatal(err)
 				}
-				if err := o.Bootstrap(b.Context()); err != nil {
+				owner, err := sourcecache.New(b.Context(), cfg.CacheDir)
+				if err != nil {
+					b.Fatal(err)
+				}
+				config, tree := cfg.Config, cfg.Tree
+				config.Cache, config.Network, config.HelmClient = owner, new(source.Network), helm.NewClient(owner)
+				tree.Input, tree.Path = input, path
+				o := newOrchestrator(config, tree, task.NewBounded(config.Concurrency))
+				if err := o.bootstrap(b.Context()); err != nil {
 					b.Fatal(err)
 				}
 				var actualRenders atomic.Int64
@@ -87,7 +101,10 @@ spec:
 						actualRenders.Add(1)
 					}
 				}, false)
-				err = o.Run(b.Context())
+				err = o.run(b.Context())
+				o.stop()
+				config.Network.Close()
+				err = errors.Join(err, owner.Close())
 				unsubRender()
 				if err != nil {
 					b.Fatal(err)

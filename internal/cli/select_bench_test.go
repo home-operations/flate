@@ -3,12 +3,10 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -17,26 +15,14 @@ import (
 
 func completedScopeFixture(tb testing.TB, count int, failures, cycle bool) orchestrator.Rendered {
 	tb.Helper()
-	root := tb.TempDir()
-	var source strings.Builder
-	ids := make([]manifest.NamedResource, count-1)
-	for i := range ids {
-		ids[i] = testutil.KustomizationID(fmt.Sprintf("ns-%d", i%8), fmt.Sprintf("item-%05d", i))
-		source.WriteString("---\n")
-		source.WriteString(testutil.KustomizationYAML(ids[i].Name, ids[i].Namespace, "  path: ./objects/"+ids[i].Name+"\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
-	}
-	testutil.WriteFile(tb, root, "flux.yaml", source.String())
-	o, err := orchestrator.New(tb.Context(), orchestrator.Config{Path: root, RepoRoot: root, CacheDir: tb.TempDir(), Concurrency: 2, ExternalChanges: change.NewSet([]string{"flux.yaml"})})
+	o, err := completedOrchestrator(tb)
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			tb.Errorf("Stop: %v", err)
-		}
-	})
-	if err := o.Bootstrap(tb.Context()); err != nil {
-		tb.Fatal(err)
+	ids := make([]manifest.NamedResource, count-1)
+	for i := range ids {
+		ids[i] = testutil.KustomizationID(fmt.Sprintf("ns-%d", i%8), fmt.Sprintf("item-%05d", i))
+		o.Store().AddObject(&manifest.Kustomization{Name: ids[i].Name, Namespace: ids[i].Namespace})
 	}
 	res := &orchestrator.Result{Manifests: make([]manifest.DocumentBatch, 0, count), Blocked: make(map[manifest.NamedResource][]manifest.NamedResource)}
 	for i, id := range ids {

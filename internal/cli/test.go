@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -48,8 +49,11 @@ func testCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 			flags: *c, roots: c.roots(firstArg(argv), kinds...),
 			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentTest,
 		}, func(inv *selectedInvocation) selectedPayload {
-			roster := testrunner.Run(inv.sides[0])
-			return selectedPayload{roster: &roster}
+			rosters := make([]output.TestGroup, len(inv.groups))
+			for i, group := range inv.groups {
+				rosters[i] = output.TestGroup{Cluster: group.cluster, Report: testrunner.Run(group.sides[0])}
+			}
+			return selectedPayload{rosters: rosters}
 		})
 	}
 	bindCommon(cmd.Flags(), c)

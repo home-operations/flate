@@ -52,20 +52,18 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						testutil.WriteFile(t, root, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
 						testutil.WriteFile(t, root, name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\ndata: {value: active}\n")
 					}
-					cfg := Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: workers}
+					cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: workers, Path: root, RepoRoot: root}
 					if changedOnly {
 						cfg.ExternalChanges = change.NewSet([]string{"flux/gate.yaml", "unused/child.yaml", "dependent/cm.yaml", "independent/cm.yaml"})
 					}
-					o, err := New(t.Context(), cfg)
+					o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 					if err != nil {
 						t.Fatal(err)
 					}
 					t.Cleanup(func() {
-						if err := o.Stop(); err != nil {
-							t.Errorf("Stop: %v", err)
-						}
+						o.stop()
 					})
-					if err := o.Bootstrap(t.Context()); err != nil {
+					if err := o.bootstrap(t.Context()); err != nil {
 						t.Fatal(err)
 					}
 					original, ok := o.store.Get[*manifest.Kustomization](child)
@@ -126,7 +124,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						}
 					}, false)
 					t.Cleanup(unsubArrivals)
-					res, err := o.Render(t.Context())
+					res, err := o.collectResult(o.run(t.Context()))
 					if err != nil || len(res.Failed) != 0 || len(res.Blocked) != 0 || o.tasks.Failures() != 0 {
 						t.Fatalf("scheduler failed to drain: error=%v failures=%v blocked=%v", err, res.Failed, res.Blocked)
 					}
@@ -206,13 +204,13 @@ data:
 	testutil.WriteFile(t, dir, "charts/app/templates/hr.yaml", hr)
 	testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: greeting, namespace: flux-system}\ndata:\n  greeting: {{ .Values.greeting | quote }}\n")
 	testutil.WriteFile(t, dir, "charts/app/templates/bare.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: bare}\ndata: {value: retained}\n")
-	o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: dir, RepoRoot: dir}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	res, err := o.Render(ctx)
+	res, err := o.render(ctx)
 	if err != nil {
 		t.Fatalf("Render must converge: %v", err)
 	}
@@ -314,17 +312,17 @@ func TestDAG_RenderEmittedDependencyResolves(t *testing.T) {
 	testutil.WriteFile(t, dir, "produced/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "produced/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: produced}\ndata: {k: v}\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if err := o.Bootstrap(context.Background()); err != nil {
+	if err := o.bootstrap(context.Background()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	if msg, ok := o.preflightFailure(testutil.KustomizationID("flux-system", "consumer")); ok {
 		t.Fatalf("consumer should wait for rendered dependency, not fail preflight: %s", msg)
 	}
-	if err := o.Run(context.Background()); err != nil {
+	if err := o.run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	for _, name := range []string{"produced", "consumer", "producer"} {
@@ -350,7 +348,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	testutil.WriteFile(t, dir, "mid/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "mid/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mid}\ndata: {k: v}\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
+	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{WipeSecrets: true, Concurrency: 4})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -359,7 +357,7 @@ func TestDAG_DanglingDependencyCascadesAndTerminates(t *testing.T) {
 	// blocking wait would hit this deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 20_000_000_000) // 20s ceiling
 	defer cancel()
-	res, _ := o.Render(ctx)
+	res, _ := o.render(ctx)
 	if res == nil {
 		t.Fatal("Render returned nil result")
 	}
@@ -431,11 +429,12 @@ spec:
 	defer cancel()
 	var previous []byte
 	for range 2 {
-		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
-		if err != nil {
-			t.Fatal(err)
+		renderedSingleton1, err := RenderTrees(ctx, []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, CacheDir: t.TempDir(), Concurrency: 2})
+		if len(renderedSingleton1) != 1 {
+			t.Fatalf("missing render: %v", err)
 		}
-		res, err := o.Render(ctx)
+		o := renderedSingleton1[0].Orchestrator
+		res := renderedSingleton1[0].Result
 		if err != nil || len(res.Failed) != 0 {
 			t.Fatalf("selector chain failed: error=%v failures=%v", err, res.Failed)
 		}
@@ -471,14 +470,13 @@ spec:
 func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	o, err := New(t.Context(), Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := o.Stop(); err != nil {
-			t.Error(err)
-		}
+		o.stop()
+
 	})
 	source := &manifest.GitRepository{Name: "ignored", Namespace: "flux-system"}
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}

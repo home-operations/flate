@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"io"
 	"maps"
 	"slices"
 
@@ -102,7 +101,15 @@ func getAllCmd(use, short string) *cobra.Command {
 				flags: *c, roots: c.roots("", renderKinds...),
 				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
 			}, func(inv *selectedInvocation) selectedPayload {
-				return selectedPayload{err: printCluster(cmd.OutOrStdout(), inv.sides[0], c.output)}
+				groups := make([]output.SummaryGroup, len(inv.groups))
+				for i, group := range inv.groups {
+					res := group.sides[0]
+					groups[i] = output.SummaryGroup{Cluster: group.cluster, Summary: map[string]any{
+						"kustomizations": res.Counts[manifest.KindKustomization],
+						"helmReleases":   res.Counts[manifest.KindHelmRelease],
+					}}
+				}
+				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ClusterGroups(groups)}
 			})
 		},
 	}
@@ -121,9 +128,11 @@ func newGetImagesCmd() *cobra.Command {
 				flags: *c, roots: c.roots("", renderKinds...),
 				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
 			}, func(inv *selectedInvocation) selectedPayload {
-				res := inv.sides[0]
-				imgs := slices.Sorted(maps.Keys(imageutil.Collect(res.Manifests)))
-				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).Images(imgs)}
+				groups := make([]output.ImageGroup, len(inv.groups))
+				for i, group := range inv.groups {
+					groups[i] = output.ImageGroup{Cluster: group.cluster, Images: slices.Sorted(maps.Keys(imageutil.Collect(group.sides[0].Manifests)))}
+				}
+				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ImageGroups(groups)}
 			})
 		},
 	}
@@ -150,7 +159,19 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 				flags: *c, roots: c.roots(firstArg(args), view.kind), labels: l.labels,
 				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
 			}, func(inv *selectedInvocation) selectedPayload {
-				return selectedPayload{err: printResources(cmd.OutOrStdout(), inv.sides[0], c.output, view)}
+				groups := make([]output.ResourceGroup, len(inv.groups))
+				for i, group := range inv.groups {
+					res := group.sides[0]
+					groups[i] = output.ResourceGroup{Cluster: group.cluster, Rows: []map[string]string{}, Documents: []map[string]any{}}
+					for _, obj := range res.Objects {
+						if obj, ok := obj.(T); ok {
+							row, doc := view.mapper(res, obj)
+							groups[i].Rows = append(groups[i].Rows, row)
+							groups[i].Documents = append(groups[i].Documents, doc)
+						}
+					}
+				}
+				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ResourceGroups(view.cols, groups)}
 			})
 		},
 	}
@@ -158,21 +179,6 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 	bindOutput(cmd.Flags(), &c.output, output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName)
 	bindSelector(cmd.Flags(), l)
 	return cmd
-}
-
-func printResources[T manifest.BaseManifest](w io.Writer, res *selection.Selection, out string, view listView[T]) error {
-	rows := make([]map[string]string, 0, len(res.Objects))
-	docs := make([]map[string]any, 0, len(res.Objects))
-	for _, obj := range res.Objects {
-		t, ok := obj.(T)
-		if !ok {
-			continue
-		}
-		row, doc := view.mapper(res, t)
-		rows = append(rows, row)
-		docs = append(docs, doc)
-	}
-	return (output.Encoder{Writer: w, Format: output.Format(out)}).Resources(view.cols, rows, docs)
 }
 
 var (
@@ -189,11 +195,3 @@ var (
 		{Header: "SOURCE", Key: "source"},
 	}
 )
-
-func printCluster(w io.Writer, res *selection.Selection, out string) error {
-	summary := map[string]any{
-		"kustomizations": res.Counts[manifest.KindKustomization],
-		"helmReleases":   res.Counts[manifest.KindHelmRelease],
-	}
-	return (output.Encoder{Writer: w, Format: output.Format(out)}).Cluster(summary)
-}

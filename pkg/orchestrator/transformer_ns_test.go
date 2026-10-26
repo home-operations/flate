@@ -68,11 +68,12 @@ spec:
     name: myapp
 `)
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4})
+	if len(renderedSingleton1) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(t.Context())
+	o := renderedSingleton1[0].Orchestrator
+	res := renderedSingleton1[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -108,11 +109,12 @@ spec:
 	testutil.WriteFile(t, dir, "apps/shared/kustomization.yaml", "namespace: other\nresources: [../myapp/myapp/ks.yaml]\npatches:\n- target: {kind: Kustomization}\n  patch: |-\n    - op: add\n      path: /spec/targetNamespace\n      value: other\n")
 	testutil.WriteFile(t, dir, "cluster/ks.yaml", testutil.KustomizationYAML("cluster-a", "flux-system", "  {path: ./apps/myapp}\n")+"---\n"+testutil.KustomizationYAML("cluster-b", "flux-system", "  {path: ./apps/shared}\n"))
 	path := dir + "/cluster"
-	o, err = New(t.Context(), Config{Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4})
-	if err != nil {
-		t.Fatal(err)
+	renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: path, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4})
+	if len(renderedSingleton2) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err = o.Render(t.Context())
+	o = renderedSingleton2[0].Orchestrator
+	res = renderedSingleton2[0].Result
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,15 +142,14 @@ spec:
 `)
 		}
 		const dirty = "cluster/source-other.yaml"
-		o, err := New(t.Context(), Config{
-			Path: path, RepoRoot: dir, WipeSecrets: true, Concurrency: 4,
+		o, err := newTestOrchestrator(t, Tree{Path: path, RepoRoot: dir,
 			SelfURLs:        []string{"https://fixture.invalid/cluster"},
-			ExternalChanges: change.NewSet([]string{dirty}),
-		})
+			ExternalChanges: change.NewSet([]string{dirty})}, Config{WipeSecrets: true, Concurrency: 4},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := o.Bootstrap(t.Context()); err != nil {
+		if err := o.bootstrap(t.Context()); err != nil {
 			t.Fatalf("Bootstrap: %v", err)
 		}
 		for _, ns := range []string{"myns", "other"} {
@@ -175,7 +176,7 @@ spec:
 		if !o.filter.Enabled() || !o.filter.ShouldReconcile(other) {
 			t.Errorf("second-source change did not select %s", other)
 		}
-		res, err := o.Render(t.Context())
+		res, err := o.collectResult(o.run(t.Context()))
 		if err != nil || len(res.Failed) != 0 {
 			t.Fatalf("changed-only Render: %v; failures=%v", err, res.Failed)
 		}

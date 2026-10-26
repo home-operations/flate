@@ -197,11 +197,11 @@ func TestOrchestrator_Render_ExposesDependsOn(t *testing.T) {
 	testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources:\n- cm.yaml\n")
 	testutil.WriteFile(t, dir, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\ndata: {k: v}\n")
 
-	o, err := New(t.Context(), Config{Path: dir, WipeSecrets: true, Concurrency: 4})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 4})
+	if len(renderedSingleton1) != 1 {
+		t.Fatalf("missing render: %v", err)
 	}
-	res, err := o.Render(context.Background())
+	res := renderedSingleton1[0].Result
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}

@@ -375,7 +375,11 @@ func TestBarWriter_CaptureTail(t *testing.T) {
 	defer slog.SetDefault(oldLogger)
 	slog.SetDefault(slog.New(slog.NewTextHandler(progressLogWriter{bar: w, tail: tail}, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	st := store.New()
-	cleanup := sync.OnceFunc(w.progress(t.Context(), st))
+	listener, stop := w.progress(t.Context())
+	unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+		listener(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, id, payload.(store.StatusInfo))
+	}, false)
+	cleanup := sync.OnceFunc(func() { unsub(); stop() })
 	captured := os.Stderr
 	release := sync.OnceFunc(func() { close(out.release) })
 	defer func() {
@@ -402,6 +406,28 @@ func TestBarWriter_CaptureTail(t *testing.T) {
 	before := out.String()
 	st.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "after cleanup"})
 	assert.Equal(t, out.String(), before)
+}
+
+func TestProgressEvents_TreeIdentity(t *testing.T) {
+	t.Parallel()
+	m := newBarModel(false)
+	id := testutil.KustomizationID("ns", "shared")
+	base := manifest.TreeID{Cluster: "clusters/a", Side: manifest.TreeBase}
+	head := manifest.TreeID{Cluster: "clusters/a", Side: manifest.TreeHead}
+	other := manifest.TreeID{Cluster: "clusters/b", Side: manifest.TreeHead}
+	m.events.observe(base, id, store.StatusInfo{Status: store.StatusReady})
+	m.events.observe(head, id, store.StatusInfo{Status: store.StatusPending})
+	m.events.observe(other, id, store.StatusInfo{Status: store.StatusFailed})
+	m.events.observe(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, id, store.StatusInfo{Status: store.StatusPending})
+	m.drainEvents()
+	assert.Equal(t, m.total, 4)
+	assert.Equal(t, m.done, 2)
+	assert.Diff(t, m.inflightLabels(), []string{"clusters/a/current:shared", "shared"})
+	m.events.observe(head, id, store.StatusInfo{Status: store.StatusReady})
+	m.drainEvents()
+	assert.Equal(t, m.total, 4)
+	assert.Equal(t, m.done, 3)
+	assert.Diff(t, m.inflightLabels(), []string{"shared"})
 }
 
 type progressLogWriter struct {

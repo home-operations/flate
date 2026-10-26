@@ -49,6 +49,9 @@ func NewBounded(workers int) *Service {
 	return s
 }
 
+// Fork borrows the concurrency budget with independent completion and panic accounting.
+func (s *Service) Fork() *Service { return &Service{sem: s.sem} }
+
 // Go launches an active task. ctx is propagated to fn. Completion is
 // reported via BlockTillDone. When the Service is
 // bounded (NewBounded), fn waits on the worker semaphore before it

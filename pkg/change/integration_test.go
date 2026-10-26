@@ -94,20 +94,17 @@ data:
   unchanged: "true"
 `)
 
-	o, err := orchestrator.New(t.Context(), orchestrator.Config{
-		Path:        dir,
-		WipeSecrets: true,
-		ExternalChanges: change.NewSet([]string{
-			"kubernetes/apps/media/plex/app/cm.yaml",
-		}),
-	})
+	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{
+		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir,
+		ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
+	}}, orchestrator.Config{WipeSecrets: true, Concurrency: 2})
 	if err != nil {
-		t.Fatalf("orchestrator.New: %v", err)
+		t.Fatal(err)
 	}
-
-	if _, err := o.Render(t.Context()); err != nil {
-		t.Fatalf("Render: %v", err)
+	if len(runs) != 1 || runs[0].Orchestrator == nil {
+		t.Fatal("missing completed tree")
 	}
+	o := runs[0].Orchestrator
 
 	plex := testutil.KustomizationID("media", "plex")
 	postgres := testutil.KustomizationID("db", "postgres")

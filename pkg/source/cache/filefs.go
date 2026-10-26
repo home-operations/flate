@@ -3,17 +3,16 @@ package cache
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"io"
 	"io/fs"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// FileFS names an acquired Blob generation; discarded PersistOnly publications
-// have no generation. Close the reader after construction. Each filesystem Open
-// pins an independent reader.
-func FileFS(name string, r io.ReadCloser) fs.FS {
-	input := r.(*blobHandle).input
+// NameBlob gives an acquired Blob generation a filename and shaping identity.
+func NameBlob(name string, generation fs.FS) fs.FS {
+	input := generation.(fileFS)
 	input.name = name
 	input.identity = manifest.Fingerprint([2]string{input.identity, name})
 	return input
@@ -25,26 +24,12 @@ func FileName(input fs.FS) string {
 	return file.name
 }
 
-type blobHandle struct {
-	io.ReadCloser
-	input fileFS
-}
-
-func (b *blobHandle) Close() error {
-	if b.ReadCloser == nil {
-		return nil
-	}
-	err := b.ReadCloser.Close()
-	b.ReadCloser = nil
-	b.input = fileFS{}
-	return err
-}
-
 type fileFS struct {
-	name     string
-	identity string
-	size     int64
-	open     func() (io.ReadCloser, error)
+	backingPath string
+	name        string
+	identity    string
+	size        int64
+	open        func() (io.ReadCloser, error)
 }
 
 func (f fileFS) Open(name string) (fs.File, error) {
@@ -61,9 +46,26 @@ func (f fileFS) Open(name string) (fs.File, error) {
 	}
 	r, err := f.open()
 	if err != nil {
-		return nil, err
+		return nil, &CacheError{err}
 	}
 	return &blobFile{ReadCloser: r, FileInfo: (&tar.Header{Name: f.name, Mode: 0o600, Size: f.size}).FileInfo()}, nil
+}
+
+func (f fileFS) ReadFile(name string) ([]byte, error) {
+	var r io.ReadCloser
+	var err error
+	if name == f.name && fs.ValidPath(name) {
+		r, err = f.open()
+	} else {
+		r, err = f.Open(name)
+	}
+	if err != nil {
+		return nil, &CacheError{err}
+	}
+	var data bytes.Buffer
+	data.Grow(int(f.size) + bytes.MinRead)
+	_, err = data.ReadFrom(r)
+	return data.Bytes(), errors.Join(err, r.Close())
 }
 
 type blobFile struct {
@@ -73,12 +75,10 @@ type blobFile struct {
 
 func (f *blobFile) Stat() (fs.FileInfo, error) { return f.FileInfo, nil }
 
-// AcquisitionIdentity reports the held generation and shaping of cache-owned readers.
+// AcquisitionIdentity reports the held generation and shaping of cache-owned filesystems.
 // Anonymous inputs and wrappers have no acquisition authority.
 func AcquisitionIdentity(input any) string {
 	switch input := input.(type) {
-	case *blobHandle:
-		return input.input.identity
 	case *tarFS:
 		return input.identity
 	case fileFS:

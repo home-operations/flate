@@ -30,6 +30,8 @@ type Options struct {
 	WipeSecrets  bool
 	RemoteInputs *source.HTTPInputs
 	RemoteRetry  cache.RetryConfig
+	// ParsedInputs reuses immutable content only from matching admitted source views.
+	ParsedInputs *ParsedInputs
 }
 
 // Loader collects source-qualified discovery evidence before admitting roots.
@@ -630,6 +632,9 @@ func (w *walker) walkAdHoc(ctx context.Context, root string) (int, error) {
 			if w.shouldSkipDir(d.Name(), path) {
 				return filepath.SkipDir
 			}
+			cached := w.loader.documents.cache[path]
+			cached.adHoc = true
+			w.loader.documents.cache[path] = cached
 			if path == root {
 				return nil
 			}
@@ -680,24 +685,21 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 
 // Decode errors retain their file coordinate until scope attribution.
 func (l *Loader) loadFile(path string) (int, error) {
+	if l.documents.parsed != nil {
+		l.documents.restore(path)
+	}
 	if l.documents.cache[path].loaded || l.documents.cache[path].selected {
 		return 0, nil
 	}
 	reader := l.documents
 	reader.regular = true
-	objs := []store.Child{}
-	collect := func(child store.Child) {
-		obj := child.Obj
-		if raw, ok := obj.(*manifest.RawObject); ok && !manifest.KindOf(raw).Tracked && len(manifest.ProducerTargets(raw)) == 0 {
-			return
-		}
-		objs = append(objs, child)
+	objs := []parsedObject{}
+	collect := func(child store.Child, ordinal int, version string) {
+		objs = append(objs, parsedObject{child, ordinal, version})
 	}
 	var err error
-	if cached := l.documents.cache[path].objects; cached != nil {
-		for _, obj := range cached {
-			collect(obj)
-		}
+	if cached := l.documents.cache[path]; cached.objects != nil {
+		objs = cached.objects
 	} else {
 		err = reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""}, true, collect)
 	}
@@ -719,7 +721,9 @@ func (l *Loader) loadFile(path string) (int, error) {
 		obj := child.Obj
 		info := manifest.KindOf(obj)
 		if !info.Tracked {
-			l.recordObject(obj, path)
+			if len(manifest.ProducerTargets(obj)) != 0 {
+				l.recordObject(obj, path)
+			}
 			continue
 		}
 		id := obj.Named()
@@ -731,7 +735,9 @@ func (l *Loader) loadFile(path string) (int, error) {
 			count++
 		}
 	}
-	l.documents.cache[path] = document{objects: objs, loaded: true}
+	cached := l.documents.cache[path]
+	cached.objects, cached.loaded = objs, true
+	l.documents.cache[path] = cached
 	return count, nil
 }
 

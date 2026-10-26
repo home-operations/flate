@@ -160,12 +160,12 @@ func TestDescription_HitHydration(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, d.chart == nil, persistent && i == 1)
 				if !persistent || i == 0 {
-					if d.analysis != nil || d.captured.files != nil || d.captured.archive != nil {
-						t.Fatal("decoded miss retained captured input or derived analysis")
+					if d.analysis == nil || d.captured.files != nil || d.captured.archive != nil {
+						t.Fatal("decoded generation lost analysis or retained captured input")
 					}
 				}
 				assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}, cliSources), []string{"unused"})
-				if persistent {
+				{
 					var receipt3 *manifest.RenderReceipt
 					_, receipt3, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 					if err == nil {
@@ -194,11 +194,9 @@ func TestDescription_HitHydration(t *testing.T) {
 					if hit.analysis != hit.record.Analysis {
 						t.Fatal("record did not share canonical analysis")
 					}
-					if i == 1 && hit.chart != nil {
+					if persistent && i == 1 && hit.chart != nil {
 						t.Fatal("fresh hit decoded the chart")
 					}
-				} else if d.record != nil {
-					t.Fatal("disabled persistence retained a render record")
 				}
 				after, err := cli.describeChart(t.Context(), hr, cliSources)
 				assert.NoError(t, err)
@@ -329,9 +327,9 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		}
 		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		assert.NoError(t, d.valuesErr)
-		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), PersistOnly: true}, cache.Policy{MaxAge: cache.Forever}, nil)
+		_, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), Render: cache.RenderAccepted}, cache.Policy{MaxAge: cache.Forever}, nil)
 		if err == nil {
-			assert.NoError(t, r.Close())
+
 			t.Fatal("invalid UTF-8 was published")
 		}
 		if !errors.Is(err, errdef.ErrNotFound) {
@@ -479,26 +477,26 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			}
 			d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 			assert.NoError(t, d.valuesErr)
-			key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, opts, hr), PersistOnly: true}
-			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+			key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, opts, hr), Render: cache.RenderAccepted}
+			_, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 				_, err := io.WriteString(w, "{")
 				return cache.ProducerResult{}, err
 			})
 			assert.NoError(t, err)
-			assert.NoError(t, r.Close())
+
 			if failure == "chart lookup" {
 				assert.NoError(t, os.RemoveAll(root))
 			}
-			r, _, _, err = owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+			r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 			if failure == "chart lookup" {
 				if _, ok := errors.AsType[*cache.CacheError](err); !ok || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, errdef.ErrNotFound) {
 					t.Fatalf("fixture did not reach lookup fault: %v", err)
 				}
 			} else {
 				assert.NoError(t, err)
-				data, err := io.ReadAll(r)
+				data, err := fs.ReadFile(r, "content")
 				assert.NoError(t, err)
-				assert.NoError(t, r.Close())
+
 				var record renderRecord
 				if _, ok := errors.AsType[*json.SyntaxError](json.Unmarshal(data, &record)); !ok {
 					t.Fatal("fixture did not reach malformed persisted record")
@@ -545,12 +543,12 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		assert.NoError(t, err)
 		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, true)
 		assert.NoError(t, d.valuesErr)
-		r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), PersistOnly: true}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+		_, _, _, err = owner.Blob(t.Context(), cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, hr), Render: cache.RenderAccepted}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 			_, err := io.WriteString(w, "{")
 			return cache.ProducerResult{}, err
 		})
 		assert.NoError(t, err)
-		assert.NoError(t, r.Close())
+
 		cli = NewClient(owner)
 		var diagnostics bytes.Buffer
 		previous := log.Writer()

@@ -20,12 +20,9 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o, err := New(t.Context(), Config{Path: after, PathOrig: before, Input: input, Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{RepoRoot: after, Path: after, BaseInput: testDirectoryInput(t, before), Input: input}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
-	changes, err := o.computeChangeSet(t.Context(), after)
-	assert.NoError(t, err)
-	assert.NoError(t, o.buildChangeFilter(t.Context(), after, changes))
+	assert.NoError(t, o.buildChangeFilter(t.Context()))
 	assert.Equal(t, o.filter.Enabled(), true)
 	warnings := o.store.Warnings()
 	if len(warnings) != 1 {
@@ -105,21 +102,16 @@ data:
 	// roots directly. change.Detect runs root-to-root, so an edit in
 	// kubernetes/apps/foo — outside the scanned flux/ subdir — still
 	// enters the keep set, without any .git-ancestor "widen" heuristic.
-	o, err := New(t.Context(), Config{
-		Path:        currCluster,
-		RepoRoot:    currRoot,
-		PathOrig:    origRoot,
-		WipeSecrets: true,
-	})
+	o, err := newTestOrchestrator(t, Tree{Path: currCluster,
+		RepoRoot: currRoot, BaseInput: testDirectoryInput(t, origRoot)}, Config{WipeSecrets: true},
+	)
 	if err != nil {
-		t.Fatalf("orchestrator.New: %v", err)
+		t.Fatal(err)
 	}
 	defer func() {
-		if err := o.Stop(); err != nil {
-			t.Errorf("Stop: %v", err)
-		}
+		o.stop()
 	}()
-	if err := o.Bootstrap(t.Context()); err != nil {
+	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 

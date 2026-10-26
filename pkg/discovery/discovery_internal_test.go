@@ -159,7 +159,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
 		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named()))
 		d := discoverer{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
-		if err := d.loadManifests(t.Context(), root); err != nil {
+		if err := d.loadManifests(t.Context(), root, true); err != nil {
 			t.Fatal(err)
 		}
 		id := testutil.KustomizationID("", "child")
@@ -343,6 +343,111 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 			}
 		})
 	}
+	t.Run("plain bootstrap collision preserves native payload", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		for _, dir := range []string{"bootstrap", "flux"} {
+			resources := "resources: [namespace.yaml, objects.yaml]\nnamespace: external-secrets\n"
+			testutil.WriteFile(t, root, dir+"/kustomization.yaml", resources)
+			testutil.WriteFile(t, root, dir+"/namespace.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: _}\n")
+		}
+		testutil.WriteFile(t, root, "bootstrap/objects.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: onepassword-secret}\nstringData: {fixture: value}\n")
+		testutil.WriteFile(t, root, "flux/objects.yaml", testutil.KustomizationYAML("owner", "external-secrets", "  path: ./payload\n"))
+		testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
+		before, err := Run(t.Context(), Config{Path: root, Store: store.New(), Trees: testTrees(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries, err := Plan(t.Context(), Config{Path: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != root {
+			t.Fatalf("plain bootstrap package established a cluster: %+v", entries)
+		}
+		after, err := Run(t.Context(), Config{Input: entries[0].Input, Path: entries[0].Path, Store: store.New(), Trees: testTrees(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := json.Marshal(before.Documents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := json.Marshal(after.Documents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(before.Documents) == 0 || !bytes.Equal(got, want) {
+			t.Fatalf("singleton discovery payload changed: want %s; got %s", want, got)
+		}
+	})
+
+	t.Run("independent data collision survives a native context", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./payload\n"))
+		for _, dir := range []string{"payload", "independent-data"} {
+			testutil.WriteFile(t, root, dir+"/kustomization.yaml", "namespace: apps\nresources: [configmap.yaml]\n")
+			testutil.WriteFile(t, root, dir+"/configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: "+dir+"}\nspec: {url: oci://fixture.invalid/chart}\n")
+		}
+		entries, err := Plan(t.Context(), Config{Path: root, RepoRoot: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 2 || entries[0].ID != "entry" || entries[1].ID != "independent-data" {
+			t.Fatalf("native context hid an independent data collision: %+v", entries)
+		}
+	})
+
+	t.Run("native entry contexts omit outside source collisions", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		sides := []string{"amber", "cobalt", "silver"}
+		for _, side := range sides {
+			testutil.WriteFile(t, root, "entries/"+side+"/owner.yaml", testutil.KustomizationYAML("owner-"+side, "flux-system", "  path: ./payload/"+side+"\n"))
+			testutil.WriteFile(t, root, "entries/"+side+"/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cluster-settings, namespace: flux-system}\ndata: {side: "+side+"}\n")
+			testutil.WriteFile(t, root, "payload/"+side+"/kustomization.yaml", "resources: [../../shared]\n")
+		}
+		testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [common.yaml]\n")
+		testutil.WriteFile(t, root, "shared/common.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: common, namespace: apps}\n")
+		for _, side := range []string{"first", "second"} {
+			testutil.WriteFile(t, root, "outside/"+side+"/kustomization.yaml", "resources: [chart.yaml]\n")
+			testutil.WriteFile(t, root, "outside/"+side+"/chart.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: repeated-chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart}\n")
+		}
+		testutil.WriteFile(t, root, "outside/unused.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: omitted}\n")
+		entries, err := Plan(t.Context(), Config{Path: root, RepoRoot: root, WipeSecrets: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != len(sides) {
+			t.Fatalf("native entry plan: %+v", entries)
+		}
+		for i, entry := range entries {
+			want := "entries/" + sides[i]
+			if entry.ID != manifest.ClusterID(want) || entry.Path != filepath.Join(root, filepath.FromSlash(want)) {
+				t.Fatalf("entry lost native coordinates: %+v", entry)
+			}
+			st := store.New()
+			result, err := Run(t.Context(), Config{Input: entry.Input, Path: entry.Path, Store: st, Trees: testTrees(t), WipeSecrets: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := result.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "common"}); !ok {
+				t.Fatal("shared resource disappeared from native entry")
+			}
+			for id := range result.Index.Records {
+				if id.Name == "repeated-chart" || id.Name == "omitted" {
+					t.Fatalf("outside root entered native payload: %s", id)
+				}
+			}
+			for _, warning := range st.Warnings() {
+				if strings.Contains(warning.Message+" "+strings.Join(warning.Detail, " "), "outside") {
+					t.Fatalf("outside omission warned: %+v", warning)
+				}
+			}
+		}
+	})
+
 }
 
 func TestRun_BootstrapNameCollision(t *testing.T) {
@@ -644,7 +749,7 @@ func TestRun_BuiltPackages(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 			d := discoverer{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
-			if err := d.loadManifests(t.Context(), root); err != nil {
+			if err := d.loadManifests(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			if roots := d.loader.StandaloneRoots(root); len(roots) != 0 {

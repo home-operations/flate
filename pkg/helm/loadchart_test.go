@@ -182,13 +182,19 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 			<-start
 			enabled := i%2 == 0
 			value := fmt.Sprintf("rendered-%02d", i)
-			out, _, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": value}}, RenderOptions{Options: Options{}, Sources: cliSources})
+			local := store.New()
+			local.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
+			sources := NewSources(local)
+			out, _, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": value}}, RenderOptions{Options: Options{}, Sources: sources})
 			if err != nil {
 				t.Error(err)
 				return
 			}
 			assert.Equal(t, hasRenderField(out, "kind", "ConfigMap"), enabled)
 			assert.Equal(t, hasRenderField(out, "value", value), enabled)
+			loaded, err := loadDecodedChart(t.Context(), cli, hr, sources)
+			assert.NoError(t, err)
+			assert.Equal(t, loaded.chart == canonical.chart, true)
 		})
 	}
 	close(start)
@@ -280,16 +286,16 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				assert.NoError(t, err)
 				d.values, err = renderer.observeValuesFiles(t.Context(), d, selected.ChartValuesFiles, false)
 				assert.NoError(t, err)
-				key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, selected), PersistOnly: true}
+				key := cache.BlobKey{Content: computeTemplateKey(d, map[string]any{}, Options{}, selected), Render: cache.RenderAccepted}
 				witness := manifest.DeepCopyMap(first[0])
 				witness["cacheWitness"] = "pinned persistent hit witness"
 				output := encodedRender(t, []map[string]any{witness})
-				r, _, _, err := outputOwner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+				_, _, _, err = outputOwner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 					err := writeTestRecord(w, key, renderRecord{Output: output, Analysis: d.analyze()})
 					return cache.ProducerResult{}, err
 				})
 				assert.NoError(t, err)
-				assert.NoError(t, r.Close())
+
 				fresh := NewClient(cachetest.New(t, outputRoot, cache.New))
 				freshSources := NewSources(sources)
 				before := backing.opens.Load()
@@ -408,8 +414,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 					})
 					assert.NoError(t, err)
 					backingName = "unconventional.payload"
-					acquired = cache.FileFS(backingName, r)
-					assert.NoError(t, r.Close())
+					acquired = cache.NameBlob(backingName, r)
 				} else {
 					if tc.shape == "archive" {
 						input = fstest.MapFS{"chart.tgz": {Data: chartArchive(t, input)}}
@@ -424,7 +429,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				assert.Equal(t, loaded.chart.Metadata.Version, version)
 				assert.Equal(t, loaded.chart != previous, true)
 				previous = loaded.chart
-				// FileFS Stat opens its backing; poisoning below the view preserves real authority.
+				// Stat opens the backing; poisoning below the view preserves acquisition authority.
 				assert.NoError(t, os.RemoveAll(filepath.Join(cacheRoot, "oci", "blobs")))
 				_, err = fs.ReadFile(acquired, backingName)
 				if err == nil {

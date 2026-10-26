@@ -39,7 +39,7 @@ type stubOCI struct {
 	err    error
 }
 
-func (s *stubOCI) Fetch(_ context.Context, r *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+func (s *stubOCI) FetchChart(_ context.Context, r *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
 	s.got = r
 	s.reads = reads
 	s.policy = policy

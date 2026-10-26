@@ -1,6 +1,7 @@
 package source
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -29,7 +30,9 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			const user, pass = "alice", "hunter2"
 			configBytes := []byte(`{}`)
 			configDigest := digest.FromBytes(configBytes)
-			manifestBytes := fmt.Appendf(nil, `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.cncf.flux.config.v1+json","digest":%q,"size":%d},"layers":[]}`, configDigest, len(configBytes))
+			layerBytes := testutil.TarGz(t, map[string]string{"app.yaml": "kind: ConfigMap\n"}, 0o644, gzip.DefaultCompression)
+			layerDigest := digest.FromBytes(layerBytes)
+			manifestBytes := fmt.Appendf(nil, `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.cncf.flux.config.v1+json","digest":%q,"size":%d},"layers":[{"mediaType":"application/vnd.cncf.flux.content.v1.tar+gzip","digest":%q,"size":%d}]}`, configDigest, len(configBytes), layerDigest, len(layerBytes))
 			manifestDigest := digest.FromBytes(manifestBytes)
 			var requests, wrongCredentials atomic.Int64
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +52,8 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 					_, _ = w.Write(manifestBytes)
 				case strings.HasSuffix(r.URL.Path, "/blobs/"+configDigest.String()):
 					_, _ = w.Write(configBytes)
+				case strings.HasSuffix(r.URL.Path, "/blobs/"+layerDigest.String()):
+					_, _ = w.Write(layerBytes)
 				case r.URL.Path == "/v2/":
 				default:
 					http.NotFound(w, r)

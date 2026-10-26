@@ -436,6 +436,11 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	const user, pass = "alice", "hunter2"
 	const chart = "name: app\nversion: 1.0.0\n"
 	art := newFakeOCIArtifact(t, map[string]string{"Chart.yaml": chart})
+	art.manifest = mustManifestJSON(t,
+		manifestBlob{data: art.config, mediaType: "application/vnd.cncf.flux.config.v1+json"},
+		manifestBlob{data: art.layer, mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"},
+	)
+	art.manifestDigest = sha256Digest(art.manifest)
 	upstream := startFakeRegistry(t, art.manifest, art.config, art.layer)
 	var failNext atomic.Bool
 	var failures atomic.Int32

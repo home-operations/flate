@@ -5,6 +5,7 @@ import (
 	"context"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"helm.sh/helm/v4/pkg/registry"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -28,17 +29,27 @@ type Fetcher struct {
 	ForceGeneric bool
 }
 
-// Fetch implements source.TypedFetcher[*manifest.OCIRepository].
-// Credentials, TLS and proxy policy are resolved before acquisition.
 type operation struct {
 	*Fetcher
-	reads   *store.ReadSet
-	secrets source.SecretGetter
+	reads      *store.ReadSet
+	secrets    source.SecretGetter
+	mediaTypes []string
 }
 
 // Fetch acquires content using one execution's captured credentials and declarations.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
-	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads)}
+	var mediaTypes []string
+	if mediaType := repo.LayerMediaType(); mediaType != "" {
+		mediaTypes = []string{mediaType}
+	}
+	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads), mediaTypes: mediaTypes}
+	return operation.fetchSource(ctx, repo, policy)
+}
+
+// FetchChart acquires chart layers using Helm's supported media types.
+func (f *Fetcher) FetchChart(ctx context.Context, repo *manifest.OCIRepository, reads *store.ReadSet, policy cache.Policy) (*store.SourceArtifact, error) {
+	operation := operation{Fetcher: f, reads: reads, secrets: source.SecretLookup(reads),
+		mediaTypes: []string{registry.ChartLayerMediaType, registry.LegacyChartLayerMediaType}}
 	return operation.fetchSource(ctx, repo, policy)
 }
 

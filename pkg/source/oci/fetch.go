@@ -41,7 +41,7 @@ type registryAcquisition struct {
 	material any
 }
 
-func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
 		ref = manifest.OCIRepositoryRef(*repo.Reference)
@@ -53,7 +53,8 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, reque
 	content := struct {
 		Source, Transport any
 		RegistryConfig    string
-	}{repo.Content(sourcev1.OCIRepositoryRef(ref)), request.material, f.RegistryConfig}
+		MediaTypes        []string
+	}{repo.Content(sourcev1.OCIRepositoryRef(ref)), request.material, f.RegistryConfig, f.mediaTypes}
 	var id string
 	if ref.Pinned() {
 		policy.MaxAge = cache.Forever
@@ -67,7 +68,7 @@ func (f *Fetcher) fetch(ctx context.Context, repo *manifest.OCIRepository, reque
 		}
 		selectedRepo := *repo
 		selectedRepo.Reference = (*sourcev1.OCIRepositoryRef)(&selected)
-		return produceLayer(ctx, request.client, &selectedRepo, w)
+		return f.produceLayer(ctx, request.client, &selectedRepo, w)
 	}
 	switch repo.LayerOperation() {
 	case sourcev1.OCILayerCopy:
@@ -104,9 +105,8 @@ func resolveRef(ctx context.Context, client *remote.Repository, repo *manifest.O
 	return manifest.OCIRepositoryRef{Tag: tag}, nil
 }
 
-func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w cache.ProducerInput) (cache.ProducerResult, error) {
+func (f *operation) produceLayer(ctx context.Context, client *remote.Repository, repo *manifest.OCIRepository, w cache.ProducerInput) (cache.ProducerResult, error) {
 	ref := manifest.OCIRepositoryRef(*repo.Reference)
-	mediaType := repo.LayerMediaType()
 	tag := cmp.Or(versionTag(ref), latestTag)
 	desc, err := client.Resolve(ctx, tag)
 	if err != nil {
@@ -139,12 +139,12 @@ func produceLayer(ctx context.Context, client *remote.Repository, repo *manifest
 		return cache.ProducerResult{Descriptor: desc, Unchanged: true}, nil
 	}
 	result := cache.ProducerResult{Descriptor: desc}
-	layer, ok := pickLayer(m.Layers, mediaType)
+	layer, ok := pickLayer(m.Layers, f.mediaTypes)
 	if !ok {
 		if len(m.Layers) == 0 {
-			return result, nil
+			return result, fmt.Errorf("%w: no layers found in artifact", manifest.ErrInput)
 		}
-		return result, fmt.Errorf("no layer matched mediaType %q (manifest has %d layer(s))", mediaType, len(m.Layers))
+		return result, fmt.Errorf("no layer matched mediaTypes %q (manifest has %d layer(s))", f.mediaTypes, len(m.Layers))
 	}
 	r, err := client.Fetch(ctx, layer)
 	if err != nil {

@@ -18,11 +18,9 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// ociFetcher is the slice of the OCI source fetcher the OCI branch
-// delegates to (source/oci.Fetcher satisfies it). Kept as an interface so
-// the branch is unit-testable without standing up a registry, and so this
-// package doesn't import pkg/source/oci.
-type ociFetcher = source.TypedFetcher[*manifest.OCIRepository]
+type ociFetcher interface {
+	FetchChart(context.Context, *manifest.OCIRepository, *store.ReadSet, cache.Policy) (*store.SourceArtifact, error)
+}
 
 // Fetcher resolves a HelmChart into an immutable source artifact.
 type Fetcher struct {
@@ -78,12 +76,9 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 		policy.MaxAge = cache.Forever
 	}
 	if r.IsOCI() {
-		// Delegate to the OCI fetcher via a synthesized OCIRepository. The
-		// artifact is re-stamped KindHelmChart so the Store entry matches
-		// the synthetic HelmChart's identity.
 		syn := synthesizeOCIRepository(r, hc)
 		syn.Interval = r.Interval
-		art, err := f.oci.Fetch(ctx, syn, f.reads, policy)
+		art, err := f.oci.FetchChart(ctx, syn, f.reads, policy)
 		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
 			retry := missing.RetryWithRegistryConfig
 			wrapped := *missing

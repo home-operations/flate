@@ -31,12 +31,15 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/source"
+	"github.com/home-operations/flate/pkg/store"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/helmchart"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"helm.sh/helm/v4/pkg/registry"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote/errcode"
@@ -482,21 +485,18 @@ func TestFetcher_Freshness_WarmConnections(t *testing.T) {
 	}
 }
 
-// startFakeRegistry serves the minimum subset of the OCI Distribution
-// API that oras.Copy needs: a /v2/ probe, manifests by tag, and blobs
-// by digest. httptest.NewTLSServer's self-signed cert pairs with the
-// caller's spec.insecure to bypass verification.
-func startFakeRegistry(t *testing.T, manifestBytes, configBytes, layerBytes []byte) *httptest.Server {
+func startFakeRegistry(t *testing.T, manifestBytes, configBytes []byte, layers ...[]byte) *httptest.Server {
 	t.Helper()
-	configDigest := sha256Digest(configBytes)
-	layerDigest := sha256Digest(layerBytes)
+	blobs := map[string][]byte{sha256Digest(configBytes): configBytes}
+	for _, layer := range layers {
+		blobs[sha256Digest(layer)] = layer
+	}
 	manifestDigest := sha256Digest(manifestBytes)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v2/"):
-			// Distribution v2 probe.
 			return
 		case strings.Contains(r.URL.Path, "/manifests/"):
 			w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
@@ -504,14 +504,11 @@ func startFakeRegistry(t *testing.T, manifestBytes, configBytes, layerBytes []by
 			_, _ = w.Write(manifestBytes)
 		case strings.Contains(r.URL.Path, "/blobs/"):
 			_, digest, _ := strings.CutLast(r.URL.Path, "/")
-			switch digest {
-			case configDigest:
-				_, _ = w.Write(configBytes)
-			case layerDigest:
-				_, _ = w.Write(layerBytes)
-			default:
-				http.NotFound(w, r)
+			if blob, ok := blobs[digest]; ok {
+				_, _ = w.Write(blob)
+				return
 			}
+			http.NotFound(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -600,7 +597,7 @@ type manifestBlob struct {
 	mediaType string
 }
 
-func mustManifestJSON(t *testing.T, config, layer manifestBlob) []byte {
+func mustManifestJSON(t *testing.T, config manifestBlob, layers ...manifestBlob) []byte {
 	t.Helper()
 	m := ocispec.Manifest{
 		SchemaVersion: 2,
@@ -610,11 +607,13 @@ func mustManifestJSON(t *testing.T, config, layer manifestBlob) []byte {
 			Digest:    digest.Digest(sha256Digest(config.data)),
 			Size:      int64(len(config.data)),
 		},
-		Layers: []ocispec.Descriptor{{
+	}
+	for _, layer := range layers {
+		m.Layers = append(m.Layers, ocispec.Descriptor{
 			MediaType: layer.mediaType,
 			Digest:    digest.Digest(sha256Digest(layer.data)),
 			Size:      int64(len(layer.data)),
-		}},
+		})
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -699,7 +698,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 				current := *repo
 				fetcher := &Fetcher{Network: newTestNetwork(t), Cache: c}
 				tc.change(&current, fetcher)
-				got, err := fetcher.fetch(t.Context(), &current, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: current.SourceInterval()})
+				got, err := (&operation{Fetcher: fetcher}).fetch(t.Context(), &current, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: current.SourceInterval()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -923,7 +922,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 					})}
 				}
 				retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-				_, err = f.fetch(ctx, repo, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
+				_, err = (&operation{Fetcher: f}).fetch(ctx, repo, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 				if failures.Load() != tc.attempts {
 					t.Fatalf("producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
 				}
@@ -994,7 +993,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				if f.Cache == c {
 					t.Fatal("reopen reused the closed owner")
 				}
-				_, err = f.fetch(ctx, repo, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
+				_, err = (&operation{Fetcher: f}).fetch(ctx, repo, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 				if requests.Load() != before || failures.Load() != tc.attempts {
 					t.Fatalf("replay fetched: requests=%d, want %d; failures=%d, want %d", requests.Load(), before, failures.Load(), tc.attempts)
 				}
@@ -1018,86 +1017,105 @@ func (rt registryRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 
 func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"unmatched", "empty", "defaults", "digest selectors"} {
-		t.Run(name, func(t *testing.T) {
+	art := newFakeOCIArtifact(t, map[string]string{"file.yaml": "x", ".git/config": "git", "image.png": "image"})
+	second := newFakeOCIArtifact(t, map[string]string{"file.yaml": "second"})
+	archive := manifestBlob{data: art.layer, mediaType: registry.ChartLayerMediaType}
+	other := manifestBlob{data: second.layer, mediaType: registry.ChartLayerMediaType}
+	prov := manifestBlob{data: []byte("plain provenance"), mediaType: registry.ProvLayerMediaType}
+	for _, tc := range []struct {
+		name     string
+		layers   []manifestBlob
+		selector *sourcev1.OCILayerSelector
+		digest   bool
+		wantCopy []byte
+		wantErr  bool
+	}{
+		{name: "defaults", layers: []manifestBlob{archive}},
+		{name: "digest selectors", layers: []manifestBlob{archive}, digest: true},
+		{name: "unmatched extract", layers: []manifestBlob{archive}, selector: &sourcev1.OCILayerSelector{MediaType: "unmatched/type"}, wantErr: true},
+		{name: "unmatched copy", layers: []manifestBlob{archive}, selector: &sourcev1.OCILayerSelector{MediaType: "unmatched/type", Operation: sourcev1.OCILayerCopy}, wantErr: true},
+		{name: "provenance only extract", layers: []manifestBlob{prov}, wantErr: true},
+		{name: "provenance only copy", layers: []manifestBlob{prov}, selector: &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}, wantCopy: prov.data},
+		{name: "provenance first extract", layers: []manifestBlob{prov, archive}, wantErr: true},
+		{name: "provenance first copy", layers: []manifestBlob{prov, archive}, selector: &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}, wantCopy: prov.data},
+		{name: "empty media extract", layers: []manifestBlob{prov, archive}, selector: &sourcev1.OCILayerSelector{}, wantErr: true},
+		{name: "empty media copy", layers: []manifestBlob{prov, archive}, selector: &sourcev1.OCILayerSelector{MediaType: "", Operation: sourcev1.OCILayerCopy}, wantCopy: prov.data},
+		{name: "first matching extract", layers: []manifestBlob{prov, archive, other}, selector: &sourcev1.OCILayerSelector{MediaType: registry.ChartLayerMediaType}},
+		{name: "first matching copy", layers: []manifestBlob{prov, archive, other}, selector: &sourcev1.OCILayerSelector{MediaType: registry.ChartLayerMediaType, Operation: sourcev1.OCILayerCopy}, wantCopy: art.layer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			art := newFakeOCIArtifact(t, map[string]string{"file.yaml": "x", ".git/config": "git", "image.png": "image"})
-			if name == "empty" {
-				var m ocispec.Manifest
-				if err := json.Unmarshal(art.manifest, &m); err != nil {
-					t.Fatal(err)
-				}
-				m.Layers = nil
-				var err error
-				art.manifest, err = json.Marshal(m)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			srv := startFakeRegistry(t, art.manifest, art.config, art.layer)
-			repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/artifact", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
-			if name == "unmatched" {
-				repo.LayerSelector = &sourcev1.OCILayerSelector{MediaType: "unmatched/type"}
-			}
-			if name == "digest selectors" {
-				repo.Reference = &sourcev1.OCIRepositoryRef{Digest: art.manifestDigest}
+			data := mustManifestJSON(t, manifestBlob{data: art.config, mediaType: "application/vnd.cncf.flux.config.v1+json"}, tc.layers...)
+			srv := startFakeRegistry(t, data, art.config, art.layer, second.layer, prov.data)
+			repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/artifact", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, LayerSelector: tc.selector}
+			if tc.digest {
+				repo.Reference = &sourcev1.OCIRepositoryRef{Digest: sha256Digest(data)}
 			}
 			root := t.TempDir()
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
-			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
-			if name == "unmatched" {
-				if err == nil {
-					t.Fatal("unmatched mediaType accepted")
+			var first *store.SourceArtifact
+			for range 2 {
+				got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
+				if tc.wantErr {
+					if got != nil || !errors.Is(err, manifest.ErrFlux) {
+						t.Fatalf("invalid selection: artifact=%v err=%v, want nil artifact and ErrFlux", got, err)
+					}
+					continue
 				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if name == "empty" {
-				entries, err := fs.ReadDir(got.FS, ".")
-				if err != nil || len(entries) != 0 {
-					t.Fatalf("empty artifact: entries=%v err=%v", entries, err)
-				}
-				return
-			}
-			for _, name := range []string{".git/config", "image.png"} {
-				if _, err := fs.Stat(got.FS, name); !errors.Is(err, fs.ErrNotExist) {
-					t.Fatalf("default ignore retained %s: %v", name, err)
-				}
-			}
-			if got := mustReadFile(t, got.FS, "file.yaml"); got != "x" {
-				t.Fatalf("content=%q", got)
-			}
-			if name == "digest selectors" {
-				copyRepo := *repo
-				copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
-				copied, err := f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if data, err := fs.ReadFile(copied.FS, "layer.tar.gz"); err != nil || !bytes.Equal(data, art.layer) {
-					t.Fatalf("copy artifact changed layer bytes: %v", err)
-				}
-				if copied.Key == got.Key {
-					t.Fatalf("different layer selectors reused cache key %q", got.Key)
-				}
-				if err := f.Cache.Close(); err != nil {
-					t.Fatal(err)
-				}
-				f.Cache = cachetest.New(t, root, sourcecache.New)
-				for range 2 {
-					warm, err := f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
-					if err != nil {
-						t.Fatal(err)
+				if tc.wantCopy != nil {
+					if data, err := fs.ReadFile(got.FS, source.OCICopiedLayerFilename); err != nil || !bytes.Equal(data, tc.wantCopy) {
+						t.Fatalf("copy changed selected layer: data=%q err=%v", data, err)
 					}
-					if data, err := fs.ReadFile(warm.FS, "layer.tar.gz"); err != nil || !bytes.Equal(data, art.layer) {
-						t.Fatalf("warm copy changed layer bytes: %v", err)
+				} else {
+					for _, name := range []string{".git/config", "image.png"} {
+						if _, err := fs.Stat(got.FS, name); !errors.Is(err, fs.ErrNotExist) {
+							t.Fatalf("default ignore retained %s: %v", name, err)
+						}
 					}
-					before, after := *copied, *warm
+					if got := mustReadFile(t, got.FS, "file.yaml"); got != "x" {
+						t.Fatalf("content=%q", got)
+					}
+				}
+				if first != nil {
+					before, after := *first, *got
 					before.FS, after.FS = nil, nil
 					assert.Diff(t, after, before)
 				}
+				first = got
+			}
+			if !tc.digest {
+				return
+			}
+			copyRepo := *repo
+			copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
+			copied, err := f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if data, err := fs.ReadFile(copied.FS, source.OCICopiedLayerFilename); err != nil || !bytes.Equal(data, art.layer) {
+				t.Fatalf("copy artifact changed layer bytes: %v", err)
+			}
+			if copied.Key == first.Key {
+				t.Fatalf("different layer selectors reused cache key %q", first.Key)
+			}
+			if err := f.Cache.Close(); err != nil {
+				t.Fatal(err)
+			}
+			f.Cache = cachetest.New(t, root, sourcecache.New)
+			for range 2 {
+				warm, err := f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{MaxAge: copyRepo.SourceInterval()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if data, err := fs.ReadFile(warm.FS, source.OCICopiedLayerFilename); err != nil || !bytes.Equal(data, art.layer) {
+					t.Fatalf("warm copy changed layer bytes: %v", err)
+				}
+				before, after := *copied, *warm
+				before.FS, after.FS = nil, nil
+				assert.Diff(t, after, before)
 			}
 		})
 	}
@@ -1271,6 +1289,162 @@ func TestFetcher_Revalidation_SelectedTagMetadata(t *testing.T) {
 					assert.NoError(t, err)
 					assert.Diff(t, body, artifact.layer)
 				}
+			}
+		})
+	}
+}
+
+func TestFetcher_ChartMediaSelector(t *testing.T) {
+	t.Parallel()
+	for _, media := range []string{registry.ChartLayerMediaType, "application/tar+gzip"} {
+		t.Run(media, func(t *testing.T) {
+			t.Parallel()
+			art := newFakeOCIArtifact(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: app\nversion: 1.0.0\n"})
+			art.config = []byte(`{"name":"app","version":"1.0.0","apiVersion":"v2"}`)
+			data := mustManifestJSON(t,
+				manifestBlob{data: art.config, mediaType: registry.ConfigMediaType},
+				manifestBlob{data: art.layer, mediaType: media},
+			)
+			srv := startFakeRegistry(t, data, art.config, art.layer)
+			repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/charts/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}}
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+			if err != nil || got == nil {
+				t.Fatalf("default request: artifact=%v error=%v", got, err)
+			}
+			if _, err := fs.ReadFile(got.FS, "Chart.yaml"); err != nil {
+				t.Fatal(err)
+			}
+			explicit := *repo
+			explicit.LayerSelector = &sourcev1.OCILayerSelector{MediaType: registry.ChartLayerMediaType}
+			got, err = f.Fetch(t.Context(), &explicit, (testInputs{}).readSet(&explicit), sourcecache.Policy{})
+			if media == registry.ChartLayerMediaType {
+				if err != nil || got == nil {
+					t.Fatalf("explicit chart selector: artifact=%v error=%v", got, err)
+				}
+			} else if got != nil || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("explicit chart selector must reject a different media type: artifact=%v error=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestFetcher_ChartMediaAfterProvenance(t *testing.T) {
+	t.Parallel()
+	for _, media := range []string{registry.ChartLayerMediaType, "application/tar+gzip"} {
+		t.Run(media, func(t *testing.T) {
+			t.Parallel()
+			art := newFakeOCIArtifact(t, map[string]string{"Chart.yaml": "apiVersion: v2\nname: app\nversion: 1.0.0\n"})
+			art.config = []byte(`{"name":"app","version":"1.0.0","apiVersion":"v2"}`)
+			data := mustManifestJSON(t, manifestBlob{data: art.config, mediaType: registry.ConfigMediaType}, manifestBlob{data: art.layer, mediaType: media})
+			prov := []byte("plain provenance")
+			var m ocispec.Manifest
+			if err := json.Unmarshal(data, &m); err != nil {
+				t.Fatal(err)
+			}
+			m.Layers = append([]ocispec.Descriptor{{MediaType: registry.ProvLayerMediaType, Digest: digest.FromBytes(prov), Size: int64(len(prov))}}, m.Layers...)
+			data, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			upstream := startFakeRegistry(t, data, art.config, art.layer)
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/blobs/"+digest.FromBytes(prov).String()) {
+					_, _ = w.Write(prov)
+					return
+				}
+				upstream.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			url := "oci://" + mustURL(t, srv.URL).Host
+			repo := &manifest.OCIRepository{Name: "app", Namespace: "ns", URL: url + "/charts/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}}
+			cache := cachetest.New(t, t.TempDir(), sourcecache.New)
+			network := newTestNetwork(t)
+			f := &Fetcher{Network: network, Cache: cache}
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+			if got != nil || !errors.Is(err, manifest.ErrFlux) {
+				t.Errorf("default OCI extract must fail on first provenance layer: artifact=%v error=%v", got, err)
+			}
+			copyRepo := *repo
+			copyRepo.LayerSelector = &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}
+			got, err = f.Fetch(t.Context(), &copyRepo, (testInputs{}).readSet(&copyRepo), sourcecache.Policy{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err = fs.ReadFile(got.FS, source.OCICopiedLayerFilename)
+			if err != nil || !bytes.Equal(data, prov) {
+				t.Errorf("default OCI copy=%q error=%v; want exact provenance bytes", data, err)
+			}
+			r := &manifest.HelmRepository{Name: "charts", Namespace: "ns", URL: url + "/charts", Type: sourcev1.HelmRepositoryTypeOCI, Insecure: true}
+			hc := helmchart.Synthesize(r, "app", "1.0.0")
+			reads := (testInputs{repos: func(string, string) *manifest.HelmRepository { return r }}).readSet(hc)
+			charts := helmchart.New(f, helmchart.Config{Cache: cache, Network: network})
+			chart, err := charts.Fetch(t.Context(), hc, reads, sourcecache.Policy{})
+			if err != nil || chart == nil {
+				t.Fatalf("chart acquisition after same-spec OCI failure: artifact=%v error=%v", chart, err)
+			}
+			if got := mustReadFile(t, chart.FS, "Chart.yaml"); got != "apiVersion: v2\nname: app\nversion: 1.0.0\n" {
+				t.Fatalf("chart content=%q", got)
+			}
+			if chart.Kind != manifest.KindHelmChart {
+				t.Fatalf("chart kind=%s", chart.Kind)
+			}
+		})
+	}
+}
+
+func TestFetcher_ChartMediaCacheIsolation(t *testing.T) {
+	t.Parallel()
+	generic := newFakeOCIArtifact(t, map[string]string{"file.yaml": "generic"})
+	chart := newFakeOCIArtifact(t, map[string]string{"file.yaml": "chart"})
+	data := mustManifestJSON(t, manifestBlob{data: generic.config, mediaType: "application/vnd.cncf.flux.config.v1+json"},
+		manifestBlob{data: generic.layer, mediaType: "application/vnd.cncf.flux.content.v1.tar+gzip"},
+		manifestBlob{data: chart.layer, mediaType: registry.ChartLayerMediaType})
+	srv := startFakeRegistry(t, data, generic.config, generic.layer, chart.layer)
+	repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/artifact", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+	gotGeneric, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotChart, err := f.FetchChart(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, mustReadFile(t, gotGeneric.FS, "file.yaml"), "generic")
+	assert.Equal(t, mustReadFile(t, gotChart.FS, "file.yaml"), "chart")
+}
+
+func TestFetcher_EmptyArtifact(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{sourcev1.OCILayerCopy, sourcev1.OCILayerExtract} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			art := newFakeOCIArtifact(t, map[string]string{"file": "x"})
+			var m ocispec.Manifest
+			if err := json.Unmarshal(art.manifest, &m); err != nil {
+				t.Fatal(err)
+			}
+			m.Layers = nil
+			data, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := startFakeRegistry(t, data, art.config, art.layer)
+			repo := &manifest.OCIRepository{URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}, LayerSelector: &sourcev1.OCILayerSelector{Operation: operation}}
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New)}
+			for _, media := range []string{"", registry.ChartLayerMediaType} {
+				t.Run("media="+media, func(t *testing.T) {
+					t.Parallel()
+					selected := *repo
+					selected.LayerSelector = &sourcev1.OCILayerSelector{Operation: operation, MediaType: media}
+					for range 2 {
+						got, err := f.Fetch(t.Context(), &selected, (testInputs{}).readSet(&selected), sourcecache.Policy{})
+						if got != nil || !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, manifest.ErrInput) {
+							t.Fatalf("empty %s: artifact=%v error=%v; want nil artifact, ErrInput and ErrFlux", operation, got, err)
+						}
+					}
+				})
 			}
 		})
 	}

@@ -243,15 +243,14 @@ func TestModel_ExcludesSyntheticIDs(t *testing.T) {
 	}
 }
 
-func TestModel_DelayedElapsed(t *testing.T) {
+func TestModel_Elapsed(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		m := newBarModel(false)
-		time.Sleep(progressDelay)
 		m.drainEvents()
-		time.Sleep(250 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 		if got := m.View().Content; !strings.Contains(got, "0.5s") {
-			t.Fatalf("elapsed excludes delay: %q", got)
+			t.Fatalf("elapsed duration: %q", got)
 		}
 	})
 }

@@ -616,6 +616,8 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						publishPermit, published := make(chan struct{}), make(chan struct{})
 						fetchPermit, accepted := make(chan struct{}), make(chan struct{})
 						assessmentPermit := make(chan struct{})
+						withdrawalObserved := make(chan struct{})
+						releaseWithdrawal := sync.OnceFunc(func() { close(withdrawalObserved) })
 						releasePublisher := sync.OnceFunc(func() { close(publishPermit) })
 						releaseFetch := sync.OnceFunc(func() { close(fetchPermit) })
 						releaseAssessment := sync.OnceFunc(func() { close(assessmentPermit) })
@@ -684,6 +686,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 									if s.GetDeclaration(repo) != nil {
 										t.Error("withdrawal retained repository authority")
 									}
+									releaseWithdrawal()
 								} else {
 									publish()
 								}
@@ -718,6 +721,15 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 								})
 							}
 							if hidden && scenario == "withdrawal_reanchor" {
+								o.tasks.YieldSlot(func() {
+									select {
+									case <-withdrawalObserved:
+									case <-ctx.Done():
+									}
+								})
+								if ctx.Err() != nil {
+									return result
+								}
 								publish()
 							}
 							if id.Kind == manifest.KindHelmChart && result.Assessment.Valid() && result.Assessment.Outcome() == schedule.Terminal {
@@ -734,6 +746,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						joined := false
 						defer func() {
 							cancel()
+							releaseWithdrawal()
 							releasePublisher()
 							releaseAssessment()
 							releaseFetch()

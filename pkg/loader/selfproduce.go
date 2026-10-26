@@ -119,7 +119,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	if len(remaining) != 0 {
 		for _, dir := range l.unreachedGeneratorRoots(repoRoot, remaining) {
 			root := graphVisit{root: repoRoot, dir: dir}
-			walks := l.visitScope(root)
+			walks := l.visitScope(root, false)
 			for _, v := range walks {
 				v.owner = manifest.NamedResource{}
 				v.source = manifest.BootstrapSourceID
@@ -246,6 +246,7 @@ type graphVisit struct {
 	incomplete         string
 	document           *types.Kustomization
 	readable           bool
+	membershipOnly     bool
 }
 
 func (v graphVisit) localCoordinate() string {
@@ -292,10 +293,15 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 		return nil
 	}
 	l.ensureScopes()
-	roots := map[string]struct{}{}
+	sourceRoot := l.documents.mountedRoot(repoRoot)
+	roots := map[string]bool{}
 	for dir, doc := range l.documents.cache {
 		if (doc.traversed || dir == l.entryPath) && doc.file != "" {
-			roots[dir] = struct{}{}
+			roots[dir] = false
+			if l.documents.mountedRoot(dir) == sourceRoot {
+				rel, err := filepath.Rel(repoRoot, dir)
+				roots[dir] = err == nil && !safepath.Escaped(rel) && l.anchorRoot(repoRoot, filepath.ToSlash(rel))
+			}
 			if doc.buildExcluded {
 				doc.buildExcluded = false
 				l.documents.cache[dir] = doc
@@ -324,15 +330,14 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 			prefix = strings.TrimSuffix(local, string(filepath.Separator)) + string(filepath.Separator)
 		}
 		if external {
-			for dir := range roots {
-				doc := l.documents.cache[dir]
-				if !doc.buildExcluded && dir != l.entryPath && (dir == local || strings.HasPrefix(dir, prefix)) {
-					doc.buildExcluded = true
-					l.documents.cache[dir] = doc
+			for dir, anchored := range roots {
+				if anchored || dir == l.entryPath || dir != local && !strings.HasPrefix(dir, prefix) {
+					continue
 				}
-			}
-			if local != l.entryPath {
-				delete(roots, local)
+				doc := l.documents.cache[dir]
+				doc.buildExcluded = true
+				l.documents.cache[dir] = doc
+				delete(roots, dir)
 			}
 			continue
 		}
@@ -352,7 +357,7 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 		return nil
 	}
 	for dir, doc := range l.documents.cache {
-		if !doc.traversed || doc.body == nil || l.documents.mountedRoot(dir) != l.documents.mountedRoot(repoRoot) {
+		if !doc.traversed || doc.body == nil || l.documents.mountedRoot(dir) != sourceRoot {
 			continue
 		}
 		for ref := range kustomizeinput.Kustomization(doc.body) {
@@ -361,8 +366,7 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 			}
 			if child, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
 				if _, candidate := roots[child]; candidate {
-					base, _ := filepath.Rel(repoRoot, child)
-					if !l.anchorRoot(repoRoot, filepath.ToSlash(base)) {
+					if !roots[child] {
 						delete(roots, child)
 					}
 				}
@@ -371,7 +375,7 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	}
 	var dirs []string
 	for dir := range roots {
-		if rel, err := filepath.Rel(repoRoot, dir); err == nil && !safepath.Escaped(rel) && l.documents.mountedRoot(dir) == l.documents.mountedRoot(repoRoot) {
+		if rel, err := filepath.Rel(repoRoot, dir); err == nil && !safepath.Escaped(rel) && l.documents.mountedRoot(dir) == sourceRoot {
 			dirs = append(dirs, filepath.ToSlash(rel))
 		}
 	}

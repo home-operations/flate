@@ -154,8 +154,8 @@ func (l *Loader) admit(repoRoot string) []store.Child {
 				continue
 			}
 			if external {
-				v := graphVisit{root: repoRoot, dir: l.documents.claimBase(repoRoot, ks.Path), role: kustomizeinput.Resource}
-				l.scopes.contributions = append(l.scopes.contributions, scopeContribution{owner: ks.Named(), source: ref, visits: l.scopeWalk(v), context: v.graphContext, membershipOnly: true, input: i + 1})
+				v := graphVisit{root: repoRoot, dir: l.documents.claimBase(repoRoot, ks.Path), owner: ks.Named(), source: ref, input: i + 1}
+				l.visitScope(v, true)
 				continue
 			}
 			local = append(local, ks)
@@ -174,7 +174,7 @@ func (l *Loader) admit(repoRoot string) []store.Child {
 					v.localBase = l.documents.localBase(root, repoRoot)
 				}
 			}
-			l.visitScope(v)
+			l.visitScope(v, false)
 		}
 		l.scopes.claims = buildClaims(l.Store, repoRoot, l.documents, local)
 		l.scopes.roots = l.packageRoots(repoRoot, kss)
@@ -183,15 +183,15 @@ func (l *Loader) admit(repoRoot string) []store.Child {
 			entry = l.fileCoordinate(l.entryPath)
 			if !slices.Contains(l.scopes.roots, entry) {
 				v := graphVisit{root: repoRoot, dir: entry, role: kustomizeinput.Resource}
-				l.scopes.contributions = append(l.scopes.contributions, scopeContribution{visits: l.scopeWalk(v), context: v.graphContext, membershipOnly: true})
+				l.visitScope(v, true)
 			}
 		}
 		for _, dir := range l.scopes.roots {
 			v := graphVisit{root: repoRoot, dir: dir, source: manifest.BootstrapSourceID, role: kustomizeinput.Resource}
 			if l.anchorRoot(repoRoot, dir) && slices.ContainsFunc(l.scopes.claims, func(claim manifest.KSClaim) bool { return strings.HasPrefix(dir+"/", claim.Prefix) }) {
-				l.scopes.contributions = append(l.scopes.contributions, scopeContribution{visits: l.scopeWalk(v), context: v.graphContext, membershipOnly: true})
+				l.visitScope(v, true)
 			} else {
-				l.visitScope(v)
+				l.visitScope(v, false)
 			}
 		}
 		l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
@@ -291,7 +291,7 @@ func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 	return traversal.visits
 }
 
-func (l *Loader) visitScope(root graphVisit) []graphVisit {
+func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 	root.role = kustomizeinput.Resource
 	visits := l.scopeWalk(root)
 	ks, _ := l.Store.Get[*manifest.Kustomization](root.owner)
@@ -299,7 +299,7 @@ func (l *Loader) visitScope(root graphVisit) []graphVisit {
 		record, _ := l.Index.Lookup(root.owner)
 		ks, _ = l.indexedObject(root.owner, record).Obj.(*manifest.Kustomization)
 	}
-	unshared := ks != nil && len(ks.Components) != 0
+	unshared := !membershipOnly && ks != nil && len(ks.Components) != 0
 	if unshared {
 		visits = slices.Clone(visits)
 		namespace := root.namespace
@@ -326,9 +326,14 @@ func (l *Loader) visitScope(root graphVisit) []graphVisit {
 			visits = append(visits, l.scopeWalk(child)...)
 		}
 	}
-	l.scopes.contributions = append(l.scopes.contributions, scopeContribution{owner: root.owner, source: root.source, visits: visits, context: root.graphContext, unshared: unshared, input: root.input})
+	l.scopes.contributions = append(l.scopes.contributions, scopeContribution{owner: root.owner, source: root.source, visits: visits, context: root.graphContext, unshared: unshared, membershipOnly: membershipOnly, input: root.input})
 	for _, v := range visits {
 		v.owner, v.source, v.input = root.owner, root.source, root.input
+		v.membershipOnly = membershipOnly
+		if membershipOnly {
+			// Membership projects identities without owning or materializing bootstrap files.
+			v.owner, v.deferMaterialization = manifest.NamedResource{}, false
+		}
 		l.scopes.visits[v.file] = append(l.scopes.visits[v.file], v)
 		if local := v.localCoordinate(); local != "" {
 			file := filepath.Join(l.SourceRoot, filepath.FromSlash(local))
@@ -559,6 +564,7 @@ func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []s
 		}
 	}
 	var namespaces []string
+	authoritative := false
 	inactive := l.scopes.inactive
 	for _, v := range l.scopes.visits[r.Path] {
 		if inactive && v.input != 0 && !l.scopes.inputs[v.input-1].active {
@@ -566,6 +572,14 @@ func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []s
 		}
 		if v.deferMaterialization || v.role != kustomizeinput.Resource || l.selfClaim(v.owner, r.Authored) {
 			continue
+		}
+		if v.membershipOnly {
+			if authoritative {
+				continue
+			}
+		} else if !authoritative {
+			namespaces = namespaces[:0]
+			authoritative = true
 		}
 		fallback := v.fallback
 		if v.namespace == "" && len(owners) == 1 {

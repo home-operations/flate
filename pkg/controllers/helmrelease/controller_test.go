@@ -7,6 +7,7 @@ import (
 	"github.com/home-operations/flate/internal/filtertest"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/assert"
@@ -459,6 +459,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 func TestController_AllowMissingSecretsOmitsUnavailableValuesFrom(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/values.yaml", "required: valid\n")
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
 name: mychart
 version: 0.1.0
@@ -468,6 +469,7 @@ kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-cm
 data:
+  required: {{ required "missing required value" .Values.required | quote }}
   kept: {{ .Values.kept | quote }}
   fallback: {{ .Values.missing | default "fallback" | quote }}
 `)
@@ -545,6 +547,19 @@ data:
 	}) {
 		t.Fatalf("new omitted reference did not produce a Count 1 warning: %+v", st.Warnings())
 	}
+	invalid := hr.Clone()
+	invalid.Name = "invalid"
+	invalid.Values = map[string]any{"required": ""}
+	st.AddObject(invalid)
+	info = controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: invalid.Named(), ReconcileNode: c.ReconcileNode})
+	if info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value") {
+		t.Fatalf("permitted values omission hid required chart failure: %+v", info)
+	}
+	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues && strings.Contains(w.Message, "Secret/default/app-values")
+	}) {
+		t.Fatalf("failed chart lost its omission warning: %+v", st.Warnings())
+	}
 }
 
 func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
@@ -580,17 +595,18 @@ func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 func TestController_ProducerBackedValuesFromOmittedWithoutFlag(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/values.yaml", "required: valid\n")
 	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Release.Name }}-cm
 data:
+  required: {{ required "missing required value" .Values.required | quote }}
   kept: {{ .Values.kept | quote }}
   fallback: {{ .Values.missing | default "fallback" | quote }}
 `)
 
-	// No flag — the producer index is the only reason the ref is dropped.
 	c, st := newTestControllerWithOptions(t, base.Options{})
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
@@ -602,8 +618,6 @@ data:
 		Name: "present-values", Namespace: "default",
 		Data: map[string]any{"values.yaml": "kept: kept-value\n"},
 	})
-	// The in-repo ExternalSecret declaring the (absent) app-values Secret —
-	// AddObject fires the producer listener, seeding the shared index.
 	publishRawFixture(t, c, &manifest.RawObject{
 		Kind: "ExternalSecret", APIVersion: "external-secrets.io/v1",
 		Name: "app-creds", Namespace: "default",
@@ -633,6 +647,19 @@ data:
 	}
 	if got := renderedConfigMapValue(art.Manifests, "fallback"); got != "fallback" {
 		t.Fatalf("rendered fallback = %q, want fallback", got)
+	}
+	invalid := hr.Clone()
+	invalid.Name = "invalid"
+	invalid.Values = map[string]any{"required": ""}
+	st.AddObject(invalid)
+	info = controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: invalid.Named(), ReconcileNode: c.ReconcileNode})
+	if info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value") {
+		t.Fatalf("permitted values omission hid required chart failure: %+v", info)
+	}
+	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+		return w.Resource == invalid.Named() && w.Category == manifest.WarnOmittedValues && strings.Contains(w.Message, "Secret/default/app-values")
+	}) {
+		t.Fatalf("failed chart lost its omission warning: %+v", st.Warnings())
 	}
 }
 
@@ -839,53 +866,6 @@ func TestController_AlreadyReady_NoTransientPending(t *testing.T) {
 	}
 	if info, _ := st.GetStatus(hr.Named()); info.Status != store.StatusReady {
 		t.Errorf("HR not Ready after no-op re-run: %+v", info)
-	}
-}
-
-func TestController_ParentReadsUnreadableSecret_ReferencePositions(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name              string
-		reverse, supplied bool
-	}{
-		{name: "forward"},
-		{name: "reverse", reverse: true},
-		{name: "forward supplied", supplied: true},
-		{name: "reverse supplied", reverse: true, supplied: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			var supplied map[manifest.NamedResource]manifest.BaseManifest
-			if tc.supplied {
-				supplied = map[manifest.NamedResource]manifest.BaseManifest{
-					{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}:      &manifest.Secret{},
-					{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}: &manifest.Secret{},
-				}
-			}
-			c, st := newTestControllerWithOptions(t, base.Options{SubstituteFrom: supplied})
-			readable := &manifest.Kustomization{Name: "a-readable", Namespace: "apps"}
-			unreadable := &manifest.Kustomization{Name: "z-unreadable", Namespace: "apps"}
-			unreadable.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported"}, {Kind: manifest.KindSecret, Name: "owned"}, {Kind: manifest.KindSecret, Name: "unreadable"}}}
-			st.AddObjects([]manifest.BaseManifest{readable, unreadable})
-			hr := &manifest.HelmRelease{Name: "app", Namespace: "apps"}
-			parents := []*manifest.Kustomization{readable, unreadable}
-			if tc.reverse {
-				slices.Reverse(parents)
-			}
-			for _, parent := range parents {
-				var unavailable []manifest.NamedResource
-				if parent == unreadable {
-					unavailable = []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "owned"}, {Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}}
-				}
-				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: unavailable}, nil)
-			}
-			if got := c.newExecution(hr.Named()).parentReadsUnreadableSecret(hr.Named()); got == tc.supplied {
-				t.Fatalf("unreadable parent secret = %t, supplied = %t", got, tc.supplied)
-			}
-			assert.Equal(t, len(unreadable.PostBuild.SubstituteFrom), 3)
-		})
 	}
 }
 

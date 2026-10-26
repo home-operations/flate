@@ -21,6 +21,8 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -80,15 +82,50 @@ func configMapNames(res *orchestrator.Result) map[string]bool {
 // Changed-only rendering must follow a nested child's effective namespace on
 // both sides without selecting an unchanged sibling.
 func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
-	for _, tc := range []struct{ name, target, namespace string }{
-		{"bare", "", ""},
-		{"target", "targetNamespace: flux-system, ", "flux-system"},
+	t.Parallel()
+	for _, tc := range []struct {
+		name, target, namespace, query string
+		remote                         bool
+	}{
+		{"bare", "", "", "", false},
+		{"target", "targetNamespace: flux-system, ", "flux-system", "", false},
+		{"markerless remote", "targetNamespace: flux-system, ", "flux-system", "", true},
+		{"markerless remote without submodules", "targetNamespace: flux-system, ", "flux-system", "?submodules=false", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			baseDir := t.TempDir()
 			headDir := t.TempDir()
 			writeCluster(t, baseDir, "v1", "same")
 			writeCluster(t, headDir, "v2", "same")
+			remote := ""
+			if tc.remote {
+				options := &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}}
+				module := t.TempDir()
+				testutil.WriteFile(t, module, "kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, module, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-submodule}\n")
+				pin := testutil.GitCommitAll(t, testutil.GitInit(t, module), "module", options)
+				root := t.TempDir()
+				resources := "resources: [child.yaml, lib]\n"
+				if tc.query != "" {
+					resources = "resources: [child.yaml]\n"
+					module = filepath.Join(module, "unavailable")
+				}
+				testutil.WriteFile(t, root, "kustomization.yaml", resources)
+				testutil.WriteFile(t, root, "child.yaml", testutil.KustomizationYAML("consumer-a", "", "  path: ./consumer\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: render-values}]\n"))
+				testutil.WriteFile(t, root, ".gitmodules", "[submodule \"lib\"]\n\tpath = lib\n\turl = file://"+module+"\n")
+				repo := testutil.GitInit(t, root)
+				testutil.GitCommitAll(t, repo, "remote", options)
+				idx, err := repo.Storer.Index()
+				assert.NoError(t, err)
+				idx.Entries = append(idx.Entries, &index.Entry{Name: "lib", Mode: filemode.Submodule, Hash: pin})
+				assert.NoError(t, repo.Storer.SetIndex(idx))
+				wt, err := repo.Worktree()
+				assert.NoError(t, err)
+				_, err = wt.Commit("submodule", options)
+				assert.NoError(t, err)
+				remote = "file://" + root + tc.query
+			}
 			for i, dir := range []string{baseDir, headDir} {
 				testutil.WriteFile(t, dir, "ks-a.yaml", testutil.KustomizationYAML("app-a", "flux-system", "  {path: ./apps/app-a, "+tc.target+"sourceRef: {kind: GitRepository, name: flux-system}}\n"))
 				if i == 1 && tc.target != "" {
@@ -97,9 +134,45 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 					testutil.WriteFile(t, dir, "apps/app-a/kustomization.yaml", "resources: [cm.yaml]\ncommonAnnotations: {revision: head}\n")
 				}
 				testutil.WriteFile(t, dir, "apps/app-a/cm.yaml", testutil.KustomizationYAML("consumer-a", "", "  path: ./consumer\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: render-values}]\n"))
+				if tc.remote {
+					control := fmt.Sprintf("resources: [%q]\n", remote)
+					if i == 1 {
+						control += "# head\n"
+					}
+					testutil.WriteFile(t, dir, "apps/app-a/kustomization.yaml", control)
+					if err := os.Remove(filepath.Join(dir, "apps/app-a/cm.yaml")); err != nil {
+						t.Fatal(err)
+					}
+				}
 				testutil.WriteFile(t, dir, "inputs/values.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: render-values, namespace: flux-system}\ndata: {VALUE: v%d}\n", i+1))
 				testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
 				testutil.WriteFile(t, dir, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cfg-a}\ndata: {k: '${VALUE}'}\n")
+			}
+
+			if tc.remote {
+				for side, root := range []string{baseDir, headDir} {
+					var first []byte
+					for run := range 2 {
+						o, err := orchestrator.New(t.Context(), orchestrator.Config{Path: root, RepoRoot: root, CacheDir: t.TempDir(), Concurrency: 2})
+						assert.NoError(t, err)
+						result, err := o.Render(t.Context())
+						assert.NoError(t, err)
+						assert.Equal(t, configMapNames(result)["from-submodule"], tc.query == "")
+						byParent := outputByParent(result.Manifests)
+						consumer := testutil.KustomizationID("flux-system", "consumer-a")
+						if len(byParent[consumer]) != 1 || !configMapNames(result)["cfg-b"] {
+							t.Fatalf("full remote reachability: %+v", result)
+						}
+						assert.Equal(t, byParent[consumer][0]["data"].(map[string]any)["k"], any(fmt.Sprintf("v%d", side+1)))
+						body, err := json.Marshal(result.Manifests)
+						assert.NoError(t, err)
+						if run == 0 {
+							first = body
+						} else {
+							assert.Equal(t, string(body), string(first))
+						}
+					}
+				}
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -133,6 +206,9 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 
 			consumer := testutil.KustomizationID(tc.namespace, "consumer-a")
 			for i, side := range []orchestrator.Rendered{base, head} {
+				if tc.remote {
+					assert.Equal(t, configMapNames(side.Result)["from-submodule"], tc.query == "")
+				}
 				if tc.namespace == "" {
 					missing := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Name: "flux-system"}
 					if side.Err == nil || !slices.Contains(side.Result.Blocked[consumer], missing) || configMapNames(side.Result)["cfg-a"] {

@@ -3,6 +3,7 @@ package kustomize
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/api/types"
 
+	"sigs.k8s.io/kustomize/kyaml/kio"
 	"sigs.k8s.io/kustomize/kyaml/yaml"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
@@ -209,7 +211,7 @@ func (w *inputWalk) references(ctx context.Context, loc walkScope, refs []kustom
 		var err error
 		switch ref.Role {
 		case kustomizeinput.Resource, kustomizeinput.Component:
-			c, err = w.resourceOperand(ctx, next, &node)
+			c, err = w.resourceOperand(ctx, next, &node, ref.Role)
 		case kustomizeinput.Configuration:
 			if ref.Inline {
 				var out []byte
@@ -243,8 +245,8 @@ func (w *inputWalk) fileOperand(ctx context.Context, loc walkScope, node *yaml.N
 	return result, err
 }
 
-func (w *inputWalk) resourceOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
-	path, err := w.resourcePath(ctx, loc, node.Value)
+func (w *inputWalk) resourceOperand(ctx context.Context, loc walkScope, node *yaml.Node, role kustomizeinput.Role) (inputResult, error) {
+	path, err := w.resourcePath(ctx, loc, node.Value, role)
 	if err != nil {
 		return inputResult{}, err
 	}
@@ -271,7 +273,7 @@ func (w *inputWalk) resourceOperand(ctx context.Context, loc walkScope, node *ya
 }
 
 func (w *inputWalk) pluginOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
-	path, err := w.resourcePath(ctx, loc, node.Value)
+	path, err := w.resourcePath(ctx, loc, node.Value, kustomizeinput.Configuration)
 	if err != nil {
 		return inputResult{}, err
 	}
@@ -344,10 +346,39 @@ func (w *inputWalk) filePath(ctx context.Context, loc walkScope, raw string) (in
 	return inputPath{file: file, replacement: file, descriptor: descriptor}, err
 }
 
-func (w *inputWalk) resourcePath(ctx context.Context, loc walkScope, raw string) (inputPath, error) {
-	if spec, ok := kustomizeinput.ParseGitBase(raw); ok {
+func (w *inputWalk) resourcePath(ctx context.Context, loc walkScope, raw string, role kustomizeinput.Role) (inputPath, error) {
+	spec, git := kustomizeinput.ParseGitBase(raw)
+	var file inputPath
+	var fileErr error
+	var body []byte
+	if _, _, http := kustomizeinput.CutHTTPScheme(raw); http && role != kustomizeinput.Component {
+		file, fileErr = w.filePath(ctx, loc, raw)
+		if fileErr == nil {
+			var err error
+			body, err = w.fs.ReadFile(file.file)
+			if err != nil {
+				return inputPath{}, err
+			}
+			if _, fileErr = kustomizeinput.Resources(body); fileErr == nil || !git {
+				return file, nil
+			}
+		} else if !git {
+			return inputPath{}, fileErr
+		} else {
+			w.recordRemote(remoteInput{Operation: remoteHTTP, URL: raw}, remoteIdentity{}, loc)
+		}
+	}
+	if git {
 		dest, err := w.fetchGitBase(ctx, spec, loc)
-		return inputPath{file: filepath.Join(loc.root, dest), replacement: dest, directory: true, descriptor: remoteInput{Operation: remoteGit, URL: spec.RepoURL, Ref: spec.Ref}}, err
+		if err != nil && fileErr != nil {
+			if _, parseErr := kio.FromBytes(body); file.file != "" && parseErr != nil && !errors.Is(err, context.DeadlineExceeded) {
+				// Build owns malformed-resource diagnostics after a directory load fails.
+				return file, nil
+			}
+			return inputPath{}, fmt.Errorf("accumulation err='%s': %w", fileErr.Error(), err)
+		}
+		return inputPath{file: filepath.Join(loc.root, dest), replacement: dest, directory: true,
+			descriptor: remoteInput{Operation: remoteGit, URL: spec.RepoURL, Ref: spec.Ref, Timeout: spec.Timeout, Submodules: spec.Submodules}}, err
 	}
 	path, err := w.filePath(ctx, loc, raw)
 	path.directory = err == nil && path.replacement == "" && w.fs.IsDir(path.file)

@@ -12,9 +12,8 @@ import (
 // fetchGitBase mounts the whole repository so local parent references retain their coordinates.
 func (w *inputWalk) fetchGitBase(ctx context.Context, spec kustomizeinput.GitBase, scope walkScope) (string, error) {
 	input := w.fs
-	descriptor := remoteInput{Operation: remoteGit, URL: spec.RepoURL, Ref: spec.Ref}
-	identity := spec.RepoURL + "@" + spec.Ref
-	if dest := input.bases[identity]; dest != "" {
+	descriptor := remoteInput{Operation: remoteGit, URL: spec.RepoURL, Ref: spec.Ref, Timeout: spec.Timeout, Submodules: spec.Submodules}
+	if dest := input.bases[descriptor]; dest != "" {
 		if input.rec != nil {
 			w.recordRemote(descriptor, input.rec.remotes[descriptor].identity, scope)
 		}
@@ -25,7 +24,7 @@ func (w *inputWalk) fetchGitBase(ctx context.Context, spec kustomizeinput.GitBas
 	if err != nil {
 		return "", err
 	}
-	name := remoteResourcePrefix + manifest.Fingerprint(identity)
+	name := remoteResourcePrefix + manifest.Fingerprint(descriptor)
 	dest := filepath.Join(scope.root, name)
 	rel, err := input.rel(dest)
 	if err != nil {
@@ -36,8 +35,8 @@ func (w *inputWalk) fetchGitBase(ctx context.Context, spec kustomizeinput.GitBas
 	}
 	input.origins = append(input.origins, mountOrigin{path: filepath.ToSlash(rel)})
 	if input.bases == nil {
-		input.bases = make(map[string]string)
+		input.bases = make(map[remoteInput]string)
 	}
-	input.bases[identity] = dest
+	input.bases[descriptor] = dest
 	return "./" + path.Join(name, spec.SubPath), nil
 }

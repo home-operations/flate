@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -45,7 +46,7 @@ const (
 
 // NewHTTPInputs borrows the nonnil storage owner, Network and task service.
 func NewHTTPInputs(owner *cache.Cache, network *Network, tasks *task.Service) HTTPInputs {
-	client := NewHTTPClient(network, HTTPResource)
+	client := &http.Client{Transport: network}
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("stopped after 10 redirects")
@@ -188,7 +189,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 	return input, err
 }
 func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {
-	fetchCtx, cancel := context.WithTimeout(ctx, HTTPResource.Timeout())
+	fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	previous, err := w.Previous(fetchCtx)
 	if err != nil {

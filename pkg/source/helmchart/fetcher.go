@@ -10,6 +10,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -155,6 +156,7 @@ func synthesizeOCIRepository(r *manifest.HelmRepository, hc *manifest.HelmChartS
 	syn.SecretRef = r.SecretRef
 	syn.CertSecretRef = r.CertSecretRef
 	syn.Insecure = r.Insecure
+	syn.Timeout = &metav1.Duration{Duration: (sourcev1.HelmRepository{Spec: r.HelmRepositorySpec}).GetTimeout()}
 	return syn
 }
 

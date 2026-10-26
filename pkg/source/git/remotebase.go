@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"time"
 
 	"errors"
 
@@ -20,10 +21,12 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// RemoteBaseRequest carries a public base's identity.
+// RemoteBaseRequest carries a public base's effective repository and command policy.
 type RemoteBaseRequest struct {
-	URL string
-	Ref string
+	URL        string
+	Ref        string
+	Timeout    time.Duration
+	Submodules bool
 }
 
 // FetchRemoteBase returns an immutable lazy view of the whole public repository.
@@ -34,6 +37,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 	}
 	repo := &manifest.GitRepository{}
 	repo.URL = request.URL
+	repo.RecurseSubmodules = request.Submodules
 	if err := f.validateRepo(repo); err != nil {
 		return nil, err
 	}
@@ -47,22 +51,28 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 	if pinned {
 		policy.MaxAge = sourcecache.Forever
 	}
-	content := struct{ URL, Ref string }{request.URL, request.Ref}
-	key := sourcecache.GitKey{Content: content, Ref: cmp.Or(request.Ref, "HEAD")}
+	content := struct {
+		URL, Ref   string
+		Submodules bool
+	}{request.URL, request.Ref, request.Submodules}
+	key := sourcecache.GitKey{Content: content, Ref: cmp.Or(request.Ref, "HEAD"), RecurseSubmodules: request.Submodules}
 	var input *gittree.FS
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
 		// Opaque base refs require upstream rev-parse over all advertised heads and tags.
 		acquisition := *repo
+		acquisition.RecurseSubmodules = false
 		if !pinned {
 			acquisition.Reference = nil
 		}
-		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{spec: &acquisition, options: git.CloneOptions{URL: request.URL, NoCheckout: true}})
+		cloned, err := f.acquire(ctx, storer, worktree, gitAcquisition{spec: &acquisition, options: git.CloneOptions{URL: request.URL, NoCheckout: true}, timeout: request.Timeout})
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
 		if !pinned {
-			err := cloned.FetchContext(ctx, &git.FetchOptions{RefSpecs: []config.RefSpec{"+refs/*:refs/*"}, Tags: git.NoTags})
+			fetchCtx, cancel := operationContext(ctx, request.Timeout)
+			err := cloned.FetchContext(fetchCtx, &git.FetchOptions{RefSpecs: []config.RefSpec{"+refs/*:refs/*"}, Tags: git.NoTags})
+			cancel()
 			if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				return plumbing.ZeroHash, err
 			}
@@ -70,6 +80,17 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		hash, err := resolveRefHash(cloned, repo.Reference, true)
 		if err != nil {
 			return plumbing.ZeroHash, err
+		}
+		if request.Submodules {
+			if err := checkoutRef(cloned, hash, nil); err != nil {
+				return plumbing.ZeroHash, err
+			}
+			updateCtx, cancel := operationContext(ctx, request.Timeout)
+			err := f.updateSubmodules(updateCtx, cloned, nil, git.DefaultSubmoduleRecursionDepth)
+			cancel()
+			if err != nil {
+				return plumbing.ZeroHash, err
+			}
 		}
 		input, _, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase, Worktree: worktree})
 		if err != nil {

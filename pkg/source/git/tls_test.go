@@ -468,7 +468,7 @@ func TestFetcher_ConcurrentCustomTLS(t *testing.T) {
 				}
 			}
 			for _, ref := range []string{"", mustHead(t, root)} {
-				_, err := f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: repos[0].URL, Ref: ref}, sourcecache.Policy{})
+				_, err := f.FetchRemoteBase(ctx, RemoteBaseRequest{URL: repos[0].URL, Ref: ref, Timeout: 27 * time.Second, Submodules: true}, sourcecache.Policy{})
 				if _, ok := errors.AsType[x509.UnknownAuthorityError](err); !ok {
 					t.Fatalf("anonymous remote base inherited private trust: %v", err)
 				}

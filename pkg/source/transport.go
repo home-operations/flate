@@ -122,40 +122,10 @@ func (m TransportMaterial) ProxyURL(target *url.URL) (*url.URL, error) {
 	return m.environment.ProxyFunc()(target)
 }
 
-// HTTPPurpose selects the existing operation bounds for HTTP clients and contexts.
-type HTTPPurpose uint8
-
-const (
-	// HTTPStream bounds setup and headers without a whole-body deadline.
-	HTTPStream HTTPPurpose = iota
-	// HTTPChart bounds a complete chart or index request.
-	HTTPChart
-	// HTTPResource bounds resource acquisition through its caller context.
-	HTTPResource
-)
-
-var requestBounds = struct {
-	header, dial time.Duration
-	request      [3]time.Duration
-}{120 * time.Second, 30 * time.Second, [3]time.Duration{0, 120 * time.Second, 5 * time.Second}}
-
-// Timeout returns the operation's bound, or zero for streamed bodies.
-func (p HTTPPurpose) Timeout() time.Duration { return requestBounds.request[p] }
-
-// NewHTTPClient applies source client policy to an existing transport.
-func NewHTTPClient(transport http.RoundTripper, purpose HTTPPurpose) *http.Client {
-	client := &http.Client{Transport: transport}
-	if purpose == HTTPChart {
-		client.Timeout = purpose.Timeout()
-	}
-	return client
-}
-
 // NewHTTPTransport builds the concrete guarded kernel required by HTTP libraries.
 func NewHTTPTransport(material TransportMaterial) *http.Transport {
 	material = material.captureEnvironment()
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.ResponseHeaderTimeout = requestBounds.header
 	if material.config != nil {
 		tr.TLSClientConfig = material.config.Clone()
 	}
@@ -165,7 +135,7 @@ func NewHTTPTransport(material TransportMaterial) *http.Transport {
 		selectProxy := material.environment.ProxyFunc()
 		tr.Proxy = func(r *http.Request) (*url.URL, error) { return selectProxy(r.URL) }
 	}
-	ssrfguard.WrapTransport(tr, &net.Dialer{Timeout: requestBounds.dial, KeepAlive: requestBounds.dial})
+	ssrfguard.WrapTransport(tr, &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second})
 	return tr
 }
 

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -254,15 +255,20 @@ func TestReadSet_HitAndInvalidation(t *testing.T) {
 
 func TestReadSet_RemoteObservations(t *testing.T) {
 	entries := []remoteEntry{
-		{Input: remoteInput{Operation: remoteGit, URL: "https://example.invalid/b.git", Ref: "z"}, Identity: remoteIdentity{Key: "family", Revision: "1"}},
+		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "z", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{Key: "family", Revision: "1"}},
 		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"}, Identity: remoteIdentity{HTTP: "http-b"}},
-		{Input: remoteInput{Operation: remoteGit, URL: "https://example.invalid/b.git", Ref: "a"}, Identity: remoteIdentity{Key: "family", Revision: "2"}},
+		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "a", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{Key: "family", Revision: "2"}},
 		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"}, Identity: remoteIdentity{HTTP: "http-a"}},
 	}
+	policy := entries[0]
+	policy.Input.Timeout = time.Minute
+	entries = append(entries, policy)
+	policy.Input.Submodules = false
+	entries = append(entries, policy)
 	entries[1].Parents = []remoteInput{entries[0].Input}
-	entries[3].Parents = []remoteInput{entries[0].Input, entries[2].Input, entries[0].Input}
+	entries[3].Parents = []remoteInput{entries[0].Input, entries[2].Input, entries[0].Input, entries[4].Input, entries[5].Input}
 	want := slices.Clone(entries)
-	want[3].Parents = []remoteInput{entries[2].Input, entries[0].Input}
+	want[3].Parents = []remoteInput{entries[2].Input, entries[0].Input, entries[5].Input, entries[4].Input}
 	slices.SortFunc(want, func(a, b remoteEntry) int { return compareRemoteInputs(a.Input, b.Input) })
 	var first []byte
 	for _, reverse := range []bool{false, true} {
@@ -307,7 +313,7 @@ func TestReadSet_RemoteObservations(t *testing.T) {
 			if diff := cmp.Diff(want, snap.Remotes); diff != "" {
 				t.Fatalf("frozen snapshot mutated (-want +got):\n%s", diff)
 			}
-			if len(rs.snapshot().Remotes[0].Parents) != 3 {
+			if len(rs.snapshot().Remotes[0].Parents) != 5 {
 				t.Fatal("additional parent was not recorded")
 			}
 		})
@@ -336,8 +342,8 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 				_, _ = io.WriteString(w, body)
 			}))
 			t.Cleanup(srv.Close)
-			a := remoteInput{Operation: remoteGit, URL: "https://example.invalid/a.git", Ref: "main"}
-			b := remoteInput{Operation: remoteGit, URL: "https://example.invalid/z.git", Ref: "main"}
+			a := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/a.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
+			b := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/z.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
 			child := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/a-child"}
 			independent := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/z-independent"}
 			if scenario == "independent-input" || scenario == "descriptor-cycle" || scenario == "missing-parent" {
@@ -401,7 +407,7 @@ func TestReadSet_RemoteValidation(t *testing.T) {
 						}
 					}
 					if scenario == "missing-parent" && descriptor == child {
-						parents = append(parents, remoteInput{Operation: remoteGit, URL: "https://example.invalid/missing.git"})
+						parents = append(parents, remoteInput{Operation: remoteGit, URL: "file:///example.invalid/missing.git", Timeout: 27 * time.Second, Submodules: true})
 					}
 					rec.recordRemote(descriptor, identity, parents)
 				}
@@ -478,4 +484,37 @@ func validReadSet(t *testing.T, snap readSetSnapshot, lower fs.FS) bool {
 		t.Fatal(err)
 	}
 	return valid
+}
+
+func TestReadSet_RemotePolicyValidation(t *testing.T) {
+	t.Parallel()
+	c := newTestTreeCache(t, "")
+	var changed atomic.Bool
+	c.SetGitBaseFetcher(func(_ context.Context, request GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+		revision := fmt.Sprintf("%v/%t", request.Timeout, request.Submodules)
+		if changed.Load() && request.Timeout == time.Minute && !request.Submodules {
+			revision = "changed"
+		}
+		return &store.SourceArtifact{Key: "same", Revision: revision, FS: fstest.MapFS{}}, nil
+	})
+	rec := newReadSet("/src")
+	for _, input := range []remoteInput{
+		{Operation: remoteGit, URL: "file:///repo", Timeout: time.Second, Submodules: true},
+		{Operation: remoteGit, URL: "file:///repo", Timeout: time.Minute, Submodules: true},
+		{Operation: remoteGit, URL: "file:///repo", Timeout: time.Minute, Submodules: false},
+	} {
+		_, identity, err := input.acquire(t.Context(), c, &treeFS{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec.recordRemote(input, identity, nil)
+	}
+	snap := rec.snapshot()
+	if valid, err := snap.stillValid(t.Context(), c, &treeFS{}, true); err != nil || !valid {
+		t.Fatalf("unchanged policies: valid=%t error=%v", valid, err)
+	}
+	changed.Store(true)
+	if valid, err := snap.stillValid(t.Context(), c, &treeFS{}, true); err != nil || valid {
+		t.Fatalf("policy-specific change: valid=%t error=%v", valid, err)
+	}
 }

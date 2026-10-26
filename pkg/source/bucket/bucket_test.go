@@ -291,6 +291,76 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 	}
 }
 
+func TestFetcher_TimeoutRecovery(t *testing.T) {
+	t.Parallel()
+	for _, reopen := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reopen=%t", reopen), func(t *testing.T) {
+			t.Parallel()
+			var blocked atomic.Bool
+			blocked.Store(true)
+			var listings, objects atomic.Int32
+			bodyStarted, bodyCanceled := make(chan struct{}), make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("list-type") != "" {
+					listings.Add(1)
+					_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>hello.txt</Key><Size>2</Size><ETag>"a"</ETag></Contents></ListBucketResult>`)
+					return
+				}
+				objects.Add(1)
+				w.Header().Set("Content-Length", "2")
+				w.Header().Set("ETag", `"a"`)
+				w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+				_, _ = io.WriteString(w, "h")
+				if blocked.Load() {
+					w.(http.Flusher).Flush()
+					close(bodyStarted)
+					<-r.Context().Done()
+					close(bodyCanceled)
+					return
+				}
+				_, _ = io.WriteString(w, "i")
+			}))
+			t.Cleanup(srv.Close)
+			root := t.TempDir()
+			f := &bucket.Fetcher{Cache: cachetest.New(t, root, cache.New), Network: newTestNetwork(t)}
+			b := &manifest.Bucket{
+				Name: "timeout", Namespace: "test", BucketName: "data", Endpoint: srv.URL,
+				Insecure: true, Region: "us-east-1", Timeout: &metav1.Duration{Duration: time.Second},
+			}
+			policy := cache.Policy{MaxAge: time.Hour}
+			artifact, err := f.Fetch(t.Context(), b, (testInputs{}).readSet(b), policy)
+			if !errors.Is(err, context.DeadlineExceeded) || artifact != nil {
+				t.Fatalf("body timeout: artifact=%v error=%v", artifact, err)
+			}
+			select {
+			case <-bodyStarted:
+			default:
+				t.Fatal("source timed out before the object body was blocked")
+			}
+			<-bodyCanceled
+			if reopen {
+				if err := f.Cache.Close(); err != nil {
+					t.Fatal(err)
+				}
+				f.Cache = cachetest.New(t, root, cache.New)
+			}
+			blocked.Store(false)
+			longer := *b
+			longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
+			artifact, err = f.Fetch(t.Context(), &longer, (testInputs{}).readSet(&longer), policy)
+			if err != nil {
+				t.Fatalf("longer policy reused timeout: %v", err)
+			}
+			if data, err := fs.ReadFile(artifact.FS, "hello.txt"); err != nil || string(data) != "hi" {
+				t.Fatalf("recovered content=%q error=%v", data, err)
+			}
+			if listings.Load() != 2 || objects.Load() != 2 {
+				t.Fatalf("recovery listings=%d objects=%d, want 2 each", listings.Load(), objects.Load())
+			}
+		})
+	}
+}
+
 func TestFetcher_TerminalStatusReplay(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {

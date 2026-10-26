@@ -48,6 +48,6 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 	if err != nil {
 		return nil, err
 	}
-	prepared.client = source.NewHTTPClient(tr, source.HTTPChart)
+	prepared.client = &http.Client{Transport: tr}
 	return prepared, nil
 }

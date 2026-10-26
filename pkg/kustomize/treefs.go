@@ -30,7 +30,7 @@ type treeFS struct {
 	maxAge  time.Duration
 	retry   cache.RetryConfig
 	slot    *task.Service
-	bases   map[string]string
+	bases   map[remoteInput]string
 	origins []mountOrigin
 }
 

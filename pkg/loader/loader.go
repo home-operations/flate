@@ -112,7 +112,8 @@ func (l *Loader) AdmitsRoot(id manifest.NamedResource, file string) bool {
 		return false
 	}
 	if r.Path == "" {
-		return r.Authored == (manifest.NamedResource{}) && l.candidates[id].Obj != nil
+		return r.Authored == (manifest.NamedResource{}) && r.Parent == (manifest.NamedResource{}) &&
+			l.candidates[id].Obj != nil
 	}
 	if admitted, known := l.roots[id]; known {
 		return admitted

@@ -3,6 +3,8 @@ package kustomize
 import (
 	"context"
 	"errors"
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"strings"
 	"testing"
 
@@ -219,6 +221,72 @@ patches:
 			assert.Equal(t, md["name"], any("pre-demo-post"))
 			assert.Equal(t, md["namespace"], any("existing"))
 			assert.Equal(t, got["data"].(map[string]any)["value"], any("disk"))
+		})
+	}
+}
+
+func TestRender_EmittedLists(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, input string
+		wantError   bool
+	}{
+		{"generic", "apiVersion: v1\nkind: List\nitems: [{apiVersion: v1, kind: ConfigMap, metadata: {name: a}}, {apiVersion: v1, kind: Secret, metadata: {name: b}}]\n", false},
+		{"typed explicit", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, kind: ConfigMap, metadata: {name: a}}]\n", false},
+		{"typed both absent", "apiVersion: v1\nkind: ConfigMapList\nitems: [{metadata: {name: bare}}]\n", true},
+		{"missing kind", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: partial}}]\n", true},
+		{"missing version", "apiVersion: v1\nkind: ConfigMapList\nitems: [{kind: ConfigMap, metadata: {name: partial}}]\n", false},
+		{"nested", `apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: List
+  items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: nested}}]
+- {apiVersion: v1, kind: ConfigMap, metadata: {name: sibling}}
+`, false},
+		{"empty", "apiVersion: v1\nkind: ConfigMapList\nitems: []\n", false},
+		{"neighbors and empty", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: before}\n---\napiVersion: v1\nkind: ConfigMapList\nitems: []\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n", false},
+		{"null items", "apiVersion: v1\nkind: ConfigMapList\nitems: null\n", false},
+		{"null member", "apiVersion: v1\nkind: ConfigMapList\nitems: [null]\n", false},
+		{"scalar member", "apiVersion: v1\nkind: ConfigMapList\nitems: [scalar]\n", true},
+		{"object items", "apiVersion: v1\nkind: ConfigMapList\nitems: {metadata: {name: bad}}\n", true},
+		{"scalar items", "apiVersion: v1\nkind: ConfigMapList\nitems: scalar\n", true},
+		{"custom kind", "apiVersion: example.test/v1\nkind: Bundle\nmetadata: {name: bundle}\nitems: [{apiVersion: v1, kind: ConfigMap, metadata: {name: child}}]\n", false},
+		{"scalar AllowList", "apiVersion: example.test/v1\nkind: AllowList\nmetadata: {name: acl}\nitems: [scalar]\n", true},
+		{"ordinary AllowList", "apiVersion: example.test/v1\nkind: AllowList\nmetadata: {name: acl}\nspec: {items: [scalar]}\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("list.yaml"), "list.yaml": tc.input})
+			kustomizestate.BuildMutex.Lock()
+			rm, oracleErr := kustomizestate.Build(filesys.MakeFsOnDisk(), root)
+			var raw []byte
+			if oracleErr == nil {
+				raw, oracleErr = rm.AsYaml()
+			}
+			kustomizestate.BuildMutex.Unlock()
+			if (oracleErr != nil) != tc.wantError {
+				t.Fatalf("complete upstream build error = %v, wantError = %t", oracleErr, tc.wantError)
+			}
+			out, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), SubPath: "."}, sourcecache.RetryConfig{})
+			if oracleErr != nil {
+				if err == nil || out != nil {
+					t.Fatalf("Render = %#v, %v; upstream error = %v", out, err, oracleErr)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			want, err := manifest.SplitDocs(raw)
+			assert.NoError(t, err)
+			assert.Diff(t, out, want)
+			if tc.name == "nested" {
+				var names []string
+				for _, doc := range out {
+					name, _ := manifest.DocMetadata(doc)
+					names = append(names, name)
+				}
+				assert.Diff(t, names, []string{"sibling", "nested"})
+			}
 		})
 	}
 }

@@ -1235,3 +1235,79 @@ func testTrees(t *testing.T) *kustomize.TreeCache {
 	t.Cleanup(trees.Close)
 	return trees
 }
+
+func TestRun_ListOwnedChildren(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources: [bundle.yaml]\n")
+	testutil.WriteFile(t, dir, "app/bundle.yaml", `apiVersion: v1
+kind: List
+items:
+- apiVersion: kustomize.toolkit.fluxcd.io/v1
+  kind: Kustomization
+  metadata: {name: owner, namespace: flux-system}
+  spec:
+    path: ./app
+    sourceRef: {kind: GitRepository, name: flux-system}
+- apiVersion: helm.toolkit.fluxcd.io/v2
+  kind: HelmRelease
+  metadata: {name: demo, namespace: apps}
+  spec:
+    chart:
+      spec:
+        chart: charts/demo
+        sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+	st := store.New()
+	result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "app"), RepoRoot: dir, Store: st})
+	assert.NoError(t, err)
+	id := testutil.HelmReleaseID("apps", "demo")
+	owner := testutil.KustomizationID("flux-system", "owner")
+	record, ok := result.Index.Lookup(id)
+	if !ok || record.Builder != "app/kustomization.yaml" || record.Parent != owner {
+		t.Fatalf("built member index = %+v", record)
+	}
+	if st.GetObject(id) != nil {
+		t.Fatal("list-emitted owned HelmRelease promoted as an orphan")
+	}
+	if st.GetObject(owner) == nil {
+		t.Fatal("list-emitted owner was not admitted")
+	}
+}
+
+func TestRun_StandaloneListPackage(t *testing.T) {
+	t.Parallel()
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "app/kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
+			body := "apiVersion: v1\nkind: List\nitems:\n- " + strings.ReplaceAll(strings.TrimSpace(testutil.KustomizationYAML("child", "", "  path: ./missing\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")), "\n", "\n  ") + "\n"
+			if invalid {
+				body = "apiVersion: v1\nkind: List\nitems: [invalid]\n"
+			}
+			testutil.WriteFile(t, dir, "app/bundle.yaml", body)
+			st := store.New()
+			result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "app"), RepoRoot: dir, Store: st})
+			if invalid {
+				if err == nil || !errors.Is(err, manifest.ErrFlux) || result != nil {
+					t.Fatalf("invalid standalone package = %v, %v", result, err)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			id := testutil.KustomizationID("apps", "child")
+			child, ok := st.GetObject(id).(*manifest.Kustomization)
+			if !ok || child.Path != "./missing" || child.SourceID() != manifest.BootstrapSourceID {
+				t.Fatalf("built child/source = %+v", child)
+			}
+			record, ok := result.Index.Lookup(id)
+			if !ok || record.Builder != "app/kustomization.yaml" || record.Parent != (manifest.NamedResource{}) {
+				t.Fatalf("standalone index = %+v", record)
+			}
+			if st.EmissionOwner(id) != (manifest.NamedResource{}) || len(result.Documents) != 1 || manifest.DocIdentity(result.Documents[0]) != id {
+				t.Fatalf("standalone ownership/output = %v", result.Documents)
+			}
+		})
+	}
+}

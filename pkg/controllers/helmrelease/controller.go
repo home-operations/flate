@@ -170,7 +170,6 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 			Detail:   stale,
 		})
 	}
-	docs = manifest.FlattenLists(docs)
 	base.Stamp(hr.EmissionPolicy(), docs)
 
 	var synthetic []store.Child

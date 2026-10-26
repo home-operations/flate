@@ -1,6 +1,7 @@
 package sourceref
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,8 +75,9 @@ data: {v: "${K}"}
 }
 
 func TestE2E_DiscoveryIndex_ChangedOnlyFileBackedProducers(t *testing.T) {
-	for _, workers := range []string{"2", "4"} {
-		t.Run(workers, func(t *testing.T) {
+	for _, list := range []bool{false, true} {
+		t.Run(fmt.Sprintf("list=%t", list), func(t *testing.T) {
+			const workers = "2"
 			root := t.TempDir()
 			orig := t.TempDir()
 			for _, dir := range []string{root, orig} {
@@ -101,11 +103,11 @@ kind: Kustomization
 resources:
   - cm.yaml
 `)
-				testutil.WriteFile(t, dir, "apps/other/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: othercm, namespace: default}
-data: {K: v}
-`)
+				cm := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: othercm, namespace: default}\ndata: {K: v}\n"
+				if list {
+					cm = "apiVersion: v1\nkind: List\nitems:\n- " + strings.ReplaceAll(strings.TrimSpace(cm), "\n", "\n  ") + "\n"
+				}
+				testutil.WriteFile(t, dir, "apps/other/cm.yaml", cm)
 				testutil.WriteFile(t, dir, "consumer/kustomization.yaml", `apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -117,9 +119,23 @@ metadata: {name: out, namespace: default}
 data: {v: "${K}"}
 `)
 			}
+			fullArgs := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn"}
+			full, stderr := harness.RequireCLIOK(t, fullArgs...)
+			if !strings.Contains(full, "name: out") || !strings.Contains(full, "v: v") {
+				t.Fatalf("full list consumer missing: %s\n%s", full, stderr)
+			}
+			again, _ := harness.RequireCLIOK(t, fullArgs...)
+			if again != full {
+				t.Fatal("identical list builds changed output")
+			}
 			testutil.WriteFile(t, root, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: out2, namespace: default}\ndata: {v: \"${K}\"}\n")
+			wantValue := "v: v"
+			if list {
+				harness.MutateFile(t, filepath.Join(root, "apps/other/cm.yaml"), "K: v", "K: changed")
+				wantValue = "v: changed"
+			}
 			stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
-			if code != 0 || !strings.Contains(stdout, "name: out2") || !strings.Contains(stdout, "v: v") {
+			if code != 0 || !strings.Contains(stdout, "name: out2") || !strings.Contains(stdout, wantValue) {
 				t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
 		})

@@ -224,6 +224,11 @@ func TestRun_SelectedEntryAdmission(t *testing.T) {
 				"scope/app/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\n")},
 				"scope/app/excluded.yaml":      {Data: []byte(testutil.KustomizationYAML("excluded-driver", "apps", "  path: ./excluded\n") + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: excluded-source, namespace: apps}\nspec: {url: https://must-not-run.invalid/repo}\n")},
 			}
+			if ownership == "unowned" {
+				for _, file := range []string{"scope/app/child.yaml", "scope/app/source.yaml", "scope/app/cm.yaml"} {
+					input[file].Data = []byte("apiVersion: v1\nkind: List\nitems:\n- " + strings.ReplaceAll(strings.TrimSpace(string(input[file].Data)), "\n", "\n  ") + "\n")
+				}
+			}
 			input["scope/app/nested/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: apps\nresources: [source.yaml]\n")}
 			input["scope/app/nested/source.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: nested-source}\nspec: {url: oci://fixture.invalid/chart}\n")}
 			input["scope/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: outside\nresources: [app]")}

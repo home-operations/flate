@@ -15,11 +15,14 @@ import (
 	"unicode/utf8"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	yamlv4 "go.yaml.in/yaml/v4"
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/cli"
 	release "helm.sh/helm/v4/pkg/release/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/cli-runtime/pkg/resource"
 	"oras.land/oras-go/v2/errdef"
 	"sigs.k8s.io/yaml"
 
@@ -34,6 +37,7 @@ const sourceHeader = "# Source: "
 var envSettings = sync.OnceValue(cli.New)
 
 // Template renders a HelmRelease and returns independently owned documents.
+// List-bearing output follows Kubernetes decoding and validation.
 // Completed output is persisted through the borrowed cache owner. A hit skips
 // chart cloning and Helm action construction; the key includes all render inputs.
 func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) ([]map[string]any, error) {
@@ -94,7 +98,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 						if loadRecord {
 							c.rememberDescription(loaded, record)
 						}
-						return docs, nil
+						return normalizeLists(docs)
 					}
 				}
 			}
@@ -190,7 +194,38 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			return nil, fmt.Errorf("%w: close helm render cache: %w", manifest.ErrFlux, err)
 		}
 	}
-	return docs, nil
+	return normalizeLists(docs)
+}
+
+func normalizeLists(docs []map[string]any) ([]map[string]any, error) {
+	var out []map[string]any
+	for i, doc := range docs {
+		if _, selected := doc["items"]; !selected {
+			if out != nil {
+				out = append(out, doc)
+			}
+			continue
+		}
+		if out == nil {
+			out = make([]map[string]any, 0, len(docs))
+			out = append(out, docs[:i]...)
+		}
+		data, err := yamlv4.Marshal(doc)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode helm list: %w", manifest.ErrInput, err)
+		}
+		infos, err := resource.NewLocalBuilder().ContinueOnError().Unstructured().Flatten().Stream(bytes.NewReader(data), "").Do().Infos()
+		if err != nil {
+			return nil, fmt.Errorf("%w: normalize helm list: %w", manifest.ErrInput, err)
+		}
+		for _, info := range infos {
+			out = append(out, info.Object.(*unstructured.Unstructured).Object)
+		}
+	}
+	if out == nil {
+		return docs, nil
+	}
+	return out, nil
 }
 
 func validChartTemplates(ch *chart.Chart) bool {

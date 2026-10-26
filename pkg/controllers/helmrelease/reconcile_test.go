@@ -757,7 +757,7 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	firstDir, secondDir := t.TempDir(), t.TempDir()
 	for _, fixture := range []struct{ dir, value string }{{firstDir, "one"}, {secondDir, "two"}} {
 		testutil.WriteFile(t, fixture.dir, "Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
-		testutil.WriteFile(t, fixture.dir, "templates/output.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-first'}\ndata: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-second'}\ndata: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n")
+		testutil.WriteFile(t, fixture.dir, "templates/output.yaml", "apiVersion: v1\nkind: ConfigMapList\nitems:\n- metadata: {name: '{{ .Release.Name }}-first'}\n  data: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n- metadata: {name: '{{ .Release.Name }}-second'}\n  data: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n")
 	}
 	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-one", FS: os.DirFS(firstDir), LocalPath: firstDir})
 	st.UpdateStatus(chart, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
@@ -769,6 +769,8 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	for i, doc := range initial.Manifests {
 		name, namespace := manifest.DocMetadata(doc)
 		want := []string{"app-first", "app-second"}[i]
+		labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+		assert.Equal(t, labels["helm.toolkit.fluxcd.io/name"], any(hr.Name))
 		if name != want || namespace != hr.Namespace || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: name}) == nil {
 			t.Fatalf("rendered identity = %s/%s, want %s/%s", namespace, name, hr.Namespace, want)
 		}
@@ -926,5 +928,44 @@ func TestReconcile_MutableChartAndSourceValuesReplay(t *testing.T) {
 	assertOutput(final, "second", "two")
 	if final.Fingerprint != withValues.Fingerprint || !cmp.Equal(final.Manifests, withValues.Manifests) {
 		t.Fatal("unchanged mutable source replay changed output")
+	}
+}
+
+func TestReconcile_ListNormalizationFailure(t *testing.T) {
+	t.Parallel()
+	c, st := newTestController(t, nil)
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/list.yaml", `apiVersion: v1
+kind: ConfigMapList
+items:
+- apiVersion: v1
+  metadata: {name: invalid}
+  data: {value: '{{ .Values.required }}'}
+`)
+	src := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+	st.AddObject(src)
+	st.SetArtifact(src.Named(), &store.SourceArtifact{FS: os.DirFS(dir), LocalPath: dir})
+	st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady})
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	st.AddObject(parent)
+	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Values: map[string]any{"required": ""}, Chart: manifest.HelmChart{Name: "mychart", Source: src.Named()}}
+	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}}}, nil)
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
+	if !c.newExecution(hr.Named()).parentReadsUnreadableSecret(hr.Named()) {
+		t.Fatal("fixture did not enable best-effort retry")
+	}
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+	if info.Status != store.StatusFailed || !strings.Contains(info.Message, "Object 'Kind' is missing") {
+		t.Fatalf("persistent invalid list was rescued: %+v", info)
+	}
+	if art, _ := st.GetArtifact(hr.Named()).(*store.Emission); art != nil && art.Complete {
+		t.Fatal("failed render published completed output")
+	}
+	if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "invalid", Namespace: "apps"}) != nil {
+		t.Fatal("failed render published a repaired child")
+	}
+	if slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool { return w.Category == manifest.WarnUnresolvedSubstitution }) {
+		t.Fatal("failed retry reported successful best-effort rescue")
 	}
 }

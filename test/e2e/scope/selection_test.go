@@ -1090,14 +1090,16 @@ func TestE2E_SelectedKustomizeClassification(t *testing.T) {
 
 func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 	for _, tc := range []struct {
-		name                               string
-		before, after                      string
-		patch, sibling, plain, declaration bool
-		want                               map[string]string
+		name                                     string
+		before, after                            string
+		patch, sibling, plain, declaration, list bool
+		want                                     map[string]string
 	}{
 		{name: "referenced patch", before: "resources: [deployment.yaml, cm.yaml]\npatches: [{path: patch.yaml}]\n", patch: true, want: map[string]string{"web": "changed"}},
 		{name: "resource removed", before: "resources: [deployment.yaml, cm.yaml]\n", after: "resources: [deployment.yaml]\n", want: map[string]string{"config": "removed"}},
 		{name: "resource added", before: "resources: [deployment.yaml]\n", after: "resources: [deployment.yaml, cm.yaml]\n", want: map[string]string{"config": "added"}},
+		{name: "list member added", before: "resources: [deployment.yaml, cm.yaml]\n", list: true, want: map[string]string{"config": "added"}},
+		{name: "list member removed", before: "resources: [deployment.yaml, cm.yaml]\n", list: true, want: map[string]string{"config": "removed"}},
 		{name: "declaration removed", before: "resources: [deployment.yaml, child.yaml]\nnameSuffix: -dev\n", after: "resources: [deployment.yaml]\nnameSuffix: -dev\n", declaration: true, want: map[string]string{"child-dev": "removed"}},
 		{name: "declaration added", before: "resources: [deployment.yaml]\nnameSuffix: -dev\n", after: "resources: [deployment.yaml, child.yaml]\nnameSuffix: -dev\n", declaration: true, want: map[string]string{"child-dev": "added"}},
 		{name: "excluded sibling", before: "resources: [deployment.yaml, cm.yaml]\n", sibling: true},
@@ -1120,6 +1122,16 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 				if tc.patch {
 					testutil.WriteFile(t, root, "app/patch.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec: {template: {spec: {containers: [{name: web, image: 'example.test/web:1'}]}}}\n")
 				}
+			}
+			if tc.list {
+				empty := "apiVersion: v1\nkind: ConfigMapList\nitems: []\n"
+				member := "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, kind: ConfigMap, metadata: {name: config}, data: {value: selected}}]\n"
+				before, after := empty, member
+				if tc.want["config"] == "removed" {
+					before, after = member, empty
+				}
+				testutil.WriteFile(t, orig, "app/cm.yaml", before)
+				testutil.WriteFile(t, current, "app/cm.yaml", after)
 			}
 			if tc.after != "" {
 				testutil.WriteFile(t, current, "app/kustomization.yaml", tc.after)
@@ -1156,6 +1168,24 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 					if value != "" {
 						t.Fatalf("ownerless resource acquired parent attribution: %s", out)
 					}
+				}
+			}
+			if tc.list {
+				reversed, _ := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", filepath.Join(orig, "app"), "--path-orig", filepath.Join(current, "app"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+				forward := result.Changes[0]
+				if err := json.Unmarshal([]byte(reversed), &result); err != nil {
+					t.Fatal(err)
+				}
+				if len(result.Changes) != 1 || len(result.Suppressed) != 0 {
+					t.Fatalf("reversed member diff: %s", reversed)
+				}
+				back := result.Changes[0]
+				want := "added"
+				if forward.Status == "added" {
+					want = "removed"
+				}
+				if back.Name != forward.Name || back.Status != want || cmp.Diff(back.Parent, forward.Parent) != "" {
+					t.Fatalf("member pairing did not reverse: %s / %s", out, reversed)
 				}
 			}
 			if tc.patch {

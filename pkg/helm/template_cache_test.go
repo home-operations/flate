@@ -569,6 +569,82 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 
 func TestTemplateCache_TemplateIntegration(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name, input string
+		invalid     bool
+	}{
+		{"list scalars", `apiVersion: v1
+kind: List
+items:
+- apiVersion: example.test/v1
+  kind: Example
+  metadata: {name: nested-keys}
+  spec:
+    mapping: {true: value}
+    string: 'yes'
+    date: '2001-01-01'
+    number: 9007199254740993
+`, false},
+		{"list partial identity", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: partial}}]\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, root := t.TempDir(), t.TempDir()
+			testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+			testutil.WriteFile(t, dir, "mychart/templates/list.yaml", "{{ if .Values.fail }}{{ fail \"cache miss action\" }}{{ end }}\n"+tc.input)
+			owner := cachetest.New(t, root, cache.New)
+			cli := NewClient(owner)
+			sources := localChartResolver(t, "chart-repo", "flux-system", dir)
+			first, firstErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: sources})
+			if tc.invalid {
+				if !errors.Is(firstErr, manifest.ErrInput) || first != nil {
+					t.Fatalf("cold invalid list = %#v, %v", first, firstErr)
+				}
+			} else {
+				assert.NoError(t, firstErr)
+			}
+			t.Run("persisted replay", func(t *testing.T) {
+				t.Parallel()
+				if !renderPersistenceEligible(t) {
+					t.Skipf("requires identified test binary: %s", cache.RenderPersistenceDisabledReason())
+				}
+				loaded, err := loadDecodedChart(t.Context(), cli, newHR(), sources)
+				assert.NoError(t, err)
+				loaded.values, loaded.valuesErr = cli.observeValuesFiles(t.Context(), loaded, newHR().ChartValuesFiles, newHR().IgnoreMissingValuesFiles)
+				assert.NoError(t, loaded.valuesErr)
+				key := cache.BlobKey{Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()), PersistOnly: true}
+				r, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
+				assert.NoError(t, err)
+				var record renderRecord
+				assert.NoError(t, json.NewDecoder(r).Decode(&record))
+				assert.NoError(t, r.Close())
+				raw, err := manifest.DecodeRender(record.Output)
+				assert.NoError(t, err)
+				wantRaw, err := manifest.SplitDocs([]byte(tc.input))
+				assert.NoError(t, err)
+				assert.Diff(t, raw, wantRaw)
+				values := map[string]any{"fail": true}
+				key.Content = computeTemplateKey(loaded, values, Options{}, newHR())
+				r, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					return cache.ProducerResult{}, json.NewEncoder(w).Encode(record)
+				})
+				assert.NoError(t, err)
+				assert.NoError(t, r.Close())
+				assert.NoError(t, owner.Close())
+				fresh := NewClient(cachetest.New(t, root, cache.New))
+				out, err := fresh.Template(t.Context(), newHR(), values, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				if tc.invalid {
+					if !errors.Is(err, manifest.ErrInput) || err.Error() != firstErr.Error() || out != nil {
+						t.Fatalf("persisted invalid list = %#v, %v; cold = %v", out, err, firstErr)
+					}
+				} else {
+					assert.NoError(t, err)
+					assert.Diff(t, out, first)
+				}
+				t.Log("verified persisted raw-list hit; Helm action would fail on a miss")
+			})
+		})
+	}
 	t.Run("empty stream", func(t *testing.T) {
 		t.Parallel()
 		dir, root := t.TempDir(), t.TempDir()

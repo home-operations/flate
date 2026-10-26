@@ -267,7 +267,7 @@ func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) er
 		return fmt.Errorf("discovery package %q build: %w", root, err)
 	}
 	built := []store.Child{}
-	for _, doc := range manifest.FlattenLists(docs) {
+	for _, doc := range docs {
 		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets})
 		if err != nil {
 			return fmt.Errorf("discovery package %q document: %w", root, err)

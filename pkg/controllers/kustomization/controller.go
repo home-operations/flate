@@ -130,7 +130,6 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err != nil {
 		return err
 	}
-	docs = manifest.FlattenLists(docs)
 	base.Stamp(ks.EmissionPolicy(), docs)
 
 	// Flux skips substitution on resources marked

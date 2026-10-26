@@ -12,6 +12,8 @@ import (
 	"helm.sh/helm/v4/pkg/action"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/cli-runtime/pkg/resource"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -619,4 +621,187 @@ func TestTemplate_ShowOnlyFraming(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTemplate_EmittedLists(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, input string
+		wantError   bool
+	}{
+		{"generic", `apiVersion: v1
+kind: List
+items:
+- {apiVersion: v1, kind: ConfigMap, metadata: {name: a}}
+- {apiVersion: v1, kind: Secret, metadata: {name: b}}
+`, false},
+		{"typed both absent", "apiVersion: v1\nkind: ConfigMapList\nitems: [{metadata: {name: bare}}]\n", false},
+		{"typed secret", "apiVersion: v1\nkind: SecretList\nitems: [{metadata: {name: secret}}]\n", false},
+		{"missing kind", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: partial}}]\n", true},
+		{"missing version", "apiVersion: v1\nkind: ConfigMapList\nitems: [{kind: ConfigMap, metadata: {name: partial}}]\n", true},
+		{"nested", `apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: List
+  items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: nested}}]
+- {apiVersion: v1, kind: ConfigMap, metadata: {name: sibling}}
+`, true},
+		{"empty", "apiVersion: v1\nkind: ConfigMapList\nitems: []\n", false},
+		{"null items", "apiVersion: v1\nkind: ConfigMapList\nitems: null\n", false},
+		{"null member", "apiVersion: v1\nkind: ConfigMapList\nitems: [null]\n", false},
+		{"scalar member", "apiVersion: v1\nkind: ConfigMapList\nitems: [scalar]\n", true},
+		{"object items", "apiVersion: v1\nkind: ConfigMapList\nitems: {metadata: {name: bad}}\n", true},
+		{"scalar items", "apiVersion: v1\nkind: ConfigMapList\nitems: scalar\n", true},
+		{"custom kind", "apiVersion: example.test/v1\nkind: Bundle\nmetadata: {name: bundle}\nitems: [{apiVersion: v1, kind: ConfigMap, metadata: {name: child}}]\n", false},
+		{"scalar AllowList", "apiVersion: example.test/v1\nkind: AllowList\nmetadata: {name: acl}\nitems: [scalar]\n", true},
+		{"ordinary AllowList", "apiVersion: example.test/v1\nkind: AllowList\nmetadata: {name: acl}\nspec: {items: [scalar]}\n", false},
+		{"constructed scalars", `apiVersion: v1
+kind: List
+items:
+- apiVersion: example.test/v1
+  kind: Example
+  metadata: {name: nested-keys}
+  spec:
+    mapping: {true: value}
+    string: 'yes'
+    date: '2001-01-01'
+    number: 9007199254740993
+`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			infos, oracleErr := resource.NewLocalBuilder().ContinueOnError().Unstructured().Flatten().Stream(strings.NewReader(tc.input), "").Do().Infos()
+			if (oracleErr != nil) != tc.wantError {
+				t.Fatalf("upstream error = %v, wantError = %t", oracleErr, tc.wantError)
+			}
+			want := make([]map[string]any, 0, len(infos))
+			for _, info := range infos {
+				want = append(want, info.Object.(*unstructured.Unstructured).Object)
+			}
+			if tc.name == "ordinary AllowList" {
+				var err error
+				want, err = manifest.SplitDocs([]byte(tc.input))
+				assert.NoError(t, err)
+			}
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+			testutil.WriteFile(t, dir, "mychart/templates/list.yaml", tc.input)
+			cli := NewClient(cachetest.New(t, "", sourcecache.New))
+			docs, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+			if oracleErr != nil {
+				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), oracleErr.Error()) {
+					t.Fatalf("Template error = %v, want upstream: %v", err, oracleErr)
+				}
+				if docs != nil {
+					t.Fatalf("failed producer returned partial output: %#v", docs)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Diff(t, docs, want)
+		})
+	}
+}
+
+func TestNormalizeLists_OwnershipAndOrder(t *testing.T) {
+	t.Parallel()
+	input := []byte(`apiVersion: v1
+kind: ConfigMap
+metadata: {name: before}
+---
+apiVersion: v1
+kind: ConfigMapList
+items: []
+---
+apiVersion: v1
+kind: ConfigMapList
+items:
+- metadata: {name: expanded}
+  data: {key: value}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: after}
+`)
+	docs, err := manifest.SplitDocs(input)
+	assert.NoError(t, err)
+	snapshot, err := manifest.EncodeRender(docs)
+	assert.NoError(t, err)
+	out, err := normalizeLists(docs)
+	assert.NoError(t, err)
+	var names []string
+	for _, doc := range out {
+		name, _ := manifest.DocMetadata(doc)
+		names = append(names, name)
+	}
+	assert.Diff(t, names, []string{"before", "expanded", "after"})
+	out[1]["data"].(map[string]any)["key"] = "changed"
+	unchanged, err := manifest.EncodeRender(docs)
+	assert.NoError(t, err)
+	assert.Diff(t, unchanged, snapshot)
+	out[0]["retained"] = true
+	assert.Equal(t, docs[0]["retained"], any(true))
+	out[2]["retained"] = true
+	assert.Equal(t, docs[3]["retained"], any(true))
+}
+
+func TestNormalizeLists_NoItems(t *testing.T) {
+	docs := []map[string]any{{"kind": "AllowList", "spec": map[string]any{"items": []any{"value"}}}, {"kind": "ConfigMap"}}
+	out, err := normalizeLists(docs)
+	assert.NoError(t, err)
+	assert.Equal(t, &out[0] == &docs[0], true)
+	allocations := testing.AllocsPerRun(100, func() {
+		out, err = normalizeLists(docs)
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, allocations, float64(0))
+}
+
+func TestTemplate_PostRenderedLists(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/list.yaml", `apiVersion: v1
+kind: List
+items:
+- apiVersion: v1
+  kind: List
+  items: [{apiVersion: v1, kind: ConfigMap, metadata: {name: nested}}]
+- {apiVersion: v1, kind: ConfigMap, metadata: {name: sibling}}
+`)
+	hr := newHR()
+	hr.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
+	out, err := NewClient(cachetest.New(t, "", sourcecache.New)).Template(t.Context(), hr, nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	assert.NoError(t, err)
+	var names []string
+	for _, doc := range out {
+		name, _ := manifest.DocMetadata(doc)
+		names = append(names, name)
+	}
+	assert.Diff(t, names, []string{"nested", "sibling"})
+}
+
+func TestNormalizeLists_ErrorDiscardsPartialOutput(t *testing.T) {
+	t.Parallel()
+	docs, err := manifest.SplitDocs([]byte(`apiVersion: v1
+kind: ConfigMap
+metadata: {name: ordinary}
+---
+apiVersion: v1
+kind: ConfigMapList
+items:
+- {apiVersion: v1, kind: ConfigMap, metadata: {name: valid}}
+- {apiVersion: v1, metadata: {name: invalid}}
+`))
+	assert.NoError(t, err)
+	before, err := manifest.EncodeRender(docs)
+	assert.NoError(t, err)
+	out, err := normalizeLists(docs)
+	if out != nil || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+		t.Fatalf("invalid stream returned partial success: %#v, %v", out, err)
+	}
+	after, err := manifest.EncodeRender(docs)
+	assert.NoError(t, err)
+	assert.Diff(t, after, before)
 }

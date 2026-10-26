@@ -105,17 +105,19 @@ kind: ClusterRole
 metadata: {name: foreign}
 `
 
-// TestReconcile_HappyPath drives the full reconcile flow: AddObject
-// fires the listener, depwait clears (no deps), kustomize renders,
-// emitRenderedChildren lands the ConfigMap as a rendered artifact,
-// status flips Ready, artifact carries a fingerprint.
 func TestReconcile_HappyPath(t *testing.T) {
 	t.Parallel()
 	c, s, root := newControllerWithFixture(t)
-	testutil.WriteFile(t, root, "apps/cm.yaml", namespaceIdentityDocs)
+	list := "apiVersion: v1\nkind: List\nitems:\n"
+	for doc := range strings.SplitSeq(namespaceIdentityDocs, "---\n") {
+		list += "- " + strings.ReplaceAll(strings.TrimSpace(doc), "\n", "\n  ") + "\n"
+	}
+	testutil.WriteFile(t, root, "apps/cm.yaml", list)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
-		Path: "./apps",
+		Path:            "./apps",
+		TargetNamespace: "rendered",
+		CommonMetadata:  &kustomizev1.CommonMetadata{Labels: map[string]string{"team": "flate"}},
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
@@ -141,12 +143,19 @@ func TestReconcile_HappyPath(t *testing.T) {
 	assert.Equal(t, len(art.Manifests), 5)
 	for _, doc := range art.Manifests {
 		name, ns := manifest.DocMetadata(doc)
-		assert.Equal(t, ns, "")
+		labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+		assert.Equal(t, labels["team"], any("flate"))
+		assert.Equal(t, labels["kustomize.toolkit.fluxcd.io/name"], any(ks.Name))
 		want := ks.TargetNamespace
 		if manifest.DocKind(doc) == "ClusterRole" && manifest.DocAPIVersion(doc) == "rbac.authorization.k8s.io/v1" {
 			want = ""
 		}
-		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+		assert.Equal(t, ns, want)
+		id := manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}
+		if !slices.Contains(testutil.Owners(s.Productions(id, nil)), ks.Named()) {
+			t.Errorf("child %s lost parent edge", id)
+		}
+		if s.GetObject(id) == nil {
 			t.Errorf("missing effective child %s/%s", want, name)
 		}
 	}
@@ -316,9 +325,12 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 				optOut = fmt.Sprintf(", %s: {kustomize.toolkit.fluxcd.io/substitute: disabled}", tc.disabled)
 			}
 			testutil.WriteFileAt(t, filepath.Join(root, "apps", "cm.yaml"), fmt.Sprintf(`apiVersion: v1
-kind: ConfigMap
-metadata: {name: hello, namespace: default%s}
-data: {greeting: '%s'}
+kind: List
+items:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata: {name: hello, namespace: default%s}
+  data: {greeting: '%s'}
 `, optOut, input))
 
 			spec := map[string]any{

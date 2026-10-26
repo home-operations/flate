@@ -2,6 +2,7 @@
 package helm
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,6 +32,13 @@ func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
 func TestE2E_BuildHR(t *testing.T) {
 	dir := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMapList
+items:
+- metadata: {name: '{{ .Release.Name }}-cm'}
+  data: {greeting: {{ .Values.greeting | quote }}, replicas: "{{ .Values.replicas }}"}
+`)
+
 	testutil.WriteFile(t, dir, "charts/mychart/templates/secret.yaml", `apiVersion: v1
 kind: Secret
 metadata: {name: demo-secret}
@@ -319,5 +327,51 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 			t.Fatalf("Helm output or warnings changed: stdout=%s stderr=%s", stdout, stderr)
 		}
 		previousOut, previousErr = stdout, stderr
+	}
+}
+
+func TestE2E_InvalidHelmList(t *testing.T) {
+	dir := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: invalid}}]\n")
+	out, stderr, code := harness.RunCLIBuffers("build", "hr", "--path", dir, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	if code != 1 || !strings.Contains(stderr, "Object 'Kind' is missing") || strings.Contains(out, "name: invalid") || strings.Contains(out, "kind: ConfigMapList") {
+		t.Fatalf("invalid list exit=%d stdout=%s stderr=%s", code, out, stderr)
+	}
+}
+
+func TestE2E_HelmListMemberDiff(t *testing.T) {
+	before, after := t.TempDir(), t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), before)
+	body := `apiVersion: v1
+kind: ConfigMapList
+items:
+- metadata: {name: stable}
+  data: {value: fixed}
+`
+	testutil.WriteFile(t, before, "charts/mychart/templates/configmap.yaml", body)
+	testutil.CopyTree(t, before, after)
+	testutil.WriteFile(t, after, "charts/mychart/templates/configmap.yaml", body+"- metadata: {name: added}\n  data: {value: extra}\n")
+	for _, tc := range []struct{ current, original, status string }{{after, before, "added"}, {before, after, "removed"}} {
+		t.Run(tc.status, func(t *testing.T) {
+			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", tc.current, "--path-orig", tc.original, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			var result struct {
+				Changes []struct {
+					Name, Status string
+					Parent       struct{ Kind, Name, Namespace string }
+				}
+				Suppressed []any
+			}
+			if err := json.Unmarshal([]byte(out), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Changes) != 1 || len(result.Suppressed) != 0 {
+				t.Fatalf("list diff = %s\n%s", out, stderr)
+			}
+			change := result.Changes[0]
+			if change.Name != "added" || change.Status != tc.status || change.Parent.Kind != "HelmRelease" || change.Parent.Name != "demo" || change.Parent.Namespace != "apps" {
+				t.Fatalf("list member lost pairing/parent: %s", out)
+			}
+		})
 	}
 }

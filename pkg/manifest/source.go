@@ -96,14 +96,6 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 		return nil, inputf("GitRepository missing spec.url")
 	}
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GitProviderGeneric)
-	cr.Spec.URL = resolveEnvsubstDefaults(cr.Spec.URL)
-	if r := cr.Spec.Reference; r != nil {
-		r.Branch = resolveEnvsubstDefaults(r.Branch)
-		r.Tag = resolveEnvsubstDefaults(r.Tag)
-		r.SemVer = resolveEnvsubstDefaults(r.SemVer)
-		r.Commit = resolveEnvsubstDefaults(r.Commit)
-		r.Name = resolveEnvsubstDefaults(r.Name)
-	}
 	out := &GitRepository{
 		Name:              cr.Name,
 		Namespace:         cr.Namespace,
@@ -222,16 +214,6 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 		return nil, inputf("OCIRepository missing spec.url")
 	}
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)
-	// Pre-resolve envsubst defaults on ref fields so a chart pin like
-	// `tag: "${FLUXCD_VERSION:=v2.8.5}"` becomes "v2.8.5" before the
-	// fetcher tries to resolve it. Bare ${VAR} (no default) is left
-	// for postBuild substitution.
-	cr.Spec.URL = resolveEnvsubstDefaults(cr.Spec.URL)
-	if r := cr.Spec.Reference; r != nil {
-		r.Tag = resolveEnvsubstDefaults(r.Tag)
-		r.SemVer = resolveEnvsubstDefaults(r.SemVer)
-		r.Digest = resolveEnvsubstDefaults(r.Digest)
-	}
 	out := &OCIRepository{
 		Name:              cr.Name,
 		Namespace:         cr.Namespace,

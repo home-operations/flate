@@ -279,6 +279,7 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 		disabled  string
 		input     string
 		want      string
+		reference string
 	}{
 		{name: "no postBuild", want: "${VAR:=default}"},
 		{name: "unset", postBuild: map[string]any{}, want: "${VAR:=default}"},
@@ -304,6 +305,13 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 			postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}},
 			want:      "configured",
 		},
+		{name: "supplied default", input: "${ENV:=prod}", postBuild: map[string]any{"substitute": map[string]any{"ENV": "stage"}}, want: "stage"},
+		{name: "nested default", input: "${ENV:=${OTHER:=prod}}", postBuild: map[string]any{"substitute": map[string]any{"OTHER": "stage"}}, want: "stage"},
+		{name: "escaped default", input: "$${ENV:=prod}", postBuild: map[string]any{"substitute": map[string]any{"ENV": "stage"}}, want: "${ENV:=prod}"},
+		{name: "ConfigMap producer", reference: "ConfigMap", postBuild: map[string]any{"substituteFrom": []any{map[string]any{"kind": "ConfigMap", "name": "settings"}}}, want: "referenced"},
+		{name: "Secret producer", reference: "Secret", postBuild: map[string]any{"substituteFrom": []any{map[string]any{"kind": "Secret", "name": "settings"}}}, want: "referenced"},
+		{name: "inline over ConfigMap", reference: "ConfigMap", postBuild: map[string]any{"substituteFrom": []any{map[string]any{"kind": "ConfigMap", "name": "settings"}}, "substitute": map[string]any{"VAR": "configured"}}, want: "configured"},
+		{name: "inline over Secret", reference: "Secret", postBuild: map[string]any{"substituteFrom": []any{map[string]any{"kind": "Secret", "name": "settings"}}, "substitute": map[string]any{"VAR": "configured"}}, want: "configured"},
 		{name: "disabled label", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, disabled: "labels", want: "${VAR:=default}"},
 		{name: "disabled annotation", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, disabled: "annotations", want: "${VAR:=default}"},
 		{name: "double dollar without variables", input: "echo $$PID", want: "echo $$PID"},
@@ -316,6 +324,13 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c, s, root := newControllerWithFixture(t)
+			s.AddObject(&manifest.Kustomization{Name: "unrelated", Namespace: "flux-system", PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VAR": "unrelated", "ENV": "unrelated"}}})
+			switch tc.reference {
+			case "ConfigMap":
+				s.AddObject(&manifest.ConfigMap{Name: "settings", Namespace: "flux-system", Data: map[string]any{"VAR": "referenced"}})
+			case "Secret":
+				s.AddObject(&manifest.Secret{Name: "settings", Namespace: "flux-system", StringData: map[string]any{"VAR": "referenced"}})
+			}
 			input := tc.input
 			if input == "" {
 				input = "${VAR:=default}"
@@ -330,7 +345,26 @@ items:
 - apiVersion: v1
   kind: ConfigMap
   metadata: {name: hello, namespace: default%s}
-  data: {greeting: '%s'}
+  data: {greeting: '%[2]s'}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: child, namespace: flux-system%[1]s}
+spec:
+  path: '%[2]s'
+  sourceRef: {kind: GitRepository, name: '%[2]s', namespace: '%[2]s'}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: source, namespace: flux-system%[1]s}
+spec: {url: 'https://example.invalid/repo', ref: {branch: '%[2]s'}}
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: release, namespace: flux-system%[1]s}
+spec:
+  chart: {spec: {chart: example, sourceRef: {kind: HelmRepository, name: charts}}}
+  valuesFrom: [{kind: ConfigMap, name: '%[2]s', valuesKey: '%[2]s', optional: true}]
 `, optOut, input))
 
 			spec := map[string]any{
@@ -354,16 +388,77 @@ items:
 			}
 			ks := obj.(*manifest.Kustomization)
 			s.AddObject(ks)
+			l := loader.New(s)
+			l.SourceRoot = root
+			_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			s.SetDiscoveryIndex(l.Index)
+			childID := testutil.KustomizationID("flux-system", "child")
+			record, found := l.Index.Lookup(childID)
+			if !found || record.Parent != ks.Named() || s.GetObject(childID) != nil {
+				t.Fatalf("child must start as owned discovery evidence: record=%+v object=%v", record, s.GetObject(childID))
+			}
+			authored := manifest.DeepCopyMap(spec)
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
 			art, _ := s.GetArtifact(ks.Named()).(*store.Emission)
-			if art == nil || len(art.Manifests) != 1 {
-				t.Fatalf("expected one rendered manifest, got %+v", art)
+			if art == nil || len(art.Manifests) != 4 {
+				t.Fatalf("expected four rendered manifests, got %+v", art)
 			}
-			data := art.Manifests[0]["data"].(map[string]any)
-			if got := data["greeting"]; got != tc.want {
-				t.Errorf("greeting = %q, want %q", got, tc.want)
+			for _, doc := range art.Manifests {
+				if manifest.DocKind(doc) == manifest.KindConfigMap {
+					assert.Equal(t, doc["data"].(map[string]any)["greeting"], any(tc.want))
+				}
+			}
+			published := make(map[manifest.NamedResource]map[string]any)
+			for run := range 2 {
+				for _, id := range []manifest.NamedResource{
+					childID,
+					{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "source"},
+					{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "release"},
+				} {
+					obj, doc, held := s.GetEmission(id)
+					held.Finish()
+					if obj == nil || doc == nil || s.EmissionOwner(id) != ks.Named() {
+						t.Fatalf("missing published child %s: %v %v", id, obj, doc)
+					}
+					var fields []string
+					typedSpec := doc["spec"].(map[string]any)
+					switch obj := obj.(type) {
+					case *manifest.Kustomization:
+						fields = []string{obj.Path, obj.SourceRef.Name, obj.SourceRef.Namespace, typedSpec["path"].(string), typedSpec["sourceRef"].(map[string]any)["name"].(string), typedSpec["sourceRef"].(map[string]any)["namespace"].(string)}
+						assert.Equal(t, obj.SourceID().Name, tc.want)
+						assert.Equal(t, obj.SourceID().Namespace, tc.want)
+					case *manifest.GitRepository:
+						fields = []string{obj.Reference.Branch, typedSpec["ref"].(map[string]any)["branch"].(string)}
+					case *manifest.HelmRelease:
+						ref := typedSpec["valuesFrom"].([]any)[0].(map[string]any)
+						fields = []string{obj.ValuesFrom[0].Name, obj.ValuesFrom[0].ValuesKey, ref["name"].(string), ref["valuesKey"].(string)}
+						assert.Equal(t, obj.ValuesFrom[0].Optional, true)
+					default:
+						t.Fatalf("unexpected child %T", obj)
+					}
+					for _, got := range fields {
+						assert.Equal(t, got, tc.want)
+					}
+					for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+						if ref.Use == "source" && id.Kind == manifest.KindKustomization || ref.Use == "valuesFrom" {
+							assert.Equal(t, ref.Name, tc.want)
+						}
+					}
+					if run == 0 {
+						published[id] = manifest.DeepCopyMap(doc)
+					} else {
+						assert.Diff(t, doc, published[id])
+					}
+				}
+				assert.Diff(t, spec, authored)
+				if run == 0 {
+					info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
+					assert.Equal(t, info.Status, store.StatusReady)
+				}
 			}
 		})
 	}

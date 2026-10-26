@@ -35,7 +35,7 @@ with `go test -race ./test/e2e/...`.
   A top-level `cluster-apps` Flux Kustomization injects
   `postBuild.substituteFrom` via `spec.patches` into every child KS rendered
   from `./apps`. The fixture also ships a SOPS-encrypted Secret alongside the
-  patched leaf to exercise the wipe-to-PLACEHOLDER behavior end-to-end. Used
+  patched leaf to exercise the wipe-to-PLACEHOLDER behavior end-to-end. Its raw data value uses complete SOPS AES256_GCM framing. Used
   by `test/e2e/substitution` tests `TestE2E_ParentPatchesPropagateToChildren`,
   `TestE2E_SOPSValueWipedToPlaceholder`, and
   `TestE2E_SubstituteDisabledAnnotation`.
@@ -46,7 +46,7 @@ with `go test -race ./test/e2e/...`.
   orphan; flate does not discover it. Used by
   `test/e2e/scope` test `TestE2E_OrphanedKustomizationNotDiscovered`.
 
-- `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, sanitized ciphertext, authored and explicit namespaces, and one tracked child render.
+- `resourceset-documents/` - ResourceSet JSON and YAML admission through SDK and CLI output: incomplete identities, nonrecursive list items, directives, duplicates, sanitized ciphertext with complete SOPS AES256_GCM framing, authored and explicit namespaces, and one tracked child render.
 
 ArtifactGenerator CLI fixtures are created in temporary repositories by
 `test/e2e/artifactgenerator_test.go`. `AllStrategies` combines nested directory

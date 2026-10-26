@@ -36,7 +36,12 @@ func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {
 	testutil.CopyTree(t, src, root)
 
 	out := harness.RunCLIStdout(t, "build", "ks", "leaf", "-n", "flux-system",
-		"--path", root, "-o", "yaml")
+		"--path", root, "--concurrency", "2", "-o", "yaml")
+	again := harness.RunCLIStdout(t, "build", "ks", "leaf", "-n", "flux-system",
+		"--path", root, "--concurrency", "2", "-o", "yaml")
+	if again != out {
+		t.Fatal("SOPS substitution output changed between runs")
+	}
 
 	if !strings.Contains(out, "secret: ..PLACEHOLDER_MY_SECRET..") {
 		t.Errorf("expected SOPS-derived MY_SECRET to substitute to its placeholder:\n%s", out)

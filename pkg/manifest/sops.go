@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"encoding/base64"
 	"maps"
+	"regexp"
 	"strings"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 )
 
-// sopsCiphertextPrefix opens every SOPS-encrypted scalar. SOPS rewrites
-// an encrypted value as `ENC[AES256_GCM,data:…,iv:…,tag:…,type:…]`; the
-// algorithm-qualified prefix plus trailing `]` is specific enough that a
-// real cleartext value never matches it by accident.
 const sopsCiphertextPrefix = "ENC[AES256_GCM,"
+
+// SOPS v3.13.3 aes/cipher.go encre defines framing without an end anchor.
+// https://raw.githubusercontent.com/getsops/sops/v3.13.3/aes/cipher.go
+var sopsCiphertext = regexp.MustCompile(`^ENC\[AES256_GCM,data:(.+),iv:(.+),tag:(.+),type:(.+)\]`)
 
 // ValuePlaceholder returns the offline placeholder token for key.
 func ValuePlaceholder(key string) string {
@@ -21,25 +22,24 @@ func ValuePlaceholder(key string) string {
 }
 
 func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
-	encrypted := isEncryptedSecret(doc)
 	var sanitized map[string]any
 	for _, field := range []string{"data", "stringData", "binaryData"} {
 		var encoding *base64.Encoding
-		if field == "binaryData" || (kind == KindSecret && field == "data") {
+		secretData := kind == KindSecret && field == "data"
+		if field == "binaryData" || secretData {
 			encoding = base64.StdEncoding
 		}
 		data, _ := doc[field].(map[string]any)
 		var replaced map[string]any
 		for key, raw := range data {
-			// Base64 decoding cannot lengthen a scalar to contain a longer marker.
-			if value, ok := raw.(string); !encrypted && ok && len(value) < len(sopsCiphertextPrefix) {
+			if value, ok := raw.(string); ok && !secretData && len(value) < len(sopsCiphertextPrefix) {
 				continue
 			}
 			value, err := scalarString(raw)
-			if err != nil && !encrypted {
+			if err != nil {
 				continue
 			}
-			wiped := WipeValue(key, value, encoding, encrypted)
+			wiped := WipeValue(key, value, encoding, secretData)
 			if wiped == value {
 				continue
 			}
@@ -61,14 +61,26 @@ func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
 	return doc, false
 }
 
-// WipeValue replaces raw or once-decoded SOPS ciphertext with a per-key token.
-// Nil encoding denotes a plaintext field; malformed encoding alone is preserved.
-func WipeValue(key, value string, encoding *base64.Encoding, encrypted bool) string {
-	wiped := encrypted || strings.Contains(value, sopsCiphertextPrefix)
-	if !wiped && encoding != nil {
+// WipeValue replaces raw SOPS tokens and once-decoded Secret.data tokens or documents.
+// Nil encoding leaves the per-key replacement as plaintext.
+func WipeValue(key, value string, encoding *base64.Encoding, secretData bool) string {
+	wiped := strings.HasPrefix(value, sopsCiphertextPrefix) && sopsCiphertext.MatchString(value)
+	if !wiped && secretData && encoding != nil {
 		var scratch [128]byte
 		decoded, err := encoding.AppendDecode(scratch[:0], []byte(value))
-		wiped = err == nil && bytes.Contains(decoded, []byte(sopsCiphertextPrefix))
+		if err == nil {
+			if bytes.HasPrefix(decoded, []byte(sopsCiphertextPrefix)) {
+				// The regexp matcher makes its input escape; keep ordinary decoding on the stack.
+				wiped = sopsCiphertext.Match(bytes.Clone(decoded))
+			}
+			// Flux 07fe06f32fd5 decryptor.go detects Secret documents by these markers.
+			for _, marker := range []string{"mac: ENC[", `"mac": "ENC[`, "sops_mac=ENC[", "[sops]"} {
+				if bytes.Contains(decoded, []byte(marker)) {
+					wiped = true
+					break
+				}
+			}
+		}
 	}
 	if !wiped {
 		return value
@@ -78,16 +90,6 @@ func WipeValue(key, value string, encoding *base64.Encoding, encrypted bool) str
 		return encoding.EncodeToString([]byte(token))
 	}
 	return token
-}
-
-func isEncryptedSecret(doc map[string]any) bool {
-	sops, ok := doc["sops"].(map[string]any)
-	if !ok {
-		return false
-	}
-	_, hasMac := sops["mac"]
-	_, hasVersion := sops["version"]
-	return hasMac || hasVersion
 }
 
 // SubstituteAnnotationKey is Flux kustomize-controller's per-resource

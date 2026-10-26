@@ -70,7 +70,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 		{name: "optional supplied", postBuild: substitutionReference("ConfigMap", true), input: externalCM, want: "supplied"},
 		{name: "secret stringData", postBuild: substitutionReference("Secret", false), input: externalSecret, want: "supplied", strict: true},
 		{name: "secret data", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "stringData: {VALUE: supplied}", "data: {VALUE: c3VwcGxpZWQ=}", 1), want: "supplied"},
-		{name: "secret ciphertext wiped", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "supplied", "'ENC[AES256_GCM,data:fixture]'", 1) + "sops: {encrypted_regex: data}\n", want: "..PLACEHOLDER_VALUE.."},
+		{name: "secret ciphertext wiped", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "supplied", "'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'", 1) + "sops: {encrypted_regex: data}\n", want: "..PLACEHOLDER_VALUE.."},
 		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), want: "${VALUE}"},
 		{name: "inline beats reference", postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n", input: externalCM, want: "inline", strict: true},
 		{name: "overlay beats inline and reference", postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n", input: externalCM, pairs: []string{"VALUE=first", "VALUE=overlay"}, want: "overlay", strict: true},

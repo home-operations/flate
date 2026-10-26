@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -33,7 +34,20 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 		{name: "sops_configmap_wipe", kind: "configMap", input: "envs: [../input.txt]", value: "VALUE=" + encrypted, wipe: true, want: "..PLACEHOLDER_VALUE.."},
 		{name: "sops_secret_wipe", kind: "secret", input: "envs: [../input.txt]", value: "VALUE=" + encrypted, wipe: true, want: "..PLACEHOLDER_VALUE.."},
 		{name: "sops_secret_preserved", kind: "secret", input: "files: [VALUE=../input.txt]", value: encrypted, want: encrypted},
+		{name: "yaml document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops:\n  mac: ENC[fixture]\n", wipe: true, want: "..PLACEHOLDER_VALUE.."},
+		{name: "json document", kind: "secret", input: "files: [VALUE=../input.txt]", value: `{"sops": {"mac": "ENC[fixture]"}}`, wipe: true, want: "..PLACEHOLDER_VALUE.."},
+		{name: "dotenv document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", wipe: true, want: "..PLACEHOLDER_VALUE.."},
+		{name: "shortest ini document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "[sops]", wipe: true, want: "..PLACEHOLDER_VALUE.."},
+		{name: "configmap document", kind: "configMap", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", wipe: true, want: "sops_mac=ENC[fixture]"},
+		{name: "disabled document", kind: "secret", input: "files: [VALUE=../input.txt]", value: "sops_mac=ENC[fixture]", want: "sops_mac=ENC[fixture]"},
 		{name: "cleartext_preserved", kind: "secret", input: "files: [VALUE=../input.txt]", value: "fixture", wipe: true, want: "fixture"},
+		{name: "ciphertext literal", kind: "configMap", input: "literals: ['VALUE=" + encrypted + "']", wipe: true, want: "..PLACEHOLDER_VALUE.."},
+		{name: "ciphertext file", kind: "secret", input: "files: [VALUE=../input.txt]", value: encrypted, wipe: true, want: "..PLACEHOLDER_VALUE.."},
+		{name: "literal prefix", kind: "configMap", input: "envs: [../input.txt]", value: "VALUE=documentation: " + encrypted, wipe: true, want: "documentation: " + encrypted},
+		{name: "embedded yaml", kind: "secret", input: "files: [VALUE=../input.txt]", value: "enabled: " + encrypted + "\n", wipe: true, want: "enabled: " + encrypted + "\n"},
+		{name: "partial framing", kind: "configMap", input: "literals: ['VALUE=ENC[AES256_GCM,data:fixture]']", wipe: true, want: "ENC[AES256_GCM,data:fixture]"},
+		{name: "encoded-looking plaintext", kind: "configMap", input: "files: [VALUE=../input.txt]", value: base64.StdEncoding.EncodeToString([]byte(encrypted)), wipe: true, want: base64.StdEncoding.EncodeToString([]byte(encrypted))},
+		{name: "encoded-looking secret", kind: "secret", input: "files: [VALUE=../input.txt]", value: base64.StdEncoding.EncodeToString([]byte(encrypted)), wipe: true, want: base64.StdEncoding.EncodeToString([]byte(encrypted))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -41,7 +55,13 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			root := filepath.Join(parent, "repo")
 			testutil.WriteFile(t, parent, "outside.txt", "OUTSIDE")
 			testutil.WriteFile(t, root, "apps/input.txt", tc.value)
-			testutil.WriteFile(t, root, "apps/a/kustomization.yaml", tc.namespace+tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+tc.input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n")
+			input := tc.input
+			if strings.HasPrefix(input, "literals: [") {
+				input = strings.TrimSuffix(input, "]") + ", CLEAR=readable]"
+			} else {
+				input += "\n  literals: [CLEAR=readable]"
+			}
+			testutil.WriteFile(t, root, "apps/a/kustomization.yaml", tc.namespace+tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+input+"\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n")
 			if tc.escape {
 				testutil.WriteFile(t, parent, "outside/kustomization.yaml", tc.kind+"Generator:\n- name: input\n  namespace: inner\n  "+tc.input+"\n")
 				testutil.WriteFile(t, root, "apps/a/kustomization.yaml", "resources: [../../../outside]\n"+tc.kind+"Generator:\n- name: sibling\n  namespace: inner\n  literals: [VALUE=sibling]\n")
@@ -107,12 +127,21 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 				if kind == manifest.KindSecret {
 					want = base64.StdEncoding.EncodeToString([]byte(want))
 				}
-				var got any
+				var got, clearValue any
 				switch o := obj.(type) {
 				case *manifest.ConfigMap:
-					got = o.Data["VALUE"]
+					got, clearValue = o.Data["VALUE"], o.Data["CLEAR"]
 				case *manifest.Secret:
-					got = o.Data["VALUE"]
+					got, clearValue = o.Data["VALUE"], o.Data["CLEAR"]
+				}
+				if !tc.existing {
+					wantClear := "readable"
+					if kind == manifest.KindSecret {
+						wantClear = base64.StdEncoding.EncodeToString([]byte(wantClear))
+					}
+					if clearValue != wantClear {
+						t.Fatalf("CLEAR=%v, want %q", clearValue, wantClear)
+					}
 				}
 				if got != want {
 					t.Fatalf("VALUE=%v, want %q", got, want)

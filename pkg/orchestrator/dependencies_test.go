@@ -19,7 +19,7 @@ func TestRender_GeneratedValuesAndParentGates(t *testing.T) {
 		t.Run(fmt.Sprintf("workers_%d/wipe_%t", tc.workers, tc.wipeSecrets), func(t *testing.T) {
 			dir := t.TempDir()
 			testutil.WriteGeneratedValuesCluster(t, dir)
-			const cipher = "ENC[AES256_GCM,data:fixture,type:str]"
+			const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 			testutil.WriteFile(t, dir, "charts/app/templates/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ .Release.Name }}-secret\n  namespace: flux-system\nstringData:\n  token: '"+cipher+"'\n")
 			o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: t.TempDir(), WipeSecrets: tc.wipeSecrets, Concurrency: tc.workers})
 			if err != nil {

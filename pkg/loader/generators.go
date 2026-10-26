@@ -67,11 +67,13 @@ func (r generatorRecord) materialize(ctx context.Context, opts Options) (manifes
 	data := make(map[string]any, len(pairs))
 	for _, pair := range pairs {
 		value := pair.Value
-		if opts.WipeSecrets {
-			value = manifest.WipeValue(pair.Key, value, nil, false)
-		}
+		var encoding *base64.Encoding
 		if !r.isConfigMap {
-			value = base64.StdEncoding.EncodeToString([]byte(value))
+			encoding = base64.StdEncoding
+			value = encoding.EncodeToString([]byte(value))
+		}
+		if opts.WipeSecrets {
+			value = manifest.WipeValue(pair.Key, value, encoding, !r.isConfigMap)
 		}
 		data[pair.Key] = value
 	}

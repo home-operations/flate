@@ -1256,10 +1256,6 @@ data:
 
 func TestParseSecret(t *testing.T) {
 	t.Parallel()
-	// flate renders the user's own repo offline, so it does NOT blanket-wipe
-	// Secret values — plaintext (incl. a published cosign public key) passes
-	// through. Only SOPS ciphertext is neutralized: flate can't decrypt it and
-	// raw ENC[...] poisons downstream rendering.
 	const sops = "ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]"
 	yamlDoc := `
 apiVersion: v1
@@ -1280,7 +1276,6 @@ stringData:
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
 		}
-		// Plaintext .data / .stringData pass through verbatim.
 		if s.Data["password"] != "dGVzdA==" {
 			t.Errorf("plaintext .data wiped: %v", s.Data["password"])
 		}
@@ -1290,8 +1285,6 @@ stringData:
 		if s.StringData["apiKey"] != "real-key" {
 			t.Errorf("plaintext .stringData wiped: %v", s.StringData["apiKey"])
 		}
-		// SOPS ciphertext is neutralized: base64(placeholder) in .data,
-		// plaintext placeholder in .stringData.
 		wantB64 := base64.StdEncoding.EncodeToString([]byte(ValuePlaceholder("enc-blob")))
 		if s.Data["enc-blob"] != wantB64 {
 			t.Errorf("SOPS .data not wiped: %v", s.Data["enc-blob"])
@@ -1308,18 +1301,12 @@ stringData:
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
 		}
-		// Even SOPS ciphertext is kept when wiping is off.
 		if s.Data["password"] != "dGVzdA==" || s.Data["enc-blob"] != sops {
 			t.Errorf("value changed despite wipeSecrets=false: %v", s.Data)
 		}
 	})
 
-	// The common "SOPS-encrypted helm values file mounted via valuesFrom
-	// Secret" pattern: the whole values.yaml (with ENC[...] scalars) is one
-	// base64 blob under .data. It must be wiped — otherwise the raw ciphertext
-	// leaks into chart values and corrupts the render (e.g. a bool flips
-	// truthy and a subchart drops). The marker lives INSIDE the base64.
-	t.Run("base64-embedded SOPS values file wiped", func(t *testing.T) {
+	t.Run("base64-embedded YAML preserved", func(t *testing.T) {
 		t.Parallel()
 		valuesYAML := "mariadb:\n  enabled: " + sops + "\nwordpressSkipInstall: " + sops + "\n"
 		doc := mustYAML(t, `
@@ -1334,19 +1321,13 @@ data:
 		if err != nil {
 			t.Fatalf("parseSecret: %v", err)
 		}
-		wantB64 := base64.StdEncoding.EncodeToString([]byte(ValuePlaceholder("values.yaml")))
+		wantB64 := base64.StdEncoding.EncodeToString([]byte(valuesYAML))
 		if s.Data["values.yaml"] != wantB64 {
-			t.Errorf("embedded SOPS values blob not wiped: %v", s.Data["values.yaml"])
+			t.Errorf("embedded YAML changed: %v", s.Data["values.yaml"])
 		}
 	})
 }
 
-// TestParseSecret_Idempotent pins the copy-before-mutate fix: parseSecret
-// must not write placeholders back into the caller-owned doc map. The wipe
-// loop mutating doc["data"] in place would re-encode an already-encoded
-// placeholder on a second parse, causing spurious EventObjectAdded on every
-// cache-hit reconcile. Only SOPS values are wiped, so the test pins both a
-// wiped SOPS value and a passed-through plaintext value.
 func TestParseSecret_Idempotent(t *testing.T) {
 	t.Parallel()
 	const sops = "ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]"
@@ -1373,7 +1354,6 @@ stringData:
 		t.Fatalf("second parse: %v", err)
 	}
 
-	// Both parses must yield identical values (wiped SOPS + passed-through).
 	if s1.Data["enc"] != s2.Data["enc"] || s1.Data["token"] != s2.Data["token"] {
 		t.Errorf("data not idempotent: first=%v second=%v", s1.Data, s2.Data)
 	}
@@ -1381,7 +1361,6 @@ stringData:
 		t.Errorf("stringData not idempotent: first=%q second=%q", s1.StringData["apiKey"], s2.StringData["apiKey"])
 	}
 
-	// The original doc must be unmodified: still the raw values.
 	gotData := doc["data"].(map[string]any)
 	if gotData["token"] != "c2VjcmV0" || gotData["enc"] != sops {
 		t.Errorf("parseSecret mutated doc[\"data\"]: %v", gotData)

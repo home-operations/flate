@@ -103,7 +103,7 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 						names = append(names, path.Join(ref.ChartPath, ".helmignore"))
 						if sub, err := fs.Sub(input, name); err == nil {
 							// Reconciliation owns chart-local loading errors, including policy failures.
-							_ = chartinput.Walk(ctx, sub, func(name string, _ fs.FileInfo, _ []byte) error {
+							_ = chartinput.Walk(ctx, sub, true, func(name string, _ fs.FileInfo, _ []byte) error {
 								names = append(names, path.Join(ref.ChartPath, name))
 								return nil
 							})

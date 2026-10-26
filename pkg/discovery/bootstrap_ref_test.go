@@ -1,6 +1,8 @@
 package discovery
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -30,6 +32,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
+	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
 )
 
 func TestRun_PinnedArtifactDiscovery(t *testing.T) {
@@ -594,6 +597,46 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		if len(d.aliasViews) != 1 || st.GetObject(alias.Named()) != alias {
 			t.Fatal("alias refresh changed registry or authored object")
 		}
+	})
+
+	t.Run("OCI chart archive", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		files := map[string]string{
+			"chart/Chart.yaml":        "apiVersion: v2\nname: demo\nversion: 1.0.0\n",
+			"chart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n",
+			"apps/file":               "retained sibling",
+		}
+		for name, data := range files {
+			testutil.WriteFile(t, root, "artifact/"+name, data)
+		}
+		oracle, err := helmloader.LoadArchive(bytes.NewReader(testutil.TarGz(t, files, 0o644, gzip.DefaultCompression)))
+		assert.NoError(t, err)
+		assert.Equal(t, oracle.Name(), "demo")
+		st := store.New()
+		bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
+		st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+		ks := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
+		st.AddObject(ks)
+		d := discoverer{cfg: Config{Path: filepath.Join(root, "artifact"), RepoRoot: root, Store: st}}
+		count, err := d.resolveEntrySources(t.Context(), true)
+		assert.NoError(t, err)
+		assert.Equal(t, count, 1)
+		artifact := st.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+		assert.Equal(t, artifact.InputAlias, true)
+		assert.Equal(t, artifact.Key, "")
+		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Source: ks.SourceID()}}
+		cli := helm.NewClient(cachetest.New(t, "", sourcecache.New))
+		first, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)})
+		assert.NoError(t, err)
+		assert.Equal(t, len(first), len(oracle.Templates))
+		name, _ := manifest.DocMetadata(first[0])
+		assert.Equal(t, name, "rendered")
+		second, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)})
+		assert.NoError(t, err)
+		assert.Diff(t, second, first)
+		assert.Equal(t, st.GetArtifact(ks.SourceID()), store.Artifact(artifact))
+		assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID), store.Artifact(bootstrap))
 	})
 
 	t.Run("OCI subtrees", func(t *testing.T) {

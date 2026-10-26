@@ -13,44 +13,10 @@ import (
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
-	"helm.sh/helm/v4/pkg/chart/v2/util"
 
 	"github.com/home-operations/flate/internal/chartinput"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 )
-
-func chartPathInFS(input fs.FS) (string, error) {
-	if _, err := fs.Stat(input, util.ChartfileName); err == nil {
-		return ".", nil
-	}
-	for _, name := range []string{source.OCICopiedLayerFilename, source.HelmChartArchiveFilename} {
-		if _, err := fs.Stat(input, name); err == nil {
-			return name, nil
-		}
-	}
-	entries, err := fs.ReadDir(input, ".")
-	if err != nil {
-		return "", fmt.Errorf("%w: read chart artifact: %w", manifest.ErrInput, err)
-	}
-	selected := ""
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		if _, err := fs.Stat(input, path.Join(e.Name(), util.ChartfileName)); err != nil {
-			continue
-		}
-		if selected != "" {
-			return "", fmt.Errorf("%w: chart artifact contains multiple Chart.yaml-bearing subdirs; flate cannot disambiguate a bundle-of-charts artifact", manifest.ErrInput)
-		}
-		selected = e.Name()
-	}
-	if selected == "" {
-		return "", fmt.Errorf("%w: chart layer missing or layerSelector misconfigured", manifest.ErrInput)
-	}
-	return selected, nil
-}
 
 type capturedChart struct {
 	files   []*archive.BufferedFile
@@ -76,14 +42,14 @@ func (c capturedChart) load() (*chart.Chart, error) {
 }
 
 // A missing requested location is distinct from a read failure within a chart.
-func captureChart(ctx context.Context, input fs.FS, name string) (capturedChart, bool, error) {
+func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bool) (capturedChart, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return capturedChart{}, false, err
 	}
 	info, err := fs.Stat(input, name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return capturedChart{}, true, fmt.Errorf("%w: chart not found at %s", manifest.ErrInput, name)
+			return capturedChart{}, true, fmt.Errorf("%w: chart not found at %s: %w", manifest.ErrInput, name, err)
 		}
 		return capturedChart{}, false, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
 	}
@@ -92,7 +58,7 @@ func captureChart(ctx context.Context, input fs.FS, name string) (capturedChart,
 		if err != nil {
 			return capturedChart{}, false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
 		}
-		files, err := chartFilesInFS(ctx, input)
+		files, err := chartFilesInFS(ctx, input, archiveShape)
 		return capturedChart{files: files}, false, err
 	}
 	r, err := input.Open(name)
@@ -107,10 +73,36 @@ func captureChart(ctx context.Context, input fs.FS, name string) (capturedChart,
 }
 
 // Capture MUST finish before LoadFiles consumes the records.
-func chartFilesInFS(ctx context.Context, input fs.FS) ([]*archive.BufferedFile, error) {
+func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*archive.BufferedFile, error) {
 	files := []*archive.BufferedFile{}
 	remaining := archive.MaxDecompressedChartSize
-	err := chartinput.Walk(ctx, input, func(name string, info fs.FileInfo, data []byte) error {
+	visit := func(name string, info fs.FileInfo, data []byte) error {
+		rooted := name
+		if archiveShape {
+			delimiter := "/"
+			if strings.ContainsRune(name, '\\') {
+				delimiter = "\\"
+			}
+			base, relative, _ := strings.Cut(name, delimiter)
+			relative = strings.ReplaceAll(relative, delimiter, "/")
+			if path.IsAbs(relative) {
+				return errors.New("chart illegally contains absolute paths")
+			}
+			relative = path.Clean(relative)
+			if relative == "." {
+				return fmt.Errorf("chart illegally contains content outside the base directory: %q", name)
+			}
+			if strings.HasPrefix(relative, "..") {
+				return errors.New("chart illegally references parent directory")
+			}
+			if len(relative) >= 3 && relative[1:3] == ":/" && (relative[0] >= 'a' && relative[0] <= 'z' || relative[0] >= 'A' && relative[0] <= 'Z') {
+				return errors.New("chart contains illegally named files")
+			}
+			if base == "Chart.yaml" {
+				return errors.New("chart yaml not in base directory")
+			}
+			rooted = relative
+		}
 		if data == nil {
 			r, err := input.Open(name)
 			if err != nil {
@@ -123,13 +115,14 @@ func chartFilesInFS(ctx context.Context, input fs.FS) ([]*archive.BufferedFile, 
 			}
 		}
 		remaining -= int64(len(data))
-		if remaining < 0 {
+		if remaining < 0 || archiveShape && remaining == 0 {
 			return fmt.Errorf("chart exceeds maximum decompressed size")
 		}
-		file := &archive.BufferedFile{Name: name, ModTime: info.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})}
+		file := &archive.BufferedFile{Name: rooted, ModTime: info.ModTime(), Data: bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})}
 		files = append(files, file)
 		return nil
-	})
+	}
+	err := chartinput.Walk(ctx, input, !archiveShape, visit)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
 	}

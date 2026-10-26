@@ -95,8 +95,8 @@ stringData:
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			chart := t.TempDir()
-			testutil.WriteFile(t, chart, "Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
-			testutil.WriteFile(t, chart, "templates/configmap.yaml", `apiVersion: v1
+			testutil.WriteFile(t, chart, "chart/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
+			testutil.WriteFile(t, chart, "chart/templates/configmap.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: chart-output

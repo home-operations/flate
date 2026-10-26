@@ -91,7 +91,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				cli := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 				cliSources := NewSources(st)
 				opts := Options{DisableChartDigestTracking: disable}
-				held := acquireChartFS(t, cli.cache, os.DirFS(dir))
+				held := acquireChartFS(t, cli.cache, chartFixtureFS(hr, os.DirFS(dir)))
 				var canonical *chart.Chart
 				render := func(identity store.SourceArtifact) ([]map[string]any, string, string) {
 					t.Helper()
@@ -141,7 +141,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					testutil.WriteFile(t, dir, "prod.yaml", "marker: "+tc.marker+"\n")
 					testutil.WriteFile(t, dir, "charts/child/Chart.yaml", "apiVersion: v2\nname: child\nversion: 1.2.3+child\n")
 					testutil.WriteFile(t, dir, "templates/cm.yaml", string(template))
-					t.Run("updated acquisition", func(t *testing.T) { held = acquireChartFS(t, cli.cache, os.DirFS(dir)) })
+					t.Run("updated acquisition", func(t *testing.T) { held = acquireChartFS(t, cli.cache, chartFixtureFS(hr, os.DirFS(dir))) })
 					canonical = nil
 				}
 				second, nextKey, nextValuesKey := render(tc.next)
@@ -166,7 +166,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 		t.Parallel()
 		st, hr, dir := ociRenderFixture(t)
 		reads := map[string]int{}
-		input := os.DirFS(dir)
+		input := chartFixtureFS(hr, os.DirFS(dir))
 		observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) { reads[name]++; return input.Open(name) }}
 		first := &store.SourceArtifact{FS: observed, Key: "untrusted", Revision: "6.15.0@" + digest, Digest: digest}
 		second := &store.SourceArtifact{Revision: "invalid", FS: fstest.MapFS{}}
@@ -176,8 +176,8 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 		assert.NoError(t, err)
 		assert.Equal(t, resolver.calls, 1)
-		assert.Equal(t, reads[".helmignore"], 1)
-		assert.Equal(t, reads["templates/cm.yaml"], 1)
+		assert.Equal(t, reads[".helmignore"], 0)
+		assert.Equal(t, reads["chart/templates/cm.yaml"], 1)
 		assert.Equal(t, hasRenderField(out, "version", "6.15.0+ff3d3e14728f"), true)
 		assert.Equal(t, first.Key, "untrusted")
 	})
@@ -216,7 +216,7 @@ data:
   marker: {{ .Values.marker | quote }}
 `)
 	}
-	input := acquireChartFS(t, cachetest.New(t, t.TempDir(), cache.New), os.DirFS(dir))
+	input := acquireChartFS(t, cachetest.New(t, t.TempDir(), cache.New), chartFixtureFS(hr, os.DirFS(dir)))
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{
 		Kind: manifest.KindOCIRepository, FS: input, Digest: digest, Revision: "6.15.0@" + digest,
@@ -232,7 +232,7 @@ data:
 			Pin, Path string
 			Auto      bool
 		}{Pin: pin, Auto: true})
-		captured, _, err := captureChart(t.Context(), input, ".")
+		captured, _, err := captureChart(t.Context(), input, ".", true)
 		assert.NoError(t, err)
 		ch, err := captured.load()
 		assert.NoError(t, err)
@@ -284,7 +284,7 @@ data:
 	}
 	writeBlob := func(t *testing.T, owner *cache.Cache, key cache.BlobKey, data []map[string]any) {
 		t.Helper()
-		captured, _, err := captureChart(t.Context(), input, ".")
+		captured, _, err := captureChart(t.Context(), input, ".", true)
 		assert.NoError(t, err)
 		ch, err := captured.load()
 		assert.NoError(t, err)
@@ -362,7 +362,7 @@ data:
 			} else {
 				files["charts/child/values.yaml"].Data = []byte("enabled: true\nmarker: edited-default\n")
 			}
-			updated := acquireChartFS(t, cachetest.New(t, t.TempDir(), cache.New), files)
+			updated := acquireChartFS(t, cachetest.New(t, t.TempDir(), cache.New), chartFixtureFS(hr, files))
 			nextStore := store.New()
 			nextStore.AddObject(&manifest.OCIRepository{Name: "podinfo", Namespace: "apps"})
 			nextStore.SetArtifact(hr.ChartSource(), &store.SourceArtifact{
@@ -402,7 +402,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 			if kind == manifest.KindHelmChart {
 				hr.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: kind, Name: "podinfo"}
 			}
-			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
+			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
 			cli := NewClient(cachetest.New(t, "", cache.New))
 			cliSources := NewSources(st)
 			var first []map[string]any
@@ -938,7 +938,7 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 	st.SetArtifact(manifest.NamedResource{
 		Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
-		&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
+		&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
 	owner := cachetest.New(t, "", cache.New)
 	newClient := func() (*Client, Sources) {
 		cli := NewClient(owner)

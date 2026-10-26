@@ -1,4 +1,4 @@
-// Package chartinput enumerates files admitted by Helm's chart ignore policy.
+// Package chartinput enumerates regular files under Helm's input policies.
 package chartinput
 
 import (
@@ -14,29 +14,32 @@ import (
 )
 
 // Walk visits admitted regular files, borrowing already-read policy bytes for .helmignore.
-func Walk(ctx context.Context, input fs.FS, visit func(string, fs.FileInfo, []byte) error) error {
+func Walk(ctx context.Context, input fs.FS, directory bool, visit func(string, fs.FileInfo, []byte) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	rules := ignore.Empty()
+	var rules *ignore.Rules
 	var policy []byte
-	if r, err := input.Open(ignore.HelmIgnore); err == nil {
-		data, readErr := io.ReadAll(io.LimitReader(r, archive.MaxDecompressedChartSize+1))
-		if err := errors.Join(readErr, r.Close()); err != nil {
+	if directory {
+		rules = ignore.Empty()
+		if r, err := input.Open(ignore.HelmIgnore); err == nil {
+			data, readErr := io.ReadAll(io.LimitReader(r, archive.MaxDecompressedChartSize+1))
+			if err := errors.Join(readErr, r.Close()); err != nil {
+				return fmt.Errorf("chart ignore rules: %w", err)
+			}
+			if int64(len(data)) > archive.MaxDecompressedChartSize {
+				return fmt.Errorf("chart ignore rules exceed maximum decompressed size")
+			}
+			policy = data
+			rules, err = ignore.Parse(bytes.NewReader(policy))
+			if err != nil {
+				return fmt.Errorf("chart ignore rules: %w", err)
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("chart ignore rules: %w", err)
 		}
-		if int64(len(data)) > archive.MaxDecompressedChartSize {
-			return fmt.Errorf("chart ignore rules exceed maximum decompressed size")
-		}
-		policy = data
-		rules, err = ignore.Parse(bytes.NewReader(policy))
-		if err != nil {
-			return fmt.Errorf("chart ignore rules: %w", err)
-		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("chart ignore rules: %w", err)
+		rules.AddDefaults()
 	}
-	rules.AddDefaults()
 	err := fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 		if canceled := ctx.Err(); canceled != nil {
 			return canceled
@@ -51,7 +54,7 @@ func Walk(ctx context.Context, input fs.FS, visit func(string, fs.FileInfo, []by
 		if err != nil {
 			return err
 		}
-		if rules.Ignore(name, info) {
+		if directory && rules.Ignore(name, info) {
 			if entry.IsDir() {
 				return fs.SkipDir
 			}
@@ -64,7 +67,7 @@ func Walk(ctx context.Context, input fs.FS, visit func(string, fs.FileInfo, []by
 			return fmt.Errorf("cannot load irregular file %s as it has file mode type bits set", name)
 		}
 		var data []byte
-		if name == ignore.HelmIgnore {
+		if directory && name == ignore.HelmIgnore {
 			data = policy
 		}
 		return visit(name, info, data)

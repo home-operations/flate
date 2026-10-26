@@ -190,9 +190,9 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 							tasks.YieldSlot(func() { <-sourceRelease })
 							if tc.status == store.StatusReady {
 								st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{
-									"Chart.yaml":              &fstest.MapFile{Data: []byte("apiVersion: v2\nname: redis\nversion: 1.0.0\n")},
-									"templates/output.yaml":   &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\ndata: {value: complete}\n")},
-									"templates/authored.yaml": &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: 'authored-{{ .Release.Name }}', namespace: flux-system}\nspec: {chart: redis, version: 1.0.0, interval: 1m, sourceRef: {kind: HelmRepository, name: bitnami}}\n")},
+									"chart/Chart.yaml":              &fstest.MapFile{Data: []byte("apiVersion: v2\nname: redis\nversion: 1.0.0\n")},
+									"chart/templates/output.yaml":   &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\ndata: {value: complete}\n")},
+									"chart/templates/authored.yaml": &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: 'authored-{{ .Release.Name }}', namespace: flux-system}\nspec: {chart: redis, version: 1.0.0, interval: 1m, sourceRef: {kind: HelmRepository, name: bitnami}}\n")},
 								}})
 							}
 							st.UpdateStatus(id, store.StatusInfo{Status: tc.status, Reason: "", Message: "source finished"})

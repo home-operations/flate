@@ -347,7 +347,10 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		assert.NoError(t, err)
 		auto := explicit.Clone()
 		auto.Chart.Source.Kind = manifest.KindHelmChart
-		st.SetArtifact(auto.ChartSource(), art)
+		automatic := *art
+		automatic.FS, _, err = gittree.New(t.Context(), backing, generation.Commit, gittree.ViewOptions{Mode: gittree.Source, Sparse: []string{"one"}, Content: struct{ Source string }{id}})
+		assert.NoError(t, err)
+		st.SetArtifact(auto.ChartSource(), &automatic)
 		autoChart, err := loadDecodedChart(t.Context(), cli, auto, cliSources)
 		assert.NoError(t, err)
 		assert.Equal(t, autoChart.chart == rootChart.chart, false)
@@ -367,7 +370,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		{"OCI chart", manifest.KindHelmChart, "file"},
 		{"HTTP chart", manifest.KindHelmChart, "file"},
 		{"OCI directory", manifest.KindOCIRepository, "directory"},
-		{"OCI archive", manifest.KindOCIRepository, "archive"},
+		{"OCI archive", manifest.KindOCIRepository, "file"},
 		{"Bucket directory", manifest.KindBucket, "directory"},
 		{"Bucket archive", manifest.KindBucket, "archive"},
 	} {
@@ -404,9 +407,9 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 						return cache.ProducerResult{}, err
 					})
 					assert.NoError(t, err)
-					acquired = cache.FileFS("chart.tgz", r)
+					backingName = "unconventional.payload"
+					acquired = cache.FileFS(backingName, r)
 					assert.NoError(t, r.Close())
-					backingName = "chart.tgz"
 				} else {
 					if tc.shape == "archive" {
 						input = fstest.MapFS{"chart.tgz": {Data: chartArchive(t, input)}}
@@ -426,6 +429,12 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				_, err = fs.ReadFile(acquired, backingName)
 				if err == nil {
 					t.Fatal("backing poison did not prevent chart reads")
+				}
+				if tc.shape == "file" {
+					_, err := loadDecodedChart(t.Context(), NewClient(owner), hr, cliSources)
+					if !errors.Is(err, fs.ErrNotExist) || !errors.Is(err, manifest.ErrInput) {
+						t.Fatalf("lost acquired payload failure: %v", err)
+					}
 				}
 				warm, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 				assert.NoError(t, err)

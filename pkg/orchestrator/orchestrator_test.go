@@ -1190,8 +1190,8 @@ func writeDigestTrackingTree(t *testing.T, root string) *store.SourceArtifact {
 	t.Helper()
 	testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: OCIRepository, name: fixture}\n  postBuild:\n    substitute: {GATE: \"true\"}\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
-	testutil.WriteFile(t, root, "Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.2.3\n")
-	testutil.WriteFile(t, root, "templates/cm.yaml", `apiVersion: v1
+	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.2.3\n")
+	testutil.WriteFile(t, root, "chart/templates/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: active

@@ -91,10 +91,12 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 	var captured capturedChart
 	capture := func() error {
 		location = selector.Path
+		archiveShape := false
 		if selector.Auto {
-			location, err = chartPathInFS(input)
-			if err != nil {
-				return err
+			location = cache.FileName(input)
+			archiveShape = location == ""
+			if archiveShape {
+				location = "."
 			}
 		}
 		label := location
@@ -102,7 +104,7 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 			label = filepath.Join(art.LocalPath, filepath.FromSlash(location))
 		}
 		var missing bool
-		captured, missing, err = captureChart(ctx, input, location)
+		captured, missing, err = captureChart(ctx, input, location, archiveShape)
 		if missing {
 			return err
 		}

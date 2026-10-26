@@ -14,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"testing/fstest"
 	"testing/synctest"
 	"time"
 
@@ -75,7 +76,20 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 		assert.Diff(t, data, payload)
 		assert.Equal(t, restoredID, id)
 		assert.Equal(t, AcquisitionIdentity(r), digest.FromBytes(payload).String())
-		assert.Equal(t, AcquisitionIdentity(FileFS("payload", r)), manifest.Fingerprint([2]string{digest.FromBytes(payload).String(), "payload"}))
+		view := FileFS("unconventional.payload", r)
+		assert.Equal(t, AcquisitionIdentity(view), manifest.Fingerprint([2]string{digest.FromBytes(payload).String(), "unconventional.payload"}))
+		assert.Equal(t, FileName(view), "unconventional.payload")
+		assert.Equal(t, FileName(struct{ fs.FS }{view}), "")
+		assert.Equal(t, FileName(fstest.MapFS{"chart.tgz": {Data: payload}}), "")
+		contents, err := fs.ReadFile(view, FileName(view))
+		assert.NoError(t, err)
+		assert.Diff(t, contents, payload)
+		var treeData bytes.Buffer
+		testutil.WriteTar(t, &treeData, map[string]string{"demo/Chart.yaml": "metadata"}, 0o644)
+		tree, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "filename-tree"}, Policy{}, producer(treeData.Bytes(), ocispec.Descriptor{}))
+		assert.NoError(t, err)
+		assert.Equal(t, FileName(tree), "")
+
 		assert.NoError(t, r.Close())
 		checkUnused()
 		if c.blobRoots[0].Root == nil {
@@ -511,6 +525,7 @@ func TestBlob_LookupAndReplacement(t *testing.T) {
 					t.Fatal(err)
 				}
 				view := FileFS("chart.tgz", r)
+				assert.Equal(t, FileName(view), "chart.tgz")
 				readerPin := AcquisitionIdentity(r)
 				assert.Equal(t, readerPin, digest.FromString(payload).String())
 				assert.Equal(t, AcquisitionIdentity(struct{ io.ReadCloser }{r}), "")

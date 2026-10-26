@@ -29,7 +29,7 @@ func (h HelmChart) Materializes() bool {
 	return h.Source.Group == SourceDomain && (h.Source.Kind == "" || h.Source.Kind == KindHelmRepository)
 }
 
-// ChartLocation validates the source kind and selects a source path or artifact discovery.
+// ChartLocation validates the source kind and selects a source path or automatic archive input.
 func (h HelmChart) ChartLocation() (string, bool, error) {
 	if h.hasSourceChartPath() {
 		return path.Clean(h.Name), false, nil

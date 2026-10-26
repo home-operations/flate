@@ -48,8 +48,8 @@ func TestReconcile_OCIChartDigestTracking(t *testing.T) {
 			c, st := newTestController(t, nil)
 			c.Options.DisableChartDigestTracking = tc.disable
 			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: podinfo\nversion: 6.15.0\n")
-			testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
+			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: podinfo\nversion: 6.15.0\n")
+			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata:
   name: podinfo
@@ -417,8 +417,8 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 					st.AddObject(dep)
 					st.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 					dir := t.TempDir()
-					testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: refresh\nversion: 1.0.0\n")
-					testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
+					testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: refresh\nversion: 1.0.0\n")
+					testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: {{ .Values.output }}, namespace: apps}
 data: {greeting: hi}
@@ -540,7 +540,7 @@ type renderBarrierFS struct {
 }
 
 func (f *renderBarrierFS) Open(name string) (fs.File, error) {
-	if name == "Chart.yaml" {
+	if name == "chart/Chart.yaml" {
 		f.once.Do(func() {
 			close(f.started)
 			f.tasks.YieldSlot(func() { <-f.resume })
@@ -580,8 +580,8 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					}
 					st.AddObject(parent)
 					dir := t.TempDir()
-					testutil.WriteFile(t, dir, "Chart.yaml", "apiVersion: v2\nname: binding\nversion: 1.0.0\n")
-					testutil.WriteFile(t, dir, "templates/cm.yaml", `apiVersion: v1
+					testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: binding\nversion: 1.0.0\n")
+					testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: binding}
 data:
@@ -756,8 +756,8 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	chart := charts[0].Named()
 	firstDir, secondDir := t.TempDir(), t.TempDir()
 	for _, fixture := range []struct{ dir, value string }{{firstDir, "one"}, {secondDir, "two"}} {
-		testutil.WriteFile(t, fixture.dir, "Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
-		testutil.WriteFile(t, fixture.dir, "templates/output.yaml", "apiVersion: v1\nkind: ConfigMapList\nitems:\n- metadata: {name: '{{ .Release.Name }}-first'}\n  data: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n- metadata: {name: '{{ .Release.Name }}-second'}\n  data: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n")
+		testutil.WriteFile(t, fixture.dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+		testutil.WriteFile(t, fixture.dir, "chart/templates/output.yaml", "apiVersion: v1\nkind: ConfigMapList\nitems:\n- metadata: {name: '{{ .Release.Name }}-first'}\n  data: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n- metadata: {name: '{{ .Release.Name }}-second'}\n  data: {value: '{{ .Values.value }}', source: "+fixture.value+"}\n")
 	}
 	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-one", FS: os.DirFS(firstDir), LocalPath: firstDir})
 	st.UpdateStatus(chart, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})

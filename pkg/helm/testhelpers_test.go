@@ -5,7 +5,9 @@ import (
 	"compress/gzip"
 	"context"
 	"io/fs"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/home-operations/flate/internal/testutil"
@@ -128,4 +130,27 @@ func encodedRender(tb testing.TB, docs []map[string]any) []byte {
 		tb.Fatal(err)
 	}
 	return data
+}
+
+type chartArchiveFS struct{ fs.FS }
+
+func (f chartArchiveFS) Open(name string) (fs.File, error) {
+	if name == "." {
+		return (fstest.MapFS{"chart": {Mode: fs.ModeDir}}).Open(".")
+	}
+	if name == "chart" {
+		return f.FS.Open(".")
+	}
+	if relative, ok := strings.CutPrefix(name, "chart/"); ok {
+		return f.FS.Open(relative)
+	}
+	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+}
+
+func chartFixtureFS(hr *manifest.HelmRelease, input fs.FS) fs.FS {
+	_, automatic, _ := hr.Chart.ChartLocation()
+	if automatic {
+		return chartArchiveFS{input}
+	}
+	return input
 }

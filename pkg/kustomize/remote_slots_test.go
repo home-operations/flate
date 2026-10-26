@@ -133,7 +133,7 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 							path = "/b"
 						}
 						input := memoryTree(t, map[string]string{
-							"kustomization.yaml": fmt.Sprintf("resources:\n- https://example.invalid%s\n- https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n", path),
+							"kustomization.yaml": fmt.Sprintf("resources:\n- https://example.invalid%s\n- git::https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n", path),
 						})
 						out, err := Render(t.Context(), c, RenderRequest{
 							Source: &store.SourceArtifact{FS: input}, Spec: demoSpec, HeldSlot: held,

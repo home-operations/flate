@@ -9,6 +9,10 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"testing/synctest"
+
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -264,5 +268,59 @@ func TestHelmRepoTransport_OwnedCleanup(t *testing.T) {
 	case <-closed:
 	case <-ctx.Done():
 		t.Fatal("owner cleanup did not close the guarded transport's idle connection")
+	}
+}
+
+type timeoutChartBody struct{ ctx context.Context }
+
+func (b timeoutChartBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (timeoutChartBody) Close() error { return nil }
+
+func TestHelmRepoTransport_SourceTimeout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name            string
+		timeout, caller time.Duration
+	}{
+		{name: "default"},
+		{name: "shorter", timeout: 10 * time.Second},
+		{name: "longer", timeout: 180 * time.Second},
+		{name: "caller", timeout: 180 * time.Second, caller: 5 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				r := httpRepo("https://charts.invalid")
+				if tc.timeout != 0 {
+					r.Timeout = &metav1.Duration{Duration: tc.timeout}
+				}
+				want := (sourcev1.HelmRepository{Spec: r.HelmRepositorySpec}).GetTimeout()
+				ctx := t.Context()
+				if tc.caller != 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tc.caller)
+					defer cancel()
+					want = min(want, tc.caller)
+				}
+				f, inputs := newHTTPFetcher(t, r)
+				prepared := preparedHTTP(t, f, inputs, r)
+				prepared.client.Transport = chartTransport(func(req *http.Request) (*http.Response, error) {
+					deadline, ok := req.Context().Deadline()
+					if !ok || time.Until(deadline) != want {
+						t.Errorf("request deadline remaining=%v present=%t, want %v", time.Until(deadline), ok, want)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: timeoutChartBody{req.Context()}, Request: req}, nil
+				})
+				start := time.Now()
+				_, err := prepared.get(ctx, r.URL+"/index.yaml", io.Discard)
+				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want {
+					t.Errorf("body deadline: elapsed=%v error=%v, want %v and DeadlineExceeded", time.Since(start), err, want)
+				}
+			})
+		})
 	}
 }

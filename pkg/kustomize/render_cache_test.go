@@ -436,7 +436,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					}
 					var trace remoteHTTPTrace
 					srv := trace.serve(t, remoteBody)
-					const gitURL = "https://example.invalid/o/r.git"
+					const gitURL = "file:///example.invalid/o/r.git"
 					ref := srv.URL + "/remote.yaml"
 					remoteFiles := map[string]string{}
 					if origin == "git" || origin == "nested-mount" {
@@ -1057,7 +1057,7 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 				srv.Close()
 				t.Logf("reachability: requests=%+v accepted_connections=%d", trace.snapshot(), trace.connections.Load())
 			})
-			const gitURL = "https://example.invalid/o/parent.git"
+			const gitURL = "file:///example.invalid/o/parent.git"
 			control := "resources: ['" + gitURL + "?ref=main']\n"
 			if scenario == "local-removes" {
 				control = "resources: ['" + srv.URL + "/child.yaml']\n"
@@ -1189,7 +1189,7 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 				_, _ = io.WriteString(w, "remote data")
 			}))
 			t.Cleanup(srv.Close)
-			const gitURL = "https://example.invalid/o/repo.git"
+			const gitURL = "file:///example.invalid/o/repo.git"
 			files := map[string]string{
 				"kustomization.yaml": "resources: ['" + gitURL + "?ref=main', local.yaml]\n",
 				"local.yaml":         cmYAML("local-v1"),
@@ -1389,7 +1389,7 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 			return &store.SourceArtifact{FS: memoryTree(t, map[string]string{"foreign": "remote"}), Key: "git-family", Revision: "1"}, nil
 		})
 		walk := inputWalk{cache: c, fs: view}
-		gitPath, err := walk.fetchGitBase(t.Context(), kustomizeinput.GitBase{RepoURL: "https://example.invalid/o/repo.git"}, walkScope{root: filepath.Join(root, "view")})
+		gitPath, err := walk.fetchGitBase(t.Context(), kustomizeinput.GitBase{RepoURL: "file:///example.invalid/o/repo.git"}, walkScope{root: filepath.Join(root, "view")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1632,4 +1632,69 @@ func testRenderEncoding(tb testing.TB, docs []map[string]any) []byte {
 func testRenderPayload(tb testing.TB, witness string) []byte {
 	tb.Helper()
 	return testRenderEncoding(tb, []map[string]any{{"witness": witness}})
+}
+
+func TestRender_RemoteSelectionTransition(t *testing.T) {
+	t.Parallel()
+	for _, initialStatus := range []int{http.StatusNotFound, http.StatusOK} {
+		t.Run(fmt.Sprint(initialStatus), func(t *testing.T) {
+			t.Parallel()
+			var changed atomic.Bool
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits.Add(1)
+				if changed.Load() {
+					_, _ = io.WriteString(w, cmYAML("file-output"))
+					return
+				}
+				w.WriteHeader(initialStatus)
+				_, _ = io.WriteString(w, "<html>repository page</html>")
+			}))
+			t.Cleanup(srv.Close)
+			url := srv.URL + "/org/repo/base"
+			root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": "resources: ['" + url + "']\n"})
+			cacheDir := t.TempDir()
+			newCache := func() *TreeCache {
+				c := newTestTreeCache(t, cacheDir)
+				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					return &store.SourceArtifact{Key: "repository", Revision: "same", FS: memoryTree(t, map[string]string{"base/kustomization.yaml": "resources: [cm.yaml]\n", "base/cm.yaml": cmYAML("git-output")})}, nil
+				})
+				return c
+			}
+			c := newCache()
+			request := RenderRequest{Source: localSource(t, root), Label: root, Spec: demoSpec}
+			out, err := Render(t.Context(), c, request, sourcecache.RetryConfig{})
+			if err != nil || !hasRenderField(out, "name", "git-output") {
+				t.Fatalf("initial directory selection: %s, %v", out, err)
+			}
+			rec := newReadSet(root)
+			view := newTreeFS(request.Source.FS, root, rec)
+			if err := preflightRemoteResources(t.Context(), c, view, root); err != nil {
+				t.Fatal(err)
+			}
+			snap, _, err := decodeFrame(testRenderFrame(t, rec.snapshot(), testRenderEncoding(t, out)))
+			if err != nil || len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) {
+				t.Fatalf("selection observations=%+v, %v", snap.Remotes, err)
+			}
+			if (snap.Remotes[0].Identity.HTTP == "") != (initialStatus == http.StatusNotFound) {
+				t.Fatalf("HTTP probe identity=%+v", snap.Remotes[0].Identity)
+			}
+			if hits.Load() != 1 {
+				t.Fatalf("one invocation probed %d times", hits.Load())
+			}
+			closeTestTreeCache(t, c)
+			changed.Store(true)
+			c = newCache()
+			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request.Source.FS}, false); err != nil || valid {
+				t.Fatalf("changed resource selection reused Git: valid=%t, %v", valid, err)
+			}
+			out, err = Render(t.Context(), c, request, sourcecache.RetryConfig{})
+			if err != nil || !hasRenderField(out, "name", "file-output") || hasRenderField(out, "name", "git-output") {
+				t.Fatalf("resource transition: %s, %v", out, err)
+			}
+			if hits.Load() != 2 {
+				t.Fatalf("validation/preflight acquisitions=%d, want one per invocation", hits.Load())
+			}
+		})
+	}
 }

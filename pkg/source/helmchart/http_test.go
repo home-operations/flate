@@ -1133,3 +1133,94 @@ func TestFetchHTTPChart_NestedIndexExhaustion_DueWave(t *testing.T) {
 		}
 	}
 }
+
+func TestFetchHTTPChart_RequestTimeouts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		stage  string
+		reopen bool
+	}{{"index", false}, {"chart", true}} {
+		t.Run(tc.stage, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				chart := buildChartTarGz(t, "app-template", "1.0.0")
+				root := t.TempDir()
+				network := newTestNetwork(t)
+				f := New(nil, Config{Network: network, Cache: cachetest.New(t, root, sourcecache.New)})
+				r := httpRepo("https://charts.invalid")
+				r.Timeout = &metav1.Duration{Duration: 5 * time.Second}
+				blocked := true
+				calls := 0
+				tr := chartTransport(func(req *http.Request) (*http.Response, error) {
+					calls++
+					index := strings.HasSuffix(req.URL.Path, "/index.yaml")
+					data := chart
+					if index {
+						data = []byte(helmRepoIndex(chartDigest(chart)))
+					}
+					select {
+					case <-time.After(3 * time.Second):
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					}
+					body := io.NopCloser(bytes.NewReader(data))
+					if blocked && (index && tc.stage == "index" || !index && tc.stage == "chart") {
+						body = timeoutChartBody{req.Context()}
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body, Request: req}, nil
+				})
+				prepared := preparedHTTP(t, f, testInputs{}, r)
+				prepared.client.Transport = tr
+				hc := helmChart(r.Name, "app-template", "1.0.0")
+				start := time.Now()
+				_, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
+				want := 5 * time.Second
+				if tc.stage == "chart" {
+					want += 3 * time.Second
+				}
+				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != want {
+					t.Fatalf("request timeout: elapsed=%v error=%v", time.Since(start), err)
+				}
+				if tc.reopen {
+					if err := f.cache.Close(); err != nil {
+						t.Fatal(err)
+					}
+					f = New(nil, Config{Network: network, Cache: cachetest.New(t, root, sourcecache.New)})
+				}
+				blocked = false
+				longer := *r
+				longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
+				prepared = preparedHTTP(t, f, testInputs{}, &longer)
+				prepared.client.Transport = tr
+				start = time.Now()
+				acquired, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
+				if err != nil {
+					t.Fatalf("longer policy replayed timeout: %v", err)
+				}
+				want = 6 * time.Second
+				if tc.stage == "chart" {
+					want = 3 * time.Second
+				}
+				if time.Since(start) != want {
+					t.Fatalf("independent request budgets: elapsed=%v want=%v", time.Since(start), want)
+				}
+				if body, err := fs.ReadFile(acquired.FS, source.HelmChartArchiveFilename); err != nil || !bytes.Equal(body, chart) {
+					t.Fatalf("chart bytes differ: %v", err)
+				}
+				if err := f.cache.Close(); err != nil {
+					t.Fatal(err)
+				}
+				f = New(nil, Config{Network: network, Cache: cachetest.New(t, root, sourcecache.New)})
+				shorter := longer
+				shorter.Timeout = &metav1.Duration{Duration: time.Nanosecond}
+				prepared = preparedHTTP(t, f, testInputs{}, &shorter)
+				prepared.client.Transport = tr
+				before := calls
+				warm, err := f.fetchHTTPChart(t.Context(), prepared, hc, sourcecache.Policy{MaxAge: time.Hour})
+				if err != nil || calls != before || warm.Key != acquired.Key {
+					t.Fatalf("timeout changed persistent content identity: calls=%d->%d error=%v", before, calls, err)
+				}
+			})
+		})
+	}
+}

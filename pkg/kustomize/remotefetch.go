@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"time"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -18,9 +19,11 @@ const (
 )
 
 type remoteInput struct {
-	Operation remoteOperation `json:"op"`
-	URL       string          `json:"url"`
-	Ref       string          `json:"ref,omitempty"`
+	Operation  remoteOperation `json:"op"`
+	URL        string          `json:"url"`
+	Ref        string          `json:"ref,omitempty"`
+	Timeout    time.Duration   `json:"timeout,omitempty"`
+	Submodules bool            `json:"submodules,omitempty"`
 }
 
 type remoteIdentity struct {
@@ -46,7 +49,7 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 		var err error
 		fetch := func() {
 			if err = ctx.Err(); err == nil {
-				artifact, err = c.gitBase(ctx, GitBaseRequest{URL: r.URL, Ref: r.Ref, MaxAge: input.maxAge}, input.retry)
+				artifact, err = c.gitBase(ctx, GitBaseRequest{URL: r.URL, Ref: r.Ref, MaxAge: input.maxAge, Timeout: r.Timeout, Submodules: r.Submodules}, input.retry)
 			}
 		}
 		if input.slot == nil {

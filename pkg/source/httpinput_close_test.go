@@ -93,7 +93,7 @@ func TestHTTPInputs_Close(t *testing.T) {
 		c := newHTTPInputs(t, cachetest.New(t, "", cache.New), network, task.NewBounded(2))
 		defer network.Close()
 		defer c.Close()
-		client := NewHTTPClient(network, HTTPStream)
+		client := &http.Client{Transport: network}
 		fetch := func() string {
 			t.Helper()
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)

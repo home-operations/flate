@@ -51,8 +51,21 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 	r := &manifest.HelmRepository{
 		Name: "truecharts", Namespace: "flux-system",
 		URL: "oci://oci.trueforge.org/truecharts/", Type: sourcev1.HelmRepositoryTypeOCI,
+		Timeout: &metav1.Duration{Duration: 3 * time.Minute},
 	}
 	syn := synthesizeOCIRepository(r, helmChart(r.Name, "kromgo", "3.0.0"))
+	if syn.Timeout == nil || syn.Timeout.Duration != r.Timeout.Duration {
+		t.Errorf("synthesized timeout = %v, want %v", syn.Timeout, r.Timeout)
+	}
+	if syn.Timeout == r.Timeout {
+		t.Fatal("synthetic timeout aliases parsed source")
+	}
+	defaultRepo := *r
+	defaultRepo.Timeout = nil
+	defaultSyn := synthesizeOCIRepository(&defaultRepo, helmChart(r.Name, "kromgo", "3.0.0"))
+	if defaultSyn.Timeout == nil || defaultSyn.Timeout.Duration != time.Minute || defaultRepo.Timeout != nil {
+		t.Fatalf("synthetic default=%v, parsed source=%v", defaultSyn.Timeout, defaultRepo.Timeout)
+	}
 	if syn.URL != "oci://oci.trueforge.org/truecharts/kromgo" {
 		t.Errorf("URL = %q (trailing slash should be normalized)", syn.URL)
 	}

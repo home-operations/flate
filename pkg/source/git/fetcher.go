@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-git/go-billy/v5"
@@ -24,7 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 
-	// HTTPS operations must retain flate's header timeout and egress guard.
+	// HTTPS operations must retain flate's egress guard.
 	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -156,6 +157,12 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 	var input *gittree.FS
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
+		timeout := time.Minute
+		if repo.Timeout != nil {
+			timeout = repo.Timeout.Duration
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
 		cloned, err := f.acquire(ctx, storer, worktree, request)
 		if err != nil {
 			return plumbing.ZeroHash, err
@@ -168,7 +175,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 			if err := checkoutRef(cloned, hash, repo.SparseCheckout); err != nil {
 				return plumbing.ZeroHash, err
 			}
-			if err := updateSubmodules(ctx, cloned, opts.Auth); err != nil {
+			if err := f.updateSubmodules(ctx, cloned, opts.Auth, git.DefaultSubmoduleRecursionDepth); err != nil {
 				return plumbing.ZeroHash, err
 			}
 		}
@@ -227,6 +234,7 @@ func gitWarnings(input *gittree.FS, id manifest.NamedResource, repository, ref s
 }
 
 type gitAcquisition struct {
+	timeout  time.Duration
 	spec     *manifest.GitRepository
 	options  git.CloneOptions
 	material any
@@ -241,13 +249,19 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		ClientCert: options.ClientCert, ClientKey: options.ClientKey,
 		Depth: options.Depth, Tags: git.NoTags,
 	}
+	fetchRef := func(repo *git.Repository) error {
+		fetchCtx, cancel := operationContext(ctx, request.timeout)
+		defer cancel()
+		return repo.FetchContext(fetchCtx, fetch)
+	}
+
 	if kind == "commit" && ref.Branch == "" {
 		repo, err := initRemote(storer, worktree, options.URL)
 		if err != nil {
 			return nil, err
 		}
 		fetch.Depth, fetch.RefSpecs = 1, []config.RefSpec{config.RefSpec("+" + value + ":refs/flate/pin")}
-		err = repo.FetchContext(ctx, fetch)
+		err = fetchRef(repo)
 		if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
 				return nil, err
@@ -256,7 +270,7 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 				slog.Debug("git: exact commit fetch refused; fetching full history", "url", options.URL, "error", err)
 			}
 			fetch.Depth, fetch.RefSpecs = 0, []config.RefSpec{"+refs/*:refs/*"}
-			if err := repo.FetchContext(ctx, fetch); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+			if err := fetchRef(repo); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 				return nil, err
 			}
 		}
@@ -271,7 +285,9 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		specs = []config.RefSpec{spec}
 	}
 	if len(specs) == 0 || worktree != nil {
-		repo, err := git.CloneContext(ctx, storer, worktree, &options)
+		cloneCtx, cancel := operationContext(ctx, request.timeout)
+		repo, err := git.CloneContext(cloneCtx, storer, worktree, &options)
+		cancel()
 		if err != nil {
 			return nil, err
 		}
@@ -284,7 +300,7 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 			return repo, nil
 		}
 		fetch.Depth, fetch.RefSpecs = 0, specs
-		err = repo.FetchContext(ctx, fetch)
+		err = fetchRef(repo)
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			err = nil
 		}
@@ -295,7 +311,7 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		return nil, err
 	}
 	fetch.RefSpecs = specs
-	err = repo.FetchContext(ctx, fetch)
+	err = fetchRef(repo)
 	if errors.Is(err, git.NoErrAlreadyUpToDate) {
 		err = nil
 	}

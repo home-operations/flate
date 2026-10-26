@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 
@@ -61,7 +62,7 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 	if err != nil {
 		return nil, nil, err
 	}
-	client.Client = &auth.Client{Client: source.NewHTTPClient(tr, source.HTTPStream), Cache: tr.(auth.Cache), Credential: auth.StaticCredential(client.Reference.Registry, cred)}
+	client.Client = &auth.Client{Client: &http.Client{Transport: tr}, Cache: tr.(auth.Cache), Credential: auth.StaticCredential(client.Reference.Registry, cred)}
 	return client, material, nil
 }
 

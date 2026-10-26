@@ -141,7 +141,16 @@ type remoteEntry struct {
 }
 
 func compareRemoteInputs(a, b remoteInput) int {
-	return cmp.Or(cmp.Compare(a.Operation, b.Operation), cmp.Compare(a.URL, b.URL), cmp.Compare(a.Ref, b.Ref))
+	if order := cmp.Or(cmp.Compare(a.Operation, b.Operation), cmp.Compare(a.URL, b.URL), cmp.Compare(a.Ref, b.Ref), cmp.Compare(a.Timeout, b.Timeout)); order != 0 {
+		return order
+	}
+	if a.Submodules == b.Submodules {
+		return 0
+	}
+	if a.Submodules {
+		return 1
+	}
+	return -1
 }
 
 // fileEntry / nodeEntry are the serialized, sorted snapshot the disk cache

@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -174,6 +175,8 @@ func normalizeChartDigest(d string) string {
 }
 
 func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (ocispec.Descriptor, error) {
+	ctx, cancel := context.WithTimeout(ctx, (sourcev1.HelmRepository{Spec: r.HelmRepositorySpec}).GetTimeout())
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return ocispec.Descriptor{}, err

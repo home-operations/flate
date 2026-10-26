@@ -11,11 +11,13 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-// GitBaseRequest carries a base identity and the referencing Flux interval.
+// GitBaseRequest carries effective Git policy and the referencing Flux interval.
 type GitBaseRequest struct {
-	URL    string
-	Ref    string
-	MaxAge time.Duration
+	URL        string
+	Ref        string
+	MaxAge     time.Duration
+	Timeout    time.Duration
+	Submodules bool
 }
 
 // GitBaseFetcher acquires an immutable repository view for private render mounts.

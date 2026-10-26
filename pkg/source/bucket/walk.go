@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -39,13 +40,20 @@ type bucketChunk struct {
 }
 
 func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w io.Writer) (ocispec.Descriptor, error) {
+	timeout := time.Minute
+	if b.Timeout != nil {
+		timeout = b.Timeout.Duration
+	}
+	listCtx, cancelList := context.WithTimeout(ctx, timeout)
+	defer cancelList()
 	var entries []minio.ObjectInfo
-	for obj := range client.ListObjects(ctx, b.BucketName, minio.ListObjectsOptions{Prefix: b.Prefix, Recursive: true}) {
+	for obj := range client.ListObjects(listCtx, b.BucketName, minio.ListObjectsOptions{Prefix: b.Prefix, Recursive: true}) {
 		if obj.Err != nil {
 			return ocispec.Descriptor{}, bucketResponseError(obj.Err)
 		}
 		entries = append(entries, obj)
 	}
+	cancelList()
 	slices.SortFunc(entries, func(a, b minio.ObjectInfo) int { return cmp.Compare(a.Key, b.Key) })
 	names := make([]string, 0, len(entries))
 	h := sha256.New()
@@ -82,10 +90,12 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 		_, _ = fmt.Fprintf(h, "%s %s\n", e.Key, e.ETag)
 	}
 	entries = entries[:len(names)]
+	downloadCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	ranges := true
 	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return e.Size > chunkBytes }); i >= 0 {
 		probe := &bucketChunk{object: &entries[i], size: 1}
-		body, header, err := probe.get(ctx, client, b.BucketName)
+		body, header, err := probe.get(downloadCtx, client, b.BucketName)
 		if err != nil {
 			return ocispec.Descriptor{}, err
 		}
@@ -111,7 +121,7 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 		}
 	}
 	budget := semaphore.NewWeighted(downloads * chunkBytes)
-	g, gctx := errgroup.WithContext(ctx)
+	g, gctx := errgroup.WithContext(downloadCtx)
 	g.SetLimit(downloads + 2)
 	g.Go(func() error {
 		tw := tar.NewWriter(w)
@@ -123,7 +133,7 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 				return gctx.Err()
 			}
 			if err := c.emit(tw, body); err != nil {
-				return cmp.Or(ctx.Err(), err)
+				return cmp.Or(ctx.Err(), downloadCtx.Err(), err)
 			}
 			budget.Release(c.weight())
 			if c.done != nil {

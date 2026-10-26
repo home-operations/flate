@@ -1,6 +1,7 @@
 package discovery_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -84,5 +86,63 @@ func TestRun_BuiltRemoteGenerator(t *testing.T) {
 	record, _ := result.Index.Lookup(id)
 	if !slices.Contains(record.Inputs, "kustomization.yaml") || len(result.Index.Readers) != 0 {
 		t.Fatalf("remote generator lost declaration input or acquired render ownership: %+v", record)
+	}
+}
+
+func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
+	t.Parallel()
+	var probes, acquisitions atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probes.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	owner := cachetest.New(t, "", cache.New)
+	network := new(source.Network)
+	t.Cleanup(network.Close)
+	tasks := task.NewBounded(2)
+	inputs := source.NewHTTPInputs(owner, network, tasks)
+	t.Cleanup(inputs.Close)
+	trees := kustomize.NewTreeCache(owner, &inputs, tasks)
+	t.Cleanup(trees.Close)
+	trees.SetGitBaseFetcher(func(_ context.Context, request kustomize.GitBaseRequest, _ cache.RetryConfig) (*store.SourceArtifact, error) {
+		acquisitions.Add(1)
+		if request.URL != server.URL+"/org/repo" || request.Ref != "" || request.Timeout != 27*time.Second || !request.Submodules {
+			return nil, fmt.Errorf("remote request lost upstream defaults: %+v", request)
+		}
+		return &store.SourceArtifact{Key: "remote-ownership", Revision: "fixed", FS: fstest.MapFS{
+			"base/kustomization.yaml": {Data: []byte("resources: [bundle.yaml]\n")},
+			"base/bundle.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: admitted, namespace: apps}\ndata: {value: remote}\n")},
+		}}, nil
+	})
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml, "+server.URL+"/org/repo/base]\n")
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: apps\nresources: [release.yaml, repository.yaml]\n")
+	testutil.WriteFile(t, root, "apps/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: remote}\nspec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: remote}}}}\n")
+	testutil.WriteFile(t, root, "apps/repository.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmRepository\nmetadata: {name: remote}\nspec: {url: https://fixture.invalid/charts}\n")
+	testutil.WriteFile(t, root, "unowned/sibling.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unowned, namespace: apps}\n")
+	st := store.New()
+	result, err := discovery.Run(t.Context(), discovery.Config{Trees: trees, Path: root + "/flux", RepoRoot: root, Store: st, RemoteInputs: &inputs})
+	assert.NoError(t, err)
+	release := testutil.HelmReleaseID("apps", "remote")
+	if _, indexed := result.Index.Lookup(release); !indexed || st.GetObject(release) != nil {
+		t.Fatalf("owned remote declaration lost index-only state: indexed=%v object=%v", indexed, st.GetObject(release))
+	}
+	repository := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "remote"}
+	if _, indexed := result.Index.Lookup(repository); !indexed || st.GetObject(repository) != nil {
+		t.Fatalf("owned source lost index-only scope: indexed=%v object=%v", indexed, st.GetObject(repository))
+	}
+	alias := st.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"})
+	if alias == nil || alias.(*store.SourceArtifact).LocalPath != root {
+		t.Fatal("remote graph lost bootstrap source classification")
+	}
+	assert.Diff(t, ownersForTest(result.Index, "apps/kustomization.yaml"), []manifest.NamedResource{testutil.KustomizationID("flux-system", "owner")})
+	admitted, ok := st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "admitted"}).(*manifest.ConfigMap)
+	if !ok || admitted.Data["value"] != "remote" || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "unowned"}) != nil {
+		t.Fatal("markerless output or scoped sibling admission changed")
+	}
+	if probes.Load() != 1 || acquisitions.Load() == 0 {
+		t.Fatalf("markerless admission: HTTP=%d Git=%d", probes.Load(), acquisitions.Load())
 	}
 }

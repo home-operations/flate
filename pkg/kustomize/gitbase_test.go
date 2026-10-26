@@ -15,7 +15,6 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 
@@ -30,76 +29,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
-
-func TestIsGitRemoteBase(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		url     string
-		ok      bool
-		repoURL string
-		subPath string
-		ref     string
-	}{
-		// --- git bases ---
-		{name: "ref query", url: "https://github.com/o/r?ref=v0.2.2",
-			ok: true, repoURL: "https://github.com/o/r", ref: "v0.2.2"},
-		{name: "ref query with default subpath", url: "https://github.com/o/r/sub/dir?ref=main",
-			ok: true, repoURL: "https://github.com/o/r", subPath: "sub/dir", ref: "main"},
-		{name: "version query", url: "https://github.com/o/r?version=v0.2.2",
-			ok: true, repoURL: "https://github.com/o/r", ref: "v0.2.2"},
-		{name: "ref beats version", url: "https://github.com/o/r?version=v1&ref=v2",
-			ok: true, repoURL: "https://github.com/o/r", ref: "v2"},
-		{name: "double-slash subpath", url: "https://github.com/o/r//sub/dir?ref=main",
-			ok: true, repoURL: "https://github.com/o/r", subPath: "sub/dir", ref: "main"},
-		{name: "double-slash no ref", url: "https://github.com/o/r//sub",
-			ok: true, repoURL: "https://github.com/o/r", subPath: "sub"},
-		{name: "git suffix with subpath", url: "https://github.com/o/r.git/sub?ref=abc",
-			ok: true, repoURL: "https://github.com/o/r.git", subPath: "sub", ref: "abc"},
-		{name: "git suffix root", url: "https://github.com/o/r.git?ref=v1",
-			ok: true, repoURL: "https://github.com/o/r.git", ref: "v1"},
-		{name: "azure _git", url: "https://dev.azure.com/org/proj/_git/repo/sub?ref=v1",
-			ok: true, repoURL: "https://dev.azure.com/org/proj/_git/repo", subPath: "sub", ref: "v1"},
-		{name: "git:: forced no ref", url: "git::https://x.example/o/r",
-			ok: true, repoURL: "https://x.example/o/r"},
-		{name: "git:: forced with ref", url: "git::https://x.example/o/r?ref=v1",
-			ok: true, repoURL: "https://x.example/o/r", ref: "v1"},
-		{name: "self-hosted gitea, no allowlist", url: "https://gitea.internal/o/r?ref=v1",
-			ok: true, repoURL: "https://gitea.internal/o/r", ref: "v1"},
-		{name: "http scheme", url: "http://h.example/o/r?ref=v1",
-			ok: true, repoURL: "http://h.example/o/r", ref: "v1"},
-
-		// --- not git bases ---
-		{name: "plain http file", url: "https://raw.githubusercontent.com/o/r/main/cm.yaml"},
-		{name: "plain http file short", url: "https://example.com/foo.yaml"},
-		{name: "marker-less ref-less repo (documented limit)", url: "https://github.com/o/r"},
-		{name: "oci ref", url: "oci://ghcr.io/o/r"},
-		{name: "ssh left to kustomize", url: "ssh://git@github.com/o/r?ref=v1"},
-		{name: "local relative", url: "./local"},
-		{name: "parent relative", url: "../shared"},
-		{name: "host only with ref", url: "https://github.com?ref=v1"},
-		{name: "single segment with ref", url: "https://github.com/onlyorg?ref=v1"},
-		{name: "empty org with ref", url: "https://github.com//repo?ref=v1"},
-		{name: "empty repo with ref", url: "https://github.com/org/?ref=v1"},
-		{name: "subpath escapes repo", url: "https://github.com/o/r//../escape?ref=v1"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			spec, ok := kustomizeinput.ParseGitBase(tc.url)
-			if ok != tc.ok {
-				t.Fatalf("kustomizeinput.ParseGitBase(%q) ok = %v, want %v (spec %+v)", tc.url, ok, tc.ok, spec)
-			}
-			if !ok {
-				return
-			}
-			if spec.RepoURL != tc.repoURL || spec.SubPath != tc.subPath || spec.Ref != tc.ref {
-				t.Errorf("kustomizeinput.ParseGitBase(%q) = {repoURL:%q subPath:%q ref:%q}, want {repoURL:%q subPath:%q ref:%q}",
-					tc.url, spec.RepoURL, spec.SubPath, spec.Ref, tc.repoURL, tc.subPath, tc.ref)
-			}
-		})
-	}
-}
 
 // fakeWorktree writes files into a fresh dir and returns its path,
 // standing in for a materialized git worktree.
@@ -138,7 +67,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 		"overlays/prod/kustomization.yaml": "resources:\n  - ../../\n",
 	})
 
-	const gitURL = "https://github.com/o/r//overlays/prod?ref=v1"
+	const gitURL = "git::https://github.com/o/r//overlays/prod?ref=v1"
 	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + gitURL + "\n"})
 
 	cache := newTestTreeCache(t, "")
@@ -151,7 +80,7 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantDir := remoteResourcePrefix + manifest.Fingerprint("https://github.com/o/r"+"@"+"v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: "https://github.com/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
 	wantEntry := "./" + wantDir + "/overlays/prod"
 	if !strings.Contains(string(body), wantEntry) {
 		t.Errorf("entry not rewritten to base subdir %q:\n%s", wantEntry, body)
@@ -171,10 +100,10 @@ func TestPreflightGitBase_RewritesToDirectory(t *testing.T) {
 	}
 }
 
-// TestPreflightGitBase_DoesNotHTTPGetGitURL is the #616 regression guard:
+// TestPreflightGitBase_NonResourceBody is the #616 regression guard:
 // a git-base URL must take the clone path, never an HTTP GET that returns
 // the host's HTML page and gets written as malformed YAML.
-func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
+func TestPreflightGitBase_NonResourceBody(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -197,10 +126,10 @@ func TestPreflightGitBase_DoesNotHTTPGetGitURL(t *testing.T) {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	if n := hits.Load(); n != 0 {
-		t.Errorf("git URL was HTTP-GETted %d time(s); it must be cloned instead (#616)", n)
+	if n := hits.Load(); n != 1 {
+		t.Errorf("resource selection HTTP probes = %d, want 1", n)
 	}
-	wantDir := remoteResourcePrefix + manifest.Fingerprint(srv.URL+"/o/r"+"@"+"v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: srv.URL + "/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
 	if !fsys.IsDir(wantDir) {
 		t.Fatalf("git URL not materialized as a base directory (#616)")
 	}
@@ -220,7 +149,7 @@ func TestPreflightGitBase_WholeRepoPreservesParentRefs(t *testing.T) {
 	})
 
 	src := testutil.WriteTree(t, map[string]string{
-		"kustomization.yaml": "resources:\n  - https://example.com/o/r//apps/foo?ref=v1\n",
+		"kustomization.yaml": "resources:\n  - git::https://example.com/o/r//apps/foo?ref=v1\n",
 	})
 
 	cache := newTestTreeCache(t, "")
@@ -250,7 +179,7 @@ func TestPreflightGitBase_SourceTreeImmutable(t *testing.T) {
 		"cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: base}\n",
 	})
 
-	original := "resources:\n  - https://example.com/o/r?ref=v1\n"
+	original := "resources:\n  - git::https://example.com/o/r?ref=v1\n"
 	src := testutil.WriteTree(t, map[string]string{"kustomization.yaml": original})
 
 	cache := newTestTreeCache(t, "")
@@ -307,9 +236,9 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 
 	fsys := memFSWith(t, map[string]string{
 		"kustomization.yaml":   "resources: [a, b, c]\n",
-		"a/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
-		"b/kustomization.yaml": "resources:\n  - https://example.com/o/r//two?ref=v1\n",
-		"c/kustomization.yaml": "resources:\n  - https://example.com/o/r//one?ref=v1\n",
+		"a/kustomization.yaml": "resources:\n  - git::https://example.com/o/r//one?ref=v1\n",
+		"b/kustomization.yaml": "resources:\n  - git::https://example.com/o/r//two?ref=v1\n",
+		"c/kustomization.yaml": "resources:\n  - git::https://example.com/o/r//one?ref=v1\n",
 	})
 
 	var calls atomic.Int32
@@ -319,7 +248,7 @@ func TestPreflightGitBase_ReusesMountWithinRender(t *testing.T) {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	wantDir := remoteResourcePrefix + manifest.Fingerprint("https://example.com/o/r@v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: "https://example.com/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
 	if calls.Load() != 1 {
 		t.Fatalf("fetches = %d, want 1", calls.Load())
 	}
@@ -371,14 +300,14 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 		}
 	}
 
-	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - https://example.com/o/r?ref=v1\n"})
+	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - git::https://example.com/o/r?ref=v1\n"})
 	cache := newTestTreeCache(t, "")
 	withFakeGitBase(t, cache, worktree, nil)
 	if err := preflightRemoteResources(context.Background(), cache, fsys, "."); err != nil {
 		t.Fatalf("preflight: %v", err)
 	}
 
-	wantDir := remoteResourcePrefix + manifest.Fingerprint("https://example.com/o/r@v1")
+	wantDir := remoteResourcePrefix + manifest.Fingerprint(remoteInput{Operation: remoteGit, URL: "https://example.com/o/r", Ref: "v1", Timeout: 27 * time.Second, Submodules: true})
 	if data, err := fsys.ReadFile(filepath.Join(wantDir, "alias.yaml")); err != nil || !strings.Contains(string(data), "name: base") {
 		t.Fatalf("regular alias: %s, %v", data, err)
 	}
@@ -397,8 +326,8 @@ func TestPreflightGitBase_SymlinkEscapeNotMaterialized(t *testing.T) {
 
 func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 	t.Parallel()
-	const parentURL = "https://example.invalid/o/parent.git"
-	const childURL = "https://example.invalid/o/child.git"
+	const parentURL = "file:///example.invalid/o/parent.git"
+	const childURL = "file:///example.invalid/o/child.git"
 	for _, fixture := range []struct {
 		name, kustomization, resource, marker string
 	}{
@@ -426,7 +355,7 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 			t.Parallel()
 			parent := fakeWorktree(t, map[string]string{
 				"kustomization.yaml":         fixture.kustomization,
-				"package/kustomization.yaml": "resources:\n  - " + childURL + "\n",
+				"package/kustomization.yaml": "resources:\n  - " + childURL + "?timeout=9s&submodules=true\n",
 				"root.yaml":                  "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: root}\n",
 			})
 			child := fakeWorktree(t, map[string]string{
@@ -441,14 +370,21 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 			c := newTestTreeCache(t, "")
 			var requests []GitBaseRequest
 			c.SetGitBaseFetcher(func(ctx context.Context, request GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+				wantTimeout, wantSubmodules := 5*time.Second, false
+				if request.URL == childURL {
+					wantTimeout, wantSubmodules = 9*time.Second, true
+				}
+				if request.Timeout != wantTimeout || request.Submodules != wantSubmodules {
+					t.Errorf("nested policy=%+v", request)
+				}
 				requests = append(requests, request)
 				dir := parent
 				if request.URL == childURL {
 					dir = child
 				}
-				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
+				return fetcher.FetchRemoteBase(ctx, sourcegit.RemoteBaseRequest{URL: "file://" + dir, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
 			})
-			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "\n")}}}
+			input := &store.SourceArtifact{Key: "root", FS: fstest.MapFS{"kustomization.yaml": &fstest.MapFile{Data: []byte("resources:\n  - " + parentURL + "?timeout=5s&submodules=false\n")}}}
 			render := func(interval string) ([]map[string]any, error) {
 				duration, err := time.ParseDuration(interval)
 				if err != nil {
@@ -489,7 +425,7 @@ func TestRender_NestedGitBasesAndIntervals(t *testing.T) {
 					}
 				}
 			}
-			update("kustomization.yaml", "resources:\n  - "+parentURL+"\n")
+			update("kustomization.yaml", "resources:\n  - "+parentURL+"?timeout=5s&submodules=false\n")
 			if _, err := render("1ns"); err == nil || !strings.Contains(err.Error(), "cycle") {
 				t.Fatalf("upstream cycle error: %v", err)
 			}
@@ -595,5 +531,105 @@ func TestRender_RemoteRetryPolicies(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPreflightGitBase_UpstreamSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, role, raw, body string
+		status, http, git     int
+	}{
+		{"markerless repository", "resources", "https://github.com/org/repo/base", "", http.StatusNotFound, 1, 1},
+		{"resource before directory", "resources", "https://github.com/org/repo//base?ref=v1", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: file}\n", http.StatusOK, 1, 0},
+		{"component directory", "components", "https://github.com/org/repo/base", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: file}\n", http.StatusOK, 0, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var httpCalls, gitCalls atomic.Int32
+			stubHTTPTransport(t, remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
+				httpCalls.Add(1)
+				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body)), Request: r}, nil
+			}))
+			fsys := memFSWith(t, map[string]string{"kustomization.yaml": tc.role + ":\n  - " + tc.raw + "\n"})
+			cache := newTestTreeCache(t, "")
+			withFakeGitBase(t, cache, fakeWorktree(t, map[string]string{"base/kustomization.yaml": "resources: []\n"}), &gitCalls)
+			err := preflightRemoteResources(t.Context(), cache, fsys, ".")
+			if err != nil || int(httpCalls.Load()) != tc.http || int(gitCalls.Load()) != tc.git {
+				t.Errorf("preflight: HTTP=%d Git=%d error=%v; want HTTP=%d Git=%d and success", httpCalls.Load(), gitCalls.Load(), err, tc.http, tc.git)
+			}
+		})
+	}
+}
+
+func TestPreflightGitBase_PolicyMounts(t *testing.T) {
+	t.Parallel()
+	c := newTestTreeCache(t, "")
+	var requests []GitBaseRequest
+	c.SetGitBaseFetcher(func(_ context.Context, r GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+		requests = append(requests, r)
+		return &store.SourceArtifact{Key: "same", Revision: "same", FS: memoryTree(t, map[string]string{"one/kustomization.yaml": "resources: []\n", "two/kustomization.yaml": "resources: []\n"})}, nil
+	})
+	view := memFSWith(t, map[string]string{"kustomization.yaml": `resources:
+- file:///org/repo//one?timeout=1s&submodules=false
+- file:///org/repo//two?timeout=1s&submodules=false
+- file:///org/repo//one?timeout=2s&submodules=false
+- file:///org/repo//one?timeout=2s&submodules=true
+`})
+	if err := preflightRemoteResources(t.Context(), c, view, "."); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 3 || len(view.bases) != 3 {
+		t.Fatalf("policy acquisitions=%+v mounts=%+v", requests, view.bases)
+	}
+	for i, want := range []GitBaseRequest{{URL: "file:///org/repo", Timeout: time.Second}, {URL: "file:///org/repo", Timeout: 2 * time.Second}, {URL: "file:///org/repo", Timeout: 2 * time.Second, Submodules: true}} {
+		if requests[i] != want {
+			t.Fatalf("request %d=%+v, want %+v", i, requests[i], want)
+		}
+	}
+}
+
+func TestPreflightGitBase_ErrorPrecedence(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, path string
+		status     int
+		timeout    bool
+	}{
+		{"malformed resource", "/org/repo/base", http.StatusOK, false},
+		{"directory timeout", "/org/repo/base", http.StatusOK, true},
+		{"HTTP failure", "/resource.yaml", http.StatusNotFound, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, "apiVersion: [")
+			}))
+			t.Cleanup(srv.Close)
+			c := newTestTreeCache(t, "")
+			var calls atomic.Int32
+			c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+				calls.Add(1)
+				if tc.timeout {
+					return nil, context.DeadlineExceeded
+				}
+				return nil, errors.New("directory failed")
+			})
+			input := &store.SourceArtifact{FS: memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + srv.URL + tc.path + "']\n"})}
+			_, err := Render(t.Context(), c, RenderRequest{Source: input, Spec: demoSpec}, sourcecache.RetryConfig{})
+			if err == nil {
+				t.Fatal("invalid input rendered")
+			}
+			if tc.status != http.StatusOK {
+				if calls.Load() != 0 || !strings.Contains(err.Error(), "HTTP 404") {
+					t.Fatalf("HTTP error precedence: calls=%d error=%v", calls.Load(), err)
+				}
+			} else if tc.timeout {
+				if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "accumulation err=") {
+					t.Fatalf("directory timeout lost file diagnostic: %v", err)
+				}
+			} else if calls.Load() != 1 || strings.Contains(err.Error(), "directory failed") || !strings.Contains(err.Error(), "yaml") {
+				t.Fatalf("malformed resource precedence: calls=%d error=%v", calls.Load(), err)
+			}
+		})
 	}
 }

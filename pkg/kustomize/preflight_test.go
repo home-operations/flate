@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
@@ -389,8 +390,8 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 		{name: "outside-component", subpath: "selected", control: "resources: [cm.yaml]\ncomponents: [../component]\n", files: map[string]string{"component/kustomization.yml": "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\npatches: [{path: $URL/patch.yaml}]\n"}, replies: map[string]string{"/patch.yaml": patch}, want: "marker: patched"},
 		{name: "generated-component", subpath: "selected", control: base, files: map[string]string{"component/kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\npatches: [{path: $URL/patch.yaml}]\n"}, replies: map[string]string{"/patch.yaml": patch}, want: "marker: patched"},
 		{name: "coalesced-resource-patch", control: "resources: [$URL/shared.yaml]\npatches: [{path: $URL/shared.yaml}]\n", replies: map[string]string{"/shared.yaml": cmYAML("remote")}, want: "name: remote"},
-		{name: "fetched-git-input", control: "resources: ['https://example.invalid/o/r.git//selected?ref=main']\n", gitFiles: map[string]string{"selected/kustomization.yaml": base + "components: [../component]\n", "selected/cm.yaml": cmYAML("demo"), "component/kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nconfigMapGenerator: [{name: generated, files: [$URL/file.txt]}]\n"}, replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: contents"},
-		{name: "plugin-git-directory", control: base + "generators: ['https://example.invalid/o/r.git//plugins?ref=main']\n", gitFiles: map[string]string{"plugins/kustomization.yaml": "resources: [g.yaml]\n", "plugins/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "local.txt: owner"},
+		{name: "fetched-git-input", control: "resources: ['file:///example.invalid/o/r.git//selected?ref=main']\n", gitFiles: map[string]string{"selected/kustomization.yaml": base + "components: [../component]\n", "selected/cm.yaml": cmYAML("demo"), "component/kustomization.yaml": "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nconfigMapGenerator: [{name: generated, files: [$URL/file.txt]}]\n"}, replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: contents"},
+		{name: "plugin-git-directory", control: base + "generators: ['file:///example.invalid/o/r.git//plugins?ref=main']\n", gitFiles: map[string]string{"plugins/kustomization.yaml": "resources: [g.yaml]\n", "plugins/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "local.txt: owner"},
 		{name: "plugin-file", control: base + "generators: [conf/g.yaml]\n", files: map[string]string{"conf/g.yaml": plugin}, replies: map[string]string{"/file.txt": "contents"}, want: "file.txt: contents"},
 		{name: "plugin-inline-multidoc", control: base + "generators:\n- |\n  " + strings.ReplaceAll(plugin+"---\napiVersion: builtin\nkind: SecretGenerator\nmetadata: {name: other}\nenvs: [$URL/env]\n", "\n", "\n  "), replies: map[string]string{"/file.txt": "contents", "/env": "marker=secret\n"}, want: "marker: c2VjcmV0"},
 		{name: "git-looking-file", control: base + "patches: [{path: $URL/repo.git//patch.yaml}]\n", replies: map[string]string{"/repo.git//patch.yaml": patch}, want: "marker: patched"},
@@ -533,7 +534,7 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 		}))
 		t.Cleanup(srv.Close)
 		url := srv.URL + "/repo.git//data"
-		const gitURL = "https://example.invalid/owner/repo.git"
+		const gitURL = "file:///example.invalid/owner/repo.git"
 		remote := memoryTree(t, map[string]string{"kustomization.yaml": "configMapGenerator: [{name: nested, files: ['chosen=" + url + "']}]\n"})
 		c := newTestTreeCache(t, "")
 		gitCalls := 0
@@ -551,10 +552,10 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 			t.Fatalf("preflight error=%v", err)
 		}
 		snap := rec.snapshot()
-		if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input != (remoteInput{Operation: remoteGit, URL: gitURL, Ref: "main"}) {
+		if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input != (remoteInput{Operation: remoteGit, URL: gitURL, Ref: "main", Timeout: 27 * time.Second, Submodules: true}) {
 			t.Fatalf("remote observations=%+v", snap.Remotes)
 		}
-		wantParents := []remoteInput{{Operation: remoteGit, URL: gitURL, Ref: "main"}}
+		wantParents := []remoteInput{{Operation: remoteGit, URL: gitURL, Ref: "main", Timeout: 27 * time.Second, Submodules: true}}
 		if diff := cmp.Diff(wantParents, snap.Remotes[0].Parents); diff != "" || len(snap.Remotes[1].Parents) != 0 {
 			t.Fatalf("root sighting erased nested parents (-want +got):\n%s; Git parents=%+v", diff, snap.Remotes[1].Parents)
 		}
@@ -605,9 +606,9 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 				_, _ = io.WriteString(w, body)
 			}))
 			t.Cleanup(srv.Close)
-			a := remoteInput{Operation: remoteGit, URL: "https://example.invalid/a-parent.git", Ref: "main"}
-			b := remoteInput{Operation: remoteGit, URL: "https://example.invalid/z-parent.git", Ref: "main"}
-			shared := remoteInput{Operation: remoteGit, URL: "https://example.invalid/m-shared.git", Ref: "main"}
+			a := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/a-parent.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
+			b := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/z-parent.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
+			shared := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/m-shared.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
 			child := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/a-child"}
 			plugin := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/plugin-one"}
 			otherPlugin := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/plugin-two"}

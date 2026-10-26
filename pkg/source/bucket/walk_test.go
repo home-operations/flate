@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -376,6 +378,7 @@ func (tr bucketRoundTrip) RoundTrip(req *http.Request) (*http.Response, error) {
 func TestWalkBucket_LargeListedSize(t *testing.T) {
 	t.Parallel()
 	const size int64 = (1 << 30) + 1
+	const timeout = 10 * time.Second
 	for _, ranges := range []bool{false, true} {
 		t.Run(fmt.Sprintf("ranges=%t", ranges), func(t *testing.T) {
 			t.Parallel()
@@ -386,10 +389,17 @@ func TestWalkBucket_LargeListedSize(t *testing.T) {
 			defer openGate()
 			var active, peak atomic.Int32
 			var gets [2]atomic.Int32
+			var listDeadline, downloadDeadline time.Time
 			client, err := minio.New("bucket.invalid", &minio.Options{
 				Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1,
 				Transport: bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
+					deadline, ok := req.Context().Deadline()
+					remaining := time.Until(deadline)
+					if !ok || remaining <= timeout-time.Second || remaining > timeout {
+						t.Errorf("large object deadline: present=%t remaining=%v, want %v", ok, remaining, timeout)
+					}
 					if req.URL.Query().Get("list-type") != "" {
+						listDeadline = deadline
 						var listing strings.Builder
 						listing.WriteString("<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
 						for i := range 2 {
@@ -418,8 +428,15 @@ func TestWalkBucket_LargeListedSize(t *testing.T) {
 					}
 					response.Header.Set("Content-Length", strconv.FormatInt(response.ContentLength, 10))
 					if probe {
+						downloadDeadline = deadline
+						if !downloadDeadline.After(listDeadline) {
+							t.Errorf("probe deadline=%v, want a new phase after listing deadline=%v", downloadDeadline, listDeadline)
+						}
 						response.Body = io.NopCloser(strings.NewReader("x"))
 						return response, nil
+					}
+					if !deadline.Equal(downloadDeadline) {
+						t.Errorf("download deadline=%v, want probe deadline=%v", deadline, downloadDeadline)
 					}
 					i, err := strconv.Atoi(strings.TrimPrefix(req.URL.Path, "/data/big"))
 					if err != nil || i < 0 || i >= len(gets) {
@@ -454,7 +471,7 @@ func TestWalkBucket_LargeListedSize(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
+				_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data", Timeout: &metav1.Duration{Duration: timeout}}, io.Discard)
 				done <- err
 			}()
 			for range 2 {
@@ -770,6 +787,140 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			if desc.Annotations["flate.revision"] != revision || desc.Annotations["flate.object-count"] != "3" {
 				t.Fatalf("metadata=%v, want revision=%s count=3", desc.Annotations, revision)
 			}
+		})
+	}
+}
+
+type timeoutBucketTransport func(*http.Request) (*http.Response, error)
+
+func (tr timeoutBucketTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return tr(req)
+}
+
+func TestWalkBucket_SourceTimeout(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{name: "default"},
+		{name: "shorter", timeout: 10 * time.Second},
+		{name: "longer", timeout: 180 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			want := tc.timeout
+			if want == 0 {
+				want = time.Minute
+			}
+			b := &manifest.Bucket{BucketName: "data"}
+			if tc.timeout != 0 {
+				b.Timeout = &metav1.Duration{Duration: tc.timeout}
+			}
+			var calls atomic.Int32
+			client, err := minio.New("bucket.invalid", &minio.Options{
+				Region: "us-east-1", BucketLookup: minio.BucketLookupPath,
+				Transport: timeoutBucketTransport(func(req *http.Request) (*http.Response, error) {
+					calls.Add(1)
+					deadline, ok := req.Context().Deadline()
+					remaining := time.Until(deadline)
+					if !ok || remaining <= want-time.Second || remaining > want {
+						t.Errorf("bucket listing deadline: present=%t remaining=%v, want %v", ok, remaining, want)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>")), Request: req}, nil
+				}),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = walkBucket(t.Context(), client, b, io.Discard)
+			if err != nil || calls.Load() == 0 {
+				t.Fatalf("controlled bucket listing: calls=%d error=%v", calls.Load(), err)
+			}
+		})
+	}
+}
+
+type bucketTimeoutBody struct{ ctx context.Context }
+
+func (b bucketTimeoutBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (bucketTimeoutBody) Close() error { return nil }
+
+func TestWalkBucket_PhaseTimeouts(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		objects int
+		elapsed time.Duration
+		fail    bool
+	}{
+		{"independent phases", 2, 6 * time.Second, false},
+		{"listing body", 2, 5 * time.Second, true},
+		{"download body", 2, 8 * time.Second, true},
+		{"complete download batch", 9, 8 * time.Second, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				start := time.Now()
+				b := &manifest.Bucket{BucketName: "data", Timeout: &metav1.Duration{Duration: 5 * time.Second}}
+				client, err := minio.New("bucket.invalid", &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1, Transport: timeoutBucketTransport(func(req *http.Request) (*http.Response, error) {
+					listing := req.URL.Query().Get("list-type") != ""
+					deadline := start.Add(8 * time.Second)
+					if listing {
+						deadline = start.Add(5 * time.Second)
+					}
+					if got, ok := req.Context().Deadline(); !ok || !got.Equal(deadline) {
+						t.Errorf("phase deadline=%v present=%t, want %v", got, ok, deadline)
+					}
+					data := "x"
+					if listing {
+						data = "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>"
+						for i := range tc.objects {
+							data += fmt.Sprintf("<Contents><Key>file%02d</Key><Size>1</Size><ETag>\"x\"</ETag></Contents>", i)
+						}
+						data += "</ListBucketResult>"
+					}
+					if listing || tc.name != "download body" {
+						select {
+						case <-time.After(3 * time.Second):
+						case <-req.Context().Done():
+							return nil, req.Context().Err()
+						}
+					}
+					body := io.NopCloser(strings.NewReader(data))
+					if listing && tc.name == "listing body" || !listing && tc.name == "download body" {
+						body = bucketTimeoutBody{req.Context()}
+					}
+					header := http.Header{"Content-Length": {strconv.Itoa(len(data))}, "Etag": {"\"x\""}, "Last-Modified": {"Mon, 02 Jan 2006 15:04:05 GMT"}}
+					return &http.Response{StatusCode: http.StatusOK, Header: header, Body: body, ContentLength: int64(len(data)), Request: req}, nil
+				})})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var output bytes.Buffer
+				_, err = walkBucket(t.Context(), client, b, &output)
+				if errors.Is(err, context.DeadlineExceeded) != tc.fail || !tc.fail && err != nil || time.Since(start) != tc.elapsed {
+					t.Fatalf("phase result: elapsed=%v error=%v", time.Since(start), err)
+				}
+				if !tc.fail {
+					tr := tar.NewReader(&output)
+					for i := range tc.objects {
+						header, err := tr.Next()
+						if err != nil || header.Name != fmt.Sprintf("file%02d", i) {
+							t.Fatalf("sorted archive entry=%v error=%v", header, err)
+						}
+						data, err := io.ReadAll(tr)
+						if err != nil || string(data) != "x" {
+							t.Fatalf("archive body=%q error=%v", data, err)
+						}
+					}
+				}
+			})
 		})
 	}
 }

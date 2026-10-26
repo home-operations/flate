@@ -1259,3 +1259,43 @@ func TestAcquire_NetworkSuppressionOwnerCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestAcquire_RequestTimeout(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		c := newTestHTTPInputs(t, "")
+		start := time.Now()
+		hits := 0
+		entered := make(chan struct{})
+		c.httpClient.Transport = remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
+			hits++
+			if deadline, ok := r.Context().Deadline(); !ok || deadline != start.Add(5*time.Second) {
+				t.Errorf("worker deadline=%v present=%t", deadline, ok)
+			}
+			body := remoteBody{Reader: remoteRead(func([]byte) (int, error) {
+				close(entered)
+				<-r.Context().Done()
+				return 0, r.Context().Err()
+			}), close: func() error { return nil }}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body, Request: r}, nil
+		})
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		first, second := make(chan error, 1), make(chan error, 1)
+		go func() {
+			_, err := c.Acquire(ctx, "https://example.invalid/resource", sourcecache.RetryConfig{}, nil)
+			first <- err
+		}()
+		<-entered
+		go func() {
+			_, err := c.Acquire(t.Context(), "https://example.invalid/resource", sourcecache.RetryConfig{}, nil)
+			second <- err
+		}()
+		if err := <-first; !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != time.Second {
+			t.Fatalf("first waiter: elapsed=%v error=%v", time.Since(start), err)
+		}
+		if err := <-second; !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second || hits != 1 {
+			t.Fatalf("shared body: elapsed=%v requests=%d error=%v", time.Since(start), hits, err)
+		}
+	})
+}

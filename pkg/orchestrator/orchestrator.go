@@ -453,7 +453,7 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) (*discovery.Result,
 		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
 	}
 	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
+		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
 		if artifact != nil {
 			for _, warning := range artifact.Warnings {
 				o.store.AddWarning(manifest.NamedResource{}, warning)

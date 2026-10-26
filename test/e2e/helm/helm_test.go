@@ -206,6 +206,32 @@ func TestE2E_HelmSourceRootValuesFilesChangedOnly(t *testing.T) {
 	}
 }
 
+func TestE2E_HelmAutomaticAliasRevision(t *testing.T) {
+	dir := sourceValuesFixture(t, "[]", false, false)
+	testutil.WriteFile(t, dir, "apps/demo/app/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  chartRef: {kind: OCIRepository, name: automatic, namespace: flux-system}
+`)
+	testutil.WriteFile(t, dir, "demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+	testutil.WriteFile(t, dir, "demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: automatic}\n")
+	source, err := os.ReadFile(filepath.Join(dir, "cluster", "source.yaml"))
+	assert.NoError(t, err)
+	testutil.WriteFile(t, dir, "cluster/source.yaml", strings.Replace(string(source),
+		"sourceRef: {kind: GitRepository, name: flux-system}",
+		"sourceRef: {kind: OCIRepository, name: automatic}", 1))
+	testutil.GitCommitAll(t, testutil.GitInit(t, dir), "init", &gogit.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+	})
+	out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
+		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	assert.Equal(t, code, 1)
+	if !strings.Contains(out, `track oci chart version: flux error: input error: invalid artifact revision ""`) {
+		t.Fatalf("alias revision failure changed:\n%s", out)
+	}
+}
+
 func sourceValuesFixture(t *testing.T, files string, ignore, chartRef bool) string {
 	t.Helper()
 	dir := t.TempDir()

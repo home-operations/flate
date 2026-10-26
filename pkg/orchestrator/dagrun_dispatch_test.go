@@ -550,8 +550,8 @@ func (f *sharedRepositoryFetcher) Fetch(ctx context.Context, obj manifest.BaseMa
 		f.observe(ctx, obj, reads)
 	}
 	return &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart", FS: fstest.MapFS{
-		"Chart.yaml":               {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
-		"templates/configmap.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n")},
+		"chart/Chart.yaml":               {Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")},
+		"chart/templates/configmap.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-output\n")},
 	}}, nil
 }
 

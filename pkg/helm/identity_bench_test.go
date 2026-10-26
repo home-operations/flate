@@ -54,7 +54,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 			b.Run(fmt.Sprintf("disk_%t/disabled_%t", disk, disabled), func(b *testing.B) {
 				st, hr, dir := ociRenderFixture(b)
 				const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-				st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
+				st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
 				root := ""
 				if disk {
 					root = b.TempDir()
@@ -78,7 +78,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 
 func BenchmarkChartValues_Cached(b *testing.B) {
 	st, hr, dir := ociRenderFixture(b)
-	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
+	st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
 	cli := NewClient(cachetest.New(b, "", sourcecache.New))
 	cliSources := NewSources(st)
 	loaded, err := loadDecodedChart(b.Context(), cli, hr, cliSources)

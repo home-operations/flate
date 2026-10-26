@@ -31,7 +31,7 @@ func TestLoadChart_ValidationAcrossSources(t *testing.T) {
 				hr.ChartRef = nil
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: os.DirFS(dir), LocalPath: dir})
+			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: kind, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 			cliSources := NewSources(st)
 			_, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
@@ -56,7 +56,7 @@ func TestLoadChart_ValuesContentWithMemoryOwner(t *testing.T) {
 	cliSources := NewSources(st)
 	var previous string
 	for i, dir := range []string{first, second} {
-		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+		st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		if err != nil {
 			t.Fatal(err)
@@ -84,7 +84,7 @@ func TestLoadChart_SharedChartRetainsValuesFingerprint(t *testing.T) {
 			if kind == manifest.KindGitRepository {
 				hr.ChartRef = nil
 			}
-			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir})
+			st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir})
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 			cliSources := NewSources(st)
 			withoutFiles := hr.Clone()
@@ -137,7 +137,7 @@ func chartFixtureDescription(t *testing.T, ch *chart.Chart) chartDescription {
 	data, err := yaml.Marshal(ch.Values)
 	assert.NoError(t, err)
 	testutil.WriteFile(t, root, filepath.Join(ch.Name(), "values.yaml"), string(data))
-	captured, _, err := captureChart(t.Context(), os.DirFS(root), ch.Name())
+	captured, _, err := captureChart(t.Context(), os.DirFS(root), ch.Name(), false)
 	assert.NoError(t, err)
 	fingerprint := captured.fingerprint()
 	return chartDescription{chart: ch, captured: captured, fingerprint: fingerprint, key: fingerprint, location: ch.Name(), analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}}

@@ -36,7 +36,7 @@ func TestDescriptionProjection(t *testing.T) {
 		"charts/child/Chart.yaml":            {Data: []byte("apiVersion: v2\nname: child\nversion: 1.0.0\ndependencies: [{name: grand, version: 1.0.0, tags: [group]}]\n")},
 		"charts/child/templates/unused.yaml": {Data: []byte("{{ .Values.nested }}")},
 	}
-	initial, _, err := captureChart(t.Context(), files, ".")
+	initial, _, err := captureChart(t.Context(), files, ".", false)
 	assert.NoError(t, err)
 	for name := range files {
 		t.Run(name, func(t *testing.T) {
@@ -47,7 +47,7 @@ func TestDescriptionProjection(t *testing.T) {
 				changed[path] = &cloned
 			}
 			changed[name].Data = append(bytes.Clone(changed[name].Data), '\n')
-			next, _, err := captureChart(t.Context(), changed, ".")
+			next, _, err := captureChart(t.Context(), changed, ".", false)
 			assert.NoError(t, err)
 			if initial.fingerprint() == next.fingerprint() {
 				t.Fatal("changed captured bytes shared an identity")
@@ -365,7 +365,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 		t.Run("OCI before capability/disabled="+map[bool]string{false: "false", true: "true"}[disabled], func(t *testing.T) {
 			t.Parallel()
 			st, hr, dir := ociRenderFixture(t)
-			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: os.DirFS(dir), Revision: "invalid"})
+			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: chartFixtureFS(hr, os.DirFS(dir)), Revision: "invalid"})
 			cli := NewClient(cachetest.New(t, "", cache.New))
 			cliSources := NewSources(st)
 			_, err := cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources})
@@ -382,7 +382,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			}
 			st, original, dir := ociRenderFixture(t)
 			hr := original.Clone()
-			art := &store.SourceArtifact{FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@sha256:0123456789abcdef"}
+			art := &store.SourceArtifact{FS: chartFixtureFS(original, os.DirFS(dir)), LocalPath: dir, Revision: "6.15.0@sha256:0123456789abcdef"}
 			opts := Options{}
 			want := "load chart " + dir
 			switch failure {

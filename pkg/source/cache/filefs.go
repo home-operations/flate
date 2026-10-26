@@ -19,6 +19,12 @@ func FileFS(name string, r io.ReadCloser) fs.FS {
 	return input
 }
 
+// FileName returns the acquired payload path, or empty for a directory view.
+func FileName(input fs.FS) string {
+	file, _ := input.(fileFS)
+	return file.name
+}
+
 type blobHandle struct {
 	io.ReadCloser
 	input fileFS

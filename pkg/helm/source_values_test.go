@@ -137,10 +137,17 @@ func TestTemplate_ArchiveValuesFiles(t *testing.T) {
 			if kind != manifest.KindExternalArtifact {
 				sub, err := fs.Sub(input, "charts/demo")
 				assert.NoError(t, err)
-				artifact = fstest.MapFS{"chart.tgz": {Data: chartArchive(t, sub)}, "prod.yaml": input["prod.yaml"]}
+				payload := chartArchive(t, sub)
+				r, _, _, err := owner.Blob(t.Context(), cache.BlobKey{Content: payload}, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+					_, err := w.Write(payload)
+					return cache.ProducerResult{}, err
+				})
+				assert.NoError(t, err)
+				artifact = cache.FileFS("chart.tgz", r)
+				assert.NoError(t, r.Close())
 			}
 			st := store.New()
-			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: acquireChartFS(t, owner, artifact), Revision: "1.0.0"})
+			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: artifact, Revision: "1.0.0"})
 			cli := NewClient(owner)
 			cliSources := NewSources(st)
 			for _, tc := range []struct {

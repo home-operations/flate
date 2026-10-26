@@ -82,7 +82,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 				digest := []string{digestA, digestB}[i]
 				st.SetArtifact(manifest.NamedResource{
 					Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: release.Chart.Source.Name},
-					&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
+					&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			}
 			originals := []*manifest.HelmRelease{hr.Clone(), hrB.Clone()}
 			ts := task.NewBounded(2)
@@ -155,7 +155,7 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 			const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
 			st.SetArtifact(manifest.NamedResource{
 				Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"},
-				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: os.DirFS(dir), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
+				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
 			if _, err := cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}); err != nil {

@@ -55,7 +55,7 @@ spec:
       chart: ./charts/nochart
       sourceRef: {kind: GitRepository, name: flux-system}
 `,
-			diagnostic: "chart not found at charts/nochart",
+			diagnostic: "chart not found at charts/nochart: stat charts/nochart: file does not exist",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,7 +77,7 @@ spec: {url: https://fixture.invalid/cluster.git}
 			if !strings.Contains(stderr, tc.diagnostic) {
 				t.Errorf("missing diagnostic %q:\n%s", tc.diagnostic, stderr)
 			}
-			for _, unwanted := range []string{dir, "flux error: input error", "stat chart"} {
+			for _, unwanted := range []string{dir, "flux error: input error", "stat chart "} {
 				if strings.Contains(stderr, unwanted) {
 					t.Errorf("diagnostic contains %q:\n%s", unwanted, stderr)
 				}

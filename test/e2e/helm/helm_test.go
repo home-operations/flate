@@ -281,3 +281,43 @@ func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string)
 	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	return filepath.Join(dir, "flux"), dir
 }
+
+func TestE2E_ReadyExpr_HelmRelease(t *testing.T) {
+	dir := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+	for _, name := range []string{"dependency", "consumer"} {
+		dependsOn := ""
+		if name == "consumer" {
+			dependsOn = `  dependsOn:
+  - name: dependency
+    readyExpr: dep.spec.values.releaseVersion == self.spec.values.releaseVersion && dep.spec.values.nested.replicas == 2 && dep.metadata.generation == dep.status.observedGeneration
+`
+		}
+		testutil.WriteFile(t, dir, "cluster/"+name+".yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: %s, namespace: default}
+spec:
+  chart:
+    spec:
+      chart: charts/mychart
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+%s  values: {greeting: desired-spec, releaseVersion: v1, nested: {replicas: 2}}
+`, name, dependsOn))
+	}
+	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}-output'}
+data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }}'}
+`)
+	var previousOut, previousErr string
+	for run := range 2 {
+		stdout, stderr := harness.RequireCLIOK(t, "build", "all", "--path", dir, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn")
+		if !strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "greeting: desired-spec") || !strings.Contains(stdout, "version: v1") || strings.Contains(stderr, "readyExpr") {
+			t.Fatalf("Helm desired-spec readiness: stdout=%s stderr=%s", stdout, stderr)
+		}
+		if run == 1 && (stdout != previousOut || stderr != previousErr) {
+			t.Fatalf("Helm output or warnings changed: stdout=%s stderr=%s", stdout, stderr)
+		}
+		previousOut, previousErr = stdout, stderr
+	}
+}

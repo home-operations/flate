@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // HelmChart is the embedded chart template inside a HelmRelease.spec.chart
@@ -222,12 +223,24 @@ func (h *HelmRelease) Clone() *HelmRelease {
 	return &out
 }
 
-// GetLabels returns the HelmRelease's metadata.labels. Implements the
-// shared accessor pkg/depwait projectObject uses for CEL exposure.
+// GetLabels returns the HelmRelease's metadata.labels.
 func (h *HelmRelease) GetLabels() map[string]string { return h.Labels }
 
 // GetAnnotations returns the HelmRelease's metadata.annotations.
 func (h *HelmRelease) GetAnnotations() map[string]string { return h.Annotations }
+
+// RenderDocument derives a Flux desired document; callers MUST keep it immutable.
+func (h *HelmRelease) RenderDocument() (map[string]any, error) {
+	doc, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&helmv2.HelmRelease{
+		APIVersion: HelmReleaseDomain + "/v2", Kind: KindHelmRelease,
+		Name: h.Name, Namespace: h.Namespace, Labels: h.Labels, Annotations: h.Annotations,
+		Spec: h.HelmReleaseSpec,
+	})
+	if err != nil {
+		return nil, inputf("project HelmRelease spec: %w", err)
+	}
+	return doc, nil
+}
 
 // ReleaseName returns the resolved Helm release name — spec.releaseName
 // when set, otherwise metadata.name — passed through release.ShortenName

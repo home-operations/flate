@@ -9,6 +9,7 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/operators"
+	"cel.dev/cel-go/common/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -52,7 +53,7 @@ func (w *Waiter) evaluateReadyExpr(expr string, dep manifest.NamedResource, obj 
 	var dependency, self func() any
 	parent, st := w.Parent, w.Store
 	if parent == dep {
-		var projected map[string]any
+		var projected any
 		dependency = func() any {
 			if projected == nil {
 				projected = projectObject(dep, obj, conds)
@@ -161,80 +162,25 @@ func shadowsSelf(ident ast.NavigableExpr) bool {
 	}
 }
 
-// projectObject keeps metadata and conditions from the same observation.
-func projectObject(id manifest.NamedResource, obj manifest.BaseManifest, conds []store.Condition) map[string]any {
+func projectObject(id manifest.NamedResource, obj manifest.BaseManifest, conds []store.Condition) any {
+	doc, err := manifest.ObjectDocument(id, obj)
+	if err != nil {
+		return types.WrapErr(err)
+	}
 	if obj == nil {
-		// Status entry without an object — only the metadata/status
-		// derived from id is reachable; labels and annotations are
-		// absent. A CEL expression like dep.metadata.labels['x']
-		// evaluating against this view sees no labels (has() returns
-		// false), which is correct: the dep isn't fully visible yet.
-		// Logged at Debug so an operator chasing a "readyExpr never
-		// satisfied" can see whether the dep had reached the store as
-		// an object or only as a phantom status entry.
-		slog.Debug("depwait: projectObject sees status without object",
-			"id", id.String())
+		slog.Debug("depwait: projectObject sees status without object", "id", id.String())
 	}
 	condsAny := make([]any, 0, len(conds))
 	for _, c := range conds {
 		condsAny = append(condsAny, conditionToMap(c))
 	}
-	meta := map[string]any{
-		"name":      id.Name,
-		"namespace": id.Namespace,
-		// flate has no apiserver, so there is no monotonically-
-		// increasing generation count to model. The single-snapshot
-		// render pins both metadata.generation and
-		// status.observedGeneration to the same value so CEL
-		// expressions like
-		//   dep.status.observedGeneration == dep.metadata.generation
-		// — a common Flux readiness idiom — never spuriously fail.
-		"generation": int64(1),
+	// Offline snapshots have no apiserver generation; normalize both sides together.
+	doc["metadata"].(map[string]any)["generation"] = int64(1)
+	doc["status"] = map[string]any{
+		"observedGeneration": int64(1),
+		"conditions":         condsAny,
 	}
-	labels, annotations := labelsAndAnnotations(obj)
-	if labels != nil {
-		meta["labels"] = labels
-	}
-	if annotations != nil {
-		meta["annotations"] = annotations
-	}
-	return map[string]any{
-		"kind":       id.Kind,
-		"apiVersion": id.KindInfo().APIVersion(),
-		"metadata":   meta,
-		"status": map[string]any{
-			"observedGeneration": int64(1),
-			"conditions":         condsAny,
-		},
-	}
-}
-
-// labelsAndAnnotations extracts metadata.labels / metadata.annotations
-// from the typed manifest when the type carries them. Returns nil maps
-// when missing (so CEL's `has(dep.metadata.labels)` evaluates false
-// rather than seeing an empty map). The conversion to map[string]any
-// is needed because the CEL DynType resolver doesn't deep-walk
-// map[string]string.
-func labelsAndAnnotations(obj manifest.BaseManifest) (labels, annotations map[string]any) {
-	type withMeta interface {
-		GetLabels() map[string]string
-		GetAnnotations() map[string]string
-	}
-	if m, ok := obj.(withMeta); ok {
-		return stringMapToAny(m.GetLabels()), stringMapToAny(m.GetAnnotations())
-	}
-	return nil, nil
-}
-
-func stringMapToAny(in map[string]string) map[string]any {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
+	return doc
 }
 
 func conditionToMap(c metav1.Condition) map[string]any {

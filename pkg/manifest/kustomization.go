@@ -29,8 +29,7 @@ type Kustomization struct {
 	Annotations map[string]string `json:"-" yaml:"-"`
 }
 
-// GetLabels returns the Kustomization's metadata.labels. Implements
-// the shared accessor pkg/depwait projectObject uses for CEL exposure.
+// GetLabels returns the Kustomization's metadata.labels.
 func (k *Kustomization) GetLabels() map[string]string { return k.Labels }
 
 // GetAnnotations returns the Kustomization's metadata.annotations.
@@ -221,7 +220,7 @@ var kustomizationEncoders = sync.Pool{New: func() any {
 	return state
 }}
 
-// RenderDocument derives a Flux generator document; callers MUST keep it immutable.
+// RenderDocument derives a Flux desired document; callers MUST keep it immutable.
 func (k *Kustomization) RenderDocument() (map[string]any, error) {
 	state := kustomizationEncoders.Get().(*kustomizationEncoder)
 	state.buffer.Reset()

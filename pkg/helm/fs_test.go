@@ -186,32 +186,34 @@ func (f countingFile) Read(p []byte) (int, error) {
 
 func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 	old := archive.MaxDecompressedChartSize
-	archive.MaxDecompressedChartSize = 4096
+	archive.MaxDecompressedChartSize = 256
 	t.Cleanup(func() { archive.MaxDecompressedChartSize = old })
 	t.Run("oversized", func(t *testing.T) {
-		data := bytes.Repeat([]byte("x"), 4*int(archive.MaxDecompressedChartSize))
-		input := fstest.MapFS{"chart.tgz": {Data: data}}
-		var bytesRead int64
-		observed := chartOpenFS{FS: input, open: func(name string) (fs.File, error) {
-			file, err := input.Open(name)
-			if err != nil {
-				return nil, err
-			}
-			return countingFile{File: file, bytesRead: &bytesRead}, nil
-		}}
-		_, missing, err := captureChart(t.Context(), observed, "chart.tgz")
-		assert.Equal(t, missing, false)
-		assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
-		if err == nil || !strings.Contains(err.Error(), "chart archive exceeds maximum decompressed size") {
-			t.Errorf("expected archive size error, got %v", err)
+		payload := testutil.TarGz(t, map[string]string{
+			"chart/Chart.yaml":  "apiVersion: v2\nname: chart\nversion: 1.0.0\n",
+			"chart/values.yaml": strings.Repeat(" ", int(archive.MaxDecompressedChartSize)+1),
+		}, 0o600, gzip.DefaultCompression)
+		assert.Equal(t, int64(len(payload)) < archive.MaxDecompressedChartSize, true)
+		_, wantErr := loader.LoadArchive(bytes.NewReader(payload))
+		if wantErr == nil {
+			t.Fatal("Helm accepted oversized fixture")
 		}
-		assert.Equal(t, bytesRead, archive.MaxDecompressedChartSize+1)
+		captured, missing, err := captureChart(t.Context(), fstest.MapFS{"chart.tgz": {Data: payload}}, "chart.tgz")
+		assert.NoError(t, err)
+		assert.Equal(t, missing, false)
+		_, err = captured.load()
+		if err == nil {
+			t.Fatal("flate accepted oversized fixture")
+		}
+		assert.Equal(t, err.Error(), wantErr.Error())
 	})
 	t.Run("valid reload", func(t *testing.T) {
 		data := "apiVersion: v2\nname: chart\nversion: 1.0.0\n"
 		payload := testutil.TarGz(t, map[string]string{"chart/Chart.yaml": data}, 0o600, gzip.NoCompression)
 		assert.Equal(t, int64(len(data)) < archive.MaxDecompressedChartSize, true)
-		assert.Equal(t, int64(len(payload)) < archive.MaxDecompressedChartSize, true)
+		assert.Equal(t, int64(len(payload)) > archive.MaxDecompressedChartSize, true)
+		_, err := loader.LoadArchive(bytes.NewReader(payload))
+		assert.NoError(t, err)
 		input := fstest.MapFS{"chart.tgz": {Data: payload}}
 		captured, missing, err := captureChart(t.Context(), input, "chart.tgz")
 		assert.NoError(t, err)

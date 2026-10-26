@@ -516,15 +516,37 @@ func TestRender_ReleasedPinRejectsHostContent(t *testing.T) {
 	}
 }
 
+func recordTestRender(t *testing.T, cache *TreeCache, req RenderRequest, receipt *manifest.RenderReceipt) {
+	t.Helper()
+	if receipt == nil {
+		t.Fatal("first render returned no receipt")
+	}
+	assert.NoError(t, cache.RecordRender(t.Context(), req.Spec.Named(), receipt, emptyRenderInventory))
+	_, stored, hit := readTestRenderFrame(t, cache, receipt.Value().(renderFrame).header.Key)
+	if !hit {
+		t.Fatal("accepted render was not persisted")
+	}
+	replayed, replayReceipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	if replayReceipt == nil || replayReceipt.Value().(renderFrame).identity == "" {
+		t.Fatal("unchanged input did not hit the accepted render cache")
+	}
+	assert.Diff(t, replayed, stored)
+}
+
 func TestRender_CacheMissesOnDirectoryMembership(t *testing.T) {
 	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Skip("requires a clean VCS-stamped build for positive persistence")
+	}
 	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "app", Spec: demoSpec}
-	first, _, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+	first, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 	if err != nil || !hasRenderField(first, "name", "a") {
 		t.Fatalf("first = %q, %v", first, err)
 	}
+	recordTestRender(t, cache, req, receipt)
 	testutil.WriteFile(t, root, "app/b.yaml", cmYAML("b"))
 	second, _, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 	if err != nil || !hasRenderField(second, "name", "b") {
@@ -583,13 +605,16 @@ func TestTreeFS_LocalConstraints(t *testing.T) {
 
 func TestRender_CacheInvalidatesTypeTransitions(t *testing.T) {
 	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Skip("requires a clean VCS-stamped build for positive persistence")
+	}
 	root := testutil.WriteTree(t, map[string]string{"app/a.yaml": cmYAML("a")})
 	artifact := localSource(t, root)
 	cache := newTestTreeCache(t, t.TempDir())
 	req := RenderRequest{Source: artifact, SubPath: "app", Spec: demoSpec}
-	if _, _, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{}); err != nil {
-		t.Fatal(err)
-	}
+	_, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	recordTestRender(t, cache, req, receipt)
 	if err := os.RemoveAll(filepath.Join(root, "app")); err != nil {
 		t.Fatal(err)
 	}
@@ -610,6 +635,9 @@ func TestRender_CacheInvalidatesTypeTransitions(t *testing.T) {
 
 func TestRender_CacheMissingComponentAppearance(t *testing.T) {
 	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Skip("requires a clean VCS-stamped build for positive persistence")
+	}
 	root := testutil.WriteTree(t, map[string]string{
 		"kustomization.yaml": "resources: [cm.yaml]\n",
 		"cm.yaml":            cmYAML("base"),
@@ -618,9 +646,9 @@ func TestRender_CacheMissingComponentAppearance(t *testing.T) {
 	req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: parsedKS(t, ksDoc(map[string]any{
 		"components": []any{"./missing"}, "ignoreMissingComponents": true,
 	}))}
-	if _, _, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{}); err != nil {
-		t.Fatal(err)
-	}
+	_, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	recordTestRender(t, cache, req, receipt)
 	testutil.WriteFile(t, root, "missing/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "missing/cm.yaml", cmYAML("arrived"))
 	out, _, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})

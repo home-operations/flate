@@ -75,7 +75,7 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 	assert.Equal(t, doc.NamePrefix, "pre-")
 }
 
-func TestGraphWalker_ImplicitMountedBoundary(t *testing.T) {
+func TestTraversal_ImplicitMountedBoundary(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	documents := documentReader{
@@ -90,9 +90,9 @@ func TestGraphWalker_ImplicitMountedBoundary(t *testing.T) {
 			},
 		},
 	}
-	walker := graphWalker{documents: documents, visited: map[graphContext]struct{}{}}
+	walk := traversal{documents: documents, visited: map[graphContext]struct{}{}}
 	var visits []string
-	walker.walk(graphVisit{root: root, dir: "entry"}, func(v graphVisit) bool {
+	walk.walk(nil, graphVisit{root: root, dir: "entry"}, func(v graphVisit) bool {
 		visits = append(visits, v.coordinate)
 		return true
 	})

@@ -267,13 +267,13 @@ func (l *Loader) scopesMatch(kss []store.Child, repoRoot string) bool {
 }
 
 func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
-	traversal, seen := l.scopes.walks[root.graphContext]
+	walk, seen := l.scopes.walks[root.graphContext]
 	if !seen {
 		var visits []graphVisit
 		if k := l.documents.cache[filepath.Join(root.root, root.dir)].body; k != nil {
 			visits = make([]graphVisit, 0, len(k.Resources)+len(k.Components)+1)
 		}
-		w := graphWalker{documents: l.documents, visited: map[graphContext]struct{}{}}
+		w := traversal{documents: l.documents, visited: map[graphContext]struct{}{}}
 		collect := func(v graphVisit) bool {
 			if origin := l.documents.localPath(v.file); origin != v.file {
 				v.origin = origin
@@ -284,11 +284,11 @@ func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 			visits = append(visits, v)
 			return true
 		}
-		w.walk(root, collect)
-		traversal.visits = visits
-		l.scopes.walks[root.graphContext] = traversal
+		w.walk(nil, root, collect)
+		walk.visits = visits
+		l.scopes.walks[root.graphContext] = walk
 	}
-	return traversal.visits
+	return walk.visits
 }
 
 func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {

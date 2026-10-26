@@ -99,6 +99,32 @@ func TestAdmit_SelfProducedTransformerIdentity(t *testing.T) {
 			}
 		})
 	}
+	t.Run("namespace prediction declines Component-only proof", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		writeFile(t, root, "entry/kustomization.yaml", "resources: [ks.yaml]\ntransformers: [proof]\n")
+		writeFile(t, root, "entry/ks.yaml", testutil.KustomizationYAML("child", "", "  path: ./leaf\n"))
+		writeFile(t, root, "entry/proof/kustomization.yaml", "namespace: forbidden\ncomponents: [component]\n")
+		writeFile(t, root, "entry/proof/component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n")
+		writeFile(t, root, "entry/proof/component/transformer.yaml", namespaceTransformer)
+		writeFile(t, root, "leaf/kustomization.yaml", "resources: []\n")
+		st := store.New()
+		st.AddObject(&manifest.Kustomization{Name: "parent", Namespace: "flux-system", Path: "./entry"})
+		l := loaderFixture(st, nil)
+		l.SourceRoot = root
+		if _, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry")); err != nil {
+			t.Fatal(err)
+		}
+		l.Admit(root)
+		if _, found := l.Index.Lookup(testutil.KustomizationID("forbidden", "child")); found {
+			t.Fatal("scope namespace prediction accepted a Component-only proof")
+		}
+		record, found := l.Index.Lookup(testutil.KustomizationID("", "child"))
+		if !found || record.File != "entry/ks.yaml" {
+			t.Fatal("declined prediction lost the authored child evidence")
+		}
+	})
+
 }
 
 func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
@@ -255,12 +281,17 @@ func TestStampTransformerTargetNamespaces_TransformerDeclines(t *testing.T) {
 		{"foreign group", "group: kustomize.toolkit.fluxcd.io", "group: example.com"},
 		{"foreign version", "kind: Kustomization", "kind: Kustomization\n    version: v2"},
 		{"invalid subject mode", "fieldSpecs:", "setRoleBindingSubjects: invalid\nfieldSpecs:"},
+		{"malformed trailing document", "fieldSpecs:", "fieldSpecs:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			writeFlatopsOverlay(t, root, "other")
-			writeFile(t, root, "transformers/transformer.yaml", strings.Replace(namespaceTransformer, tc.from, tc.to, 1))
+			transformer := strings.Replace(namespaceTransformer, tc.from, tc.to, 1)
+			if tc.name == "malformed trailing document" {
+				transformer += "---\nbroken: [unclosed\n"
+			}
+			writeFile(t, root, "transformers/transformer.yaml", transformer)
 			s := store.New()
 			ks := leafKS("other", "./apps/other/other/app")
 			s.AddObject(ks)
@@ -470,31 +501,35 @@ func TestResolve_TransformerRejections(t *testing.T) {
 	}
 }
 
-// TestSubtreeHasNamespaceTransformer_DepthCapAndCycle proves the recursive walk
-// is bounded: a NamespaceTransformer reachable only PAST transformerScanMaxDepth
-// is not found (the cap stops the descent), and a reference cycle terminates via
-// the visited set instead of looping.
 func TestSubtreeHasNamespaceTransformer_DepthCapAndCycle(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	// A linear chain d0 → d1 → … each via `resources: - ../d{i+1}`, with the
-	// NamespaceTransformer only at the deepest dir — reached at a depth beyond
-	// the cap, so detection returns false.
-	const depth = transformerScanMaxDepth + 1
-	for i := range depth {
-		writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", i),
-			fmt.Sprintf("resources:\n  - ../d%d\n", i+1))
+	for _, depth := range []int{transformerScanMaxDepth, transformerScanMaxDepth + 1} {
+		t.Run(fmt.Sprintf("depth %d", depth), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			for i := range depth {
+				writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", i), fmt.Sprintf("resources: [../d%d]\n", i+1))
+			}
+			writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", depth), "resources: [transformer.yaml]\n")
+			writeFile(t, root, fmt.Sprintf("d%d/transformer.yaml", depth), namespaceTransformer)
+			got := readerForTest(root).subtreeHasNamespaceTransformer(root, "d0", map[string]struct{}{})
+			if got != (depth == transformerScanMaxDepth) {
+				t.Fatalf("proof at depth %d = %t", depth, got)
+			}
+		})
 	}
-	writeFile(t, root, fmt.Sprintf("d%d/kustomization.yaml", depth), "resources:\n  - ./transformer.yaml\n")
-	writeFile(t, root, fmt.Sprintf("d%d/transformer.yaml", depth), namespaceTransformer)
-	if readerForTest(root).subtreeHasNamespaceTransformer(root, "d0", map[string]struct{}{}, 0) {
-		t.Error("want false: NamespaceTransformer sits past transformerScanMaxDepth")
+	writeFile(t, root, "component/kustomization.yaml", "components: [nested]\n")
+	writeFile(t, root, "component/nested/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [transformer.yaml]\n")
+	writeFile(t, root, "component/nested/transformer.yaml", namespaceTransformer)
+	if readerForTest(root).subtreeHasNamespaceTransformer(root, "component", map[string]struct{}{}) {
+		t.Fatal("Component edge supplied namespace proof")
 	}
 
 	// A reference cycle a → b → a must terminate (visited set) and return false.
 	writeFile(t, root, "cyc/a/kustomization.yaml", "resources:\n  - ../b\n")
 	writeFile(t, root, "cyc/b/kustomization.yaml", "resources:\n  - ../a\n")
-	if readerForTest(root).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}, 0) {
+	if readerForTest(root).subtreeHasNamespaceTransformer(root, "cyc/a", map[string]struct{}{}) {
 		t.Error("want false on a reference cycle (must not loop)")
 	}
 }

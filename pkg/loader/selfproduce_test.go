@@ -982,9 +982,9 @@ func TestLoader_DotDotPaths(t *testing.T) {
 				t.Errorf("packageRoots = %v, want %v", got, wantRoots)
 			}
 
-			w := graphWalker{documents: documents, visited: map[graphContext]struct{}{}}
+			w := traversal{documents: documents, visited: map[graphContext]struct{}{}}
 			var files []string
-			if !w.walk(graphVisit{root: root, dir: tc.path}, func(v graphVisit) bool {
+			if !w.walk(nil, graphVisit{root: root, dir: tc.path}, func(v graphVisit) bool {
 				files = append(files, v.file)
 				return true
 			}) {
@@ -1012,17 +1012,17 @@ func TestLoader_DotDotPaths(t *testing.T) {
 	}
 }
 
-func TestGraphWalker_RootCoordinates(t *testing.T) {
+func TestTraversal_RootCoordinates(t *testing.T) {
 	t.Parallel()
 	for _, dir := range []string{"", ".", "./apps/..", "apps//child/../app", "/app", "https://example.com/app"} {
 		t.Run(dir, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, filepath.Join(root, dir), "kustomization.yaml", "resources: []\n")
-			w := graphWalker{documents: readerForTest(root), visited: map[graphContext]struct{}{}}
+			w := traversal{documents: readerForTest(root), visited: map[graphContext]struct{}{}}
 			context := graphContext{root: root, dir: dir}
 			count := 0
-			if !w.walk(graphVisit{graphContext: context}, func(v graphVisit) bool {
+			if !w.walk(nil, graphVisit{graphContext: context}, func(v graphVisit) bool {
 				assert.Equal(t, v.graphContext, context)
 				count++
 				return true
@@ -1233,10 +1233,10 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 			if mode == "projected" || mode == "self_owner" {
 				b.idx.Records[generator] = manifest.DiscoveryRecord{Authored: authored, Path: filepath.Join(root, "generator.yaml"), File: "generator.yaml"}
 			}
-			w := graphWalker{documents: reader, visited: map[graphContext]struct{}{}}
+			w := traversal{documents: reader, visited: map[graphContext]struct{}{}}
 			var scope []graphVisit
 			var declarations []producerDeclaration
-			if !w.walk(graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID}, func(v graphVisit) bool {
+			if !w.walk(nil, graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID}, func(v graphVisit) bool {
 				v.deferMaterialization = mode != "explicit"
 				if mode == "self_owner" {
 					v.owner = generator

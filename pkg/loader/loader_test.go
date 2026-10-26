@@ -643,10 +643,6 @@ data:
 	if s.GetObject(cmID) != nil {
 		t.Errorf("Component-housed CM must NOT be in Store during discovery (existence-only)")
 	}
-	// The templated KS would be filtered upstream by parseFile's
-	// envsubst guard even if walkComponentData tried to publish it,
-	// but this assertion pins the "Component CRs stay hidden" contract
-	// at the boundary the caller cares about: the Store.
 	leakID := testutil.KustomizationID("ns", "${APP}-leak")
 	if s.GetObject(leakID) != nil {
 		t.Errorf("templated Flux CR inside a Component must NOT leak into the Store")
@@ -694,12 +690,6 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	}
 }
 
-// TestLoader_DiscoveryRecordsNestedComponentData pins the
-// Component-of-Component recursion in walkComponentData: an outer
-// Component that references an inner Component via `components:`
-// must surface the inner Component's CM/Secret data files into the
-// producer index. The reference PR (tjwallace/flate#1) walked only
-// `resources:` and missed this graph shape — this test is the fence.
 func TestLoader_DiscoveryRecordsNestedComponentData(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -737,13 +727,32 @@ data:
 	if _, ok := filesForTest(l.Index)[id]; !ok {
 		t.Errorf("inner Component CM must be recorded in SourceFiles")
 	}
+	for _, role := range []string{"resources", "components"} {
+		t.Run("ordinary directory through "+role, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [../component, ../ordinary]\n")
+			testutil.WriteFile(t, root, "component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n"+role+": [../ordinary]\n")
+			testutil.WriteFile(t, root, "ordinary/kustomization.yaml", "resources: [ks.yaml]\n")
+			testutil.WriteFile(t, root, "ordinary/ks.yaml", testutil.KustomizationYAML("ordinary", "apps", "  path: ./workload\n"))
+			l := New(store.New())
+			l.SourceRoot = root
+			count, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry"))
+			assert.NoError(t, err)
+			_, found := l.Index.Lookup(testutil.KustomizationID("apps", "ordinary"))
+			want := role == "resources"
+			wantCount := 0
+			if want {
+				wantCount = 1
+			}
+			if found != want || count != wantCount {
+				t.Fatalf("ordinary Resource after Component %s: found=%t, count=%d", role, found, count)
+			}
+		})
+	}
+
 }
 
-// TestLoader_DiscoveryComponentCycleTerminates pins the
-// w.visited cycle protection in walkComponentData: a pair of
-// Components that reference each other via `components:` must not
-// infinite-loop. The same primitive descend uses; verify here so a
-// future change can't drop it.
 func TestLoader_DiscoveryComponentCycleTerminates(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -871,9 +880,6 @@ resources: []
 	}
 }
 
-// TestLoader_RespectsCanceledContext asserts the walk bails out on
-// context cancellation. Useful when a stuck NFS mount or symlink
-// loop would otherwise block Bootstrap indefinitely.
 func TestLoader_RespectsCanceledContext(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -888,6 +894,85 @@ metadata: {name: a, namespace: ns}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
+	for _, site := range []string{"graph", "siblings"} {
+		t.Run(site, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			base := ""
+			if site == "siblings" {
+				base = "package/"
+				testutil.WriteFile(t, root, base+"kustomization.yaml", "resources: []\n")
+			} else {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [first.yaml, second.yaml]\n")
+			}
+			for _, name := range []string{"first", "second"} {
+				testutil.WriteFile(t, root, base+name+".yaml", testutil.KustomizationYAML(name, "apps", "  path: ./workload\n"))
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			input := &cancelIterationFS{FS: os.DirFS(root), cancel: cancel}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input})
+			l := New(st)
+			l.SourceRoot = root
+			count, err := l.Load(ctx, root)
+			if !errors.Is(err, context.Canceled) || count != 1 || input.after != 0 || !input.canceled {
+				t.Fatalf("Load = (%d, %v), canceled=%t, subsequent I/O=%d", count, err, input.canceled, input.after)
+			}
+			if _, complete := l.scopes.scanned[root]; complete {
+				t.Fatal("canceled root marked scanned")
+			}
+			if _, ok := l.Index.Lookup(testutil.KustomizationID("apps", "second")); ok {
+				t.Fatal("sibling admitted after cancellation")
+			}
+		})
+	}
+}
+
+type cancelIterationFS struct {
+	fs.FS
+	cancel   context.CancelFunc
+	canceled bool
+	after    int
+}
+
+func (f *cancelIterationFS) Open(name string) (fs.File, error) {
+	if f.canceled {
+		f.after++
+		return nil, context.Canceled
+	}
+	file, err := f.FS.Open(name)
+	if err == nil && filepath.Base(name) == "first.yaml" {
+		return cancelIterationFile{File: file, cancel: func() { f.canceled = true; f.cancel() }}, nil
+	}
+	return file, err
+}
+
+func (f *cancelIterationFS) Stat(name string) (fs.FileInfo, error) {
+	if f.canceled {
+		f.after++
+		return nil, context.Canceled
+	}
+	return fs.Stat(f.FS, name)
+}
+
+func (f *cancelIterationFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	if f.canceled {
+		f.after++
+		return nil, context.Canceled
+	}
+	return fs.ReadDir(f.FS, name)
+}
+
+type cancelIterationFile struct {
+	fs.File
+	cancel context.CancelFunc
+}
+
+func (f cancelIterationFile) Close() error {
+	err := f.File.Close()
+	f.cancel()
+	return err
 }
 
 func TestLoader_MalformedManifestFails(t *testing.T) {
@@ -1177,13 +1262,20 @@ func TestLoader_IndependentRoots(t *testing.T) {
 
 type unreadableListingFS struct{ fs.FS }
 
-type unreadableInputFS struct{ fs.FS }
+type unreadableInputFS struct {
+	fs.FS
+	denied string
+}
 
 func (f unreadableInputFS) Open(name string) (fs.File, error) {
-	if name == "kustomization.yaml" {
+	if name == f.denied {
 		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
 	}
 	return f.FS.Open(name)
+}
+
+func (f unreadableInputFS) Stat(name string) (fs.FileInfo, error) {
+	return fs.Stat(f.FS, name)
 }
 
 func (unreadableListingFS) ReadDir(name string) ([]fs.DirEntry, error) {
@@ -1209,19 +1301,15 @@ func TestLoader_WarningConditions(t *testing.T) {
 			l := New(st)
 			l.documents = readerForTest(root)
 			if site == "kustomization" {
-				l.documents.views[root] = unreadableInputFS{FS: os.DirFS(root)}
+				l.documents.read(root)
+				l.documents.views[root] = unreadableInputFS{FS: os.DirFS(root), denied: "kustomization.yaml"}
 			}
 			if site == "readdir" {
 				l.documents.views[root] = unreadableListingFS{FS: os.DirFS(root)}
 			}
-			w := &walker{loader: l, scanRoot: root}
-			var err error
-			if site == "component" {
-				_, err = w.walkComponentData(t.Context(), root)
-			} else {
-				_, err = w.walkKustomize(t.Context(), root, filepath.Join(root, "kustomization.yaml"))
-			}
-			assert.NoError(t, err)
+			w := traversal{documents: l.documents, policy: traversalAdmission, loader: l, directories: map[string]struct{}{}}
+			w.walk(t.Context().Err, graphVisit{root: root, file: root}, nil)
+			assert.NoError(t, w.err)
 			warnings := st.Warnings()
 			category := manifest.WarnInputParseFailed
 			if site == "readdir" {
@@ -1232,6 +1320,29 @@ func TestLoader_WarningConditions(t *testing.T) {
 			}
 		})
 	}
+	t.Run("failed nested resource preserves parent count", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [nested]\n")
+		testutil.WriteFile(t, root, "nested/kustomization.yaml", "resources: [first.yaml, blocked.yaml]\n")
+		testutil.WriteFile(t, root, "nested/first.yaml", testutil.KustomizationYAML("first", "apps", "  path: ./workload\n"))
+		testutil.WriteFile(t, root, "nested/blocked.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: blocked}\n")
+		l := New(store.New())
+		l.SourceRoot = root
+		l.documents = readerForTest(root)
+		l.documents.views[root] = unreadableInputFS{FS: os.DirFS(root), denied: "nested/blocked.yaml"}
+		count, err := l.Load(t.Context(), root)
+		if count != 0 || !errors.Is(err, fs.ErrPermission) {
+			t.Fatalf("Load = (%d, %v), want parent count 0 and permission error", count, err)
+		}
+		if _, found := l.Index.Lookup(testutil.KustomizationID("apps", "first")); !found {
+			t.Fatal("failed successor removed previously read evidence")
+		}
+		if _, scanned := l.scopes.scanned[root]; scanned {
+			t.Fatal("failed root marked scanned")
+		}
+	})
+
 }
 
 func TestLoader_PreferExistingIndexedObject(t *testing.T) {

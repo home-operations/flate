@@ -1065,6 +1065,27 @@ func TestSelect_RawFluxLookalikeExcludedFromStatuses(t *testing.T) {
 
 func TestSelect_ExplicitChartVersion(t *testing.T) {
 	t.Parallel()
+	selectVersions := func(t *testing.T, run Rendered, obj manifest.BaseManifest) map[manifest.NamedResource]string {
+		t.Helper()
+		id := obj.Named()
+		var objects []manifest.BaseManifest
+		var versions map[manifest.NamedResource]string
+		for i := range 2 {
+			selected, err, diagnostic := Select([]Rendered{run}, nil, []manifest.NamedResource{{Group: id.Group, Kind: id.Kind}}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, diagnostic)
+			if len(selected) != 1 || len(selected[0].Objects) != 1 || selected[0].Objects[0] != obj {
+				t.Fatalf("selected rows: %+v, want %s", selected, id)
+			}
+			if i == 1 {
+				assert.Diff(t, selected[0].Objects, objects)
+				assert.Diff(t, selected[0].ChartVersions, versions)
+			}
+			objects = selected[0].Objects
+			versions = selected[0].ChartVersions
+		}
+		return versions
+	}
 	for _, ns := range []struct{ namespace, source string }{{"", "apps"}, {"foreign", "foreign"}} {
 		for _, tc := range []struct {
 			name, kind, want string
@@ -1078,6 +1099,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 			{name: "nil reference"},
 			{name: "missing source", absent: true},
 			{name: "helm chart", kind: manifest.KindHelmChart, want: "2.3.4"},
+			{name: "empty helm chart", kind: manifest.KindHelmChart},
 			{name: "missing helm chart", kind: manifest.KindHelmChart, absent: true},
 			{name: "nonapplicable source", kind: manifest.KindHelmRepository},
 		} {
@@ -1105,19 +1127,33 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 						run.store.AddObject(source)
 					}
 				}
-				selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.HelmReleaseID("", "")}, nil)
-				if err != nil || selected[0].ChartVersions != nil || hr.Chart.Version != "9.9.9" {
-					t.Fatalf("explicit version replaced: %+v %v", selected[0].ChartVersions, err)
+				versions := selectVersions(t, run, hr)
+				if versions != nil || hr.Chart.Version != "9.9.9" {
+					t.Fatalf("explicit version replaced: %+v, chart version %q", versions, hr.Chart.Version)
 				}
 				updated := hr.Clone()
 				updated.Chart.Version = ""
 				run.store.AddObject(updated)
-				selected, err, _ = Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.HelmReleaseID("", "")}, nil)
-				if err != nil || selected[0].ChartVersions[hr.Named()] != tc.want {
-					t.Fatalf("effective source version: %+v %v, want %q", selected[0].ChartVersions, err, tc.want)
-				}
+				versions = selectVersions(t, run, updated)
+				version, ok := versions[hr.Named()]
+				assert.Equal(t, version, tc.want)
+				assert.Equal(t, ok, tc.want != "")
 			})
 		}
+	}
+	oci := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
+	oci.Reference = &sourcev1.OCIRepositoryRef{Tag: "1.2.3"}
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
+	chart.Version = "2.3.4"
+	for _, obj := range []manifest.BaseManifest{oci, chart, &manifest.ConfigMap{Name: "config", Namespace: "apps"}} {
+		t.Run(obj.Named().Kind, func(t *testing.T) {
+			t.Parallel()
+			run := selectedRun(&Result{})
+			run.store.AddObject(obj)
+			if versions := selectVersions(t, run, obj); versions != nil {
+				t.Fatalf("non-release chart versions: %+v", versions)
+			}
+		})
 	}
 }
 

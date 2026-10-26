@@ -97,6 +97,8 @@ type BaseManifest interface {
 	Named() NamedResource
 	// SourcePath returns the source identity and authored path, or zero values when absent.
 	SourcePath() (NamedResource, string, bool)
+	// ChartDisplaySource returns the source for chart version inference, or zero values when inapplicable.
+	ChartDisplaySource() (NamedResource, bool)
 	Suspended() bool
 	ReferenceCapacity() (int, int)
 	kind() KindInfo

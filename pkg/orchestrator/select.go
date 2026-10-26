@@ -203,11 +203,10 @@ func matchesLabels(obj manifest.BaseManifest, filter map[string]string) bool {
 }
 
 func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
-	hr, ok := obj.(*manifest.HelmRelease)
-	if !ok || hr.Chart.Version != "" {
+	src, ok := obj.ChartDisplaySource()
+	if !ok {
 		return ""
 	}
-	src := hr.ChartSource()
 	if chart, ok := s.run.store.GetObject(src).(interface{ ChartVersion() string }); ok {
 		return chart.ChartVersion()
 	}

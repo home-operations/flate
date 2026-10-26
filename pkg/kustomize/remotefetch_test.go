@@ -16,6 +16,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -45,7 +46,10 @@ func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
-			_, _, err := (remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo"}).acquire(ctx, c, &treeFS{})
+			acquired, identity, err := (remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo"}).acquire(ctx, c, &treeFS{})
+			if acquired != nil || identity != (remoteIdentity{}) {
+				t.Errorf("canceled acquisition filesystem=%v identity=%+v", acquired, identity)
+			}
 			done <- err
 		}()
 		synctest.Wait()
@@ -117,8 +121,10 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		artifact *store.SourceArtifact
+		err      error
 	}{
 		{name: "unavailable"},
+		{name: "fetch-error", err: fs.ErrNotExist},
 		{name: "missing filesystem", artifact: &store.SourceArtifact{Key: "family", Revision: "revision"}},
 		{name: "missing family", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Revision: "revision"}},
 		{name: "missing generation", artifact: &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family"}},
@@ -128,7 +134,7 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 			t.Parallel()
 			c := newTestTreeCache(t, "")
 			c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-				return tc.artifact, nil
+				return tc.artifact, tc.err
 			})
 			descriptor := remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo.git", Ref: "main"}
 			_, identity, err := descriptor.acquire(t.Context(), c, newTreeFS(fstest.MapFS{}, "/src", nil))
@@ -136,8 +142,85 @@ func TestRemoteInput_UnavailableGit(t *testing.T) {
 				if err != nil || identity.Key != "family" || identity.Digest != "digest" {
 					t.Fatalf("digest generation=%+v error=%v", identity, err)
 				}
-			} else if !errors.Is(err, manifest.ErrInput) {
-				t.Fatalf("unavailable Git error=%v", err)
+			} else {
+				wantErr := tc.err
+				if wantErr == nil {
+					wantErr = manifest.ErrInput
+				}
+				if !errors.Is(err, wantErr) || identity != (remoteIdentity{}) {
+					t.Fatalf("unavailable Git identity=%+v error=%v", identity, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRemoteInput_HTTPFailureObservation(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			t.Parallel()
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits.Add(1)
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(srv.Close)
+			c := newTestTreeCache(t, "")
+			descriptor := remoteInput{Operation: remoteHTTP, URL: srv.URL}
+			acquired, identity, err := descriptor.acquire(t.Context(), c, &treeFS{})
+			response, ok := errors.AsType[*fetcherr.ResponseError](err)
+			want := remoteIdentity{}
+			if status == http.StatusNotFound {
+				want.HTTPStatus = status
+			}
+			if acquired != nil || !ok || response.StatusCode != status || identity != want || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("HTTP %d: filesystem=%v identity=%+v error=%v", status, acquired, identity, err)
+			}
+			if status == http.StatusNotFound {
+				_, original := c.remoteInputs.Acquire(t.Context(), descriptor.URL, sourcecache.RetryConfig{}, nil)
+				if original != err || hits.Load() != 1 { //nolint:errorlint // Shared acquisition must return the identical error object.
+					t.Fatalf("acquisition changed error or repeated probe: original=%v error=%v requests=%d", original, err, hits.Load())
+				}
+			}
+		})
+	}
+}
+
+func TestRemoteInput_HTTPFailureIdentity(t *testing.T) {
+	t.Parallel()
+	notFound := &fetcherr.ResponseError{StatusCode: http.StatusNotFound}
+	independent := errors.New("independent failure")
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "bare", err: notFound, want: true},
+		{name: "wrapped", err: fmt.Errorf("probe: %w", notFound), want: true},
+		{name: "terminal-domain-tree", err: &sourcecache.TerminalError{Err: fmt.Errorf("%w: probe: %w", manifest.ErrFlux, errors.Join(notFound, nil)), Attempted: true}, want: true},
+		{name: "forbidden", err: &fetcherr.ResponseError{StatusCode: http.StatusForbidden}},
+		{name: "rate-limited", err: &fetcherr.ResponseError{StatusCode: http.StatusTooManyRequests}},
+		{name: "server", err: &fetcherr.ResponseError{StatusCode: http.StatusInternalServerError}},
+		{name: "network", err: &net.OpError{Op: "dial", Net: "tcp", Err: independent}},
+		{name: "canceled", err: errors.Join(notFound, context.Canceled)},
+		{name: "deadline", err: errors.Join(context.DeadlineExceeded, notFound)},
+		{name: "cache", err: &sourcecache.CacheError{Err: notFound}},
+		{name: "independent-last", err: errors.Join(notFound, independent)},
+		{name: "independent-first", err: errors.Join(independent, notFound)},
+		{name: "conflicting-status-last", err: errors.Join(notFound, &fetcherr.ResponseError{StatusCode: http.StatusForbidden})},
+		{name: "conflicting-status-first", err: errors.Join(&fetcherr.ResponseError{StatusCode: http.StatusForbidden}, notFound)},
+		{name: "domain-only", err: manifest.ErrFlux},
+		{name: "response-cause", err: &fetcherr.ResponseError{StatusCode: http.StatusNotFound, Err: independent}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			want := remoteIdentity{}
+			if tc.want {
+				want.HTTPStatus = http.StatusNotFound
+			}
+			if got := httpFailureIdentity(tc.err); got != want {
+				t.Fatalf("observation=%+v, want %+v: %v", got, want, tc.err)
 			}
 		})
 	}

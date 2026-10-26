@@ -258,7 +258,7 @@ func TestReadSet_RemoteObservations(t *testing.T) {
 		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "z", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{Key: "family", Revision: "1"}},
 		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/b.git//file"}, Identity: remoteIdentity{HTTP: "http-b"}},
 		{Input: remoteInput{Operation: remoteGit, URL: "file:///example.invalid/b.git", Ref: "a", Timeout: 27 * time.Second, Submodules: true}, Identity: remoteIdentity{Key: "family", Revision: "2"}},
-		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"}, Identity: remoteIdentity{HTTP: "http-a"}},
+		{Input: remoteInput{Operation: remoteHTTP, URL: "https://example.invalid/a"}, Identity: remoteIdentity{HTTPStatus: http.StatusNotFound}},
 	}
 	policy := entries[0]
 	policy.Input.Timeout = time.Minute
@@ -518,5 +518,90 @@ func TestReadSet_RemotePolicyValidation(t *testing.T) {
 	changed.Store(true)
 	if valid, err := snap.stillValid(t.Context(), c, &treeFS{}, true); err != nil || valid {
 		t.Fatalf("policy-specific change: valid=%t error=%v", valid, err)
+	}
+}
+
+func TestReadSet_FailedRemoteObservation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		operation remoteOperation
+		status    int
+		saved     remoteIdentity
+		valid     bool
+	}{
+		{name: "unchanged-404", status: http.StatusNotFound, saved: remoteIdentity{HTTPStatus: http.StatusNotFound}, valid: true},
+		{name: "404-to-403", status: http.StatusForbidden, saved: remoteIdentity{HTTPStatus: http.StatusNotFound}},
+		{name: "404-to-429", status: http.StatusTooManyRequests, saved: remoteIdentity{HTTPStatus: http.StatusNotFound}},
+		{name: "404-to-500", status: http.StatusInternalServerError, saved: remoteIdentity{HTTPStatus: http.StatusNotFound}},
+		{name: "empty-to-404", status: http.StatusNotFound},
+		{name: "empty-to-empty", status: http.StatusForbidden},
+		{name: "unavailable-git", operation: remoteGit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			t.Cleanup(srv.Close)
+			c := newTestTreeCache(t, "")
+			descriptor := remoteInput{Operation: tc.operation, URL: srv.URL}
+			snap := readSetSnapshot{Remotes: []remoteEntry{{Input: descriptor, Identity: tc.saved}}}
+			if valid, err := snap.stillValid(t.Context(), c, &treeFS{}, true); err != nil || valid != tc.valid {
+				t.Fatalf("validation=%t error=%v, want %t", valid, err, tc.valid)
+			}
+		})
+	}
+}
+
+func TestReadSet_RemoteFailureCancellation(t *testing.T) {
+	t.Parallel()
+	for _, completed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("completed=%t", completed), func(t *testing.T) {
+			t.Parallel()
+			entered, release := make(chan struct{}), make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				close(entered)
+				if !completed {
+					<-release
+				}
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			t.Cleanup(srv.Close)
+			c := newTestTreeCache(t, "")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			probe := remoteInput{Operation: remoteHTTP, URL: srv.URL}
+			snap := readSetSnapshot{Remotes: []remoteEntry{{Input: probe, Identity: remoteIdentity{HTTPStatus: http.StatusNotFound}}}}
+			if completed {
+				_, identity, err := probe.acquire(t.Context(), c, &treeFS{})
+				if err == nil || identity != snap.Remotes[0].Identity {
+					t.Fatalf("completed probe=%+v error=%v", identity, err)
+				}
+				git := remoteInput{Operation: remoteGit, URL: "file:///repo"}
+				snap.Remotes = append(snap.Remotes, remoteEntry{Input: git, Identity: remoteIdentity{Key: "family", Revision: "1"}, Parents: []remoteInput{probe}})
+				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					cancel()
+					return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "family", Revision: "1"}, nil
+				})
+			}
+			type result struct {
+				valid bool
+				err   error
+			}
+			done := make(chan result, 1)
+			go func() {
+				valid, err := snap.stillValid(ctx, c, &treeFS{}, true)
+				done <- result{valid, err}
+			}()
+			if !completed {
+				<-entered
+				cancel()
+				close(release)
+			}
+			if got := <-done; got.valid || !errors.Is(got.err, context.Canceled) {
+				t.Fatalf("canceled validation=%t error=%v", got.valid, got.err)
+			}
+		})
 	}
 }

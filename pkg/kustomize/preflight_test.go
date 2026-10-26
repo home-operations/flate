@@ -2,6 +2,8 @@ package kustomize
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"maps"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/home-operations/flate/internal/fetcherr"
 	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -95,27 +98,37 @@ func TestPreflightRemoteResources_RewritesSuccessfulFetch(t *testing.T) {
 	}
 }
 
-// TestPreflightRemoteResources_PropagatesFailure locks the contract: a URL
-// fetch failure returns an error to the caller — the KS controller surfaces it
-// as a real reconcile failure rather than silently tombstoning. The error
-// wraps the URL and the underlying status so `flate test` shows the user what's
-// actually broken in their repo.
 func TestPreflightRemoteResources_PropagatesFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(srv.Close)
-
-	fsys := memFSWith(t, map[string]string{"kustomization.yaml": "resources:\n  - " + srv.URL + "/missing.yaml\n"})
-	err := preflightRemoteResources(context.Background(), newTestTreeCache(t, ""), fsys, ".")
-	if err == nil {
-		t.Fatal("expected error on 404; got nil (preflight would silently swallow the failure)")
-	}
-	if !strings.Contains(err.Error(), srv.URL) {
-		t.Errorf("error should name the URL; got %q", err)
-	}
-	if !strings.Contains(err.Error(), "HTTP 404") {
-		t.Errorf("error should name the status code; got %q", err)
+	t.Parallel()
+	for _, requiredFile := range []bool{false, true} {
+		t.Run(fmt.Sprintf("required-file=%t", requiredFile), func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			t.Cleanup(srv.Close)
+			url := srv.URL + "/missing.yaml"
+			body := "resources: ['" + url + "']\n"
+			if requiredFile {
+				body = "configMapGenerator: [{name: required, files: ['chosen=" + url + "']}]\n"
+			}
+			fsys := memFSWith(t, map[string]string{"kustomization.yaml": body})
+			fsys.rec = newReadSet("/")
+			err := preflightRemoteResources(t.Context(), newTestTreeCache(t, ""), fsys, ".")
+			if err == nil || !strings.Contains(err.Error(), url) || !strings.Contains(err.Error(), "HTTP 404") {
+				t.Fatalf("404 diagnostics=%v", err)
+			}
+			if requiredFile {
+				response, ok := errors.AsType[*fetcherr.ResponseError](err)
+				if !ok || response.StatusCode != http.StatusNotFound {
+					t.Fatalf("required file lost acquisition error: %v", err)
+				}
+			}
+			observation := fsys.rec.remotes[remoteInput{Operation: remoteHTTP, URL: url}]
+			if observation.identity != (remoteIdentity{HTTPStatus: http.StatusNotFound}) {
+				t.Fatalf("failed input observation=%+v", observation.identity)
+			}
+		})
 	}
 }
 
@@ -527,7 +540,9 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 }
 
 func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
+	t.Parallel()
 	t.Run("root-after-nested", func(t *testing.T) {
+		t.Parallel()
 		var hits atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			hits.Add(1)
@@ -587,6 +602,7 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 	})
 	for _, scenario := range []string{"nested-git", "http-plugin", "shared-mount", "shared-plugin", "equal-content-plugins", "same-repository-subpaths"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			var mu sync.Mutex
 			calls := make(map[string]int)
 			record := func(url string) {
@@ -597,7 +613,11 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 			var changed atomic.Int32
 			var srv *httptest.Server
 			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				record(srv.URL + r.URL.Path)
+				record(srv.URL + r.URL.RequestURI())
+				if strings.HasPrefix(r.URL.Path, "/probe.git") {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
 				body := "remote data"
 				if strings.HasPrefix(r.URL.Path, "/plugin-") {
 					body = "apiVersion: builtin\nkind: ConfigMapGenerator\nmetadata: {name: generated}\nfiles: ['chosen=" + srv.URL + "/a-child']\n"
@@ -612,6 +632,8 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 			b := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/z-parent.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
 			shared := remoteInput{Operation: remoteGit, URL: "file:///example.invalid/m-shared.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
 			child := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/a-child"}
+			probe := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/probe.git//subdir?ref=main"}
+			selected := remoteInput{Operation: remoteGit, URL: srv.URL + "/probe.git", Ref: "main", Timeout: 27 * time.Second, Submodules: true}
 			plugin := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/plugin-one"}
 			otherPlugin := remoteInput{Operation: remoteHTTP, URL: srv.URL + "/plugin-two"}
 			leaf := "configMapGenerator: [{name: nested, files: ['chosen=" + child.URL + "']}]\n"
@@ -633,9 +655,12 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 				}
 				repositories[shared.URL] = map[string]string{
 					"subdir/kustomization.yaml": "resources: [../inner]\n",
-					"inner/kustomization.yaml":  leaf,
+					"inner/kustomization.yaml":  "resources: ['" + probe.URL + "']\n",
 				}
-				want[b], want[shared], want[child] = nil, []remoteInput{a, b}, []remoteInput{a, b, shared}
+				repositories[selected.URL] = map[string]string{"subdir/kustomization.yaml": leaf}
+				want[b], want[shared] = nil, []remoteInput{a, b}
+				want[probe], want[selected] = []remoteInput{a, b, shared}, []remoteInput{a, b, shared}
+				want[child] = []remoteInput{a, b, shared, selected}
 			case "shared-plugin":
 				root = "generators: ['" + a.URL + "//plugins?ref=main', '" + b.URL + "//plugins?ref=main']\n"
 				for _, parent := range []remoteInput{a, b} {
@@ -676,6 +701,9 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 				t.Fatalf("observations=%+v; want=%+v", snap.Remotes, want)
 			}
 			for _, entry := range snap.Remotes {
+				if entry.Input == probe && entry.Identity != (remoteIdentity{HTTPStatus: http.StatusNotFound}) {
+					t.Fatalf("nested probe identity=%+v", entry.Identity)
+				}
 				parents, ok := want[entry.Input]
 				slices.SortFunc(parents, compareRemoteInputs)
 				if !ok || !cmp.Equal(parents, entry.Parents) {
@@ -731,7 +759,7 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 					t.Fatalf("changed parent %d: valid=%t error=%v", change, valid, err)
 				}
 				mu.Lock()
-				if calls[child.URL] != 0 || scenario == "shared-mount" && calls[shared.URL] != 0 {
+				if calls[child.URL] != 0 || scenario == "shared-mount" && (calls[shared.URL] != 0 || calls[probe.URL] != 0 || calls[selected.URL] != 0) {
 					t.Errorf("changed parent %d acquired descendants: %v", change, calls)
 				}
 				mu.Unlock()

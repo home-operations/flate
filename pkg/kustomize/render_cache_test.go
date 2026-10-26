@@ -1842,18 +1842,26 @@ func testRenderPayload(tb testing.TB, witness string) []byte {
 
 func TestRender_RemoteSelectionTransition(t *testing.T) {
 	t.Parallel()
-	for _, initialStatus := range []int{http.StatusNotFound, http.StatusOK} {
-		t.Run(fmt.Sprint(initialStatus), func(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		initialStatus int
+		changeGit     bool
+	}{
+		{name: "404-to-http", initialStatus: http.StatusNotFound},
+		{name: "non-resource-to-http", initialStatus: http.StatusOK},
+		{name: "404-to-git", initialStatus: http.StatusNotFound, changeGit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			var changed atomic.Bool
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				hits.Add(1)
-				if changed.Load() {
+				if changed.Load() && !tc.changeGit {
 					_, _ = io.WriteString(w, cmYAML("file-output"))
 					return
 				}
-				w.WriteHeader(initialStatus)
+				w.WriteHeader(tc.initialStatus)
 				_, _ = io.WriteString(w, "<html>repository page</html>")
 			}))
 			t.Cleanup(srv.Close)
@@ -1863,31 +1871,69 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 			newCache := func() *TreeCache {
 				c := newTestTreeCache(t, cacheDir)
 				c.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-					return &store.SourceArtifact{Key: "repository", Revision: "same", FS: memoryTree(t, map[string]string{"base/kustomization.yaml": "resources: [cm.yaml]\n", "base/cm.yaml": cmYAML("git-output")})}, nil
+					name := "git-output"
+					if changed.Load() && tc.changeGit {
+						name = "changed-git-output"
+					}
+					return &store.SourceArtifact{Key: "repository", Revision: name, FS: memoryTree(t, map[string]string{"base/kustomization.yaml": "resources: [cm.yaml]\n", "base/cm.yaml": cmYAML(name)})}, nil
 				})
 				return c
 			}
 			c := newCache()
 			request := RenderRequest{Source: localSource(t, root), Label: root, Spec: demoSpec}
-			out, _, err := Render(t.Context(), c, request, sourcecache.RetryConfig{})
-			if err != nil || !hasRenderField(out, "name", "git-output") {
+			out, receipt, err := Render(t.Context(), c, request, sourcecache.RetryConfig{})
+			if err != nil || receipt == nil || !hasRenderField(out, "name", "git-output") {
 				t.Fatalf("initial directory selection: %s, %v", out, err)
 			}
-			rec := newReadSet(root)
-			view := newTreeFS(request.Source.FS, root, rec)
-			if err := preflightRemoteResources(t.Context(), c, view, root); err != nil {
+			realOutput := testRenderEncoding(t, out)
+			if err := c.RecordRender(t.Context(), demoSpec.Named(), receipt, emptyRenderInventory); err != nil {
 				t.Fatal(err)
 			}
-			snap := rec.snapshot()
-			if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) {
+			frame := receipt.Value().(renderFrame)
+			snap := frame.header.Reads
+			key := frame.header.Key
+			eligible := renderPersistenceEligible(t)
+			persisted, saved, hit := readTestRenderFrame(t, c, key)
+			if hit != eligible || hit && (!reflect.DeepEqual(persisted, snap) || !bytes.Equal(realOutput, testRenderEncoding(t, saved))) {
+				t.Fatalf("persisted=%t eligible=%t observations=%+v output=%s", hit, eligible, persisted.Remotes, saved)
+			}
+			t.Logf("persistence eligible=%t persisted hit=%t", eligible, hit)
+			if hit {
+				snap = persisted
+			}
+			if len(snap.Remotes) != 2 || snap.Remotes[0].Input != (remoteInput{Operation: remoteHTTP, URL: url}) || snap.Remotes[1].Input.Operation != remoteGit || snap.Remotes[1].Identity != (remoteIdentity{Key: "repository", Revision: "git-output"}) {
 				t.Fatalf("selection observations=%+v", snap.Remotes)
 			}
-			if (snap.Remotes[0].Identity.HTTP == "") != (initialStatus == http.StatusNotFound) {
-				t.Fatalf("HTTP probe identity=%+v", snap.Remotes[0].Identity)
+			if tc.initialStatus == http.StatusNotFound {
+				if snap.Remotes[0].Identity != (remoteIdentity{HTTPStatus: http.StatusNotFound}) {
+					t.Fatalf("HTTP probe identity=%+v", snap.Remotes[0].Identity)
+				}
+			} else if snap.Remotes[0].Identity.HTTP == "" || snap.Remotes[0].Identity.HTTPStatus != 0 {
+				t.Fatalf("HTTP content identity=%+v", snap.Remotes[0].Identity)
 			}
 			if hits.Load() != 1 {
 				t.Fatalf("one invocation probed %d times", hits.Load())
 			}
+			closeTestTreeCache(t, c)
+			c = newCache()
+			if valid, err := snap.stillValid(t.Context(), c, &treeFS{lower: request.Source.FS}, false); err != nil || !valid {
+				t.Fatalf("unchanged resource selection rejected Git: valid=%t, %v", valid, err)
+			}
+			out, _, err = Render(t.Context(), c, request, sourcecache.RetryConfig{})
+			if err != nil || !bytes.Equal(realOutput, testRenderEncoding(t, out)) {
+				t.Fatalf("unchanged real output: %s, %v", out, err)
+			}
+			if eligible {
+				publishTestFrame(t, c.owner, sourcecache.BlobKey{Content: key, PersistOnly: true}, testRenderFrame(t, persisted, testRenderPayload(t, "REMOTE-SELECTION")))
+			}
+			closeTestTreeCache(t, c)
+			c = newCache()
+			out, _, err = Render(t.Context(), c, request, sourcecache.RetryConfig{})
+			witness := hasRenderField(out, "witness", "REMOTE-SELECTION")
+			if err != nil || witness != eligible || !eligible && !bytes.Equal(realOutput, testRenderEncoding(t, out)) {
+				t.Fatalf("saved-render reuse: %s, %v; eligible=%t", out, err, eligible)
+			}
+			t.Logf("persistence eligible=%t witness assertion executed=%t witness reused=%t", eligible, eligible, witness)
 			closeTestTreeCache(t, c)
 			changed.Store(true)
 			c = newCache()
@@ -1895,10 +1941,14 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 				t.Fatalf("changed resource selection reused Git: valid=%t, %v", valid, err)
 			}
 			out, _, err = Render(t.Context(), c, request, sourcecache.RetryConfig{})
-			if err != nil || !hasRenderField(out, "name", "file-output") || hasRenderField(out, "name", "git-output") {
+			want := "file-output"
+			if tc.changeGit {
+				want = "changed-git-output"
+			}
+			if err != nil || !hasRenderField(out, "name", want) || hasRenderField(out, "name", "git-output") || hasRenderField(out, "witness", "REMOTE-SELECTION") {
 				t.Fatalf("resource transition: %s, %v", out, err)
 			}
-			if hits.Load() != 2 {
+			if hits.Load() != 4 {
 				t.Fatalf("validation/preflight acquisitions=%d, want one per invocation", hits.Load())
 			}
 		})

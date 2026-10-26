@@ -319,8 +319,8 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 						return
 					}
 					remote := rs.Remotes[index]
-					_, identity, err := remote.Input.acquire(ctx, cache, &validationInput)
-					results[index].valid = err == nil && identity == remote.Identity
+					_, identity, _ := remote.Input.acquire(ctx, cache, &validationInput)
+					results[index].valid = identity != (remoteIdentity{}) && identity == remote.Identity
 				})
 			}
 			for _, index := range wave {

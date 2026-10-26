@@ -294,9 +294,7 @@ func (w *inputWalk) pluginOperand(ctx context.Context, loc walkScope, node *yaml
 
 func (w *inputWalk) acquire(ctx context.Context, descriptor remoteInput, scope walkScope) (fs.FS, error) {
 	acquired, identity, err := descriptor.acquire(ctx, w.cache, w.fs)
-	if err == nil {
-		w.recordRemote(descriptor, identity, scope)
-	}
+	w.recordRemote(descriptor, identity, scope)
 	return acquired, err
 }
 
@@ -364,8 +362,6 @@ func (w *inputWalk) resourcePath(ctx context.Context, loc walkScope, raw string,
 			}
 		} else if !git {
 			return inputPath{}, fileErr
-		} else {
-			w.recordRemote(remoteInput{Operation: remoteHTTP, URL: raw}, remoteIdentity{}, loc)
 		}
 	}
 	if git {

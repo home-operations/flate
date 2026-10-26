@@ -161,12 +161,8 @@ func (o *Orchestrator) warnMissingCRDs() {
 		return
 	}
 	missing := make(map[manifest.NamedResource]map[manifest.NamedResource]struct{})
-	for _, obj := range o.store.ListObjects(manifest.FluxOperatorDomain, manifest.KindResourceSet) {
-		rs, ok := obj.(*manifest.ResourceSet)
-		if !ok {
-			continue
-		}
-		id := rs.Named()
+	for _, obj := range o.store.ListObjects("", "") {
+		id := obj.Named()
 		info, ok := o.store.GetStatus(id)
 		if !ok || info.Status != store.StatusReady {
 			continue
@@ -184,10 +180,16 @@ func (o *Orchestrator) warnMissingCRDs() {
 			if _, ok := o.store.GetStatus(crd); ok {
 				continue
 			}
-			if missing[crd] == nil {
-				missing[crd] = make(map[manifest.NamedResource]struct{})
+			for ref := range manifest.References(obj, manifest.ReferenceAll) {
+				if ref.Gate == 0 || ref.NamedResource != crd {
+					continue
+				}
+				if missing[crd] == nil {
+					missing[crd] = make(map[manifest.NamedResource]struct{})
+				}
+				missing[crd][id] = struct{}{}
+				break
 			}
-			missing[crd][id] = struct{}{}
 		}
 	}
 	for _, crd := range slices.SortedFunc(maps.Keys(missing), manifest.NamedResource.Compare) {

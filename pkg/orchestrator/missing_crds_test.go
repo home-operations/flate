@@ -229,16 +229,17 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 	}
 }
 
-func acceptCRDGatesForTest(t *testing.T, st *store.Store, rs *manifest.ResourceSet) {
+func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManifest) {
 	t.Helper()
 	reads := new(store.ReadSet)
-	reads.Init(st, rs.Named(), nil)
-	reads.GetObject(rs.Named())
-	for ref := range manifest.References(rs, manifest.ReferenceRelations) {
-		if ref.Use == "dependsOn" {
-			reads.GetObject(ref.NamedResource)
-			reads.Require(ref.DependencyRef)
+	reads.Init(st, obj.Named(), nil)
+	reads.GetObject(obj.Named())
+	for ref := range manifest.References(obj, manifest.ReferenceAll) {
+		if ref.Gate == 0 || !ref.IsCRD() {
+			continue
 		}
+		reads.GetObject(ref.NamedResource)
+		reads.Require(ref.DependencyRef)
 	}
 	reads.Accept()
 	assert.Equal(t, reads.Valid(), true)
@@ -253,6 +254,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	o := &Orchestrator{store: s, cfg: Config{AllowMissingCRDs: true}}
 	crdA := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "a.example.com"}
 	crdB := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "b.example.com"}
+	ungatedCRD := manifest.NamedResource{Group: crdA.Group, Kind: crdA.Kind, Namespace: "ns"}
 	for _, tc := range []struct {
 		name                string
 		status              store.Status
@@ -283,6 +285,80 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		want = append(want, manifest.Warning{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/ns/a, ResourceSet.fluxcd.controlplane.io/ns/z"})
 	}
 	assert.Diff(t, s.Warnings(), want)
+	for _, tc := range []struct {
+		name         string
+		declared     []manifest.NamedResource
+		inputsFrom   []fluxopv1.InputProviderReference
+		gated        []manifest.NamedResource
+		semantic     []manifest.NamedResource
+		required     []manifest.NamedResource
+		warned       []manifest.NamedResource
+		semanticOnly bool
+	}{
+		{name: "no accepted footprint", declared: []manifest.NamedResource{crdA}},
+		{name: "semantic input", semantic: []manifest.NamedResource{crdA}, required: []manifest.NamedResource{crdA}, semanticOnly: true},
+		{
+			name:       "ungated CRD reference",
+			inputsFrom: []fluxopv1.InputProviderReference{{APIVersion: crdA.Group + "/v1", Kind: crdA.Kind}},
+			semantic:   []manifest.NamedResource{ungatedCRD}, required: []manifest.NamedResource{ungatedCRD},
+		},
+		{
+			name: "gated and semantic inputs", declared: []manifest.NamedResource{crdA},
+			gated: []manifest.NamedResource{crdA}, semantic: []manifest.NamedResource{crdB},
+			required: []manifest.NamedResource{crdA, crdB}, warned: []manifest.NamedResource{crdA},
+		},
+		{
+			name: "partial acceptance", declared: []manifest.NamedResource{crdA, crdB},
+			gated: []manifest.NamedResource{crdA}, required: []manifest.NamedResource{crdA},
+			warned: []manifest.NamedResource{crdA},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			rs := &manifest.ResourceSet{Name: "app", Namespace: "ns"}
+			rs.InputsFrom = tc.inputsFrom
+			for _, crd := range tc.declared {
+				dep := fluxopv1.Dependency{APIVersion: crd.Group + "/v1", Kind: crd.Kind, Name: crd.Name, Namespace: "explicit"}
+				manifest.KindOf(&manifest.RawObject{APIVersion: dep.APIVersion, Kind: dep.Kind}).Namespaced()
+				rs.DependsOn = append(rs.DependsOn, dep)
+			}
+			var owner manifest.BaseManifest = rs
+			if tc.semanticOnly {
+				owner = &manifest.Kustomization{Name: "app", Namespace: "ns"}
+			}
+			st.AddObject(owner)
+			st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady})
+			st.SetArtifact(owner.Named(), &store.Emission{})
+			if len(tc.gated)+len(tc.semantic) != 0 {
+				reads := new(store.ReadSet)
+				reads.Init(st, owner.Named(), nil)
+				reads.GetObject(owner.Named())
+				for _, id := range tc.gated {
+					reads.GetObject(id)
+					reads.Require(manifest.DependencyRef{NamedResource: id})
+				}
+				for _, id := range tc.semantic {
+					reads.RequireData(id)
+				}
+				reads.Accept()
+				assert.Equal(t, reads.Valid(), true)
+				reads.Retire()
+				for range st.Sweep() {
+				}
+			}
+			assert.Diff(t, slices.SortedFunc(st.RequiredInputs(owner.Named()), manifest.NamedResource.Compare), tc.required)
+			(&Orchestrator{store: st, cfg: Config{AllowMissingCRDs: true}}).warnMissingCRDs()
+			var want []manifest.Warning
+			for _, crd := range tc.warned {
+				want = append(want, manifest.Warning{
+					Resource: crd, Category: manifest.WarnMissingCRD, Count: 1,
+					Message: "CRD " + crd.String() + " absent from offline inputs; accepted for " + owner.Named().String(),
+				})
+			}
+			assert.Diff(t, st.Warnings(), want)
+		})
+	}
 	for _, state := range []string{"object", "ready", "pending", "failed", "disabled", "foreign object", "foreign status"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
@@ -405,9 +481,13 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			if state == "dedup" {
 				accepted := s.GetArtifact(rs.Named()).(*store.Emission)
 				assert.Diff(t, accepted.Manifests, before.(*store.Emission).Manifests)
-				assert.Equal(t, publications, 0)
+			}
+			wantPublications := 1
+			if state == "unchanged" || state == "dedup" {
+				wantPublications = 0
 			}
 			o.warnMissingCRDs()
+			assert.Equal(t, publications, wantPublications)
 			wantWarnings := 1
 			if state == "remove" || strings.HasPrefix(state, "filter") || state == "failed gate" {
 				wantWarnings = 0
@@ -416,6 +496,17 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			if wantWarnings == 1 {
 				assert.Equal(t, s.Warnings()[0].Count, 1)
 			}
+			var wantRequired []manifest.NamedResource
+			if state == "unchanged" || state == "add" || state == "dedup" {
+				wantRequired = []manifest.NamedResource{{Group: "apiextensions.k8s.io", Kind: crd.Kind, Name: crd.Name}}
+			}
+			if state == "failed gate" {
+				wantRequired = []manifest.NamedResource{
+					{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "missing"},
+					{Group: "apiextensions.k8s.io", Kind: crd.Kind, Name: crd.Name},
+				}
+			}
+			assert.Diff(t, slices.SortedFunc(s.RequiredInputs(rs.Named()), manifest.NamedResource.Compare), wantRequired)
 			_, _, accepted := s.GetEmission(rs.Named())
 			raw := accepted.Manifests
 			wantNames := []string{"old"}
@@ -448,22 +539,26 @@ func TestMissingCRDs_SharedWarningsAndOutput(t *testing.T) {
 		testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
 		testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- sets.yaml\n")
 		var sets strings.Builder
-		for _, name := range []string{"z", "a"} {
+		for _, name := range []string{"z", "a", "unrelated"} {
+			dependencies := ""
+			if name != "unrelated" {
+				dependencies = ` dependsOn:
+ - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: z.example.com}
+ - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: a.example.com}
+ - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: a.example.com}
+`
+			}
 			fmt.Fprintf(&sets, `---
 apiVersion: fluxcd.controlplane.io/v1
 kind: ResourceSet
 metadata: {name: %s, namespace: flux-system}
 spec:
- dependsOn:
- - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: z.example.com}
- - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: a.example.com}
- - {apiVersion: apiextensions.k8s.io/v1, kind: CustomResourceDefinition, name: a.example.com}
- resources:
+%s resources:
  - apiVersion: example.com/v1
    kind: Widget
    metadata: {name: %s, namespace: flux-system}
    spec: {value: %s}
-`, name, name, name)
+`, name, dependencies, name, name)
 		}
 		testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
 		o, err := New(t.Context(), Config{Path: dir, RepoRoot: dir, CacheDir: cache, Concurrency: 2, AllowMissingCRDs: true})
@@ -485,8 +580,11 @@ spec:
 			want = append(want, manifest.Warning{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/a, ResourceSet.fluxcd.controlplane.io/flux-system/z"})
 		}
 		assert.Diff(t, res.Warnings, want)
-		for _, name := range []string{"a", "z"} {
+		for _, name := range []string{"a", "z", "unrelated"} {
 			id := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: name}
+			status, ok := o.store.GetStatus(id)
+			assert.Equal(t, ok, true)
+			assert.Equal(t, status.Status, store.StatusReady)
 			art, ok := o.store.GetArtifact(id).(*store.Emission)
 			if !ok || len(art.Manifests) != 1 {
 				t.Fatalf("%s artifact=%+v", id, art)

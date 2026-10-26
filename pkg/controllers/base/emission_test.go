@@ -33,7 +33,7 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 			c.Configure(Options{SkipKinds: []string{"ConfigMap"}})
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", TargetNamespace: "apps"}
 			s.AddObject(parent)
-			doc := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "credentials"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:encrypted]"}}
+			doc := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "credentials"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"}}
 			skipped := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "skipped", "namespace": "apps"}}
 			invalid := map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "invalid"}, "spec": "invalid"}
 			borrowed := []map[string]any{doc, skipped, invalid}
@@ -42,7 +42,7 @@ func TestEmit_RetainsSanitizedInvalidDocuments(t *testing.T) {
 			if len(children) != 2 || len(docs) != 2 {
 				t.Fatalf("parse: children=%d docs=%d", len(children), len(docs))
 			}
-			want := "ENC[AES256_GCM,data:encrypted]"
+			want := "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 			if wipe {
 				want = manifest.ValuePlaceholder("X")
 			}
@@ -502,7 +502,7 @@ func TestEmit_PartialRetainsUnvisitedDocuments(t *testing.T) {
 	root := &manifest.Kustomization{Name: "root", Namespace: "apps"}
 	s.AddObject(root)
 	invalid := map[string]any{"apiVersion": manifest.FluxKustomizeDomain + "/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": "invalid", "namespace": "apps"}, "spec": "invalid"}
-	secret := map[string]any{"apiVersion": "v1", "kind": manifest.KindSecret, "metadata": map[string]any{"name": "secret", "namespace": "apps"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:encrypted]"}}
+	secret := map[string]any{"apiVersion": "v1", "kind": manifest.KindSecret, "metadata": map[string]any{"name": "secret", "namespace": "apps"}, "stringData": map[string]any{"X": "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"}}
 	valid := manifest.DeepCopyMap(invalid)
 	valid["spec"] = map[string]any{"path": "original"}
 	children, docs := parseChildrenForTest(root.Named(), []map[string]any{secret, valid, invalid}, manifest.ParseDocOptions{WipeSecrets: true})

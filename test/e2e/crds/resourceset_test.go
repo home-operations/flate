@@ -67,7 +67,7 @@ func TestE2E_ResourceSetGeneratedData(t *testing.T) {
 		rs         = "ResourceSet/flux-system/demo"
 		sa         = "ServiceAccount/default/sa-one"
 		secret     = "Secret/default/secret-one"
-		ciphertext = "ENC[AES256_GCM,data:fixture,type:str]"
+		ciphertext = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	)
 	for _, tc := range []struct {
 		name      string
@@ -105,7 +105,7 @@ spec:
 			wantFields := map[string]any{"key": "value"}
 			if tc.encrypted {
 				fields = fmt.Sprintf("{key: value, encrypted: '%s'}", ciphertext)
-				secretData = fmt.Sprintf("      data: {plain: dmFsdWU=, encoded: %s}\n", base64.StdEncoding.EncodeToString([]byte(ciphertext)))
+				secretData = fmt.Sprintf("      data: {plain: dmFsdWU=, encoded: '%s'}\n", ciphertext)
 				wantFields["encrypted"] = "..PLACEHOLDER_encrypted.."
 			}
 			testutil.WriteFile(t, root, "app/resourceset.yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1

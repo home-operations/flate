@@ -92,12 +92,15 @@ func TestMissingSecretErr(t *testing.T) {
 
 func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 	t.Parallel()
+	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
+	encodedCipher := base64.StdEncoding.EncodeToString([]byte(cipher))
 	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "ns", Name: "repo"}
 	for _, tc := range []struct {
 		name               string
 		data, stringData   map[string]any
 		field              string
 		username, password string
+		metadata           bool
 	}{
 		{name: "absent"},
 		{name: "empty username", stringData: map[string]any{"username": "", "password": "plain"}},
@@ -118,10 +121,26 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 		{name: "valid", stringData: map[string]any{"username": "user", "password": "plain"}, username: "user", password: "plain"},
 		{name: "valid encoded", data: map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("user")), "password": base64.StdEncoding.EncodeToString([]byte("plain"))}, username: "user", password: "plain"},
 		{name: "shadowed malformed data", data: map[string]any{"username": "credential-payload!"}, stringData: map[string]any{"username": "user", "password": "plain"}, username: "user", password: "plain"},
+		{name: "clear metadata credentials", stringData: map[string]any{"username": "user", "password": "plain"}, username: "user", password: "plain", metadata: true},
+		{name: "encoded clear metadata credentials", data: map[string]any{"username": base64.StdEncoding.EncodeToString([]byte("user")), "password": base64.StdEncoding.EncodeToString([]byte("plain"))}, username: "user", password: "plain", metadata: true},
+		{name: "ciphertext username", stringData: map[string]any{"username": cipher, "password": "plain"}, metadata: true},
+		{name: "ciphertext password", stringData: map[string]any{"username": "user", "password": cipher}},
+		{name: "encoded ciphertext username", data: map[string]any{"username": encodedCipher}, stringData: map[string]any{"password": "plain"}, metadata: true},
+		{name: "partial decode beside wiped password", data: map[string]any{"username": encodedCipher + "!"}, stringData: map[string]any{"password": cipher}, field: "username", metadata: true},
+		{name: "raw ciphertext encoded field", data: map[string]any{"username": cipher}, stringData: map[string]any{"password": cipher}, metadata: true},
+		{name: "unsupported scalar beside wiped password", stringData: map[string]any{"username": []any{"credential-payload"}, "password": cipher}, field: "username", metadata: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			sec := &manifest.Secret{Name: "metadata-secret", Namespace: "elsewhere", Data: tc.data, StringData: tc.stringData}
+			doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindSecret, "metadata": map[string]any{"name": "metadata-secret", "namespace": "elsewhere"}, "data": tc.data, "stringData": tc.stringData}
+			if tc.metadata {
+				doc["sops"] = map[string]any{"version": "3.13.3", "mac": "metadata"}
+			}
+			obj, _, _, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: true})
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			sec := obj.(*manifest.Secret)
 			username, password, err := BasicAuthFromSecret(sec, owner, "creds")
 			if tc.username != "" {
 				if err != nil || username != tc.username || password != tc.password {

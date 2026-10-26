@@ -1,6 +1,7 @@
 package sourceref
 
 import (
+	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -179,6 +180,46 @@ func TestE2E_BootstrapGeneratorSopsSubstitution(t *testing.T) {
 		if !strings.Contains(stdout, "..PLACEHOLDER_API_KEY..") || strings.Contains(stdout, "ENC[") {
 			t.Fatalf("ciphertext substitution: %s", stdout)
 		}
+	}
+}
+
+func TestE2E_GeneratorSopsDocumentHash(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", `resources: [deployment.yaml]
+secretGenerator:
+  - name: settings
+    files: [values.yaml=values.sops.yaml]
+`)
+	testutil.WriteFile(t, root, "deployment.yaml", `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: app}
+spec:
+  selector: {matchLabels: {app: demo}}
+  template:
+    metadata: {labels: {app: demo}}
+    spec:
+      containers:
+        - name: app
+          image: example.invalid/app:latest
+          envFrom:
+            - secretRef: {name: settings}
+`)
+	testutil.WriteFile(t, root, "values.sops.yaml", `enabled: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]
+sops:
+  mac: ENC[fixture]
+`)
+	args := []string{"build", "all", "--path", root, "--skip-kinds", "", "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress"}
+	var previous string
+	for run := range 2 {
+		out, _ := harness.RequireCLIOK(t, args...)
+		if strings.Count(out, "name: settings-8h75cgbfc5") != 2 || !strings.Contains(out, "secretRef:") ||
+			!strings.Contains(out, "values.yaml: "+base64.StdEncoding.EncodeToString([]byte("..PLACEHOLDER_values.yaml.."))) {
+			t.Fatalf("generated name, reference or sanitized data changed:\n%s", out)
+		}
+		if run != 0 && out != previous {
+			t.Fatal("identical generated builds changed output")
+		}
+		previous = out
 	}
 }
 

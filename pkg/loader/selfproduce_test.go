@@ -722,10 +722,10 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 		Path: "./apps",
 	})
 
-	testutil.WriteFile(t, dir, "generated/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: deferred-secret}\nstringData: {TOKEN: 'ENC[AES256_GCM,data:x]'}\nsops: {mac: encrypted}\n")
+	testutil.WriteFile(t, dir, "generated/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: deferred-secret}\nstringData: {TOKEN: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n")
 	s.AddObject(&manifest.Kustomization{Name: "generated", Namespace: "flux-system", Path: "./generated", TargetNamespace: "flux-system"})
 	testutil.WriteFile(t, dir, "generated/nested/kustomization.yaml", "namespace: nested\nresources: [secret.yaml, producer.yaml]\nconfigMapGenerator: [{name: generated-data, files: [payload=../../inputs/payload.yaml]}]\n")
-	testutil.WriteFile(t, dir, "generated/nested/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: nested-secret}\nstringData: {TOKEN: 'ENC[AES256_GCM,data:x]'}\nsops: {mac: encrypted}\n")
+	testutil.WriteFile(t, dir, "generated/nested/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: nested-secret}\nstringData: {TOKEN: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n")
 	testutil.WriteFile(t, dir, "generated/nested/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: nested-producer}\nspec: {target: {name: nested-produced}, data: [{secretKey: KEY, remoteRef: {key: hidden}}]}\n")
 	testutil.WriteFile(t, dir, "inputs/payload.yaml", testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n"))
 	idx := rendererFixture(t, loaderFixture(s, nil), dir)

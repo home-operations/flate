@@ -21,7 +21,7 @@ spec:
     - apiVersion: v1
       kind: ConfigMap
       metadata: {name: sanitized}
-      data: {encrypted: 'ENC[AES256_GCM,data:fixture,type:str]'}
+      data: {encrypted: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}
     - apiVersion: apps/v1
       kind: Deployment
       metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}

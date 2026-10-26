@@ -280,7 +280,7 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "namespace: effective\n")
 	testutil.WriteFile(t, root, "components/a/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [secret.yaml]\ntransformers: [https://example.invalid/opaque]\n")
-	testutil.WriteFile(t, root, "components/a/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: component}\nstringData: {KEY: 'ENC[AES256_GCM,data:x]'}\nsops: {mac: encrypted}\n")
+	testutil.WriteFile(t, root, "components/a/secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: component}\nstringData: {KEY: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n")
 	testutil.WriteFile(t, root, "components/b/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nconfigMapGenerator: [{name: b, files: [value.txt]}]\n")
 	testutil.WriteFile(t, root, "components/b/value.txt", "value")
 	s := store.New()

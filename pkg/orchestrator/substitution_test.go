@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,11 +76,11 @@ func TestNew_SubstitutionSnapshot(t *testing.T) {
 	cm.Data["nested"] = map[string]any{"items": []any{"owned"}}
 	raw := []byte("b3duZWQ=")
 	cm.Data["BINARY"] = raw
-	const cipher = "ENC[AES256_GCM,data:fixture,type:str]"
+	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
 	cm.Data["CIPHER"] = cipher
 	secretData, secretStringData := []byte("b3duZWQ="), []byte("owned")
 	secret := &manifest.Secret{Name: "secret", Namespace: "apps", Data: map[string]any{"VALUE": "b3duZWQ=", "BINARY": secretData}, StringData: map[string]any{"VALUE": "owned", "BINARY": secretStringData}}
-	secret.Data["ENCODED"] = base64.StdEncoding.EncodeToString([]byte(cipher))
+	secret.Data["ENCODED"] = cipher
 	secret.StringData["CIPHER"] = cipher
 	overlay := map[string]string{"VALUE": "owned"}
 	sources := []SubstitutionSource{source, {Object: secret, Path: "secret-values.yaml"}}

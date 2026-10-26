@@ -490,13 +490,30 @@ func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 			for _, tag := range []string{"v1.0.0", "v2.0.0"} {
 				repository := localSource(sourcev1.GitRepositoryRef{Tag: tag})
 				if option == "sparse" {
-					repository.SparseCheckout = []string{"apps"}
+					repository.SparseCheckout = []string{"./value.txt"}
 				} else {
 					repository.RecurseSubmodules = true
 				}
 				got, err := ResolveLocal(t.Context(), localLocation(t, root), []*manifest.GitRepository{repository}, "")
 				if err != nil || (len(got) != 0) != (tag == "v2.0.0" || option == "sparse") {
 					t.Fatalf("%s %s = %v, %v", option, tag, got, err)
+				}
+				if option == "sparse" {
+					input := got[repository.Named()]
+					data, err := fs.ReadFile(input.FS, "value.txt")
+					assert.NoError(t, err)
+					want := "A"
+					if tag == "v2.0.0" {
+						want = "dirty"
+					}
+					assert.Equal(t, string(data), want)
+					_, err = fs.Stat(input.FS, "extra.txt")
+					if tag == "v1.0.0" {
+						assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
+					} else {
+						assert.NoError(t, err)
+					}
+					assert.Diff(t, repository.SparseCheckout, []string{"./value.txt"})
 				}
 			}
 		})

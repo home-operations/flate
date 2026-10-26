@@ -1016,6 +1016,77 @@ func TestNew_EntryPolicy(t *testing.T) {
 			})
 		}
 	})
+	t.Run("sparse shaping and refresh", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		files := map[string]string{
+			".dot": "dot", ".sourceignore": "apps/drop.yaml\napps/keep.yaml\n",
+			"apps/a.yaml": "a", "apps/b.yaml": "b", "apps-old/b.yaml": "old", "apps-extra/c.yaml": "extra",
+			"apps/keep.yaml": "keep", "apps/drop.yaml": "drop", "infra/c/manifest.yaml": "infra",
+			"target": "target", "target-old": "old-target",
+		}
+		for name, data := range files {
+			testutil.WriteFile(t, root, name, data)
+		}
+		all := []string{".dot", ".sourceignore", "apps-extra/c.yaml", "apps-old/b.yaml", "apps/a.yaml", "apps/b.yaml", "infra/c/manifest.yaml", "target", "target-old"}
+		apps := []string{"apps-extra/c.yaml", "apps-old/b.yaml", "apps/a.yaml", "apps/b.yaml"}
+		for _, tc := range []struct {
+			name   string
+			sparse []string
+			ignore string
+			want   []string
+		}{
+			{name: "nil", want: all},
+			{name: "empty", sparse: []string{}, want: all},
+			{name: "prefix", sparse: []string{"apps"}, want: apps},
+			{name: "normalized prefix", sparse: []string{"./apps"}, want: apps},
+			{name: "dot", sparse: []string{"."}, want: []string{".dot", ".sourceignore"}},
+			{name: "missing", sparse: []string{"absent"}},
+			{name: "file prefix", sparse: []string{"target"}, want: []string{"target", "target-old"}},
+			{name: "normalized file prefix", sparse: []string{"./target"}, want: []string{"target", "target-old"}},
+			{name: "empty normalized prefix", sparse: []string{"./"}, want: all},
+			{name: "one prefix only", sparse: []string{"././apps"}},
+			{name: "mixed", sparse: []string{"missing", "./apps", "./infra"}, want: []string{"apps-extra/c.yaml", "apps-old/b.yaml", "apps/a.yaml", "apps/b.yaml", "infra/c/manifest.yaml"}},
+			{name: "ignore prefix", sparse: []string{"apps"}, ignore: "!apps/keep.yaml\n!infra/c/manifest.yaml\n", want: []string{"apps-extra/c.yaml", "apps-old/b.yaml", "apps/a.yaml", "apps/b.yaml", "apps/keep.yaml"}},
+			{name: "ignore normalized prefix", sparse: []string{"./apps"}, ignore: "!apps/keep.yaml\n!infra/c/manifest.yaml\n", want: []string{"apps-extra/c.yaml", "apps-old/b.yaml", "apps/a.yaml", "apps/b.yaml", "apps/keep.yaml"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				admitted, err := admitLocal(t, root)
+				assert.NoError(t, err)
+				before := slices.Clone(tc.sparse)
+				input, _, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Source, Current: admitted.FS, Sparse: tc.sparse, Ignore: tc.ignore})
+				assert.NoError(t, err)
+				want := make(map[string]string, len(tc.want))
+				for _, name := range tc.want {
+					want[name] = files[name]
+				}
+				var previous map[string]string
+				for run := range 2 {
+					if run > 0 {
+						input, _, err = operation(t, input, Direct)
+						assert.NoError(t, err)
+					}
+					got := map[string]string{}
+					err = fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
+						if err != nil || entry.IsDir() {
+							return err
+						}
+						data, err := fs.ReadFile(input, name)
+						got[name] = string(data)
+						return err
+					})
+					assert.NoError(t, err)
+					assert.Diff(t, got, want)
+					assert.Diff(t, tc.sparse, before)
+					if run > 0 {
+						assert.Diff(t, got, previous)
+					}
+					previous = got
+				}
+			})
+		}
+	})
 	t.Run("rejected links", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()

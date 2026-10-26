@@ -63,6 +63,22 @@ type ViewOptions struct {
 	Changes []string
 }
 
+// NormalizeSparsePaths removes one leading ./ from each sparse selection.
+// The result may share backing with paths and MUST remain immutable.
+func NormalizeSparsePaths(paths []string) []string {
+	for i, path := range paths {
+		if !strings.HasPrefix(path, "./") {
+			continue
+		}
+		paths = slices.Clone(paths)
+		for j := i; j < len(paths); j++ {
+			paths[j] = strings.TrimPrefix(paths[j], "./")
+		}
+		return paths
+	}
+	return paths
+}
+
 // FS is an admitted filesystem. Its representation is selected once by New.
 type FS struct {
 	// Warnings is immutable admission evidence, nil when no advisory was observed.
@@ -555,6 +571,7 @@ func (g *gitView) shape(ctx context.Context, opts ViewOptions, input *FS) error 
 	case Direct:
 		visible = ViewOptions.directVisible
 	case Source:
+		opts.Sparse = NormalizeSparsePaths(opts.Sparse)
 		visible = ViewOptions.sourceVisible
 		if matcher == nil {
 			matcher, err = input.SourcePolicy(ctx)

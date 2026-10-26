@@ -109,7 +109,8 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 
 		// Disabled dependencies must be pruned before validating their CRDs.
-		if opts.SkipCRDs && hr.CRDsPolicy != string(helmv2.Skip) {
+		crds, _ := selectedActionPolicy(hr, opts.IsUpgrade)
+		if opts.SkipCRDs && crds != helmv2.Skip {
 			if err := validateCRDs(ch); err != nil {
 				return nil, nil, err
 			}
@@ -357,11 +358,23 @@ func schemaValidationSkipped(opts Options, hr *manifest.HelmRelease, values map[
 	return disabled || manifest.ContainsValuePlaceholder(values)
 }
 
-// newInstallAction builds the DryRunClient action.Install that Template
-// renders through, mirroring helm-controller's install/upgrade field
-// wiring. Returns the configured install, the effective disableHooks
-// flag (reused by Template's post-render hook filter so hooks don't
-// leak into the output when disabled).
+func selectedActionPolicy(hr *manifest.HelmRelease, isUpgrade bool) (helmv2.CRDsPolicy, bool) {
+	release := helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}
+	var crds helmv2.CRDsPolicy
+	var disableOpenAPI bool
+	if isUpgrade {
+		policy := release.GetUpgrade()
+		crds, disableOpenAPI = policy.CRDs, policy.DisableOpenAPIValidation
+	} else {
+		policy := release.GetInstall()
+		crds, disableOpenAPI = policy.CRDs, policy.DisableOpenAPIValidation
+	}
+	if crds == "" {
+		crds = helmv2.Create
+	}
+	return crds, disableOpenAPI
+}
+
 func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts Options, caps *common.Capabilities) (*action.Install, bool) {
 	inst := action.NewInstall(cfg)
 	inst.DryRunStrategy = action.DryRunClient
@@ -372,13 +385,8 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	// HR renders cleanly in flate (which doesn't consult Devel for local
 	// chart resolution) but fails in cluster, or vice versa.
 	inst.Devel = true
-	inst.IncludeCRDs = !opts.SkipCRDs
-	// The CLI skip flag suppresses CRDs regardless of HR policy.
-	// spec.install.crds / spec.upgrade.crds set to "Skip" also suppresses
-	// CRDs when the CLI requests them.
-	if hr.CRDsPolicy == string(helmv2.Skip) {
-		inst.IncludeCRDs = false
-	}
+	crds, disableOpenAPI := selectedActionPolicy(hr, opts.IsUpgrade)
+	inst.IncludeCRDs = !opts.SkipCRDs && crds != helmv2.Skip
 	disableHooks := hr.Install != nil && hr.Install.DisableHooks
 	if opts.IsUpgrade {
 		disableHooks = hr.Upgrade != nil && hr.Upgrade.DisableHooks
@@ -396,7 +404,7 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	if hr.Install != nil {
 		inst.Replace = hr.Install.Replace
 	}
-	inst.DisableOpenAPIValidation = hr.DisableOpenAPIValidation
+	inst.DisableOpenAPIValidation = disableOpenAPI
 	// inst.SkipSchemaValidation is values-dependent, so Template sets it once
 	// the effective values are resolved (see schemaValidationSkipped).
 	// spec.postRenderers — pipe rendered output through one or more

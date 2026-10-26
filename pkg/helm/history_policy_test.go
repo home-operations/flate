@@ -3,10 +3,13 @@ package helm
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"testing"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -73,9 +76,9 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		{"install namespace", `{"install":{"createNamespace":true}}`, true},
 		{"install apply", `{"install":{"serverSideApply":true}}`, true},
 		{"prepared install skip crds", `{"install":{"skipCRDs":true}}`, true},
-		{"prepared install crds", `{"install":{"crds":"Skip"}}`, true},
+		{"active install crds", `{"install":{"crds":"Skip"}}`, false},
 		{"prepared install schema", `{"install":{"disableSchemaValidation":true}}`, true},
-		{"prepared install openapi", `{"install":{"disableOpenAPIValidation":true}}`, true},
+		{"active install openapi", `{"install":{"disableOpenAPIValidation":true}}`, false},
 		{"upgrade wait", `{"upgrade":{"disableWait":true}}`, true},
 		{"upgrade wait jobs", `{"upgrade":{"disableWaitForJobs":true}}`, true},
 		{"upgrade timeout", `{"upgrade":{"timeout":"5m"}}`, true},
@@ -136,9 +139,11 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		{"effective version", func(h *manifest.HelmRelease, _ *RenderOptions) { h.Chart.Version = "different" }},
 		{"effective values files", func(h *manifest.HelmRelease, _ *RenderOptions) { h.ChartValuesFiles = []string{"different.yaml"} }},
 		{"effective missing values", func(h *manifest.HelmRelease, _ *RenderOptions) { h.IgnoreMissingValuesFiles = true }},
-		{"effective crds", func(h *manifest.HelmRelease, _ *RenderOptions) { h.CRDsPolicy = "Skip" }},
+		{"effective crds", func(h *manifest.HelmRelease, _ *RenderOptions) { h.Install = &helmv2.Install{CRDs: helmv2.Skip} }},
 		{"effective schema", func(h *manifest.HelmRelease, _ *RenderOptions) { h.DisableSchemaValidation = true }},
-		{"effective openapi", func(h *manifest.HelmRelease, _ *RenderOptions) { h.DisableOpenAPIValidation = true }},
+		{"effective openapi", func(h *manifest.HelmRelease, _ *RenderOptions) {
+			h.Install = &helmv2.Install{DisableOpenAPIValidation: true}
+		}},
 		{"effective values", func(h *manifest.HelmRelease, _ *RenderOptions) { h.Values = map[string]any{"different": true} }},
 		{"skip kinds", func(_ *manifest.HelmRelease, o *RenderOptions) { o.SkipKinds = []string{"ConfigMap"} }},
 		{"skip crds", func(_ *manifest.HelmRelease, o *RenderOptions) { o.SkipCRDs = true }},
@@ -172,4 +177,64 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, bytes.Equal(index, after), true)
 	})
+}
+
+func TestTemplate_SelectedActionHistory(t *testing.T) {
+	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Skip("requires a clean VCS-stamped build for positive persistence")
+	}
+	chartDir := t.TempDir()
+	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, chartDir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\n")
+	for _, isUpgrade := range []bool{false, true} {
+		t.Run(fmt.Sprintf("upgrade=%t", isUpgrade), func(t *testing.T) {
+			t.Parallel()
+			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+			hr := newHR()
+			input := RenderOptions{IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
+			_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
+			assert.NoError(t, err)
+			child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "demo"}
+			records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {}}
+			assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
+			for _, tc := range []struct {
+				name                      string
+				policy                    helmv2.CRDsPolicy
+				openAPI, active, complete bool
+				target, release           string
+			}{
+				{name: "empty", active: true, complete: true},
+				{name: "default", policy: helmv2.Create, active: true, complete: true},
+				{name: "replace", policy: helmv2.CreateReplace, active: true},
+				{name: "skip", policy: helmv2.Skip, active: true},
+				{name: "openapi", openAPI: true, active: true},
+				{name: "inactive", policy: helmv2.Skip, openAPI: true, complete: true},
+				{name: "target namespace", target: "apps"},
+				{name: "release name", release: "chosen"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					changed := hr.Clone()
+					if isUpgrade == tc.active {
+						changed.Upgrade = &helmv2.Upgrade{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
+					} else {
+						changed.Install = &helmv2.Install{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
+					}
+					changed.TargetNamespace, changed.HelmReleaseSpec.ReleaseName = tc.target, tc.release
+					previous, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
+					assert.Equal(t, complete, tc.complete)
+					if complete {
+						assert.Diff(t, maps.Collect(previous), records)
+					}
+					warm, _, err := renderer.Template(t.Context(), changed, nil, input)
+					assert.NoError(t, err)
+					fresh := NewClient(cachetest.New(t, "", cache.New))
+					cold, _, err := fresh.Template(t.Context(), changed, nil, input)
+					assert.NoError(t, err)
+					assert.Diff(t, warm, cold)
+				})
+			}
+		})
+	}
 }

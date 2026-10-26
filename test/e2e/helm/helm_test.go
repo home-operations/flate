@@ -19,13 +19,24 @@ import (
 )
 
 func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
-	out := harness.RunCLIOutputOnly(t, "get", "hr", "--path", harness.TestdataPath(t, "simple"), "-o", "yaml")
-	// HelmRelease projection should carry sourceRef (chart's resolved
-	// ref) and releaseName.
-	for _, want := range []string{"sourceRef:", "releaseName:"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("missing %q in projected hr YAML:\n%s", want, out)
-		}
+	for _, tc := range []struct{ name, spec, want string }{
+		{"target namespace", "  targetNamespace: target\n", "target-demo"},
+		{"explicit override", "  targetNamespace: target\n  releaseName: chosen\n", "chosen"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+			file := filepath.Join(dir, "cluster", "helmrelease.yaml")
+			body, err := os.ReadFile(file)
+			assert.NoError(t, err)
+			testutil.WriteFileAt(t, file, string(body)+tc.spec)
+			out := harness.RunCLIOutputOnly(t, "get", "hr", "--path", dir, "-o", "yaml")
+			for _, want := range []string{"sourceRef:", "releaseName: " + tc.want} {
+				if !strings.Contains(out, want) {
+					t.Errorf("missing %q in projected hr YAML:\n%s", want, out)
+				}
+			}
+		})
 	}
 }
 
@@ -203,6 +214,82 @@ func TestE2E_HelmSourceRootValuesFilesChangedOnly(t *testing.T) {
 				harness.MustExtractSkipLine(t, status, "apps/sibling")
 			})
 		}
+	}
+}
+
+func TestE2E_HelmReleaseTargetNamespaceIdentity(t *testing.T) {
+	dir := sourceValuesFixture(t, "[]", false, false)
+	testutil.WriteFile(t, dir, "charts/jenkins-deployment/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace }}'}
+`)
+	before := t.TempDir()
+	testutil.CopyTree(t, dir, before)
+	for _, root := range []string{dir, before} {
+		testutil.GitCommitAll(t, testutil.GitInit(t, root), "init", &gogit.CommitOptions{
+			Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+		})
+	}
+	cache := t.TempDir()
+	args := []string{"build", "all", "--path", filepath.Join(dir, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", cache}
+	baseline := harness.RunCLIStdout(t, args...)
+	if !strings.Contains(baseline, "name: demo-values") {
+		t.Fatalf("baseline identity missing:\n%s", baseline)
+	}
+	file := filepath.Join(dir, "apps", "demo", "app", "release.yaml")
+	body, err := os.ReadFile(file)
+	assert.NoError(t, err)
+	testutil.WriteFileAt(t, file, string(body)+"  targetNamespace: target\n")
+	for _, changedOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changed-only=%t", changedOnly), func(t *testing.T) {
+			selected := append([]string(nil), args...)
+			if changedOnly {
+				selected = append(selected, "--base", "HEAD")
+			}
+			out := harness.RunCLIStdout(t, selected...)
+			for _, want := range []string{"name: target-demo-values", "namespace: target"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("missing %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "name: demo-values") || strings.Contains(out, "name: sibling-values") == changedOnly {
+				t.Fatalf("incorrect identity or sibling selection:\n%s", out)
+			}
+			assert.Equal(t, harness.RunCLIStdout(t, selected...), out)
+		})
+	}
+	for _, tc := range []struct{ current, original, added, removed, addedNS, removedNS string }{
+		{dir, before, "target-demo-values", "demo-values", "target", "apps"},
+		{before, dir, "demo-values", "target-demo-values", "apps", "target"},
+	} {
+		t.Run("diff/"+tc.added, func(t *testing.T) {
+			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", filepath.Join(tc.current, "cluster"), "--path-orig", filepath.Join(tc.original, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", cache)
+			var result struct {
+				Changes []struct {
+					Kind, Name, Namespace, Status string
+					Parent                        struct{ Kind, Name, Namespace string }
+				}
+				Suppressed []any
+			}
+			assert.NoError(t, json.Unmarshal([]byte(out), &result))
+			assert.Equal(t, len(result.Suppressed), 0)
+			found := 0
+			for _, change := range result.Changes {
+				if change.Kind != "ConfigMap" {
+					continue
+				}
+				added := change.Name == tc.added && change.Namespace == tc.addedNS && change.Status == "added"
+				removed := change.Name == tc.removed && change.Namespace == tc.removedNS && change.Status == "removed"
+				if !added && !removed {
+					t.Fatalf("unexpected identity change: %s\n%s", out, stderr)
+				}
+				assert.Equal(t, change.Parent.Kind, "HelmRelease")
+				assert.Equal(t, change.Parent.Name, "demo")
+				assert.Equal(t, change.Parent.Namespace, "apps")
+				found++
+			}
+			assert.Equal(t, found, 2)
+		})
 	}
 }
 

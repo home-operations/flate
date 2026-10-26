@@ -152,8 +152,7 @@ func helmChartFromSource(src *HelmChartSource) HelmChart {
 //   - Values is the decoded form of spec.values (map[string]any) so
 //     consumers don't have to JSON-decode on every access. Shadows
 //     the embedded Spec.Values (*apiextensionsv1.JSON).
-//   - CRDsPolicy collapses spec.install.crds vs spec.upgrade.crds.
-//   - DisableSchemaValidation projects install policy; OpenAPI combines both actions.
+//   - DisableSchemaValidation projects install policy.
 //   - ChartValuesFiles + IgnoreMissingValuesFiles are sourced from
 //     spec.chart.spec.valuesFiles OR the referenced HelmChart CRD.
 type HelmRelease struct {
@@ -173,16 +172,8 @@ type HelmRelease struct {
 	Labels      map[string]string `json:"-" yaml:"-"`
 	Annotations map[string]string `json:"-" yaml:"-"`
 
-	// CRDsPolicy collapses spec.install.crds vs spec.upgrade.crds. One
-	// of "" (chart's helm default), "Skip", "Create", "CreateReplace".
-	// Upgrade wins over Install when both are set, matching
-	// helm-controller's "upgrade-after-install" model.
-	CRDsPolicy string `json:"-" yaml:"-"`
-
-	// DisableSchemaValidation projects install policy. DisableOpenAPIValidation
-	// combines install and upgrade policy.
-	DisableSchemaValidation  bool `json:"-" yaml:"-"`
-	DisableOpenAPIValidation bool `json:"-" yaml:"-"`
+	// DisableSchemaValidation projects install policy.
+	DisableSchemaValidation bool `json:"-" yaml:"-"`
 
 	// ChartValuesFiles are selected source or chart files merged before release values.
 	ChartValuesFiles         []string `json:"-" yaml:"-"`
@@ -243,16 +234,10 @@ func (h *HelmRelease) RenderDocument() (map[string]any, error) {
 	return doc, nil
 }
 
-// ReleaseName returns the resolved Helm release name — spec.releaseName
-// when set, otherwise metadata.name — passed through release.ShortenName
-// so HRs whose effective name is >53 characters get the same hash-
-// suffixed shortened form a real cluster sees. Mirrors helm-controller's
-// internal/release.ShortenName (a 40-char prefix + "-" + 12 hex chars of
-// sha256(name)). Without shortening, charts referencing `.Release.Name`
-// rendered different resource names/labels in flate vs cluster.
-// Always non-empty.
+// ReleaseName returns the upstream defaulted and shortened Helm release name.
 func (h *HelmRelease) ReleaseName() string {
-	return shortenReleaseName(cmp.Or(h.HelmReleaseSpec.ReleaseName, h.Name))
+	release := helmv2.HelmRelease{Name: h.Name, Spec: h.HelmReleaseSpec}
+	return shortenReleaseName(release.GetReleaseName())
 }
 
 // shortenReleaseName mirrors helm-controller/internal/release.ShortenName.
@@ -372,11 +357,6 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 			return nil, inputf("HelmRelease spec.values: %w", err)
 		}
 	}
-	install, upgrade := cr.GetInstall(), cr.GetUpgrade()
-	disableSchema := install.DisableSchemaValidation
-	disableOpenAPI := install.DisableOpenAPIValidation || upgrade.DisableOpenAPIValidation
-	// The upgrade policy takes precedence after the first install.
-	crdsPolicy := string(cmp.Or(upgrade.CRDs, install.CRDs))
 	for _, dep := range cr.Spec.DependsOn {
 		if dep.Name == "" {
 			return nil, inputf("HelmRelease missing dependsOn.name")
@@ -400,11 +380,9 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		Values:                   values,
 		Labels:                   cr.Labels,
 		Annotations:              cr.Annotations,
-		DisableSchemaValidation:  disableSchema,
-		DisableOpenAPIValidation: disableOpenAPI,
+		DisableSchemaValidation:  cr.GetInstall().DisableSchemaValidation,
 		ChartValuesFiles:         chartValuesFiles,
 		IgnoreMissingValuesFiles: ignoreMissingValuesFiles,
-		CRDsPolicy:               crdsPolicy,
 	}, nil
 }
 
@@ -495,9 +473,7 @@ func (h *HelmRelease) Content(source any, omitted []NamedResource) any {
 		Spec                     helmv2.HelmReleaseSpec
 		ChartValuesFiles         []string
 		IgnoreMissingValuesFiles bool
-		CRDsPolicy               string
 		DisableSchemaValidation  bool
-		DisableOpenAPIValidation bool
 	}{
 		Omitted:                  omitted,
 		Source:                   source,
@@ -508,8 +484,6 @@ func (h *HelmRelease) Content(source any, omitted []NamedResource) any {
 		Spec:                     h.HelmReleaseSpec,
 		ChartValuesFiles:         h.ChartValuesFiles,
 		IgnoreMissingValuesFiles: h.IgnoreMissingValuesFiles,
-		CRDsPolicy:               h.CRDsPolicy,
 		DisableSchemaValidation:  h.DisableSchemaValidation,
-		DisableOpenAPIValidation: h.DisableOpenAPIValidation,
 	}
 }

@@ -59,7 +59,7 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 	type keyHR struct {
 		ReleaseName              string
 		ReleaseNamespace         string
-		CRDsPolicy               string
+		CRDsPolicy               helmv2.CRDsPolicy
 		DisableSchemaValidation  bool
 		DisableOpenAPIValidation bool
 		InstallDisableHooks      bool
@@ -71,12 +71,13 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 		IgnoreMissingValuesFiles bool
 		PostRenderers            []helmv2.PostRenderer
 	}
+	crds, disableOpenAPI := selectedActionPolicy(hr, opts.IsUpgrade)
 	khr := keyHR{
 		ReleaseName:              hr.ReleaseName(),
 		ReleaseNamespace:         hr.ReleaseNamespace(),
-		CRDsPolicy:               hr.CRDsPolicy,
+		CRDsPolicy:               crds,
 		DisableSchemaValidation:  schemaValidationSkipped(opts, hr, nil),
-		DisableOpenAPIValidation: hr.DisableOpenAPIValidation,
+		DisableOpenAPIValidation: disableOpenAPI,
 		ChartVersion:             hr.Chart.Version,
 		ChartValuesFiles:         hr.ChartValuesFiles,
 		IgnoreMissingValuesFiles: hr.IgnoreMissingValuesFiles,

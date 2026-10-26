@@ -305,43 +305,6 @@ spec:
 `)
 }
 
-func TestParseHelmRelease_ValuesFromEnvsubstDefault(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name      string
-		valuesKey string
-		refName   string
-		wantKey   string
-		wantName  string
-	}{
-		{"default := resolves", "${CLUSTER_NAME:=biohazard}.yaml", "cm", "biohazard.yaml", "cm"},
-		{"default :- resolves", "${X:-foo}.yaml", "cm", "foo.yaml", "cm"},
-		{"literal key untouched", "biohazard.yaml", "cm", "biohazard.yaml", "cm"},
-		{"bare var left for postBuild", "${CLUSTER_NAME}.yaml", "cm", "${CLUSTER_NAME}.yaml", "cm"},
-		{"templated name default resolves", "values.yaml", "${ENV:=prod}-cm", "values.yaml", "prod-cm"},
-		{"bare var name untouched", "values.yaml", "${ENV}-cm", "values.yaml", "${ENV}-cm"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			spec := "  valuesFrom:\n    - kind: ConfigMap\n      name: \"" + tc.refName + "\"\n      valuesKey: \"" + tc.valuesKey + "\"\n"
-			hr, err := parseHelmRelease(helmReleaseDoc(t, spec))
-			if err != nil {
-				t.Fatalf("parseHelmRelease: %v", err)
-			}
-			if len(hr.ValuesFrom) != 1 {
-				t.Fatalf("expected 1 valuesFrom, got %d", len(hr.ValuesFrom))
-			}
-			if got := hr.ValuesFrom[0].ValuesKey; got != tc.wantKey {
-				t.Errorf("valuesKey = %q, want %q", got, tc.wantKey)
-			}
-			if got := hr.ValuesFrom[0].Name; got != tc.wantName {
-				t.Errorf("name = %q, want %q", got, tc.wantName)
-			}
-		})
-	}
-}
-
 func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -392,31 +355,85 @@ func TestParseHelmChartSource_DefaultsAndReconcileStrategy(t *testing.T) {
 	}
 }
 
-func TestParseDoc_EmptyEnvsubstDefaults(t *testing.T) {
+func TestParseDoc_PreservesEnvsubstFields(t *testing.T) {
 	t.Parallel()
-	for _, operator := range []string{"-", "="} {
-		t.Run(operator, func(t *testing.T) {
+	for _, tc := range []struct{ name, value string }{
+		{"equals default", "${ENV:=prod}"},
+		{"dash default", "${ENV:-prod}"},
+		{"empty equals default", "${ENV:=}"},
+		{"empty dash default", "${ENV:-}"},
+		{"nested default", "${ENV:=${OTHER:=prod}}"},
+		{"bare", "${ENV}"},
+		{"escaped", "$${ENV:=prod}"},
+		{"literal", "prod"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			doc := mustYAML(t, fmt.Sprintf(`
-apiVersion: kustomize.toolkit.fluxcd.io/v1
+			for _, kind := range []string{KindKustomization, KindGitRepository, KindOCIRepository, KindHelmRelease} {
+				t.Run(kind, func(t *testing.T) {
+					t.Parallel()
+					value := tc.value
+					var doc map[string]any
+					switch kind {
+					case KindKustomization:
+						doc = mustYAML(t, fmt.Sprintf(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
-metadata: {name: ks, namespace: ns}
+metadata: {name: child, namespace: apps}
 spec:
-  path: '${PREFIX:%s}apps'
-  sourceRef:
-    kind: GitRepository
-    name: '${PREFIX:%s}repo'
-  interval: 5m
-`, operator, operator))
-			obj, _, _, err := ParseDoc(doc, ParseDocOptions{})
-			assert.NoError(t, err)
-			k, ok := obj.(*Kustomization)
-			if !ok {
-				t.Fatalf("ParseDoc returned %T, want *Kustomization", obj)
+  path: '%[1]s'
+  sourceRef: {kind: GitRepository, name: '%[1]s', namespace: '%[1]s'}
+  dependsOn: [{name: sibling, namespace: '%[1]s'}]
+  postBuild: {substituteFrom: [{kind: ConfigMap, name: optional, optional: true}]}
+`, value))
+					case KindGitRepository:
+						doc = mustYAML(t, fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: child, namespace: apps}
+spec:
+  url: '%[1]s'
+  ref: {branch: '%[1]s', tag: '%[1]s', semver: '%[1]s', commit: '%[1]s', name: '%[1]s'}
+`, value))
+					case KindOCIRepository:
+						doc = mustYAML(t, fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: child, namespace: apps}
+spec:
+  url: '%[1]s'
+  ref: {tag: '%[1]s', semver: '%[1]s', digest: '%[1]s'}
+`, value))
+					case KindHelmRelease:
+						doc = helmReleaseDoc(t, fmt.Sprintf("  valuesFrom: [{kind: ConfigMap, name: '%s', valuesKey: '%s', optional: true}]", value, value))
+					}
+					before := DeepCopyMap(doc)
+					obj, authoritative, changed, err := ParseDoc(doc, ParseDocOptions{})
+					assert.NoError(t, err)
+					assert.Equal(t, changed, false)
+					assert.Diff(t, doc, before)
+					assert.Diff(t, authoritative, before)
+					var fields map[string]string
+					switch obj := obj.(type) {
+					case *Kustomization:
+						fields = map[string]string{"path": obj.Path, "sourceRef.name": obj.SourceRef.Name, "sourceRef.namespace": obj.SourceRef.Namespace, "dependsOn.namespace": obj.DependsOn[0].Namespace}
+						assert.Equal(t, obj.PostBuild.SubstituteFrom[0].Optional, true)
+					case *GitRepository:
+						ref := obj.Reference
+						fields = map[string]string{"url": obj.URL, "ref.branch": ref.Branch, "ref.tag": ref.Tag, "ref.semver": ref.SemVer, "ref.commit": ref.Commit, "ref.name": ref.Name}
+					case *OCIRepository:
+						ref := obj.Reference
+						fields = map[string]string{"url": obj.URL, "ref.tag": ref.Tag, "ref.semver": ref.SemVer, "ref.digest": ref.Digest}
+					case *HelmRelease:
+						fields = map[string]string{"valuesFrom.name": obj.ValuesFrom[0].Name, "valuesFrom.valuesKey": obj.ValuesFrom[0].ValuesKey}
+						assert.Equal(t, obj.ValuesFrom[0].Optional, true)
+					default:
+						t.Fatalf("unexpected child %T", obj)
+					}
+					for field, got := range fields {
+						if got != value {
+							t.Errorf("%s = %q, want %q", field, got, value)
+						}
+					}
+				})
 			}
-			assert.Equal(t, k.Path, "apps")
-			assert.Equal(t, k.SourceRef.Kind, KindGitRepository)
-			assert.Equal(t, k.SourceRef.Name, "repo")
 		})
 	}
 }

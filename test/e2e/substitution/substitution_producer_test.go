@@ -1,6 +1,7 @@
 package substitution
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,6 +215,65 @@ func TestE2E_DependencyCycleWarnings(t *testing.T) {
 					t.Fatal("cycle warning changed")
 				}
 				previous = stderr
+			}
+		})
+	}
+}
+
+func TestE2E_LiteralKustomizationPath(t *testing.T) {
+	for _, mode := range []string{"full-build", "own-postBuild", "changed-only", "paired-diff", "reverse-diff"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			declaration := "root.yaml"
+			selected := root
+			if mode != "full-build" && mode != "own-postBuild" {
+				declaration = "flux/root.yaml"
+				selected = filepath.Join(root, "flux")
+			}
+			spec := "  path: ./apps/${ENV:=prod}\n  sourceRef: {kind: GitRepository, name: flux-system}\n"
+			if mode == "own-postBuild" {
+				spec += "  postBuild: {substitute: {ENV: stage}}\n"
+			}
+			testutil.WriteFile(t, root, declaration, testutil.KustomizationYAML("root", "apps", spec))
+			testutil.WriteFile(t, root, "apps/${ENV:=prod}/kustomization.yaml", "resources: [cm.yaml]\n")
+			const cm = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: correct, namespace: apps}\ndata: {answer: %s}\n"
+			before, after := "before", "literal"
+			if mode == "reverse-diff" {
+				before, after = after, before
+			}
+			if selected != root {
+				testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n"))
+				testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, root, "unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated, namespace: apps}\n")
+				testutil.WriteFile(t, root, "apps/${ENV:=prod}/cm.yaml", fmt.Sprintf(cm, before))
+				repo := testutil.GitInit(t, root)
+				testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			}
+			testutil.WriteFile(t, root, "apps/${ENV:=prod}/cm.yaml", fmt.Sprintf(cm, after))
+			args := []string{"build", "all", "--path", selected, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
+			if selected != root {
+				args = append(args, "--base", "HEAD")
+			}
+			if strings.HasSuffix(mode, "diff") {
+				args[0] = "diff"
+				args = append(args, "-o", "diff")
+			}
+			var previous string
+			for run := range 2 {
+				stdout, stderr, code := harness.RunCLIBuffers(args...)
+				if code != 0 || !strings.Contains(stdout, "correct") || !strings.Contains(stdout, "apps") || !strings.Contains(stdout, "literal") || strings.Contains(stdout, "unrelated") {
+					t.Fatalf("literal path: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				if args[0] == "build" && (!strings.Contains(stdout, "name: correct") || !strings.Contains(stdout, "namespace: apps") || !strings.Contains(stdout, "answer: literal")) {
+					t.Fatalf("missing intended ConfigMap: stdout=%s stderr=%s", stdout, stderr)
+				}
+				if strings.HasSuffix(mode, "diff") && !strings.Contains(stdout, "before") {
+					t.Fatalf("missing diff side: stdout=%s stderr=%s", stdout, stderr)
+				}
+				if run > 0 && stdout != previous {
+					t.Fatalf("unstable output: first=%s second=%s", previous, stdout)
+				}
+				previous = stdout
 			}
 		})
 	}

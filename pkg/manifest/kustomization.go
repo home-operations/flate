@@ -78,12 +78,6 @@ func parseKustomization(doc map[string]any) (*Kustomization, error) {
 	if err := decodeCR(doc, &cr, "Kustomization", FluxKustomizeDomain); err != nil {
 		return nil, err
 	}
-	cr.Spec.Path = resolveEnvsubstDefaults(cr.Spec.Path)
-	cr.Spec.SourceRef.Name = resolveEnvsubstDefaults(cr.Spec.SourceRef.Name)
-	cr.Spec.SourceRef.Namespace = resolveEnvsubstDefaults(cr.Spec.SourceRef.Namespace)
-	for i := range cr.Spec.DependsOn {
-		cr.Spec.DependsOn[i].Namespace = resolveEnvsubstDefaults(cr.Spec.DependsOn[i].Namespace)
-	}
 	// sourceRef validation catches the truncated-YAML case where
 	// `name:` (no value, e.g. file ends mid-mapping) decodes silently
 	// as empty string. Without this, the failure surfaces as a

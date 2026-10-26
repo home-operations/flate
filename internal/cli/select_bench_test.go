@@ -3,10 +3,13 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testrunner"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -99,14 +102,83 @@ func TestCompletedScopeFixture_SelectionCounts(t *testing.T) {
 	}
 }
 
+func keepSetFixture(tb testing.TB, count, sides int) []orchestrator.Rendered {
+	tb.Helper()
+	runs := make([]orchestrator.Rendered, sides)
+	want := make([][]manifest.NamedResource, sides)
+	for i := range runs {
+		root := tb.TempDir()
+		paths := make([]string, count)
+		want[i] = make([]manifest.NamedResource, count)
+		for j := range paths {
+			id := testutil.KustomizationID(fmt.Sprintf("side-%d-ns-%d", i, j%8), fmt.Sprintf("item-%05d", j))
+			want[i][j] = id
+			paths[j] = id.Name + ".yaml"
+			testutil.WriteFile(tb, root, paths[j], testutil.KustomizationYAML(id.Name, id.Namespace, "  suspend: true\n"))
+		}
+		side := manifest.TreeHead
+		if sides == 2 && i == 0 {
+			side = manifest.TreeBase
+		}
+		id := manifest.TreeID{Cluster: ".", Side: side}
+		rendered, err := orchestrator.RenderTrees(tb.Context(), []orchestrator.Tree{{
+			ID: id, RepoRoot: root, Path: root, ExternalChanges: change.NewSet(paths),
+		}}, orchestrator.Config{Concurrency: 2})
+		assert.NoError(tb, err)
+		if len(rendered) != 1 || rendered[0].Absent || rendered[0].Orchestrator == nil || rendered[0].Result == nil {
+			tb.Fatal("missing completed keep-set run")
+		}
+		runs[i] = rendered[0]
+		assert.Equal(tb, runs[i].ID, id)
+		assert.NoError(tb, runs[i].Err)
+		sentinel := testutil.KustomizationID(fmt.Sprintf("side-%d-ns-0", 1-i), "off-scope")
+		runs[i].Store().AddObject(&manifest.Kustomization{Name: sentinel.Name, Namespace: sentinel.Namespace})
+		if runs[i].Store().GetObject(sentinel) == nil {
+			tb.Fatal("missing local off-scope sentinel")
+		}
+		explicit, err, remainder := orchestrator.Select([]orchestrator.Rendered{runs[i]}, nil,
+			[]manifest.NamedResource{testutil.KustomizationID(sentinel.Namespace, "")}, nil)
+		assert.NoError(tb, err)
+		assert.NoError(tb, remainder)
+		if len(explicit[0].Objects) != 1 {
+			tb.Fatalf("explicit namespace selected %d objects; want sentinel only", len(explicit[0].Objects))
+		}
+		assert.Equal(tb, explicit[0].Objects[0].Named(), sentinel)
+		assert.Equal(tb, explicit[0].Counts[manifest.KindKustomization], 1)
+	}
+	if sides == 2 && runs[0].Store() == runs[1].Store() {
+		tb.Fatal("comparison sides share a store")
+	}
+	selected, err, remainder := orchestrator.Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+	assert.NoError(tb, err)
+	assert.NoError(tb, remainder)
+	assert.Equal(tb, len(selected), sides)
+	for i, side := range selected {
+		got := make([]manifest.NamedResource, len(side.Objects))
+		for j, obj := range side.Objects {
+			got[j] = obj.Named()
+		}
+		slices.SortFunc(got, manifest.NamedResource.Compare)
+		slices.SortFunc(want[i], manifest.NamedResource.Compare)
+		assert.Diff(tb, got, want[i])
+		assert.Equal(tb, side.Counts[manifest.KindKustomization], count)
+	}
+	return runs
+}
+
+func TestKeepSetFixture_InferredScope(t *testing.T) {
+	for _, sides := range []int{1, 2} {
+		t.Run(fmt.Sprintf("sides_%d", sides), func(t *testing.T) {
+			keepSetFixture(t, 16, sides)
+		})
+	}
+}
+
 func BenchmarkIncludeNamespace_KeepSet(b *testing.B) {
 	for _, count := range []int{100, 5000} {
 		for _, sides := range []int{1, 2} {
 			b.Run(fmt.Sprintf("keep_%d/sides_%d", count, sides), func(b *testing.B) {
-				runs := make([]orchestrator.Rendered, sides)
-				for i := range runs {
-					runs[i] = completedScopeFixture(b, count, false, false)
-				}
+				runs := keepSetFixture(b, count, sides)
 				roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
 				b.ReportAllocs()
 				for b.Loop() {

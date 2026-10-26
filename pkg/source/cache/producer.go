@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 
@@ -282,18 +281,13 @@ func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descri
 	}
 	name := stored.Digest.Encoded()
 	e.fs = fileFS{name: "content", identity: stored.Digest.String(), size: stored.Size, open: func() (io.ReadCloser, error) {
-		info, err := c.root.Stat(root.path)
+		current, temporary, err := root.current(c.root)
 		if err != nil {
 			return nil, err
 		}
-		if os.SameFile(info, root.info) {
-			return root.Open(name)
+		if temporary {
+			defer func() { _ = current.Close() }()
 		}
-		current, err := c.root.OpenRoot(root.path)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = current.Close() }()
 		return current.Open(name)
 	}}
 	return nil

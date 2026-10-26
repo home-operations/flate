@@ -224,9 +224,10 @@ type Orchestrator struct {
 	// stopOnce guards Stop so a New+Bootstrap-then-abort caller's
 	// manual Stop and Run's deferred Stop don't double-close the
 	// staging cache / controller unsubs.
-	stopOnce   sync.Once
-	stopErr    error
-	ownNetwork bool
+	stopOnce    sync.Once
+	stopErr     error
+	ownNetwork  bool
+	controllers base.Controllers
 }
 
 // Result contains rendered document batches, failures and discovery diagnostics.
@@ -342,6 +343,7 @@ func New(ctx context.Context, cfg Config) (result *Orchestrator, err error) {
 	o.hrc = helmrelease.New(base.New(st, ts), client, cfg.HelmOptions, cfg.WipeSecrets)
 	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
 	o.agc = artifactgenerator.New(st, ts, owner)
+	o.controllers = base.Controllers{Kustomization: o.ksc, HelmRelease: o.hrc, ResourceSet: o.rsc, Source: o.src, ArtifactGenerator: o.agc}
 	o.depGraph = newDependencyGraph()
 	return o, nil
 }
@@ -443,8 +445,7 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) (err error) {
 			return err
 		}
 	}
-	o.completeBootstrap(res, changes)
-	return nil
+	return o.completeBootstrap(ctx, res, changes)
 }
 
 func (o *Orchestrator) prepareBootstrap(ctx context.Context) (*discovery.Result, error) {
@@ -499,10 +500,12 @@ func (o *Orchestrator) prepareBootstrap(ctx context.Context) (*discovery.Result,
 	return res, nil
 }
 
-func (o *Orchestrator) completeBootstrap(res *discovery.Result, changes *change.Set) {
+func (o *Orchestrator) completeBootstrap(ctx context.Context, res *discovery.Result, changes *change.Set) error {
 	o.freezeSubstitutions()
 	o.failDependsOnCycles()
-	o.buildChangeFilter(res.RepoRoot, changes)
+	if err := o.buildChangeFilter(ctx, res.RepoRoot, changes); err != nil {
+		return err
+	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
 	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
 		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
@@ -517,6 +520,7 @@ func (o *Orchestrator) completeBootstrap(res *discovery.Result, changes *change.
 		}
 	}
 	o.bootstrapped = true
+	return nil
 }
 
 // replacePreflightFailures replaces the current preflight-failure map

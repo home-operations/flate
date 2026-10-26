@@ -89,8 +89,8 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			if diff := cmp.Diff(before, child, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
 				t.Fatalf("caller object/document mutated (-want +got):\n%s", diff)
 			}
-			if next.Children[1].Obj != child || next.Children[2].Obj != sibling || sibling.DependsOn[0].Name != "${PREFIX:-dev-}config" {
-				t.Fatal("caller emission/children mutated")
+			if next.Footprint() == nil || next.Children[1].Obj != got || sibling.DependsOn[0].Name != "${PREFIX:-dev-}config" {
+				t.Fatal("accepted caller handoff or immutable input changed")
 			}
 			_, _, accepted := st.GetEmission(parent.Named())
 			if diff := cmp.Diff(docs, accepted.Manifests); diff != "" {
@@ -100,7 +100,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			if diff := cmp.Diff(childDoc, accepted.Children[1].Doc); diff != "" {
 				t.Fatalf("child document changed (-want +got):\n%s", diff)
 			}
-			if _, handled, err := newExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "inputs"); !handled || err != nil {
+			if _, handled, err := newExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "inputs", &store.Emission{}); !handled || err != nil {
 				t.Fatalf("normalized replay: handled=%v err=%v", handled, err)
 			}
 			replayed, _ := st.Get[*manifest.Kustomization](child.Named())

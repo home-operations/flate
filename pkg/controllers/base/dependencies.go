@@ -95,7 +95,7 @@ func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, p
 			e.PromoteData(ctx, ref.NamedResource)
 		}
 		input := provider.Lookup(ref.NamedResource)
-		allowMissing := e.allowMissingSecrets
+		allowMissing := e.AllowMissingSecrets
 		if ref.Use == "substituteFrom" {
 			allowMissing = ref.Kind == manifest.KindSecret
 			if allowMissing && !ref.Optional && (input.Data == nil || !input.Data.HasKeys()) {

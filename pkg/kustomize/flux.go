@@ -1,7 +1,6 @@
 package kustomize
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -9,7 +8,9 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // RenderRequest carries the authoritative source and its mount label. Label is
@@ -43,61 +45,60 @@ type RenderRequest struct {
 	SubPath string
 	// Spec is the prepared Flux Kustomization; nil builds without a Flux owner.
 	Spec *manifest.Kustomization
+	// Substitute binds the configured substitution overlay to accepted history.
+	Substitute map[string]string
+	// WipeSecrets binds the parse policy to accepted history.
+	WipeSecrets bool
+	// StrictSubstitutions binds undefined-variable handling to accepted history.
+	StrictSubstitutions bool
+	// SkipKinds binds the effective emitted-kind policy to accepted history.
+	SkipKinds []string
+	// DependencySubstitutions binds emitted dependency projection to accepted history.
+	DependencySubstitutions values.DependencySubstitutions
 }
 
 // Render returns unstamped renderer documents from an admitted source and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
-func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]map[string]any, error) {
-	if cache == nil {
-		return nil, fmt.Errorf("%w: incomplete render request", manifest.ErrInput)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if req.Source == nil || req.Source.FS == nil {
-		return nil, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
-	}
-	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
-	var ignore any
-	if req.ApplyIgnore {
-		input, err := cache.sourceRootFor(ctx, req.Source, root)
-		if err != nil {
-			return nil, err
-		}
-		lower, ignore = input.fs, input.ignore
-	}
-	var err error
-	root, err = filepath.Abs(root)
+func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]map[string]any, *manifest.RenderReceipt, error) {
+	prepared, err := cache.prepareRender(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
+		return nil, nil, err
 	}
+	lower, root := prepared.lower, prepared.root
 	var maxAge time.Duration
 	if req.Spec != nil {
 		maxAge = req.Spec.Interval.Duration
 	}
-	key := renderKey(req, root, ignore)
+	key := prepared.key
 	blobKey := sourcecache.BlobKey{Content: key, PersistOnly: true}
-	reader, _, _, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	reader, _, lookup, err := cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
-		return nil, fmt.Errorf("kustomize render cache lookup: %w", err)
+		return nil, nil, fmt.Errorf("kustomize render cache lookup: %w", err)
 	}
 	if err == nil {
+		identity := sourcecache.AcquisitionIdentity(reader)
 		raw, readErr := io.ReadAll(reader)
 		if err := errors.Join(readErr, reader.Close()); err != nil {
-			return nil, fmt.Errorf("%w: read kustomize render cache: %w", manifest.ErrFlux, err)
+			return nil, nil, fmt.Errorf("%w: read kustomize render cache: %w", manifest.ErrFlux, err)
 		}
-		snap, output, err := decodeFrame(raw)
+		frame, err := decodeFrame(raw)
 		if err != nil {
 			slog.Debug("kustomize: decode render frame", "err", err)
-		} else {
-			valid, err := snap.stillValid(ctx, cache, &treeFS{lower: lower, retry: retry, maxAge: maxAge, slot: req.HeldSlot}, req.Source.Key != "")
+		} else if frame.header.Key == key {
+			valid, err := frame.header.Reads.stillValid(ctx, cache, &treeFS{lower: lower, retry: retry, maxAge: maxAge, slot: req.HeldSlot}, req.Source.Key != "")
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if valid {
-				if docs, err := manifest.DecodeRender(output); err == nil {
-					return docs, nil
+				if docs, err := manifest.DecodeRender(frame.output); err == nil {
+					frame.binding, frame.lookup, frame.identity = prepared.binding, lookup, identity
+					binding := manifest.Fingerprint(prepared.binding)
+					if frame.header.Binding != binding {
+						frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
+						frame.accepted, frame.acceptedKey, frame.identity = nil, "", ""
+					}
+					return docs, manifest.NewRenderReceipt(frame, equalRenderFrame), nil
 				}
 			}
 		}
@@ -111,10 +112,10 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 	subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 	canonicalDir, file, err := memFS.CleanedAbs(subDir)
 	if err != nil {
-		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s: %w", manifest.ErrInput, req.SubPath, err)
+		return nil, nil, fmt.Errorf("%w: kustomization path is not a directory: %s: %w", manifest.ErrInput, req.SubPath, err)
 	}
 	if file != "" {
-		return nil, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, req.SubPath)
+		return nil, nil, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, req.SubPath)
 	}
 	subDir = canonicalDir.String()
 	var ks map[string]any
@@ -123,14 +124,14 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 	if req.Spec != nil {
 		ks, err = req.Spec.RenderDocument()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		data, kfile, err = generateManifest(memFS, subDir, ks)
 		if err != nil {
-			return nil, fmt.Errorf("flux kustomize generator: %w", err)
+			return nil, nil, fmt.Errorf("flux kustomize generator: %w", err)
 		}
 		if err := memFS.WriteFile(kfile, data); err != nil {
-			return nil, fmt.Errorf("write kustomization.yaml: %w", err)
+			return nil, nil, fmt.Errorf("write kustomization.yaml: %w", err)
 		}
 	} else {
 		kfile, _ = kustomizationFileIn(memFS, subDir)
@@ -138,17 +139,10 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 	subPath := req.SubPath
 
 	if err := preflightRemoteResources(ctx, cache, memFS, subDir); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if kfile != "" {
-		data, err = memFS.ReadFile(kfile)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rm, err := func() (resmap.ResMap, error) {
 		kustomizestate.BuildMutex.Lock()
@@ -160,51 +154,82 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		// On a duplicate-resource-id failure, name every accumulated path that
 		// emits the colliding resource so a localized duplicate is locatable.
 		if strings.Contains(err.Error(), "already registered id") {
+			data, readErr := memFS.ReadFile(kfile)
+			if readErr != nil {
+				return nil, nil, readErr
+			}
 			if attr := duplicateProducers(memFS, subDir, subPath, data); attr != "" {
-				return nil, fmt.Errorf("%w\n%s", built, attr)
+				return nil, nil, fmt.Errorf("%w\n%s", built, attr)
 			}
 		}
-		return nil, built
+		return nil, nil, built
 	}
 	// AsYAML converts through JSON, so label scalar spelling MUST be retained first.
 	if req.Spec != nil && req.Spec.EmissionPolicy().StringLabels {
 		for _, r := range rm.Resources() {
 			if err := r.SetLabels(r.GetLabels()); err != nil {
-				return nil, fmt.Errorf("%w: normalize labels: %w", manifest.ErrInput, err)
+				return nil, nil, fmt.Errorf("%w: normalize labels: %w", manifest.ErrInput, err)
 			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	out, err := rm.AsYaml()
 	if err != nil {
-		return nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
+		return nil, nil, fmt.Errorf("kustomize render %s: %w", subPath, err)
 	}
 	docs, err := manifest.SplitDocs(out)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	reader, _, _, err = cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: 0}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		payload, err := manifest.EncodeRender(docs)
-		if err != nil {
-			return sourcecache.ProducerResult{}, err
-		}
-		frame, err := encodeFrame(rec.snapshot(), payload)
-		if err != nil {
-			return sourcecache.ProducerResult{}, fmt.Errorf("encode kustomize render frame: %w", err)
-		}
-		_, err = io.Copy(w, bytes.NewReader(frame))
-		return sourcecache.ProducerResult{}, err
-	})
+	payload, err := manifest.EncodeRender(docs)
 	if err != nil {
-		return nil, fmt.Errorf("kustomize render cache publish: %w", err)
+		return nil, nil, err
 	}
-	if err := reader.Close(); err != nil {
-		return nil, fmt.Errorf("%w: close kustomize render frame: %w", manifest.ErrFlux, err)
+	frame := renderFrame{header: renderHeader{Key: key, Reads: rec.snapshot()}, binding: prepared.binding, output: payload}
+	return docs, manifest.NewRenderReceipt(frame, equalRenderFrame), nil
+}
+
+type renderRequest struct {
+	lower     fs.FS
+	root, key string
+	binding   renderBinding
+}
+
+func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (renderRequest, error) {
+	if c == nil {
+		return renderRequest{}, fmt.Errorf("%w: incomplete render request", manifest.ErrInput)
 	}
-	return docs, nil
+	if err := ctx.Err(); err != nil {
+		return renderRequest{}, err
+	}
+	if req.Source == nil || req.Source.FS == nil {
+		return renderRequest{}, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
+	}
+	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
+	var ignore any
+	if req.ApplyIgnore {
+		input, err := c.sourceRootFor(ctx, req.Source, root)
+		if err != nil {
+			return renderRequest{}, err
+		}
+		lower, ignore = input.fs, input.ignore
+	}
+	var err error
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return renderRequest{}, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
+	}
+	key := renderKey(req, root, ignore)
+	source := manifest.BootstrapSourceID
+	if req.Spec != nil {
+		source = req.Spec.SourceID()
+	}
+	return renderRequest{lower: lower, root: root, key: key,
+		binding: renderBinding{key, source, req.Source.Kind, req.Source.URL, req.Source.LocalPath, req.Source.LocalRoot, req.Source.Key, req.Source.Revision, req.Source.Digest, req.Source.InputAlias, maps.Clone(req.Substitute), req.WipeSecrets, req.StrictSubstitutions, slices.Clone(req.SkipKinds), req.DependencySubstitutions},
+	}, nil
 }
 
 // Mutable files are validated by the read set; immutable generations are part

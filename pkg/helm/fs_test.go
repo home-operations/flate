@@ -150,7 +150,7 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 				canonical = loaded.chart
 			}
 			assert.Equal(t, loaded.chart == canonical, true)
-			out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+			out, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 			assert.NoError(t, err)
 			if !hasRenderField(out, "marker", marker) {
 				t.Fatal(out)
@@ -728,7 +728,7 @@ func TestLoadFSChart_AutomaticArchiveSemantics(t *testing.T) {
 				t.Errorf("chart (-want +got):\n%s", diff)
 			}
 			if tc.name == "split roots" || tc.name == "multiple metadata roots" {
-				docs, err := cli.Template(t.Context(), hr, nil, RenderOptions{Sources: sources})
+				docs, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Sources: sources})
 				assert.NoError(t, err)
 				assert.Equal(t, len(docs), len(want.Templates))
 			}
@@ -800,7 +800,7 @@ func TestLoadFSChart_AutomaticInputErrors(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: input})
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
-			docs, err := cli.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(st)})
+			docs, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(st)})
 			if !errors.Is(err, fs.ErrPermission) || !errors.Is(err, manifest.ErrInput) || docs != nil {
 				t.Fatalf("%s failure selected another chart: docs=%v, error=%v", failure, docs, err)
 			}

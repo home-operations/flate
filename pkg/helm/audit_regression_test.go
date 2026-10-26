@@ -72,7 +72,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	values := map[string]any{"unused": func() {}}
 	opts := Options{}
 	assert.Equal(t, computeTemplateKey(loaded, values, opts, hr), "")
-	out, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: cliSources})
+	out, _, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: cliSources})
 	if err != nil {
 		t.Fatal(err)
 	}

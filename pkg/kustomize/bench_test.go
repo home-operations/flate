@@ -39,7 +39,13 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		out, receipt1, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		if err == nil {
+			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt1, emptyRenderInventory); recordErr != nil {
+				b.Fatal(recordErr)
+			}
+		}
+
 		if err != nil {
 			b.Fatalf("Render: %v", err)
 		}
@@ -75,12 +81,24 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 		}),
 	}
 	ctx := b.Context()
-	if _, err := Render(ctx, cache, req, sourcecache.RetryConfig{}); err != nil {
+	_, receipt2, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
+	if err == nil {
+		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt2, emptyRenderInventory); recordErr != nil {
+			b.Fatal(recordErr)
+		}
+	}
+	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		out, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
+		out, receipt3, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
+		if err == nil {
+			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt3, emptyRenderInventory); recordErr != nil {
+				b.Fatal(recordErr)
+			}
+		}
+
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -142,7 +160,13 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		out, receipt4, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		if err == nil {
+			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt4, emptyRenderInventory); recordErr != nil {
+				b.Fatal(recordErr)
+			}
+		}
+
 		if err != nil {
 			b.Fatalf("Render: %v", err)
 		}
@@ -181,7 +205,13 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
-			out, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec}, sourcecache.RetryConfig{})
+			out, receipt5, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec}, sourcecache.RetryConfig{})
+			if err == nil {
+				if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt5, emptyRenderInventory); recordErr != nil {
+					b.Fatal(recordErr)
+				}
+			}
+
 			if err != nil {
 				b.Fatalf("Render: %v", err)
 			}

@@ -62,12 +62,24 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				cli := NewClient(cachetest.New(b, root, sourcecache.New))
 				cliSources := NewSources(st)
 				opts := Options{DisableChartDigestTracking: disabled}
-				if _, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}); err != nil {
+				_, receipt1, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+				if err == nil {
+					if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt1, emptyRenderInventory); recordErr != nil {
+						b.Fatal(recordErr)
+					}
+				}
+				if err != nil {
 					b.Fatal(err)
 				}
 				b.ReportAllocs()
 				for b.Loop() {
-					if _, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}); err != nil {
+					_, receipt2, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+					if err == nil {
+						if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt2, emptyRenderInventory); recordErr != nil {
+							b.Fatal(recordErr)
+						}
+					}
+					if err != nil {
 						b.Fatal(err)
 					}
 				}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 	"time"
@@ -27,7 +26,7 @@ const (
 
 // EncodeRender encodes constructed render documents without changing scalar types.
 func EncodeRender(docs []map[string]any) ([]byte, error) {
-	data := binary.AppendUvarint(nil, uint64(len(docs)))
+	data := binary.AppendUvarint(make([]byte, 0, 256*len(docs)), uint64(len(docs)))
 	for _, doc := range docs {
 		var err error
 		data, err = appendRender(data, doc)
@@ -77,7 +76,13 @@ func appendRender(data []byte, value any) ([]byte, error) {
 		}
 	case map[string]any:
 		data = binary.AppendUvarint(append(data, renderStringMap), uint64(len(v)))
-		for _, key := range slices.Sorted(maps.Keys(v)) {
+		var storage [16]string
+		keys := storage[:0]
+		for key := range v {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
 			data = binary.AppendUvarint(data, uint64(len(key)))
 			data = append(data, key...)
 			var err error
@@ -137,9 +142,25 @@ func DecodeRender(data []byte) ([]map[string]any, error) {
 }
 
 type renderDecoder struct {
-	data   []byte
-	budget int
-	err    error
+	strings     [32]string
+	stringCount int
+	data        []byte
+	budget      int
+	err         error
+}
+
+func (d *renderDecoder) text(data []byte) string {
+	for _, text := range d.strings[:d.stringCount] {
+		if text == string(data) {
+			return text
+		}
+	}
+	text := string(data)
+	if d.stringCount < len(d.strings) {
+		d.strings[d.stringCount] = text
+		d.stringCount++
+	}
+	return text
 }
 
 func (d *renderDecoder) unsigned() uint64 {
@@ -226,7 +247,7 @@ func (d *renderDecoder) value(depth int) any {
 		data := d.data[:n]
 		d.data = d.data[n:]
 		if tag == renderString {
-			return string(data)
+			return d.text(data)
 		}
 		var v time.Time
 		if err := v.UnmarshalBinary(data); err != nil {
@@ -258,7 +279,7 @@ func (d *renderDecoder) value(depth int) any {
 			if d.err != nil {
 				return nil
 			}
-			key := string(d.data[:size])
+			key := d.text(d.data[:size])
 			d.data = d.data[size:]
 			value := d.value(depth + 1)
 			if d.err != nil {

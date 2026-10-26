@@ -182,7 +182,7 @@ func TestLoadChart_PerCallCloneIsolatesValuesAndDependencies(t *testing.T) {
 			<-start
 			enabled := i%2 == 0
 			value := fmt.Sprintf("rendered-%02d", i)
-			out, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": value}}, RenderOptions{Options: Options{}, Sources: cliSources})
+			out, _, err := cli.Template(t.Context(), hr, map[string]any{"child": map[string]any{"enabled": enabled, "value": value}}, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				t.Error(err)
 				return
@@ -260,7 +260,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				sources := store.New()
 				sources.SetArtifact(selected.ChartSource(), &store.SourceArtifact{FS: input})
 				rendererSources := NewSources(sources)
-				first, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
+				first, _, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
 				assert.NoError(t, err)
 				if !hasRenderField(first, "marker", "acquired") {
 					t.Fatal(first)
@@ -269,7 +269,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				if reads == 0 {
 					t.Fatal("first render did not read acquired backing")
 				}
-				second, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
+				second, _, err := renderer.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: rendererSources})
 				assert.NoError(t, err)
 				assert.Diff(t, second, first)
 				assert.Equal(t, backing.opens.Load(), reads)
@@ -285,7 +285,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				witness["cacheWitness"] = "pinned persistent hit witness"
 				output := encodedRender(t, []map[string]any{witness})
 				r, _, _, err := outputOwner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-					err := json.NewEncoder(w).Encode(renderRecord{Output: output, Analysis: d.analyze()})
+					err := writeTestRecord(w, key, renderRecord{Output: output, Analysis: d.analyze()})
 					return cache.ProducerResult{}, err
 				})
 				assert.NoError(t, err)
@@ -293,7 +293,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 				fresh := NewClient(cachetest.New(t, outputRoot, cache.New))
 				freshSources := NewSources(sources)
 				before := backing.opens.Load()
-				hit, err := fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
+				hit, _, err := fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 				assert.NoError(t, err)
 				assert.Diff(t, hit, []map[string]any{witness})
 				reads = backing.opens.Load()
@@ -305,7 +305,7 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 						t.Fatal("persisted hit did not leave an observation-only entry")
 					}
 				}
-				hit, err = fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
+				hit, _, err = fresh.Template(t.Context(), selected, nil, RenderOptions{Options: Options{}, Sources: freshSources})
 				assert.NoError(t, err)
 				assert.Diff(t, hit, []map[string]any{witness})
 				assert.Equal(t, backing.opens.Load(), reads)

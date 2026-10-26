@@ -51,7 +51,7 @@ data: {key: value}
 	var arrivals atomic.Int64
 	unsub := s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals.Add(1) }, false)
 	t.Cleanup(unsub)
-	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
+	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 	first := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	defer first.Assessment.Close()
 	if first.Assessment.Outcome() == schedule.Blocked || !first.Assessment.Valid() || arrivals.Load() != 1 {
@@ -103,7 +103,7 @@ data: {key: fixed}
 					rs.InputsFrom = []fluxopv1.InputProviderReference{{Kind: manifest.KindResourceSetInputProvider, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}}}}
 				}
 				s.AddObject(rs)
-				d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
+				d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 				initial := d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 				defer initial.Assessment.Close()
 				if initial.Assessment.Outcome() == schedule.Blocked || !initial.Assessment.Valid() {
@@ -175,6 +175,7 @@ data: {key: fixed}
 				c.StartLifecycle()
 
 				d.o.rsc = c
+				d.o.controllers.ResourceSet = c
 				var arrivals, outputArrivals, outputWithdrawals atomic.Int64
 				unsub := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 					arrivals.Add(1)
@@ -263,7 +264,7 @@ data: {key: fixed}
 			c := resourceset.New(s, tasks, true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
-			result := (dagDispatcher{&Orchestrator{store: s, rsc: c}}).Dispatch(t.Context(), child.Named(), manifest.DrainNone)
+			result := (dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}).Dispatch(t.Context(), child.Named(), manifest.DrainNone)
 			defer result.Assessment.Close()
 			run := result.Assessment.(*base.Execution)
 			info, _ := s.GetStatus(child.Named())
@@ -301,7 +302,7 @@ metadata: {name: output}
 data: {key: initial}
 `}
 	s.AddObject(rs)
-	d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
+	d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 	d.Dispatch(t.Context(), rs.Named(), manifest.DrainNone)
 	s.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -498,8 +499,7 @@ data: {value: rendered}
 			c := resourceset.New(s, tasks, true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
-
-			d := dagDispatcher{&Orchestrator{store: s, rsc: c}}
+			d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}
 			unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
 				if id == l.Named() {
 					publications.Add(1)

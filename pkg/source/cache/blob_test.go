@@ -1188,3 +1188,140 @@ func TestBlob_RevalidationFailures(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderMetadata_CurrentGenerationWithoutPayloadOpen(t *testing.T) {
+	t.Parallel()
+	if reason := RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		c := cachetest.New(t, t.TempDir(), New)
+		key := BlobKey{Content: "render-metadata", PersistOnly: true}
+		r, _, id, err := c.Blob(t.Context(), key, Policy{}, producer([]byte("first"), ocispec.Descriptor{Annotations: map[string]string{"generation": "first"}}))
+		assert.NoError(t, err)
+		assert.NoError(t, r.Close())
+		previous, _ := c.entries.Load(id)
+		e := previous.(*entry)
+		stamp := time.Now()
+		assert.NoError(t, c.root.Chtimes(blobPath(e.stored.Digest), stamp, stamp))
+		input := e.fs.(fileFS)
+		input.open = func() (io.ReadCloser, error) {
+			t.Error("metadata lookup opened the payload")
+			return nil, errors.New("unexpected payload open")
+		}
+		e.fs = input
+		descriptor, _, enabled, err := c.RenderMetadata(t.Context(), "render-metadata", id)
+		assert.NoError(t, err)
+		assert.Equal(t, enabled, true)
+		assert.Equal(t, descriptor.Annotations["generation"], "first")
+		started, publish := make(chan struct{}), make(chan struct{})
+		finished := make(chan error, 1)
+		go func() {
+			r, _, _, err := c.Blob(t.Context(), key, Policy{}, func(_ context.Context, input ProducerInput) (ProducerResult, error) {
+				close(started)
+				<-publish
+				_, err := input.Write([]byte("second"))
+				return ProducerResult{Annotations: map[string]string{"generation": "second"}}, err
+			})
+			if err == nil {
+				err = r.Close()
+			}
+			finished <- err
+		}()
+		<-started
+		descriptor, _, enabled, err = c.RenderMetadata(t.Context(), "render-metadata", id)
+		close(publish)
+		assert.NoError(t, err)
+		assert.Equal(t, enabled, true)
+		assert.Equal(t, descriptor.Annotations["generation"], "first")
+		assert.NoError(t, <-finished)
+		current, _ := c.entries.Load(id)
+		head := current.(*entry)
+		assert.NoError(t, c.root.Chtimes(blobPath(head.stored.Digest), stamp, stamp))
+		descriptor, _, enabled, err = c.RenderMetadata(t.Context(), "render-metadata", id)
+		assert.NoError(t, err)
+		assert.Equal(t, enabled, true)
+		assert.Equal(t, descriptor.Annotations["generation"], "second")
+		assert.Equal(t, e.descriptor.Annotations["generation"], "first")
+		before, err := c.root.Stat(blobPath(head.stored.Digest))
+		assert.NoError(t, err)
+		time.Sleep(2 * accessInterval)
+		_, _, _, err = c.RenderMetadata(t.Context(), "render-metadata", id)
+		assert.NoError(t, err)
+		after, err := c.root.Stat(blobPath(head.stored.Digest))
+		assert.NoError(t, err)
+		if !after.ModTime().After(before.ModTime()) {
+			t.Fatal("metadata access did not retain the active generation")
+		}
+
+	})
+}
+
+func TestRenderMetadata_CurrentDirectory(t *testing.T) {
+	t.Parallel()
+	if reason := RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	for _, name := range []string{"removed payload", "nonregular payload", "removed parent", "replaced parent empty", "replaced parent present", "escaping parent", "canceled", "closed"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			c := cachetest.New(t, t.TempDir(), New)
+			key := BlobKey{Content: "current-directory", PersistOnly: true}
+			payload := []byte("current-directory-payload")
+			r, _, lookup, err := c.Blob(t.Context(), key, Policy{}, producer(payload, ocispec.Descriptor{}))
+			assert.NoError(t, err)
+			identity := AcquisitionIdentity(r)
+			assert.NoError(t, r.Close())
+			stored, _ := c.entries.Load(lookup)
+			path := blobPath(stored.(*entry).stored.Digest)
+			parent := filepath.Dir(path)
+			ctx := t.Context()
+			switch name {
+			case "removed payload":
+				assert.NoError(t, c.root.Remove(path))
+			case "nonregular payload":
+				assert.NoError(t, c.root.Remove(path))
+				assert.NoError(t, c.root.Mkdir(path, 0o750))
+			case "removed parent":
+				assert.NoError(t, c.root.Rename(parent, parent+"-old"))
+			case "replaced parent empty", "replaced parent present":
+				assert.NoError(t, c.root.Rename(parent, parent+"-old"))
+				assert.NoError(t, c.root.Mkdir(parent, 0o750))
+				if name == "replaced parent present" {
+					assert.NoError(t, c.root.WriteFile(path, payload, 0o600))
+				}
+			case "escaping parent":
+				assert.NoError(t, c.root.Rename(parent, parent+"-old"))
+				assert.NoError(t, os.Symlink(t.TempDir(), filepath.Join(c.root.Name(), parent)))
+			case "canceled":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			case "closed":
+				assert.NoError(t, c.Close())
+			}
+			_, current, enabled, err := c.RenderMetadata(ctx, "current-directory", lookup)
+			if name == "replaced parent present" {
+				assert.NoError(t, err)
+				if !enabled || current == "" || current != identity {
+					t.Fatal("replaced current directory lost the published generation")
+				}
+				r, _, _, err := c.Blob(ctx, key, Policy{MaxAge: Forever}, nil)
+				assert.NoError(t, err)
+				data, err := io.ReadAll(r)
+				assert.NoError(t, errors.Join(err, r.Close()))
+				assert.Equal(t, bytes.Equal(data, payload), true)
+				return
+			}
+			if err == nil || current != "" {
+				t.Fatal("invalid current directory authorized a metadata hit")
+			}
+			if _, ok := errors.AsType[*CacheError](err); !ok {
+				t.Fatalf("metadata failure lost cache attribution: %v", err)
+			}
+			if name == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Fatalf("metadata failure lost cancellation: %v", err)
+			}
+		})
+	}
+}

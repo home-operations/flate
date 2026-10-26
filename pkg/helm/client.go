@@ -218,7 +218,11 @@ func (d chartDescription) analyze() *chartAnalysis {
 	if d.analysis != nil {
 		return d.analysis
 	}
-	return &chartAnalysis{Templates: chartTemplateText(d.chart), Allowed: knownTopLevelKeys(d.chart), RequiresLoader: requiresChartLoader(d.chart)}
+	analysis := &chartAnalysis{Templates: chartTemplateText(d.chart), Allowed: knownTopLevelKeys(d.chart), RequiresLoader: requiresChartLoader(d.chart)}
+	if d.chart.Metadata != nil {
+		analysis.Version = d.chart.Metadata.Version
+	}
+	return analysis
 }
 
 // cloneChartForRender returns a shallow copy of src with the fields

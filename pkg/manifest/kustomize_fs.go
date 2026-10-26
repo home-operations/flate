@@ -19,7 +19,7 @@ type KSClaim struct {
 	Prefix string
 }
 
-// RenderRoots yields normalized source-relative render roots and components.
+// RenderRoots yields source-relative render roots and unresolved component evidence.
 // An empty root denotes the source artifact root.
 func RenderRoots(obj BaseManifest) iter.Seq[string] {
 	return func(yield func(string) bool) {
@@ -39,11 +39,17 @@ func (k *Kustomization) renderRoots(components []string, yield func(string) bool
 	}
 	for _, refs := range [2][]string{k.Components, components} {
 		for _, ref := range refs {
-			resolved, ok := kustpath.Resolve(base, ref, kustpath.Claim)
-			if !ok {
+			if ref == "" {
 				continue
 			}
-			if !yield(resolved) {
+			root := ref
+			if ref != "" && !filepath.IsAbs(ref) && !strings.Contains(ref, "://") {
+				root = base + "/" + ref
+				if base == "" {
+					root = ref
+				}
+			}
+			if !yield(root) {
 				return
 			}
 		}
@@ -56,8 +62,17 @@ func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) 
 	claims := make([]KSClaim, 0, len(kss))
 	for _, ks := range kss {
 		id := ks.Named()
+		base := true
 		ks.renderRoots(components[id], func(root string) bool {
 			prefix := root
+			if !base {
+				var ok bool
+				prefix, ok = kustpath.Resolve("", root, kustpath.Claim)
+				if !ok {
+					return true
+				}
+			}
+			base = false
 			if prefix != "" {
 				prefix += "/"
 			}

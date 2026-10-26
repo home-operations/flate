@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"io"
 	"io/fs"
 	"strings"
 	"testing"
@@ -153,4 +154,33 @@ func chartFixtureFS(hr *manifest.HelmRelease, input fs.FS) fs.FS {
 		return chartArchiveFS{input}
 	}
 	return input
+}
+
+func emptyRenderInventory(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}
+
+func writeTestRecord(w io.Writer, key cache.BlobKey, record renderRecord) error {
+	identity, _ := key.Content.(string)
+	data, err := encodeFrame(renderHeader{Key: identity, Analysis: record.Analysis}, record.Output)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
+}
+
+func readTestRecord(r io.Reader, record *renderRecord) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	return decodeTestRecord(data, record)
+}
+
+func decodeTestRecord(data []byte, record *renderRecord) error {
+	frame, err := decodeFrame(data)
+	if err != nil {
+		return err
+	}
+	record.Output, record.Analysis, record.frame = frame.output, frame.header.Analysis, frame
+	return nil
 }

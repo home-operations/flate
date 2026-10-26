@@ -3,11 +3,14 @@ package helmrelease
 
 import (
 	"context"
+	"iter"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -63,6 +66,11 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 	return &ex.run
 }
 
+// Owns reports whether id belongs to the HelmRelease controller.
+func (*Controller) Owns(id manifest.NamedResource) bool {
+	return id.Group == manifest.HelmReleaseDomain && id.Kind == manifest.KindHelmRelease
+}
+
 func (c *execution) reconcile(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
 	var err error
 	hr, err = c.run.RequireRefresh(ctx, hr, manifest.GateInputs, level)
@@ -114,14 +122,14 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	var attempt store.Emission
 	defer attempt.Finish()
 	handled := false
-	input := helm.RenderOptions{Options: c.Options, Sources: helm.NewSources(&c.run.Reads)}
+	input := helm.RenderOptions{Options: c.Options, DependencySubstitutions: c.DependencySubstitutions, Sources: helm.NewSources(&c.run.Reads), WipeSecrets: c.WipeSecrets}
 	input.Admit = func(key string) (bool, error) {
 		var content any
 		if key != "" {
 			content = hr.Content(key, omitted)
 		}
 		var err error
-		fp, handled, err = c.run.FingerprintDedup(id, content)
+		fp, handled, err = c.run.FingerprintDedup(id, content, &attempt)
 		if handled || err != nil {
 			return handled, err
 		}
@@ -129,9 +137,12 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		_, _, attempt = c.run.Reads.GetEmission(id)
 		return false, nil
 	}
-	docs, err := c.Helm.Template(ctx, hr, hr.Values, input)
+	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
 	if handled {
-		return err
+		if err != nil {
+			return err
+		}
+		return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
 	}
 	if err != nil {
 		// Best-effort rescue: if this HR's parent Kustomization couldn't read a
@@ -142,11 +153,14 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		// gate. Bounded: only failing HRs are touched, and only adopted if the
 		// retry actually renders — a failure with a different cause (missing
 		// container, chart 404) re-fails and falls through to the error below.
-		if rescued, paths, ok := c.renderBestEffort(ctx, id, hr, input); ok {
+		if rescued, rescuedReceipt, paths, ok, rescueErr := c.renderBestEffort(ctx, id, hr, input); ok {
 			if handled {
-				return nil
+				if rescueErr != nil {
+					return rescueErr
+				}
+				return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
 			}
-			docs, err = rescued, nil
+			docs, receipt, err = rescued, rescuedReceipt, nil
 			c.run.Reads.AddWarning(id, manifest.Warning{
 				Resource: id,
 				Category: manifest.WarnUnresolvedSubstitution,
@@ -180,32 +194,36 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	}
 	attempt.Children, attempt.Manifests = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Children = append(attempt.Children, synthetic...)
-	attempt.Fingerprint, attempt.Complete = fp, true
-	return c.run.Emit(id, &attempt, nil)
+	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
+	if err := c.run.Emit(id, &attempt, nil); err != nil {
+		return err
+	}
+	return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
 }
 
-// renderBestEffort retries a failed chart render with empty values replaced by
-// placeholders, scoped to HelmReleases whose parent Kustomization couldn't read
-// a substituteFrom Secret offline — the signal that the failure is plausibly an
-// unresolved secret-sourced value rather than a genuine misconfiguration. It
-// adopts the retry only if it renders, returning the rescued docs and the
-// filled value paths. ok=false when there's nothing to rescue (no unreadable
-// parent secret, no empty leaves) or the retry still fails — the caller then
-// surfaces the original error and the HR fails as before, so a non-empty cause
-// (missing container, chart 404) is never masked.
-func (c *execution) renderBestEffort(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease, input helm.RenderOptions) ([]map[string]any, []string, bool) {
+func (c *execution) renderBestEffort(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease, input helm.RenderOptions) ([]map[string]any, *manifest.RenderReceipt, []string, bool, error) {
 	if !c.parentReadsUnreadableSecret(id) {
-		return nil, nil, false
+		return nil, nil, nil, false, nil
 	}
 	filled, paths := manifest.FillEmptyValueLeaves(hr.Values)
 	if len(paths) == 0 {
-		return nil, nil, false
+		return nil, nil, nil, false, nil
 	}
-	docs, err := c.Helm.Template(ctx, hr, filled, input)
+	handled := false
+	admit := input.Admit
+	input.Admit = func(key string) (bool, error) {
+		stop, err := admit(key)
+		handled = stop || err != nil
+		return stop, err
+	}
+	docs, receipt, err := c.Helm.Template(ctx, hr, filled, input)
+	if handled {
+		return nil, nil, nil, true, err
+	}
 	if err != nil {
-		return nil, nil, false
+		return nil, nil, nil, false, nil
 	}
-	return docs, paths, true
+	return docs, receipt, paths, true, nil
 }
 
 func (c *execution) parentReadsUnreadableSecret(id manifest.NamedResource) bool {
@@ -244,4 +262,37 @@ func (c *execution) materializeHelmChartSource(id manifest.NamedResource, hr *ma
 	}
 	hr.Chart.Source = syn.Named()
 	return hr, true, nil
+}
+
+// PreviousRender prepares captured values and admitted charts without runtime effects, and reports whether they can narrow selection.
+func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	hr, ok := reads.GetDeclaration(reads.ID()).(*manifest.HelmRelease)
+	if !ok || ctx.Err() != nil {
+		return nil, false
+	}
+	data := values.NewStoreProvider(reads, c.WipeSecrets, nil)
+	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
+	var omittedRefs []manifest.NamedResource
+	for ref := range manifest.References(hr, manifest.ReferenceRelations) {
+		if ref.Use != "valuesFrom" {
+			continue
+		}
+		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional, AllowMissing: c.AllowMissingSecrets}, manifest.DrainNone)
+		if availability.Kind != schedule.Terminal {
+			return nil, false
+		}
+		if availability.Omit {
+			omittedRefs = append(omittedRefs, ref.NamedResource)
+		}
+	}
+	hr = omitValues(hr, omittedRefs)
+	hr, omitted, err := helm.Prepare(hr, helm.NewSources(reads).HelmChart, data, c.Helm.ValuesCache())
+	if err != nil || len(omitted) != 0 {
+		return nil, false
+	}
+	records, found := c.Helm.PreviousRender(ctx, hr, hr.Values, helm.RenderOptions{Options: c.Options, DependencySubstitutions: c.DependencySubstitutions, Sources: helm.NewSources(reads), WipeSecrets: c.WipeSecrets})
+	if !found {
+		return nil, false
+	}
+	return records, true
 }

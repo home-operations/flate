@@ -176,7 +176,7 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 			if mode == "emit" {
 				run.Emit(parent.Named(), attempt, nil)
 			} else {
-				_, handled, err := run.FingerprintDedup(parent.Named(), "same")
+				_, handled, err := run.FingerprintDedup(parent.Named(), "same", &store.Emission{})
 				assert.NoError(t, err)
 				assert.Equal(t, handled, true)
 			}

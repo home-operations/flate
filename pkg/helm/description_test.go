@@ -58,7 +58,7 @@ func TestDescriptionProjection(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, strings.Contains(chartTemplateText(ch), ".Values.nested"), true)
 	assert.Equal(t, requiresChartLoader(ch), false)
-	analysis := &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}
+	analysis := &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch), RequiresLoader: requiresChartLoader(ch)}
 	assert.Diff(t, analysis.Allowed, map[string]struct{}{"child": {}, "childAlias": {}, "feature": {}, "global": {}, "tags": {}})
 	data, err := json.Marshal(renderRecord{Output: []byte("rendered"), Analysis: analysis})
 	assert.NoError(t, err)
@@ -113,7 +113,13 @@ func TestDescription_SourceObservation(t *testing.T) {
 	hr.ChartValuesFiles = []string{"config/prod.yaml", "config/../config/prod.yaml"}
 	cli := NewClient(cachetest.New(t, "", cache.New))
 	cliSources := NewSources(st)
-	out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	out, receipt1, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	if err == nil {
+		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt1, emptyRenderInventory); recordErr != nil {
+			t.Fatal(recordErr)
+		}
+	}
+
 	assert.NoError(t, err)
 	assert.Equal(t, reads, 1)
 	if !hasRenderField(out, "marker", "first") {
@@ -138,7 +144,13 @@ func TestDescription_HitHydration(t *testing.T) {
 			for i := range 2 {
 				cli := NewClient(cachetest.New(t, root, cache.New))
 				cliSources := NewSources(st)
-				out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				out, receipt2, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				if err == nil {
+					if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt2, emptyRenderInventory); recordErr != nil {
+						t.Fatal(recordErr)
+					}
+				}
+
 				assert.NoError(t, err)
 				if i == 0 {
 					want = out
@@ -154,11 +166,25 @@ func TestDescription_HitHydration(t *testing.T) {
 				}
 				assert.Diff(t, cli.StaleValuePaths(t.Context(), hr, map[string]any{"marker": 1, "unused": 1}, cliSources), []string{"unused"})
 				if persistent {
-					_, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+					var receipt3 *manifest.RenderReceipt
+					_, receipt3, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+					if err == nil {
+						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt3, emptyRenderInventory); recordErr != nil {
+							t.Fatal(recordErr)
+						}
+					}
+
 					assert.NoError(t, err)
 					hit, err := cli.describeChart(t.Context(), hr, cliSources)
 					assert.NoError(t, err)
-					_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+					var receipt4 *manifest.RenderReceipt
+					_, receipt4, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+					if err == nil {
+						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt4, emptyRenderInventory); recordErr != nil {
+							t.Fatal(recordErr)
+						}
+					}
+
 					assert.NoError(t, err)
 					repeated, err := cli.describeChart(t.Context(), hr, cliSources)
 					assert.NoError(t, err)
@@ -201,7 +227,7 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			assert.NoError(t, err)
 			ch, err := d.captured.load()
 			assert.NoError(t, err)
-			fresh := &renderRecord{Output: []byte("hit"), Analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
+			fresh := &renderRecord{Output: []byte("hit"), Analysis: &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
 			start := make(chan struct{})
 			var wg sync.WaitGroup
 			decoded := d
@@ -214,7 +240,7 @@ func TestDescription_HydrationKeepsDecoded(t *testing.T) {
 			if decoded.captured.files != nil || decoded.captured.archive != nil {
 				t.Fatal("decode retained captured input")
 			}
-			late := &renderRecord{Output: []byte("late"), Analysis: &chartAnalysis{Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
+			late := &renderRecord{Output: []byte("late"), Analysis: &chartAnalysis{Version: ch.Metadata.Version, Templates: chartTemplateText(ch), Allowed: knownTopLevelKeys(ch)}}
 			cli.rememberDescription(d, late)
 			cli.rememberDescription(d, nil)
 			current, err := cli.describeChart(t.Context(), hr, cliSources)
@@ -277,7 +303,13 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		owner := cachetest.New(t, root, cache.New)
 		cli := NewClient(owner)
 		cliSources := NewSources(st)
-		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		out, receipt5, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		if err == nil {
+			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt5, emptyRenderInventory); recordErr != nil {
+				t.Fatal(recordErr)
+			}
+		}
+
 		if validOutput {
 			assert.NoError(t, err)
 		} else if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || len(out) != 0 {
@@ -326,7 +358,15 @@ func TestReview_NestedWarnings(t *testing.T) {
 				diagnostics.Reset()
 				cli := NewClient(cachetest.New(t, cacheRoot, cache.New))
 				cliSources := NewSources(st)
-				_, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				var receipt6 *manifest.RenderReceipt
+				var err error
+				_, receipt6, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				if err == nil {
+					if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt6, emptyRenderInventory); recordErr != nil {
+						t.Fatal(recordErr)
+					}
+				}
+
 				assert.NoError(t, err)
 				if !strings.Contains(diagnostics.String(), "Warning:") {
 					t.Fatal("real nested loader diagnostics were suppressed")
@@ -337,7 +377,14 @@ func TestReview_NestedWarnings(t *testing.T) {
 					t.Fatal("nested warning did not require the real loader")
 				}
 				diagnostics.Reset()
-				_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				var receipt7 *manifest.RenderReceipt
+				_, receipt7, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+				if err == nil {
+					if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt7, emptyRenderInventory); recordErr != nil {
+						t.Fatal(recordErr)
+					}
+				}
+
 				assert.NoError(t, err)
 				assert.Equal(t, diagnostics.Len(), 0)
 			}
@@ -356,7 +403,15 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 		hr.IgnoreMissingValuesFiles = false
 		cli := NewClient(cachetest.New(t, "", cache.New))
 		cliSources := NewSources(st)
-		_, err := cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources})
+		var receipt8 *manifest.RenderReceipt
+		var err error
+		_, receipt8, err = cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources})
+		if err == nil {
+			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt8, emptyRenderInventory); recordErr != nil {
+				t.Fatal(recordErr)
+			}
+		}
+
 		if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "load chart") {
 			t.Fatalf("chart validation lost precedence: %v", err)
 		}
@@ -368,7 +423,15 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{FS: chartFixtureFS(hr, os.DirFS(dir)), Revision: "invalid"})
 			cli := NewClient(cachetest.New(t, "", cache.New))
 			cliSources := NewSources(st)
-			_, err := cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources})
+			var receipt9 *manifest.RenderReceipt
+			var err error
+			_, receipt9, err = cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources})
+			if err == nil {
+				if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt9, emptyRenderInventory); recordErr != nil {
+					t.Fatal(recordErr)
+				}
+			}
+
 			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "track oci chart version") {
 				t.Fatalf("OCI validation lost precedence: %v", err)
 			}
@@ -441,7 +504,14 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 					t.Fatal("fixture did not reach malformed persisted record")
 				}
 			}
-			_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+			var receipt10 *manifest.RenderReceipt
+			_, receipt10, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+			if err == nil {
+				if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt10, emptyRenderInventory); recordErr != nil {
+					t.Fatal(recordErr)
+				}
+			}
+
 			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), want) {
 				t.Fatalf("preparation lost precedence over persisted fault: %v", err)
 			}
@@ -461,7 +531,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 }
 
 func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
-	t.Run("record decode before action", func(t *testing.T) {
+	t.Run("malformed raw frame misses", func(t *testing.T) {
 		if !renderPersistenceEligible(t) {
 			t.Skip("requires clean stamped persistence for storage-error precedence")
 		}
@@ -481,14 +551,21 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		})
 		assert.NoError(t, err)
 		assert.NoError(t, r.Close())
+		cli = NewClient(owner)
 		var diagnostics bytes.Buffer
 		previous := log.Writer()
 		log.SetOutput(&diagnostics)
 		defer log.SetOutput(previous)
-		_, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
-		_, syntax := errors.AsType[*json.SyntaxError](err)
-		if !errors.Is(err, manifest.ErrFlux) || !syntax || strings.Contains(err.Error(), "action must wait") || !strings.Contains(diagnostics.String(), "Warning:") {
-			t.Fatalf("deferred cache error lost precedence: %v", err)
+		var receipt11 *manifest.RenderReceipt
+		_, receipt11, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		if err == nil {
+			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt11, emptyRenderInventory); recordErr != nil {
+				t.Fatal(recordErr)
+			}
+		}
+
+		if err == nil || !strings.Contains(err.Error(), "action must wait") || !strings.Contains(diagnostics.String(), "Warning:") {
+			t.Fatalf("malformed raw frame prevented ordinary rendering: %v", err)
 		}
 	})
 }
@@ -508,7 +585,13 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 	for _, location := range []string{"first", "second"} {
 		request := hr.Clone()
 		request.Chart.Name = location
-		_, err := cli.Template(t.Context(), request, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		_, receipt12, err := cli.Template(t.Context(), request, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		if err == nil {
+			if recordErr := cli.RecordRender(t.Context(), (request).Named(), receipt12, emptyRenderInventory); recordErr != nil {
+				t.Fatal(recordErr)
+			}
+		}
+
 		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "load chart "+location+":") {
 			t.Fatalf("location %q: got %v", location, err)
 		}

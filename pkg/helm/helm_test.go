@@ -46,7 +46,7 @@ data:
 		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 
-	out, err := cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, RenderOptions{Options: Options{}, Sources: cliSources})
+	out, _, err := cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err != nil {
 		t.Fatalf("Template: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 			ready.Done()
 			<-start
 			var err error
-			outputs[i], err = cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources})
+			outputs[i], _, err = cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err != nil {
 				t.Error(err)
 			}
@@ -118,7 +118,7 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	for key, value := range cli.chartValuesCache {
 		cachedBefore[key] = manifest.DeepCopyMap(value.merged)
 	}
-	repeated, err := cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources})
+	repeated, _, err := cli.Template(t.Context(), hr, vals, RenderOptions{Options: Options{}, Sources: cliSources})
 	assert.NoError(t, err)
 	assert.Diff(t, repeated, outputs[0])
 	assert.Equal(t, len(cli.chartValuesCache), len(cachedBefore))
@@ -175,7 +175,7 @@ func TestTemplate_TestHooksSkippedByDefault(t *testing.T) {
 	cli, cliSources := helmChartFixture(t)
 	hr := newHR()
 
-	out, err := cli.Template(context.Background(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	out, _, err := cli.Template(context.Background(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err != nil {
 		t.Fatalf("Template: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestTemplate_TestEnableIncludesTestHook(t *testing.T) {
 			t.Parallel()
 			hr := newHR()
 			hr.Test = &helmv2.Test{Enable: true}
-			out, err := cli.Template(t.Context(), hr, nil, RenderOptions{SkipTests: tc.skip, Sources: cliSources})
+			out, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{SkipTests: tc.skip, Sources: cliSources})
 			assert.NoError(t, err)
 			assert.Diff(t, templateResources(t, out), tc.want)
 		})
@@ -255,7 +255,7 @@ func TestTemplate_ActionHookPolicy(t *testing.T) {
 			if tc.upgrade != nil {
 				hr.Upgrade = &helmv2.Upgrade{DisableHooks: *tc.upgrade}
 			}
-			out, err := cli.Template(t.Context(), hr, nil, RenderOptions{IsUpgrade: tc.isUpgrade, NoHooks: tc.noHooks, Sources: cliSources})
+			out, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{IsUpgrade: tc.isUpgrade, NoHooks: tc.noHooks, Sources: cliSources})
 			assert.NoError(t, err)
 			want := []string{"ConfigMap/demo-cm"}
 			if tc.wantHook {
@@ -270,7 +270,7 @@ func TestTemplate_ActionHookPolicy(t *testing.T) {
 		hr.Install = &helmv2.Install{}
 		hr.Upgrade = &helmv2.Upgrade{DisableHooks: true}
 		opts := Options{ShowOnly: []string{"mychart/templates/pre-install-hook.yaml"}}
-		out, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+		out, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 		assert.NoError(t, err)
 		const want = "---\n# Source: mychart/templates/pre-install-hook.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-pre\n  annotations:\n    \"helm.sh/hook\": pre-install\ndata:\n  k: v\n"
 		wantDocs, err := manifest.SplitDocs([]byte(want))
@@ -278,7 +278,7 @@ func TestTemplate_ActionHookPolicy(t *testing.T) {
 		assert.Diff(t, out, wantDocs)
 		assert.Diff(t, templateResources(t, out), []string{"ConfigMap/demo-pre"})
 		opts.NoHooks = true
-		out, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+		out, _, err = cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 		assert.NoError(t, err)
 		assert.Diff(t, out, []map[string]any(nil))
 	})
@@ -450,7 +450,7 @@ metadata:
 			assert.NoError(t, err)
 			if tc.renderedChart {
 				cli, cliSources := helmChartFixture(t)
-				docs, err = cli.Template(t.Context(), hr, nil, RenderOptions{NoHooks: true, Sources: cliSources})
+				docs, _, err = cli.Template(t.Context(), hr, nil, RenderOptions{NoHooks: true, Sources: cliSources})
 				assert.NoError(t, err)
 			}
 			want, err := manifest.SplitDocs([]byte(tc.want))

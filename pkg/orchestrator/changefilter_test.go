@@ -9,7 +9,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
@@ -21,10 +20,12 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o := &Orchestrator{cfg: Config{PathOrig: before, Input: input}, store: store.New()}
+	o, err := New(t.Context(), Config{Path: after, PathOrig: before, Input: input, Concurrency: 2})
+	assert.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, o.Stop()) })
 	changes, err := o.computeChangeSet(t.Context(), after)
 	assert.NoError(t, err)
-	o.buildChangeFilter(after, changes)
+	assert.NoError(t, o.buildChangeFilter(t.Context(), after, changes))
 	assert.Equal(t, o.filter.Enabled(), true)
 	warnings := o.store.Warnings()
 	if len(warnings) != 1 {

@@ -7,12 +7,17 @@ import (
 	"helm.sh/helm/v4/pkg/chart/common"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // RenderOptions supplies one render's captured sources and template settings.
 type RenderOptions struct {
 	Options
 	Sources Sources
+	// WipeSecrets binds the emitted Secret policy to accepted history.
+	WipeSecrets bool
+	// DependencySubstitutions binds emitted dependency projection to accepted history.
+	DependencySubstitutions values.DependencySubstitutions
 	// Admit receives the cache owner's content key; true returns empty output without rendering.
 	Admit func(string) (bool, error)
 }
@@ -59,6 +64,9 @@ func (o Options) SkipResourceKinds() []string {
 // capabilities builds common.Capabilities from the supplied options.
 // Returns the default capabilities when no overrides are provided.
 func (o Options) capabilities() (*common.Capabilities, error) {
+	if o.KubeVersion == "" && o.APIVersions == "" {
+		return common.DefaultCapabilities, nil
+	}
 	caps := common.DefaultCapabilities.Copy()
 	if o.KubeVersion != "" {
 		kv, err := common.ParseKubeVersion(o.KubeVersion)

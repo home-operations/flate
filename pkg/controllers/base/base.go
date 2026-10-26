@@ -20,21 +20,27 @@ type Controller struct {
 	// SubstituteFrom is the immutable bootstrap-approved substitution snapshot.
 	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 
-	started   atomic.Bool
-	filter    *change.Filter
-	skipKinds []string
+	started atomic.Bool
+	filter  *change.Filter
+	// SkipKinds is the immutable visible-output exclusion list.
+	SkipKinds []string
 
-	dependencySubstitutions values.DependencySubstitutions
+	// DependencySubstitutions binds emitted dependency projection to accepted history.
+	DependencySubstitutions values.DependencySubstitutions
 	existence               depwait.ExistenceLookup
-	allowMissingSecrets     bool
-	allowMissingCRDs        bool
-	preflight               func(manifest.NamedResource) (string, bool)
+	// AllowMissingSecrets permits unresolved required Helm values at the fixpoint.
+	AllowMissingSecrets bool
+	allowMissingCRDs    bool
+	preflight           func(manifest.NamedResource) (string, bool)
 }
 
 // New constructs a controller with the shared store and task service.
 func New(s *store.Store, t *task.Service) *Controller {
 	return &Controller{Store: s, Tasks: t}
 }
+
+// MissingCRDsAllowed reports whether unresolved CRD dependencies are allowed.
+func (c *Controller) MissingCRDsAllowed() bool { return c.allowMissingCRDs }
 
 // requireNotStarted panics if the started gate is set, enforcing the
 // invariant that reconcile-shaping config is frozen once dispatch
@@ -80,15 +86,15 @@ type Options struct {
 // Configure installs immutable setup before dispatch.
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
-	c.dependencySubstitutions = opts.DependencySubstitutions
+	c.DependencySubstitutions = opts.DependencySubstitutions
 	c.filter = opts.Filter
 	c.SubstituteFrom = opts.SubstituteFrom
-	c.skipKinds = opts.SkipKinds
+	c.SkipKinds = opts.SkipKinds
 	c.existence = opts.Existence
 	c.preflight = opts.PreflightFailure
 	c.Store.SetDiscoveryIndex(opts.Index)
 	c.allowMissingCRDs = opts.AllowMissingCRDs
-	c.allowMissingSecrets = opts.AllowMissingSecrets
+	c.AllowMissingSecrets = opts.AllowMissingSecrets
 }
 
 // KeepEmitted admits the incoming child and reports whether it is selected.

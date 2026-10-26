@@ -398,13 +398,6 @@ func (c *Cache) publishOutcome(ctx context.Context, id string, o *outcome, remot
 }
 
 func (c *Cache) pushOutcomeBlob(ctx context.Context, mediaType string, data []byte) (ocispec.Descriptor, error) {
-	limit := outcomeManifestLimit
-	if mediaType == outcomeConfig {
-		limit = outcomeConfigLimit
-	}
-	if len(data) > limit {
-		return ocispec.Descriptor{}, nil
-	}
 	desc := content.NewDescriptorFromBytes(mediaType, data)
 	if err := c.store.Push(ctx, desc, bytes.NewReader(data)); err != nil {
 		if errors.Is(err, errdef.ErrAlreadyExists) {

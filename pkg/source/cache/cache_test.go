@@ -369,18 +369,6 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 	}
 }
 
-func TestAcquire_ExpandedCapCountsIgnoredDuplicates(t *testing.T) {
-	old := maxExtractedBytes
-	maxExtractedBytes = 2*512 + 5
-	t.Cleanup(func() { maxExtractedBytes = old })
-	for _, root := range []string{"", t.TempDir()} {
-		c := cachetest.New(t, root, New)
-		if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-test-cap", Ignore: "file"}, Policy{MaxAge: 0}, producer(orderedArchive(t, "file", "abc", "file", "def"), ocispec.Descriptor{})); err == nil {
-			t.Fatal("ignored duplicate bypassed expanded cap")
-		}
-	}
-}
-
 func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 	t.Run("due", func(t *testing.T) {
 		for _, callers := range []int{2, 4} {

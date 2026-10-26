@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 
@@ -16,36 +17,26 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
 
-func TestHttpGetURL_RejectsOversizedBody(t *testing.T) {
+func TestHttpGetURL_AcceptsLargeBody(t *testing.T) {
 	t.Parallel()
+	const size = (64 << 20) + 1
 	c := newTestHTTPInputs(t, "")
+	closes := 0
 	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
-		body := remoteBody{Reader: remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), close: func() error { return nil }}
+		reader := io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), size)
+		body := remoteBody{Reader: reader, close: func() error { closes++; return nil }}
 		return &http.Response{StatusCode: http.StatusOK, Body: body, Header: make(http.Header)}, nil
 	})
-	_, err := c.httpGetURL(t.Context(), "https://example.invalid/big.yaml", sourcecache.ProducerInput{Writer: io.Discard})
-	if err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("oversized-body error=%v", err)
-	}
-}
-
-func TestHttpGetURL_AcceptsBodyAtCap(t *testing.T) {
-	t.Parallel()
-	c := newTestHTTPInputs(t, "")
-	c.httpClient.Transport = remoteRoundTrip(func(*http.Request) (*http.Response, error) {
-		reader := io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), remoteFetchMaxBytes)
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(reader), Header: make(http.Header)}, nil
-	})
-	desc, err := c.httpGetURL(t.Context(), "https://example.invalid/atcap.yaml", sourcecache.ProducerInput{Writer: io.Discard})
-	if err != nil || desc.Size != remoteFetchMaxBytes {
-		t.Fatalf("body exactly at cap: size=%d, error=%v", desc.Size, err)
+	desc, err := c.httpGetURL(t.Context(), "https://example.invalid/big.yaml", sourcecache.ProducerInput{Writer: io.Discard})
+	if err != nil || desc.Size != size || closes != 1 {
+		t.Fatalf("large body: size=%d closes=%d error=%v, want %d bytes and one close", desc.Size, closes, err, size)
 	}
 }
 
 func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 	t.Parallel()
-	readErr, closeErr := errors.New("body read"), errors.New("body close")
-	for _, outcome := range []string{"success", "created", "last-success", "status", "read", "limit"} {
+	readErr, writeErr, closeErr := errors.New("body read"), errors.New("body write"), errors.New("body close")
+	for _, outcome := range []string{"success", "created", "last-success", "status", "read", "large-read", "write"} {
 		t.Run(outcome, func(t *testing.T) {
 			t.Parallel()
 			c := newTestHTTPInputs(t, "")
@@ -62,16 +53,25 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 					status = http.StatusNotFound
 				case "read":
 					reader = remoteRead(func([]byte) (int, error) { return 0, readErr })
-				case "limit":
-					reader = remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil })
+				case "large-read":
+					reader = io.MultiReader(io.LimitReader(remoteRead(func(p []byte) (int, error) { clear(p); return len(p), nil }), (64<<20)+1), iotest.ErrReader(readErr))
 				}
 				return &http.Response{StatusCode: status, Header: make(http.Header), Body: remoteBody{Reader: reader, close: func() error { closes++; return closeErr }}}, nil
 			})
-			_, err := c.httpGetURL(t.Context(), "https://example.invalid/body", sourcecache.ProducerInput{Writer: io.Discard})
+			writer := io.Discard
+			if outcome == "write" {
+				reader, pipe := io.Pipe()
+				if err := reader.CloseWithError(writeErr); err != nil {
+					t.Fatal(err)
+				}
+				defer pipe.Close()
+				writer = pipe
+			}
+			_, err := c.httpGetURL(t.Context(), "https://example.invalid/body", sourcecache.ProducerInput{Writer: writer})
 			if !errors.Is(err, closeErr) || closes != 1 || strings.Count(err.Error(), closeErr.Error()) != 1 {
 				t.Fatalf("body cleanup: %v closes=%d", err, closes)
 			}
-			if outcome == "read" && !errors.Is(err, readErr) || outcome == "status" && fetcherr.Classes(err)&fetcherr.Client == 0 || outcome == "limit" && !strings.Contains(err.Error(), "exceeds") {
+			if (outcome == "read" || outcome == "large-read") && !errors.Is(err, readErr) || outcome == "status" && fetcherr.Classes(err)&fetcherr.Client == 0 || outcome == "write" && !errors.Is(err, writeErr) {
 				t.Fatalf("operation identity: %v", err)
 			}
 			if outcome == "status" {
@@ -80,7 +80,7 @@ func TestHttpGetURL_BodyCloseErrors(t *testing.T) {
 					t.Fatalf("response facts=%+v error=%v", status, err)
 				}
 			}
-			if (outcome == "status" || outcome == "read" || outcome == "limit") && !strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
+			if (outcome == "status" || outcome == "read" || outcome == "large-read" || outcome == "write") && !strings.HasSuffix(err.Error(), "\n"+closeErr.Error()) {
 				t.Fatalf("operation must precede cleanup: %v", err)
 			}
 		})

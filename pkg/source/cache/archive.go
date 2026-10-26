@@ -23,8 +23,6 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-var maxExtractedBytes int64 = 1 << 30
-
 type tarFS struct {
 	root     *os.Root
 	memory   *tree.Tree
@@ -168,23 +166,20 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 		if err != nil {
 			return nil, err
 		}
-		limit := maxExtractedBytes
 		if key.Policy == "extract" {
-			limit = 100 << 20
-		} else {
-			total += pos.offset - header
+			const limit = 100 << 20
+			if h.Size > limit-total {
+				return nil, fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, limit)
+			}
+			total += h.Size
 		}
-		if h.Size > limit-total {
-			return nil, fmt.Errorf("tar entry %q exceeds %d-byte extract limit", h.Name, limit)
-		}
-		total += h.Size
 		nextHeader = alignNext(pos.offset + h.Size)
 		link := h.Typeflag == tar.TypeSymlink || h.Typeflag == tar.TypeLink
 		if key.Policy == "extract" && h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir {
 			return nil, fmt.Errorf("unsupported tar entry %q type %d", h.Name, h.Typeflag)
 		}
 		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeDir && !link {
-			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // The expanded-byte cap covers every declared entry.
+			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // Flux source archives permit uncapped traversal; member paths are validated.
 				return nil, err
 			}
 			nextHeader = alignNext(pos.offset)
@@ -254,14 +249,14 @@ func readArchive(r io.Reader, key ArchiveKey, index *tarFS) (*tarFS, error) {
 			continue
 		}
 		if sparse && builder == nil {
-			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // The expanded-byte cap covers this regular sparse entry.
+			if _, err := io.Copy(io.Discard, tr); err != nil { //nolint:gosec // Flux source archives permit sparse expansion; reads stay confined to this member.
 				return nil, err
 			}
 			nextHeader = alignNext(pos.offset)
 		}
 		if builder != nil {
-			data := make([]byte, h.Size)
-			if _, err := io.ReadFull(tr, data); err != nil {
+			data, err := io.ReadAll(tr)
+			if err != nil {
 				return nil, err
 			}
 			nextHeader = alignNext(pos.offset)

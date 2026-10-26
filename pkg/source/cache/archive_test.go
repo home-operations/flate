@@ -3,7 +3,6 @@ package cache
 import (
 	"archive/tar"
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -74,81 +73,14 @@ func TestAcquire_ArchiveNames(t *testing.T) {
 	}
 }
 
-func gnuSparseEntry(logicalSize uint64) []byte {
-	blk := make([]byte, 512)
-	copy(blk[0:], "big")
-	copy(blk[100:], "0000644\x00")
-	copy(blk[108:], "0000000\x00")
-	copy(blk[116:], "0000000\x00")
-	copy(blk[124:], "00000000000\x00")
-	copy(blk[136:], "00000000000\x00")
-	blk[156] = 'S'
-	copy(blk[257:], "ustar  \x00")
-	blk[483] = 0x80 // GNU sparse logical size is base-256 encoded.
-	binary.BigEndian.PutUint64(blk[483+4:], logicalSize)
-	for i := 148; i < 156; i++ {
-		blk[i] = ' '
-	}
-	sum := 0
-	for _, b := range blk {
-		sum += int(b)
-	}
-	copy(blk[148:], fmt.Sprintf("%06o\x00 ", sum))
-	return append(bytes.Clone(blk), make([]byte, 1024)...)
-}
-
-func TestAcquire_SkippedSparseEntryCountsAgainstCap(t *testing.T) {
-	old := maxExtractedBytes
-	maxExtractedBytes = 1 << 20
-	t.Cleanup(func() { maxExtractedBytes = old })
-	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
-		t.Run(backing.name, func(t *testing.T) {
-			root := backing.root
-			c := cachetest.New(t, root, New)
-			_, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-sparse-cap"}, Policy{MaxAge: 0}, producer(gnuSparseEntry(1<<36), ocispec.Descriptor{}))
-			if err == nil {
-				t.Fatalf("root=%q: skipped sparse entry declaring 64 GiB bypassed the 1 MiB expanded-byte cap", root)
-			}
-		})
-	}
-}
-
-func TestAcquire_EmptyEntryHeadersCountAgainstCap(t *testing.T) {
-	old := maxExtractedBytes
-	maxExtractedBytes = 1024
-	t.Cleanup(func() { maxExtractedBytes = old })
-	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
-		t.Run(backing.name, func(t *testing.T) {
-			c := cachetest.New(t, backing.root, New)
-			key := ArchiveKey{Content: "source-empty-headers-cap"}
-			var overCapTar bytes.Buffer
-			testutil.WriteTar(t, &overCapTar, map[string]string{"a": "", "b": "", "c": ""}, 0o644)
-			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(overCapTar.Bytes(), ocispec.Descriptor{})); err == nil {
-				t.Fatal("empty entry headers bypassed extract cap")
-			}
-			key.Policy = "extract"
-			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(overCapTar.Bytes(), ocispec.Descriptor{})); err != nil {
-				t.Fatalf("extract charged header bytes: %v", err)
-			}
-			key.Policy = ""
-			var payloadTar bytes.Buffer
-			testutil.WriteTar(t, &payloadTar, map[string]string{"a": "", "b": ""}, 0o644)
-			if _, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, producer(payloadTar.Bytes(), ocispec.Descriptor{})); err != nil {
-				t.Fatalf("retry at extract cap: %v", err)
-			}
-		})
-	}
-}
-
 func TestAcquire_TrailingRecordPadding(t *testing.T) {
-	old := maxExtractedBytes
-	maxExtractedBytes = 2*512 + 2
-	t.Cleanup(func() { maxExtractedBytes = old })
+	t.Parallel()
 	var payloadTar bytes.Buffer
 	testutil.WriteTar(t, &payloadTar, map[string]string{"file": "x", "other": "y"}, 0o644)
 	data := append(payloadTar.Bytes(), make([]byte, 8192)...)
 	for _, backing := range []struct{ name, root string }{{"memory", ""}, {"disk", t.TempDir()}} {
 		t.Run(backing.name, func(t *testing.T) {
+			t.Parallel()
 			root := backing.root
 			c := cachetest.New(t, root, New)
 			if _, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "source-padding"}, Policy{MaxAge: time.Hour}, producer(data, ocispec.Descriptor{})); err != nil {

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -73,6 +74,13 @@ func TestWalkBucket_BoundedParallelOrder(t *testing.T) {
 	}
 	if got := peak.Load(); got < 2 || got > 8 {
 		t.Fatalf("parallel downloads=%d, want 2..8", got)
+	}
+	var repeated bytes.Buffer
+	if _, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, &repeated); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data.Bytes(), repeated.Bytes()) {
+		t.Fatal("bucket archive differs between two runs")
 	}
 	tr := tar.NewReader(&data)
 	for i := range 16 {
@@ -339,28 +347,132 @@ func TestWalkBucket_ArchiveNames(t *testing.T) {
 	}
 }
 
-// A listing is untrusted: an object larger than the archive cap, or a negative size, must fail before
-// any allocation or download.
-func TestWalkBucket_RejectsImplausibleListedSize(t *testing.T) {
+func TestWalkBucket_RejectsNegativeListedSize(t *testing.T) {
 	t.Parallel()
-	for _, size := range []int64{-1, 1<<30 + 1, 1 << 40} {
-		t.Run(fmt.Sprint(size), func(t *testing.T) {
+	var gets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("list-type") == "" {
+			gets.Add(1)
+			return
+		}
+		_, _ = io.WriteString(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>big</Key><Size>-1</Size><ETag>\"x\"</ETag></Contents></ListBucketResult>")
+	}))
+	t.Cleanup(srv.Close)
+	client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, io.Discard); err == nil || err.Error() != `bucket object "big" has negative size` || gets.Load() != 0 {
+		t.Fatalf("err=%v gets=%d, want a listing-time error and no download", err, gets.Load())
+	}
+}
+
+type bucketRoundTrip func(*http.Request) (*http.Response, error)
+
+func (tr bucketRoundTrip) RoundTrip(req *http.Request) (*http.Response, error) {
+	return tr(req)
+}
+
+func TestWalkBucket_LargeListedSize(t *testing.T) {
+	t.Parallel()
+	const size int64 = (1 << 30) + 1
+	for _, ranges := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ranges=%t", ranges), func(t *testing.T) {
 			t.Parallel()
-			var gets atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Query().Get("list-type") == "" {
-					gets.Add(1)
-					return
-				}
-				_, _ = fmt.Fprintf(w, "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>big</Key><Size>%d</Size><ETag>\"x\"</ETag></Contents></ListBucketResult>", size)
-			}))
-			defer srv.Close()
-			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath})
+			cause := errors.New("large bucket body")
+			arrived := make(chan struct{}, downloads)
+			gate := make(chan struct{})
+			openGate := sync.OnceFunc(func() { close(gate) })
+			defer openGate()
+			var active, peak atomic.Int32
+			var gets [2]atomic.Int32
+			client, err := minio.New("bucket.invalid", &minio.Options{
+				Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1,
+				Transport: bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
+					if req.URL.Query().Get("list-type") != "" {
+						var listing strings.Builder
+						listing.WriteString("<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>")
+						for i := range 2 {
+							fmt.Fprintf(&listing, "<Contents><Key>big%d</Key><Size>%d</Size><ETag>\"v1\"</ETag></Contents>", i, size)
+						}
+						listing.WriteString("</ListBucketResult>")
+						return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(listing.String())), Request: req}, nil
+					}
+					if req.Header.Get("If-Match") != `"v1"` {
+						t.Errorf("large object ETag: %q", req.Header.Get("If-Match"))
+					}
+					response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Request: req, ContentLength: size}
+					response.Header.Set("ETag", `"v1"`)
+					response.Header.Set("Last-Modified", time.Unix(0, 0).UTC().Format(http.TimeFormat))
+					probe := req.Header.Get("Range") == "bytes=0-0"
+					if ranges {
+						var start, end int64
+						if n, err := fmt.Sscanf(req.Header.Get("Range"), "bytes=%d-%d", &start, &end); n != 2 || err != nil || end-start+1 > chunkBytes {
+							t.Errorf("large object range: %q", req.Header.Get("Range"))
+						}
+						response.StatusCode = http.StatusPartialContent
+						response.ContentLength = end - start + 1
+						response.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+					} else if !probe && req.Header.Get("Range") != "" {
+						t.Errorf("ignored-range object split: %q", req.Header.Get("Range"))
+					}
+					response.Header.Set("Content-Length", strconv.FormatInt(response.ContentLength, 10))
+					if probe {
+						response.Body = io.NopCloser(strings.NewReader("x"))
+						return response, nil
+					}
+					i, err := strconv.Atoi(strings.TrimPrefix(req.URL.Path, "/data/big"))
+					if err != nil || i < 0 || i >= len(gets) {
+						return nil, fmt.Errorf("unexpected large bucket path: %s", req.URL.Path)
+					}
+					gets[i].Add(1)
+					n := active.Add(1)
+					defer active.Add(-1)
+					for old := peak.Load(); old < n; old = peak.Load() {
+						if peak.CompareAndSwap(old, n) {
+							break
+						}
+					}
+					select {
+					case arrived <- struct{}{}:
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					}
+					select {
+					case <-gate:
+					case <-req.Context().Done():
+						return nil, req.Context().Err()
+					}
+					response.Body = io.NopCloser(iotest.ErrReader(cause))
+					return response, nil
+				}),
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := walkBucket(t.Context(), client, &manifest.Bucket{BucketName: "data"}, io.Discard); err == nil || err.Error() != `bucket object "big" exceeds 1 GiB extract limit` || gets.Load() != 0 {
-				t.Fatalf("err=%v gets=%d, want a listing-time error and no download", err, gets.Load())
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := walkBucket(ctx, client, &manifest.Bucket{BucketName: "data"}, io.Discard)
+				done <- err
+			}()
+			for range 2 {
+				select {
+				case <-arrived:
+				case err := <-done:
+					t.Fatalf("large acquisition ended before concurrent body reads: %v", err)
+				}
+			}
+			openGate()
+			if err := <-done; !errors.Is(err, cause) {
+				t.Fatalf("large object did not reach original reader fault: %v", err)
+			}
+			if peak.Load() < 2 || peak.Load() > downloads {
+				t.Fatalf("large object parallel work=%d, want 2..%d", peak.Load(), downloads)
+			}
+			if !ranges && (gets[0].Load() != 1 || gets[1].Load() != 1) {
+				t.Fatalf("ignored ranges split whole objects: gets=%d/%d", gets[0].Load(), gets[1].Load())
 			}
 		})
 	}

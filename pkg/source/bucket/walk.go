@@ -26,9 +26,8 @@ import (
 )
 
 const (
-	chunkBytes     int64 = 8 << 20
-	maxObjectBytes int64 = 1 << 30
-	downloads            = 8
+	chunkBytes int64 = 8 << 20
+	downloads        = 8
 )
 
 type bucketChunk struct {
@@ -75,15 +74,15 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 		if name == "." {
 			return ocispec.Descriptor{}, fmt.Errorf("bucket key %q is a non-directory root: %w", e.Key, fs.ErrInvalid)
 		}
-		if e.Size < 0 || e.Size > maxObjectBytes {
-			return ocispec.Descriptor{}, fmt.Errorf("bucket object %q exceeds 1 GiB extract limit", e.Key)
+		if e.Size < 0 {
+			return ocispec.Descriptor{}, fmt.Errorf("bucket object %q has negative size", e.Key)
 		}
 		entries[len(names)] = e
 		names = append(names, name)
 		_, _ = fmt.Fprintf(h, "%s %s\n", e.Key, e.ETag)
 	}
 	entries = entries[:len(names)]
-	step := chunkBytes
+	ranges := true
 	if i := slices.IndexFunc(entries, func(e minio.ObjectInfo) bool { return e.Size > chunkBytes }); i >= 0 {
 		probe := &bucketChunk{object: &entries[i], size: 1}
 		body, header, err := probe.get(ctx, client, b.BucketName)
@@ -91,12 +90,14 @@ func walkBucket(ctx context.Context, client *minio.Client, b *manifest.Bucket, w
 			return ocispec.Descriptor{}, err
 		}
 		_ = body.Close()
-		if header.Get("Content-Range") == "" {
-			step = maxObjectBytes
-		}
+		ranges = header.Get("Content-Range") != ""
 	}
 	var chunks []*bucketChunk
 	for i := range entries {
+		step := chunkBytes
+		if !ranges {
+			step = max(int64(1), entries[i].Size)
+		}
 		for start := int64(0); start == 0 || start < entries[i].Size; start += step {
 			c := &bucketChunk{
 				object: &entries[i], name: names[i],

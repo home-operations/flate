@@ -157,7 +157,7 @@ func (f *operation) produceLayer(ctx context.Context, client *remote.Repository,
 		if err != nil {
 			return result, fmt.Errorf("gzip: %w", orasError(err))
 		}
-		_, copyErr := io.Copy(w, gz) //nolint:gosec // The archive consumer caps expanded regular payloads before publication.
+		_, copyErr := io.Copy(w, gz) //nolint:gosec // Flux source extraction is uncapped; the cache validates and confines archive entries.
 		closeErr := gz.Close()
 		if copyErr != nil {
 			return result, orasError(copyErr)

@@ -609,39 +609,6 @@ func TestOutcome_PublicationFailure(t *testing.T) {
 
 func TestOutcome_WriteBounds(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, media string
-		limit       int
-	}{{"config", outcomeConfig, outcomeConfigLimit}, {"manifest", ocispec.MediaTypeImageManifest, outcomeManifestLimit}} {
-		for _, extra := range []int{0, 1} {
-			t.Run(fmt.Sprintf("%s/%d", tc.name, extra), func(t *testing.T) {
-				t.Parallel()
-				c := cachetest.New(t, t.TempDir(), New)
-				o := newOutcome(outcomeFailure(connReset()), time.Now().UTC(), 1, ocispec.Descriptor{})
-				config, data, _ := o.encode()
-				if tc.media == outcomeConfig {
-					data = config
-				}
-				data = append(data, bytes.Repeat([]byte(" "), tc.limit+extra-len(data))...)
-				desc, err := c.pushOutcomeBlob(t.Context(), tc.media, data)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if extra == 0 {
-					if desc.Size != int64(tc.limit) {
-						t.Fatalf("exact bound rejected: %+v", desc)
-					}
-				} else {
-					if desc.Digest != "" {
-						t.Fatal("oversize blob published")
-					}
-					if _, err := c.root.Stat(blobPath(content.NewDescriptorFromBytes(tc.media, data).Digest)); !errors.Is(err, fs.ErrNotExist) {
-						t.Fatalf("oversize blob written: %v", err)
-					}
-				}
-			})
-		}
-	}
 	for _, size := range []int{outcomeConfigLimit, outcomeConfigLimit + 1} {
 		t.Run(fmt.Sprintf("record/%d", size), func(t *testing.T) {
 			t.Parallel()

@@ -37,13 +37,6 @@ type remoteWorkers struct {
 	drain chan struct{}
 }
 
-// remoteFetchMaxBytes caps each HTTP input response body. A
-// kustomization resource is almost always under a megabyte of YAML;
-// 64 MiB is several orders of magnitude of headroom that still
-// bounds the OOM blast radius from a malicious or accidentally-huge
-// URL endpoint.
-const remoteFetchMaxBytes = 64 << 20 // 64 MiB
-
 const (
 	httpOriginalURLAnnotation  = "flate.http-original-url"
 	httpETagAnnotation         = "flate.http-etag"
@@ -240,13 +233,9 @@ func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.Prod
 	if result.Unchanged {
 		return result, nil
 	}
-	// The extra byte detects overflow without buffering an unbounded response.
-	size, err := io.Copy(w, io.LimitReader(resp.Body, remoteFetchMaxBytes+1))
+	size, err := io.Copy(w, resp.Body)
 	if err != nil {
 		return cache.ProducerResult{}, err
-	}
-	if size > remoteFetchMaxBytes {
-		return cache.ProducerResult{}, fmt.Errorf("response body exceeds %d-byte cap", remoteFetchMaxBytes)
 	}
 	result.Size = size
 	return result, nil

@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -366,6 +367,97 @@ func TestReadArchive_ExtractDeclaredSize(t *testing.T) {
 				}
 			} else if err == nil || errors.Is(err, io.ErrUnexpectedEOF) {
 				t.Fatalf("declared size cap bypassed: %v", err)
+			}
+		})
+	}
+}
+
+func TestReadArchive_LargeDeclaredSize(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []string{"", "source", "fixed"} {
+		t.Run("policy="+policy, func(t *testing.T) {
+			t.Parallel()
+			for _, backing := range []string{"memory", "disk"} {
+				t.Run(backing, func(t *testing.T) {
+					t.Parallel()
+					cause := errors.New("large archive body")
+					for _, tc := range []struct {
+						name        string
+						cause, want error
+					}{
+						{"truncated", io.EOF, io.ErrUnexpectedEOF},
+						{"fault", cause, cause},
+					} {
+						t.Run(tc.name, func(t *testing.T) {
+							t.Parallel()
+							index := &tarFS{}
+							if backing == "disk" {
+								root, err := os.OpenRoot(t.TempDir())
+								if err != nil {
+									t.Fatal(err)
+								}
+								t.Cleanup(func() { _ = root.Close() })
+								index.root = root
+							}
+							var header bytes.Buffer
+							if err := tar.NewWriter(&header).WriteHeader(&tar.Header{Name: "large", Size: 1 << 33, Mode: 0o644}); err != nil {
+								t.Fatal(err)
+							}
+							_, err := readArchive(io.MultiReader(bytes.NewReader(header.Bytes()), iotest.ErrReader(tc.cause)), ArchiveKey{Policy: policy}, index)
+							if !errors.Is(err, tc.want) {
+								t.Fatalf("large declared body: %v, want %v", err, tc.want)
+							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestReadArchive_AcceptsLargeSource(t *testing.T) {
+	t.Parallel()
+	const size = (1 << 30) + 1
+	for _, policy := range []string{"", "source", "fixed"} {
+		t.Run("policy="+policy, func(t *testing.T) {
+			t.Parallel()
+			root, err := os.OpenRoot(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = root.Close() })
+			file, err := root.Create("large.tar")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			var header bytes.Buffer
+			if err := tar.NewWriter(&header).WriteHeader(&tar.Header{Name: "large", Size: size, Mode: 0o644, Format: tar.FormatUSTAR}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := file.Write(header.Bytes()); err != nil {
+				t.Fatal(err)
+			}
+			if err := file.Truncate(alignNext(int64(header.Len())+size) + 1024); err != nil {
+				t.Fatal(err)
+			}
+			var previous map[string]int64
+			for range 2 {
+				if _, err := file.Seek(0, io.SeekStart); err != nil {
+					t.Fatal(err)
+				}
+				input, err := readArchive(file, ArchiveKey{Policy: policy}, &tarFS{root: root})
+				if err != nil {
+					t.Fatalf("valid large source archive: %v", err)
+				}
+				got := make(map[string]int64)
+				for name, node := range input.nodes {
+					got[name] = node.Size()
+				}
+				if got["large"] != size || len(got) != 2 || previous != nil && !maps.Equal(got, previous) {
+					t.Fatalf("large archive index changed: %v, previous %v", got, previous)
+				}
+				previous = got
 			}
 		})
 	}

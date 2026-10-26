@@ -145,31 +145,6 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
 	}
 	if err != nil {
-		// Best-effort rescue: if this HR's parent Kustomization couldn't read a
-		// substituteFrom Secret offline, a required value the render needs may
-		// have substituted to empty (e.g. cronjob.timeZone from ${CONFIG_TZ}).
-		// Re-render with those empties filled by placeholders so the resource
-		// stays VISIBLE in the diff instead of being dropped by the FAILED-HR
-		// gate. Bounded: only failing HRs are touched, and only adopted if the
-		// retry actually renders — a failure with a different cause (missing
-		// container, chart 404) re-fails and falls through to the error below.
-		if rescued, rescuedReceipt, paths, ok, rescueErr := c.renderBestEffort(ctx, id, hr, input); ok {
-			if handled {
-				if rescueErr != nil {
-					return rescueErr
-				}
-				return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
-			}
-			docs, receipt, err = rescued, rescuedReceipt, nil
-			c.run.Reads.AddWarning(id, manifest.Warning{
-				Resource: id,
-				Category: manifest.WarnUnresolvedSubstitution,
-				Message:  "rendered best-effort: unresolved substitution values replaced with placeholders",
-				Detail:   paths,
-			})
-		}
-	}
-	if err != nil {
 		return err
 	}
 	// #744: flag top-level release values no chart template references — a key
@@ -199,49 +174,6 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		return err
 	}
 	return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
-}
-
-func (c *execution) renderBestEffort(ctx context.Context, id manifest.NamedResource, hr *manifest.HelmRelease, input helm.RenderOptions) ([]map[string]any, *manifest.RenderReceipt, []string, bool, error) {
-	if !c.parentReadsUnreadableSecret(id) {
-		return nil, nil, nil, false, nil
-	}
-	filled, paths := manifest.FillEmptyValueLeaves(hr.Values)
-	if len(paths) == 0 {
-		return nil, nil, nil, false, nil
-	}
-	handled := false
-	admit := input.Admit
-	input.Admit = func(key string) (bool, error) {
-		stop, err := admit(key)
-		handled = stop || err != nil
-		return stop, err
-	}
-	docs, receipt, err := c.Helm.Template(ctx, hr, filled, input)
-	if handled {
-		return nil, nil, nil, true, err
-	}
-	if err != nil {
-		return nil, nil, nil, false, nil
-	}
-	return docs, receipt, paths, true, nil
-}
-
-func (c *execution) parentReadsUnreadableSecret(id manifest.NamedResource) bool {
-	for _, p := range c.run.Reads.Productions(id, nil) {
-		if p.Owner == (manifest.NamedResource{}) || p.Owner == id {
-			continue
-		}
-		emission, _ := c.run.Reads.GetArtifact(p.Owner).(*store.Emission)
-		if emission == nil {
-			continue
-		}
-		for _, ref := range emission.Unreadable {
-			if c.SubstituteFrom[ref] == nil {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (c *execution) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool, error) {

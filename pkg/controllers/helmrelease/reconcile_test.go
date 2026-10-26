@@ -557,150 +557,125 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
 			t.Parallel()
 
-			for _, rescue := range []bool{false, true} {
-				t.Run(fmt.Sprintf("rescue_%t", rescue), func(t *testing.T) {
-					t.Parallel()
-
-					st := store.New()
-					tasks := task.NewBounded(workers)
-					owner, err := sourcecache.New(t.Context(), "")
-					if err != nil {
-						t.Fatal(err)
-					}
-					t.Cleanup(func() { _ = owner.Close() })
-					client := helm.NewClient(owner)
-					c := New(base.New(st, tasks), client, helm.Options{}, false)
-					c.Configure(base.Options{})
-					c.StartLifecycle()
-					started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
-					release := sync.OnceFunc(func() { close(resume) })
-					t.Cleanup(func() { release(); tasks.BlockTillDone(); c.StartLifecycle() })
-					parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-					if rescue {
-						parent.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}}}
-					}
-					st.AddObject(parent)
-					dir := t.TempDir()
-					testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: binding\nversion: 1.0.0\n")
-					testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `apiVersion: v1
+			st := store.New()
+			tasks := task.NewBounded(workers)
+			owner, err := sourcecache.New(t.Context(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = owner.Close() })
+			client := helm.NewClient(owner)
+			c := New(base.New(st, tasks), client, helm.Options{}, false)
+			c.Configure(base.Options{})
+			c.StartLifecycle()
+			started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(resume) })
+			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.StartLifecycle() })
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			st.AddObject(parent)
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: binding\nversion: 1.0.0\n")
+			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: binding}
 data:
   output: {{ .Values.output | quote }}
   required: {{ required "required value" .Values.required | quote }}
 `)
-					src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
-					st.AddObject(src)
-					source := &store.SourceArtifact{
-						Kind:      manifest.KindOCIRepository,
-						FS:        &renderBarrierFS{FS: os.DirFS(dir), tasks: tasks, started: started, resume: resume},
-						LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
-						Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
-					}
-					st.SetArtifact(src.Named(), source)
-					st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-					required := "present"
-					if rescue {
-						required = ""
-					}
-					docA := map[string]any{
-						"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
-						"metadata": map[string]any{"name": "release", "namespace": "apps"},
-						"spec": map[string]any{
-							"chartRef": map[string]any{"kind": manifest.KindOCIRepository, "name": src.Name},
-							"values":   map[string]any{"output": "A", "required": required},
-						},
-					}
-					docB := manifest.DeepCopyMap(docA)
-					docB["spec"].(map[string]any)["values"].(map[string]any)["output"] = "B"
-					publish := func(doc map[string]any) {
-						_, _, next := st.GetEmission(parent.Named())
-						defer next.Finish()
-						next.Children, next.Manifests = c.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
-						next.Complete = true
-						if rescue {
-							next.Unreadable = []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: parent.Namespace, Name: "unreadable"}}
-						}
-						c.Emit(parent.Named(), &next, nil)
-					}
-					publish(docA)
-					st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-					id := testutil.HelmReleaseID("apps", "release")
-					hr, ok := st.Get[*manifest.HelmRelease](id)
-					if !ok {
-						t.Fatal("parent did not emit input A")
-					}
-					var accepted atomic.Pointer[store.Emission]
-					unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
-						if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
-							accepted.Store(emission)
-						}
-					}, false)
-					t.Cleanup(unsubscribe)
-					tasks.Go(t.Context(), "parent", func(context.Context) {
-						defer release()
-						reached := false
-						tasks.YieldSlot(func() {
-							select {
-							case <-started:
-								reached = true
-							case <-rendered:
-							}
-						})
-						if !reached {
-							t.Error("render never reached chart filesystem")
-							return
-						}
-						publish(docB)
-					})
-					markRendered := sync.OnceFunc(func() { close(rendered) })
-					info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
-						Tasks: tasks, Store: st, ID: id,
-						ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-							defer markRendered()
-							return c.ReconcileNode(ctx, id, level)
-						},
-					})
-					if info.Status != store.StatusReady {
-						t.Fatalf("canonical replacement status = %+v", info)
-					}
-
-					if tasks.Failures() != 0 {
-						t.Fatalf("task failures = %d", tasks.Failures())
-					}
-					emission := accepted.Load()
-					if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint == "" || !emission.OutputReads.Valid() {
-						t.Fatalf("accepted B emission = %+v; want complete output with current provenance and a content key", emission)
-					}
-					if got := renderedConfigMapValue(emission.Manifests, "output"); got != "B" {
-						t.Fatalf("rendered output = %q, want B", got)
-					}
-					if rescue {
-						if got := renderedConfigMapValue(emission.Manifests, "required"); got != "..PLACEHOLDER_required.." {
-							t.Fatalf("rescued value = %q", got)
-						}
-						if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-							return w.Resource == id && w.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(w.Detail, "required")
-						}) {
-							t.Fatal("best-effort rescue warning missing")
-						}
-					}
-					current, ok := st.Get[*manifest.HelmRelease](id)
-					if !ok || current.Values["output"] != "B" {
-						t.Fatalf("current input is not B: %+v", current)
-					}
-					if st.GetArtifact(id) != emission {
-						t.Error("canonical B does not expose its accepted output")
-					}
-					output, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "binding"})
-					if !ok || output.Data["output"] != "B" {
-						t.Fatalf("canonical emitted child = %+v, want output B", output)
-					}
-
-					if hr.Values["output"] != "A" || hr.Values["required"] != required {
-						t.Fatal("render mutated input A")
+			src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
+			st.AddObject(src)
+			source := &store.SourceArtifact{
+				Kind:      manifest.KindOCIRepository,
+				FS:        &renderBarrierFS{FS: os.DirFS(dir), tasks: tasks, started: started, resume: resume},
+				LocalPath: dir, Revision: "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+				Digest: "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+			}
+			st.SetArtifact(src.Named(), source)
+			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+			required := "present"
+			docA := map[string]any{
+				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
+				"metadata": map[string]any{"name": "release", "namespace": "apps"},
+				"spec": map[string]any{
+					"chartRef": map[string]any{"kind": manifest.KindOCIRepository, "name": src.Name},
+					"values":   map[string]any{"output": "A", "required": required},
+				},
+			}
+			docB := manifest.DeepCopyMap(docA)
+			docB["spec"].(map[string]any)["values"].(map[string]any)["output"] = "B"
+			publish := func(doc map[string]any) {
+				_, _, next := st.GetEmission(parent.Named())
+				defer next.Finish()
+				next.Children, next.Manifests = c.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+				next.Complete = true
+				c.Emit(parent.Named(), &next, nil)
+			}
+			publish(docA)
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+			id := testutil.HelmReleaseID("apps", "release")
+			hr, ok := st.Get[*manifest.HelmRelease](id)
+			if !ok {
+				t.Fatal("parent did not emit input A")
+			}
+			var accepted atomic.Pointer[store.Emission]
+			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
+				if emission, ok := payload.(*store.Emission); other == id && ok && emission.Complete {
+					accepted.Store(emission)
+				}
+			}, false)
+			t.Cleanup(unsubscribe)
+			tasks.Go(t.Context(), "parent", func(context.Context) {
+				defer release()
+				reached := false
+				tasks.YieldSlot(func() {
+					select {
+					case <-started:
+						reached = true
+					case <-rendered:
 					}
 				})
+				if !reached {
+					t.Error("render never reached chart filesystem")
+					return
+				}
+				publish(docB)
+			})
+			markRendered := sync.OnceFunc(func() { close(rendered) })
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+				Tasks: tasks, Store: st, ID: id,
+				ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+					defer markRendered()
+					return c.ReconcileNode(ctx, id, level)
+				},
+			})
+			if info.Status != store.StatusReady {
+				t.Fatalf("canonical replacement status = %+v", info)
+			}
+
+			if tasks.Failures() != 0 {
+				t.Fatalf("task failures = %d", tasks.Failures())
+			}
+			emission := accepted.Load()
+			if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint == "" || !emission.OutputReads.Valid() {
+				t.Fatalf("accepted B emission = %+v; want complete output with current provenance and a content key", emission)
+			}
+			if got := renderedConfigMapValue(emission.Manifests, "output"); got != "B" {
+				t.Fatalf("rendered output = %q, want B", got)
+			}
+			current, ok := st.Get[*manifest.HelmRelease](id)
+			if !ok || current.Values["output"] != "B" {
+				t.Fatalf("current input is not B: %+v", current)
+			}
+			if st.GetArtifact(id) != emission {
+				t.Error("canonical B does not expose its accepted output")
+			}
+			output, ok := st.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "binding"})
+			if !ok || output.Data["output"] != "B" {
+				t.Fatalf("canonical emitted child = %+v, want output B", output)
+			}
+
+			if hr.Values["output"] != "A" || hr.Values["required"] != required {
+				t.Fatal("render mutated input A")
 			}
 		})
 	}
@@ -953,12 +928,9 @@ items:
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Values: map[string]any{"required": ""}, Chart: manifest.HelmChart{Name: "mychart", Source: src.Named()}}
 	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}}}, nil)
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
-	if !c.newExecution(hr.Named()).parentReadsUnreadableSecret(hr.Named()) {
-		t.Fatal("fixture did not enable best-effort retry")
-	}
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
 	if info.Status != store.StatusFailed || !strings.Contains(info.Message, "Object 'Kind' is missing") {
-		t.Fatalf("persistent invalid list was rescued: %+v", info)
+		t.Fatalf("invalid list did not retain its original failure: %+v", info)
 	}
 	if art, _ := st.GetArtifact(hr.Named()).(*store.Emission); art != nil && art.Complete {
 		t.Fatal("failed render published completed output")
@@ -967,48 +939,66 @@ items:
 		t.Fatal("failed render published a repaired child")
 	}
 	if slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool { return w.Category == manifest.WarnUnresolvedSubstitution }) {
-		t.Fatal("failed retry reported successful best-effort rescue")
+		t.Fatal("failed render reported successful placeholder substitution")
 	}
 }
 
-func TestReconcile_RescuePublishesSuccessfulReceipt(t *testing.T) {
+func TestReconcile_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
 	t.Parallel()
-	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
-		t.Skip(reason)
-	}
-	c, st := newTestController(t, nil)
-	c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
-	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rescued, namespace: apps}\ndata:\n  value: {{ required \"missing required value\" .Values.required | quote }}\n")
-	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
-	st.AddObject(source)
-	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
-	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
-	hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()}, Values: map[string]any{"required": ""}}
-	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}}}}
-	st.AddObject(parent)
-	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Name: "unreadable", Namespace: "apps"}}}, nil)
-	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
-	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
-	assert.Equal(t, info.Status, store.StatusReady)
-	emission, ok := st.GetArtifact(hr.Named()).(*store.Emission)
-	if !ok || emission.Render == nil || !emission.Complete {
-		t.Fatal("successful rescue did not retain its accepted receipt")
-	}
-	filled, paths := manifest.FillEmptyValueLeaves(hr.Values)
-	assert.Equal(t, len(paths), 1)
-	assert.Equal(t, renderedConfigMapValue(emission.Manifests, "value"), filled["required"].(string))
-	previous, complete := c.Helm.PreviousRender(t.Context(), hr, filled, helm.RenderOptions{Sources: helm.NewSources(st)})
-	if !complete || previous == nil {
-		t.Fatal("successful second render did not publish durable history")
-	}
-	var children []manifest.NamedResource
-	for child := range previous {
-		children = append(children, child)
-	}
-	assert.Diff(t, children, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Name: "rescued", Namespace: "apps"}})
-	if _, complete := c.Helm.PreviousRender(t.Context(), hr, hr.Values, helm.RenderOptions{Sources: helm.NewSources(st)}); complete {
-		t.Fatal("failed first render borrowed rescued history")
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{name: "empty", value: ""},
+		{name: "null"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, st := newTestController(t, nil)
+			cacheDir := t.TempDir()
+			c.Helm = helm.NewClient(cachetest.New(t, cacheDir, sourcecache.New))
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rescued, namespace: apps}\ndata:\n  value: {{ required \"missing required value\" .Values.required | quote }}\n")
+			source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+			st.AddObject(source)
+			st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+			st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
+			hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()}, Values: map[string]any{"required": tc.value}}
+			original := hr.Clone()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}}}}
+			st.AddObject(parent)
+			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Name: "unreadable", Namespace: "apps"}}}, nil)
+			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+			if info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value") {
+				t.Errorf("required chart value did not retain its original failure: %+v", info)
+			}
+			stored := st.GetObject(hr.Named()).(*manifest.HelmRelease)
+			assert.Diff(t, stored.Values, original.Values)
+			if emission, _ := st.GetArtifact(hr.Named()).(*store.Emission); emission != nil && (emission.Complete || emission.Render != nil || len(emission.Manifests) != 0) {
+				t.Error("failed chart published completed output or a successful receipt")
+			}
+			if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "rescued", Namespace: "apps"}) != nil {
+				t.Error("failed chart published a fabricated ConfigMap")
+			}
+			if slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+				return w.Resource == hr.Named() && w.Category == manifest.WarnUnresolvedSubstitution
+			}) {
+				t.Error("failed chart reported successful placeholder substitution")
+			}
+			t.Run("history", func(t *testing.T) {
+				t.Parallel()
+				if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
+					t.Skip(reason)
+				}
+				fresh := helm.NewClient(cachetest.New(t, cacheDir, sourcecache.New))
+				for _, inputs := range []map[string]any{original.Values, {"required": manifest.ValuePlaceholder("required")}} {
+					if _, complete := fresh.PreviousRender(t.Context(), hr, inputs, helm.RenderOptions{Sources: helm.NewSources(st)}); complete {
+						t.Errorf("failed chart has successful history for values %#v", inputs)
+					}
+				}
+			})
+		})
 	}
 }

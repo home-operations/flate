@@ -205,7 +205,8 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	}
 }
 
-func TestRender_SubstitutionSuppliedSecretDoesNotRescueHelmRelease(t *testing.T) {
+func TestRender_SubstitutionSourcesPreserveRequiredChartFailure(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		references    string
@@ -250,7 +251,7 @@ func TestRender_SubstitutionSuppliedSecretDoesNotRescueHelmRelease(t *testing.T)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rescued := tt.missingSecret != ""
+			t.Parallel()
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "flux/apps.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
@@ -294,48 +295,30 @@ spec:
 				}
 			})
 			res, err := o.Render(t.Context())
-			if rescued {
-				if err != nil {
-					t.Errorf("expected rescued render, got %v", err)
-				}
-			} else if _, ok := errors.AsType[*FailuresError](err); !ok {
+			if _, ok := errors.AsType[*FailuresError](err); !ok {
 				t.Errorf("expected reconcile failure, got %v", err)
 			}
 			if res == nil {
 				t.Fatal("missing render result")
 			}
 			demo := testutil.HelmReleaseID("apps", "demo")
-			if _, failed := res.Failed[demo]; failed == rescued {
-				t.Errorf("HelmRelease failed = %v, want %v", failed, !rescued)
+			if info, failed := res.Failed[demo]; !failed || !strings.Contains(info.Message, "greeting is required") {
+				t.Errorf("required chart value did not retain its original failure: %+v", info)
 			}
-			placeholder := false
-			for id, docs := range outputByParent(res.Manifests) {
-				for _, doc := range docs {
-					if manifest.ContainsValuePlaceholder(doc) {
-						placeholder = true
-						if !rescued {
-							t.Errorf("unexpected rescue placeholder in %s: %v", id, doc)
-						}
-					}
-				}
+			if docs := outputByParent(res.Manifests)[demo]; len(docs) != 0 {
+				t.Errorf("failed chart published output: %v", docs)
 			}
-			if rescued && !placeholder {
-				t.Error("rescued render must contain a value placeholder")
-			}
-			rescueWarning, missingWarning := false, false
+			missingWarning := false
 			for _, warning := range res.Warnings {
-				if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution && slices.Contains(warning.Detail, "greeting") {
-					rescueWarning = true
-					if !rescued {
-						t.Errorf("unexpected rescue warning: %+v", warning)
-					}
+				if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution {
+					t.Errorf("failed chart reported successful placeholder substitution: %+v", warning)
 				}
 				if warning.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(warning.Message, fmt.Sprintf("Secret %q", tt.missingSecret)) {
 					missingWarning = true
 				}
 			}
-			if rescued && (!rescueWarning || !missingWarning) {
-				t.Errorf("missing unresolved-substitution warnings: rescue = %v, missing Secret = %v", rescueWarning, missingWarning)
+			if want := tt.missingSecret != ""; missingWarning != want {
+				t.Errorf("missing Secret warning = %v, want %v", missingWarning, want)
 			}
 		})
 	}

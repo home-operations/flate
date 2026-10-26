@@ -401,3 +401,84 @@ items:
 		})
 	}
 }
+
+func TestE2E_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
+	dir := sourceValuesFixture(t, "[]", false, false)
+	testutil.WriteFile(t, dir, "charts/jenkins-deployment/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: '{{ .Release.Name }}-values'}
+data: {greeting: {{ required "missing required value" .Values.greeting | quote }}}
+`)
+	parentPath := filepath.Join(dir, "apps/demo/ks.yaml")
+	parent, err := os.ReadFile(parentPath)
+	assert.NoError(t, err)
+	testutil.WriteFileAt(t, parentPath, string(parent)+"  postBuild: {substituteFrom: [{kind: Secret, name: unreadable}]}\n")
+	releasePath := filepath.Join(dir, "apps/demo/app/release.yaml")
+	release, err := os.ReadFile(releasePath)
+	assert.NoError(t, err)
+	testutil.WriteFileAt(t, releasePath, string(release)+"  values: {greeting: valid}\n")
+	original := t.TempDir()
+	testutil.CopyTree(t, dir, original)
+	for _, root := range []string{dir, original} {
+		testutil.GitCommitAll(t, testutil.GitInit(t, root), "init", &gogit.CommitOptions{
+			Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+		})
+	}
+	testutil.WriteFileAt(t, releasePath, string(release)+"  values: {greeting: \"\"}\n")
+	for _, mode := range []string{"full", "changed-only"} {
+		t.Run(mode, func(t *testing.T) {
+			args := []string{"build", "all", "--path", filepath.Join(dir, "cluster"),
+				"--allow-missing-secrets", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			if mode == "changed-only" {
+				args = append(args, "--base", "HEAD")
+			}
+			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			if code != 1 || !strings.Contains(stderr, "missing required value") || !strings.Contains(stderr, "apps/demo") {
+				t.Fatalf("required chart failure: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, "[UnresolvedSubstitution]") || !strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
+				t.Fatalf("parent omission warning missing: %s", stderr)
+			}
+			if strings.Contains(stdout, "name: demo-values") || strings.Contains(stdout, "..PLACEHOLDER_") {
+				t.Fatalf("failed chart published fabricated output: %s", stdout)
+			}
+			if strings.Contains(stdout, "name: sibling-values") != (mode == "full") {
+				t.Fatalf("unchanged sibling selection: mode=%s stdout=%s stderr=%s", mode, stdout, stderr)
+			}
+		})
+	}
+	for _, tc := range []struct{ current, original, side string }{
+		{dir, original, "current"},
+		{original, dir, "orig"},
+	} {
+		t.Run("diff/"+tc.side, func(t *testing.T) {
+			stdout, stderr, code := harness.RunCLIBuffers("diff", "all", "--path", filepath.Join(tc.current, "cluster"),
+				"--path-orig", filepath.Join(tc.original, "cluster"), "-o", "json", "--allow-missing-secrets",
+				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			if code != 1 || !strings.Contains(stderr, "missing required value") || !strings.Contains(stderr, "diff suppressed") {
+				t.Fatalf("failed-side chart diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, "[UnresolvedSubstitution]") || !strings.Contains(stderr, `substituteFrom Secret "unreadable"`) {
+				t.Fatalf("diff lost parent omission warning: %s", stderr)
+			}
+			if strings.Contains(stdout, "demo-values") || strings.Contains(stdout, "..PLACEHOLDER_") {
+				t.Fatalf("failed chart leaked into diff: %s", stdout)
+			}
+			var result struct {
+				Suppressed []struct {
+					Parent struct{ Kind, Name, Namespace string }
+					Side   string
+					Count  int
+				}
+			}
+			assert.NoError(t, json.Unmarshal([]byte(stdout), &result))
+			if len(result.Suppressed) != 1 {
+				t.Fatalf("missing failed-release suppression: %s", stdout)
+			}
+			note := result.Suppressed[0]
+			if note.Parent.Kind != "HelmRelease" || note.Parent.Name != "demo" || note.Parent.Namespace != "apps" || note.Side != tc.side || note.Count != 1 {
+				t.Fatalf("failed-release suppression changed: %s", stdout)
+			}
+		})
+	}
+}

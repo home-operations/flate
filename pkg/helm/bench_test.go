@@ -230,7 +230,7 @@ spec:
 				cli := NewClient(cachetest.New(b, "", sourcecache.New))
 				cliSources := benchChartResolver(b, dir, os.DirFS(dir))
 				hr := newHR()
-				hr.CRDsPolicy = policy
+				hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(policy)}
 				b.ReportAllocs()
 				for b.Loop() {
 					_, receipt7, err := cli.Template(b.Context(), hr, nil, RenderOptions{SkipCRDs: true, Sources: cliSources})

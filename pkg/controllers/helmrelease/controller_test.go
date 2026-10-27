@@ -759,11 +759,27 @@ func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 		Interval: metav1Duration(time.Hour),
 		Chart:    manifest.HelmChart{Name: "podinfo"},
 	}
-	patched := base.Clone()
-	patched.DriftDetection = &helmv2.DriftDetection{Mode: helmv2.DriftDetectionEnabled}
-
-	if got := replayKey(base.Content(nil, nil)); got == replayKey(patched.Content(nil, nil)) {
-		t.Errorf("fingerprint should differ when spec.driftDetection mutates; both = %q", got)
+	for _, tc := range []struct {
+		name   string
+		change func(*manifest.HelmRelease)
+	}{
+		{"drift detection", func(h *manifest.HelmRelease) {
+			h.DriftDetection = &helmv2.DriftDetection{Mode: helmv2.DriftDetectionEnabled}
+		}},
+		{"install crds", func(h *manifest.HelmRelease) { h.Install = &helmv2.Install{CRDs: helmv2.Skip} }},
+		{"upgrade crds", func(h *manifest.HelmRelease) { h.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip} }},
+		{"install openapi", func(h *manifest.HelmRelease) { h.Install = &helmv2.Install{DisableOpenAPIValidation: true} }},
+		{"upgrade openapi", func(h *manifest.HelmRelease) { h.Upgrade = &helmv2.Upgrade{DisableOpenAPIValidation: true} }},
+		{"target namespace", func(h *manifest.HelmRelease) { h.TargetNamespace = "apps" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			patched := base.Clone()
+			tc.change(patched)
+			if got := replayKey(base.Content(nil, nil)); got == replayKey(patched.Content(nil, nil)) {
+				t.Errorf("fingerprint should differ when spec mutates; both = %q", got)
+			}
+		})
 	}
 }
 

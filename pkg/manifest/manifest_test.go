@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -307,29 +308,23 @@ spec:
 
 func TestParseHelmRelease_CRDsPolicy(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name     string
-		specBody string
-		want     string
+	for _, tc := range []struct {
+		name, spec       string
+		install, upgrade helmv2.CRDsPolicy
 	}{
-		{"install only", "  install: {crds: Create}", "Create"},
-		{"empty upgrade uses install", "  install: {crds: Create}\n  upgrade: {}", "Create"},
-		{"upgrade wins over install", "  install: {crds: Create}\n  upgrade: {crds: CreateReplace}", "CreateReplace"},
-		{"upgrade only", "  upgrade: {crds: CreateReplace}", "CreateReplace"},
-		{"empty upgrade preserves install", "  install: {crds: Create}\n  upgrade: {}", "Create"},
-		{"skip suppresses", "  upgrade: {crds: Skip}", "Skip"},
-		{"empty when neither set", "", ""},
-	}
-	for _, tc := range cases {
+		{"install only", "  install: {crds: Create}", helmv2.Create, ""},
+		{"empty upgrade", "  install: {crds: Skip}\n  upgrade: {}", helmv2.Skip, ""},
+		{"opposite", "  install: {crds: Create}\n  upgrade: {crds: Skip}", helmv2.Create, helmv2.Skip},
+		{"upgrade only", "  upgrade: {crds: CreateReplace}", "", helmv2.CreateReplace},
+		{"neither", "", "", ""},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			hr, err := parseHelmRelease(helmReleaseDoc(t, tc.specBody))
-			if err != nil {
-				t.Fatalf("parseHelmRelease: %v", err)
-			}
-			if hr.CRDsPolicy != tc.want {
-				t.Errorf("CRDsPolicy = %q, want %q", hr.CRDsPolicy, tc.want)
-			}
+			hr, err := parseHelmRelease(helmReleaseDoc(t, tc.spec))
+			assert.NoError(t, err)
+			release := helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}
+			assert.Equal(t, release.GetInstall().CRDs, tc.install)
+			assert.Equal(t, release.GetUpgrade().CRDs, tc.upgrade)
 		})
 	}
 }
@@ -779,7 +774,7 @@ spec:
 	}{
 		{"Name", hr.Name, "podinfo"},
 		{"Namespace", hr.Namespace, "podinfo"},
-		{"ReleaseName", hr.ReleaseName(), "podinfo"},
+		{"ReleaseName", hr.ReleaseName(), "apps-podinfo"},
 		{"ReleaseNamespace", hr.ReleaseNamespace(), "apps"},
 		{"Chart.Name", hr.Chart.Name, "podinfo"},
 		{"Chart.Version", hr.Chart.Version, "6.3.2"},
@@ -800,45 +795,38 @@ spec:
 
 func TestParseHelmRelease_ReleaseNameOverride(t *testing.T) {
 	t.Parallel()
-	hr, err := parseHelmRelease(helmReleaseDoc(t, "  releaseName: my-explicit-release"))
-	if err != nil {
-		t.Fatalf("parseHelmRelease: %v", err)
-	}
-	if hr.HelmReleaseSpec.ReleaseName != "my-explicit-release" {
-		t.Errorf("HelmReleaseSpec.ReleaseName = %q, want my-explicit-release", hr.HelmReleaseSpec.ReleaseName)
-	}
-	if got := hr.ReleaseName(); got != "my-explicit-release" {
-		t.Errorf("ReleaseName() with override = %q, want my-explicit-release", got)
+	for _, tc := range []struct{ name, spec, want string }{
+		{"metadata namespace only", "", "hr"},
+		{"target namespace", "  targetNamespace: apps", "apps-hr"},
+		{"explicit override", "  targetNamespace: apps\n  releaseName: my-explicit-release", "my-explicit-release"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr, err := parseHelmRelease(helmReleaseDoc(t, tc.spec))
+			assert.NoError(t, err)
+			before := Fingerprint(hr.HelmReleaseSpec)
+			assert.Equal(t, hr.ReleaseName(), tc.want)
+			assert.Equal(t, Fingerprint(hr.HelmReleaseSpec), before)
+		})
 	}
 }
 
-// TestReleaseName_Shortens locks the helm-controller release.ShortenName
-// contract: names ≤53 chars pass through; longer names become a 40-char
-// prefix + "-" + 12 hex chars of sha256(name). Without this flate's
-// `.Release.Name` diverges from a real cluster's for long HR names.
 func TestReleaseName_Shortens(t *testing.T) {
 	t.Parallel()
-	short := &HelmRelease{Name: "short-name"}
-	if got := short.ReleaseName(); got != "short-name" {
-		t.Errorf("short name should pass through: got %q", got)
-	}
-
-	// 60-char name exceeds the 53 threshold.
-	longName := "this-is-a-very-long-helmrelease-name-that-exceeds-53-chars"
-	if len(longName) <= 53 {
-		t.Fatalf("test setup: longName should be >53 chars, got %d", len(longName))
-	}
-	hr := &HelmRelease{Name: longName}
-	got := hr.ReleaseName()
-	if len(got) != 53 {
-		t.Errorf("shortened name should be exactly 53 chars; got %d (%q)", len(got), got)
-	}
-	if got == longName {
-		t.Errorf("expected shortening; got %q", got)
-	}
-	// Deterministic: same input → same hash suffix.
-	if got2 := hr.ReleaseName(); got2 != got {
-		t.Errorf("non-deterministic shortening: %q vs %q", got, got2)
+	for _, tc := range []struct{ name, metadata, target, explicit, want string }{
+		{"short", "short-name", "", "", "short-name"},
+		{"boundary", strings.Repeat("a", 53), "", "", strings.Repeat("a", 53)},
+		{"composed boundary", strings.Repeat("a", 48), "apps", "", "apps-" + strings.Repeat("a", 48)},
+		{"long metadata", "this-is-a-very-long-helmrelease-name-that-exceeds-53-chars", "", "", "this-is-a-very-long-helmrelease-name-tha-23e95a162bda"},
+		{"long composed", "demo", "namespace-with-a-very-long-name-for-release-composition", "", "namespace-with-a-very-long-name-for-rele-e5340b09d048"},
+		{"explicit override", "demo", "namespace-with-a-very-long-name-for-release-composition", "chosen", "chosen"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := &HelmRelease{Name: tc.metadata, HelmReleaseSpec: helmv2.HelmReleaseSpec{TargetNamespace: tc.target, ReleaseName: tc.explicit}}
+			assert.Equal(t, hr.ReleaseName(), tc.want)
+			assert.Equal(t, hr.ReleaseName(), tc.want)
+		})
 	}
 }
 
@@ -2118,10 +2106,10 @@ func TestParseHelmRelease_DisableValidationCombinations(t *testing.T) {
 					t.Fatal(err)
 				}
 				wantSchema := (stage == "install" || stage == "both") && flags.schema
-				wantOpenAPI := stage != "neither" && flags.openAPI
-				if hr.DisableSchemaValidation != wantSchema || hr.DisableOpenAPIValidation != wantOpenAPI {
-					t.Errorf("validation flags = (%t, %t), want (%t, %t)", hr.DisableSchemaValidation, hr.DisableOpenAPIValidation, wantSchema, wantOpenAPI)
-				}
+				assert.Equal(t, hr.DisableSchemaValidation, wantSchema)
+				release := helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}
+				assert.Equal(t, release.GetInstall().DisableOpenAPIValidation, (stage == "install" || stage == "both") && flags.openAPI)
+				assert.Equal(t, release.GetUpgrade().DisableOpenAPIValidation, (stage == "upgrade" || stage == "both") && flags.openAPI)
 			})
 		}
 	}

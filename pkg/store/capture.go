@@ -300,17 +300,8 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 			r.invalid.Store(true)
 		}
 	}
-	if view.payloadOwner != nil {
-		r.sample(id, view.payloadOwner, view.payloadRecord, false)
-		r.activateProducers()
-		input.view.payloadRecord = nil
-		input.view.payloadInput = nil
-	}
-	if view.owner != nil {
-		r.sample(id, view.owner, view.record, false)
-		r.activateProducers()
-		input.view.record = nil
-	}
+	input.view.record = nil
+	input.view.payloadInput = nil
 	return input.view.child.Obj
 }
 

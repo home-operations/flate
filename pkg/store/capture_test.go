@@ -28,7 +28,7 @@ func TestCapture_ProducerRecordLifetime(t *testing.T) {
 			if payload {
 				firstPayload = map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): {Key: "first"}}
 			}
-			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: true}, firstPayload)
+			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: false}, firstPayload)
 			previous := weak.Make(s.GetArtifact(producer.Named(), ArtifactContent).(*Emission))
 			var reads ReadSet
 			reads.Init(s, ownerID("reader"), nil)
@@ -165,7 +165,7 @@ func TestReadRegistration_CrossShardLostWakeup(t *testing.T) {
 					sh.captureLocked(old.Obj.Named(), sh.cells[old.Obj.Named()], &view)
 					sh.mu.RUnlock()
 					if payload {
-						reads.sample(old.Obj.Named(), view.payloadOwner, view.payloadRecord, false)
+						reads.sample(old.Obj.Named(), view.payloadOwner, view.payloadOwner.current.Load(), false)
 					} else {
 						reads.sample(old.Obj.Named(), view.owner, view.record, false)
 					}
@@ -1161,7 +1161,7 @@ func TestCapture_PayloadAuthority(t *testing.T) {
 			declaration := emissionChild("input", "z")
 			target := child.Obj.Named()
 			payload := &SourceArtifact{Key: "first", Digest: "first", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
-			s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: payload})
+			s.RecordEmitted(a, &Emission{Children: []Child{child}, Complete: false}, map[manifest.NamedResource]*SourceArtifact{target: payload})
 			s.RecordEmitted(z, &Emission{Children: []Child{declaration}, Complete: true}, nil)
 			if static {
 				s.AddObject(declaration.Obj)
@@ -1519,29 +1519,62 @@ func TestReadRegistration_SelectedDeclaration(t *testing.T) {
 	}
 }
 
-func TestCapture_CompletedSupplierQueryIsolation(t *testing.T) {
+func TestCapture_SupplierQueryIsolation(t *testing.T) {
+	t.Parallel()
+	for _, complete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("complete=%t", complete), func(t *testing.T) {
+			t.Parallel()
+			st := New()
+			sourceOwner, queryOwner := ownerID("source-owner"), ownerID("query-owner")
+			st.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: sourceOwner.Name, Namespace: sourceOwner.Namespace}, &manifest.Kustomization{Name: queryOwner.Name, Namespace: queryOwner.Namespace}})
+			source, query := emissionChild("source", "same"), emissionChild("query", "same")
+			payload := &SourceArtifact{Key: "family", Content: "generation", FS: fstest.MapFS{}}
+			st.RecordEmitted(sourceOwner, &Emission{Children: []Child{source}, Complete: complete}, map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): payload})
+			st.RecordEmitted(queryOwner, &Emission{Children: []Child{query}, Complete: complete}, nil)
+			var reads ReadSet
+			reads.Init(st, ownerID("reader"), nil)
+			defer reads.Close()
+			reads.GetArtifact(source.Obj.Named(), ArtifactContent)
+			reads.UnsettledProducers(query.Obj.Named())
+			reads.Productions(query.Obj.Named(), nil)
+			next := *payload
+			next.Metadata = map[string]string{"ignored": "next"}
+			st.RecordEmitted(sourceOwner, &Emission{Children: []Child{source, emissionChild("unrelated", "new")}, Complete: complete}, map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): &next})
+			assert.Equal(t, reads.Valid(), true)
+			assert.Equal(t, len(slices.Collect(st.Sweep())), 0)
+			st.RecordEmitted(queryOwner, &Emission{Children: []Child{query, emissionChild("query-sibling", "new")}, Complete: complete, Fingerprint: "query-publication"}, nil)
+			assert.Diff(t, slices.Collect(st.Sweep()), []manifest.NamedResource{reads.ID()})
+			assert.Equal(t, reads.Valid(), false)
+		})
+	}
+}
+
+func TestCapture_PartialSupplierInputStamp(t *testing.T) {
 	t.Parallel()
 	st := New()
-	sourceOwner, queryOwner := ownerID("source-owner"), ownerID("query-owner")
-	st.AddObjects([]manifest.BaseManifest{&manifest.Kustomization{Name: sourceOwner.Name, Namespace: sourceOwner.Namespace}, &manifest.Kustomization{Name: queryOwner.Name, Namespace: queryOwner.Namespace}})
-	source, query := emissionChild("source", "same"), emissionChild("query", "same")
-	payload := &SourceArtifact{Key: "family", Content: "generation", FS: fstest.MapFS{}}
-	st.RecordEmitted(sourceOwner, &Emission{Children: []Child{source}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): payload})
-	st.RecordEmitted(queryOwner, &Emission{Children: []Child{query}, Complete: true}, nil)
+	producer := ownerID("producer")
+	st.AddObject(&manifest.Kustomization{Name: producer.Name, Namespace: producer.Namespace})
+	sibling := emissionChild("sibling", "same")
+	child := &manifest.ResourceSet{Name: "consumer", Namespace: "apps"}
+	st.RecordEmitted(producer, &Emission{Children: []Child{sibling}}, nil)
 	var reads ReadSet
-	reads.Init(st, ownerID("reader"), nil)
+	reads.Init(st, child.Named(), nil)
 	defer reads.Close()
-	reads.GetArtifact(source.Obj.Named(), ArtifactContent)
-	reads.UnsettledProducers(query.Obj.Named())
-	reads.Productions(query.Obj.Named(), nil)
-	next := *payload
-	next.Metadata = map[string]string{"ignored": "next"}
-	st.RecordEmitted(sourceOwner, &Emission{Children: []Child{source}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{source.Obj.Named(): &next})
+	reads.GetObject(sibling.Obj.Named())
+	st.RecordEmitted(producer, &Emission{Children: []Child{sibling, {Obj: child}}}, nil)
+	_, _, captured := reads.GetEmission(child.Named())
+	defer captured.Finish()
+	_, _, current := st.GetEmission(child.Named())
+	defer current.Finish()
 	assert.Equal(t, reads.Valid(), true)
+	assert.Equal(t, captured.input, manifest.BaseManifest(child))
+	assert.Equal(t, captured.inputHead, current.inputHead)
+	st.RecordEmitted(producer, &Emission{Children: []Child{sibling, {Obj: child}, emissionChild("unrelated", "new")}}, nil)
+	_, _, repeated := reads.GetEmission(child.Named())
+	defer repeated.Finish()
+	assert.Equal(t, reads.Valid(), true)
+	assert.Equal(t, repeated.inputHead, captured.inputHead)
 	assert.Equal(t, len(slices.Collect(st.Sweep())), 0)
-	st.RecordEmitted(queryOwner, &Emission{Children: []Child{query}, Complete: true, Fingerprint: "query-publication"}, nil)
-	assert.Diff(t, slices.Collect(st.Sweep()), []manifest.NamedResource{reads.ID()})
-	assert.Equal(t, reads.Valid(), false)
 }
 
 func TestReadSet_MatchesProducerAvailability(t *testing.T) {
@@ -1573,7 +1606,7 @@ func TestReadRegistration_StableWithdrawalNoABA(t *testing.T) {
 	producer := ownerID("producer")
 	st.AddObject(&manifest.Kustomization{Name: producer.Name, Namespace: producer.Namespace})
 	publish := func(child Child) {
-		st.RecordEmitted(producer, &Emission{Children: []Child{child}, Complete: true}, nil)
+		st.RecordEmitted(producer, &Emission{Children: []Child{child}}, nil)
 	}
 	first, second := emissionChild("input", "first"), emissionChild("input", "second")
 	publish(first)

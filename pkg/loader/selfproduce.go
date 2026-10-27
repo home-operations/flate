@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/kustomize/api/types"
 
 	"github.com/home-operations/flate/internal/kustomizeinput"
-	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
@@ -162,9 +161,8 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 
 func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]struct{}) []string {
 	pinned := map[manifest.NamedResource]bool{}
-	for _, child := range l.Kustomizations() {
-		ks := child.Obj.(*manifest.Kustomization)
-		_, pinned[ks.Named()], _ = SourceView(l.Store, ks.SourceID(), repoRoot)
+	for _, input := range l.scopes.inputs {
+		pinned[input.owner.Named()] = l.scopes.sources[input.source].pinned
 	}
 	var roots []string
 	for _, dir := range slices.Sorted(maps.Keys(remaining)) {
@@ -278,8 +276,15 @@ func (l *Loader) StandaloneRoots(repoRoot string) []string {
 			return false
 		}
 		for _, visit := range l.scopeWalk(graphVisit{root: repoRoot, dir: dir}) {
-			if visit.role == kustomizeinput.Resource && len(l.rootAdmission(visit.file, visit.coordinate, false).owners) != 0 {
-				return true
+			if visit.role == kustomizeinput.Resource {
+				found := false
+				l.fileOwners(visit.file, visit.coordinate, func(manifest.NamedResource) bool {
+					found = true
+					return false
+				})
+				if found {
+					return true
+				}
 			}
 		}
 		return false
@@ -292,6 +297,7 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 		return nil
 	}
 	l.ensureScopes()
+	l.documents.replayEdges()
 	sourceRoot := l.documents.mountedRoot(repoRoot)
 	roots := map[string]bool{}
 	for dir, doc := range l.documents.cache {
@@ -307,9 +313,10 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 			}
 		}
 	}
-	for _, child := range kss {
+	for i, child := range kss {
 		ks := child.Obj.(*manifest.Kustomization)
-		root, pinned, external := SourceView(l.Store, ks.SourceID(), repoRoot)
+		view := l.scopes.sources[l.scopes.inputs[i].source]
+		root, pinned, external := view.root, view.pinned, view.external
 		if ks.IsFragment() {
 			continue
 		}
@@ -355,25 +362,11 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	if len(roots) == 0 {
 		return nil
 	}
-	for dir, doc := range l.documents.cache {
-		if !doc.traversed || doc.body == nil || l.documents.mountedRoot(dir) != sourceRoot {
-			continue
-		}
-		for ref := range kustomizeinput.Kustomization(doc.body) {
-			if ref.Role == kustomizeinput.File || ref.Inline {
-				continue
-			}
-			if child, ok := kustpath.Resolve(dir, ref.Path, kustpath.Dependency); ok {
-				if _, candidate := roots[child]; candidate {
-					if !roots[child] {
-						delete(roots, child)
-					}
-				}
-			}
-		}
-	}
 	var dirs []string
 	for dir := range roots {
+		if l.documents.cache[dir].incoming && !roots[dir] {
+			continue
+		}
 		if rel, err := filepath.Rel(repoRoot, dir); err == nil && !safepath.Escaped(rel) && l.documents.mountedRoot(dir) == sourceRoot {
 			dirs = append(dirs, filepath.ToSlash(rel))
 		}
@@ -418,7 +411,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 		}
 		if r.Authored == (manifest.NamedResource{}) {
 			r.Authored, r.Path, r.File = obj.Named(), v.file, coordinate
-			r.Refs = discoveryReferences(projected)
+			r.Refs = discoveryReferences(nil, projected)
 		}
 		p := manifest.Production{Owner: v.owner, Authored: obj.Named(), Path: v.file, File: coordinate, Source: v.source}
 		if v.owner != (manifest.NamedResource{}) && info.Runnable && b.store.GetObject(id) == nil {

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"cmp"
 	"context"
 	"io/fs"
 	"path"
@@ -13,9 +14,27 @@ import (
 )
 
 func (l *Loader) recordReader(file, local string, reader manifest.FileReader) {
-	l.Index.Readers[file] = appendUniqueProducer(l.Index.Readers[file], reader)
+	add := func(file string) {
+		readers := l.Index.Readers[file]
+		i, found := slices.BinarySearchFunc(readers, reader, func(a, b manifest.FileReader) int {
+			if order := cmp.Or(a.Reader.Compare(b.Reader), a.Source.Compare(b.Source)); order != 0 {
+				return order
+			}
+			if a.Exact == b.Exact {
+				return 0
+			}
+			if a.Exact {
+				return 1
+			}
+			return -1
+		})
+		if !found {
+			l.Index.Readers[file] = slices.Insert(readers, i, reader)
+		}
+	}
+	add(file)
 	if local != "" {
-		l.Index.Readers[local] = appendUniqueProducer(l.Index.Readers[local], reader)
+		add(local)
 	}
 }
 

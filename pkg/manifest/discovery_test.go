@@ -20,6 +20,9 @@ func TestDiscoveryIndex_CommittedClaimsExcludeCheckoutRoot(t *testing.T) {
 		{"../.flate-sources/pin/app/config.yaml", []NamedResource{child}, []NamedResource{parent}},
 		{"../.flate-sources/other/app/config.yaml", nil, nil},
 		{"apps/config.yaml", []NamedResource{checkout}, nil},
+		{"..", nil, nil},
+		{"../", nil, nil},
+		{"", nil, nil},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			t.Parallel()
@@ -62,5 +65,53 @@ func TestDiscoveryIndex_ReadersOfFileReplay(t *testing.T) {
 	owners, ancestors := index.OwnersOfFile("missing/nested/input.yaml")
 	if !slices.Equal(owners, []NamedResource{ancestor, exact}) || len(ancestors) != 0 {
 		t.Fatalf("source pairs changed owner projection: %v, %v", owners, ancestors)
+	}
+}
+
+func TestDiscoveryIndex_OwnersOfFilePrefixGroups(t *testing.T) {
+	t.Parallel()
+	root := NamedResource{Name: "root"}
+	parentA := NamedResource{Name: "parent-a"}
+	parentB := NamedResource{Name: "parent-b"}
+	child := NamedResource{Name: "child"}
+	index := &DiscoveryIndex{Claims: map[string][]NamedResource{
+		"": {root}, "apps/": {parentB, parentA}, "apps/nested/": {child},
+	}}
+	for _, tc := range []struct {
+		file              string
+		owners, ancestors []NamedResource
+	}{
+		{"apps/nested/config.yaml", []NamedResource{child}, []NamedResource{parentA, parentB, root}},
+		{"apps/nested", []NamedResource{child}, []NamedResource{parentA, parentB, root}},
+		{"apps", []NamedResource{parentA, parentB}, []NamedResource{root}},
+		{"apps2/config.yaml", []NamedResource{root}, nil},
+		{"/", []NamedResource{root}, nil},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			t.Parallel()
+			for range 2 {
+				owners, ancestors := index.OwnersOfFile(tc.file)
+				if !slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors) {
+					t.Fatalf("ownership = (%v, %v), want (%v, %v)", owners, ancestors, tc.owners, tc.ancestors)
+				}
+				if !slices.Equal(index.Claims["apps/"], []NamedResource{parentB, parentA}) {
+					t.Fatal("query mutated borrowed peer group")
+				}
+			}
+		})
+	}
+}
+
+func TestDiscoveryIndex_OwnersOfFileUnclaimed(t *testing.T) {
+	index := &DiscoveryIndex{Claims: map[string][]NamedResource{"other/": {{Name: "owner"}}}}
+	var owners, ancestors []NamedResource
+	allocations := testing.AllocsPerRun(1, func() {
+		owners, ancestors = index.OwnersOfFile("apps/file.yaml")
+	})
+	if len(owners) != 0 || len(ancestors) != 0 {
+		t.Fatalf("unclaimed ownership = (%v, %v)", owners, ancestors)
+	}
+	if allocations != 0 {
+		t.Fatalf("unclaimed allocations = %g, want 0", allocations)
 	}
 }

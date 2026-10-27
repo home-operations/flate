@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"sigs.k8s.io/kustomize/api/types"
+
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/internal/kustpath"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -235,15 +237,55 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 			}
 		}
 	}
-	for ref := range kustomizeinput.Kustomization(d) {
-		if !w.reference(check, v, ref, yield) {
-			return false
-		}
+	if !w.documents.references(abs, d, w.policy == traversalAdmission, func(ref kustomizeinput.Reference, target string) bool {
+		return w.reference(check, v, traversalReference{Reference: ref, target: target}, yield)
+	}) {
+		return false
 	}
 	if w.policy == traversalAdmission && v.role != kustomizeinput.Component && !w.build {
 		w.count += w.scanBootstrapFluxKS(check, v.root, abs, file)
 	}
 	return w.proceed(check)
+}
+
+func (r documentReader) references(dir string, body *types.Kustomization, resolve bool, yield func(kustomizeinput.Reference, string) bool) bool {
+	doc := r.cache[dir]
+	record := !doc.edgesKnown && doc.traversed && body != nil && r.mountedRoot(dir) == r.mountedRoot(r.bootstrap)
+	for ref := range kustomizeinput.Kustomization(body) {
+		var target string
+		if (record || resolve) && ref.Role != kustomizeinput.File && !ref.Inline {
+			target, _ = kustpath.Resolve(dir, ref.Path, kustpath.Dependency)
+			if record && target != "" {
+				child := r.cache[target]
+				child.incoming = true
+				r.cache[target] = child
+			}
+		}
+		if yield != nil && !yield(ref, target) {
+			return false
+		}
+	}
+	if record {
+		doc = r.cache[dir]
+		doc.edgesKnown = true
+		r.cache[dir] = doc
+	}
+	return true
+}
+
+func (r *documentReader) replayEdges() {
+	if r.edgesDirty {
+		var pending []string
+		for dir, doc := range r.cache {
+			if !doc.edgesKnown && doc.traversed && doc.body != nil {
+				pending = append(pending, dir)
+			}
+		}
+		for _, dir := range pending {
+			r.references(dir, r.cache[dir].body, false, nil)
+		}
+		r.edgesDirty = false
+	}
 }
 
 func (w *traversal) admitFile(check func() error, root, file string, component bool) bool {
@@ -269,7 +311,12 @@ func (w *traversal) admitFile(check func() error, root, file string, component b
 	return w.err == nil
 }
 
-func (w *traversal) reference(check func() error, v graphVisit, ref kustomizeinput.Reference, yield func(graphVisit) bool) bool {
+type traversalReference struct {
+	kustomizeinput.Reference
+	target string
+}
+
+func (w *traversal) reference(check func() error, v graphVisit, ref traversalReference, yield func(graphVisit) bool) bool {
 	if !w.proceed(check) {
 		return false
 	}
@@ -280,9 +327,8 @@ func (w *traversal) reference(check func() error, v graphVisit, ref kustomizeinp
 		if ref.Role != kustomizeinput.Resource && ref.Role != kustomizeinput.Component {
 			return true
 		}
-		base := v.file
-		resolved, ok := kustpath.Resolve(base, ref.Path, kustpath.Directory)
-		if !ok {
+		base, resolved := v.file, ref.target
+		if resolved == "" || filepath.IsAbs(ref.Path) {
 			return true
 		}
 		input, name := w.documents.input(resolved)
@@ -373,7 +419,7 @@ func (w *traversal) configuration(v graphVisit, config pluginInputs, yield func(
 	for _, ref := range config.references {
 		child := v
 		child.dir = v.pluginRoot
-		if !w.reference(nil, child, ref, yield) {
+		if !w.reference(nil, child, traversalReference{Reference: ref}, yield) {
 			return false
 		}
 	}

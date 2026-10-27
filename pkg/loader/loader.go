@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/home-operations/flate/internal/claimpath"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -144,22 +145,10 @@ func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdm
 	if scope.denied {
 		return scope
 	}
-	if l.scopes != nil {
-		for _, v := range l.scopes.visits[file] {
-			if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource {
-				scope.owners = appendUniqueProducer(scope.owners, v.owner)
-			}
-		}
-	}
-	if origin := l.documents.localPath(file); origin != file {
-		coordinate = l.fileCoordinate(origin)
-	}
-	if eligible != fileIndependent {
-		owners, ancestors := l.Index.OwnersOfFile(coordinate)
-		for _, owner := range append(owners, ancestors...) {
-			scope.owners = appendUniqueProducer(scope.owners, owner)
-		}
-	}
+	l.fileOwners(file, coordinate, func(owner manifest.NamedResource) bool {
+		scope.owners = appendUniqueProducer(scope.owners, owner)
+		return true
+	})
 	if !structural {
 		return scope
 	}
@@ -172,6 +161,47 @@ func (l *Loader) rootAdmission(file, coordinate string, structural bool) rootAdm
 		}
 	}
 	return scope
+}
+
+func (l *Loader) fileOwners(file, coordinate string, yield func(manifest.NamedResource) bool) {
+	if l.documents.cache[file].eligible == fileInactive {
+		return
+	}
+	if origin := l.documents.localPath(file); origin != file {
+		coordinate = l.fileCoordinate(origin)
+	}
+	if l.scopes != nil {
+		for _, v := range l.scopes.visits[file] {
+			if v.owner != (manifest.NamedResource{}) && v.role == kustomizeinput.Resource && !yield(v.owner) {
+				return
+			}
+		}
+	}
+	if coordinate == "" || l.documents.cache[file].eligible == fileIndependent {
+		return
+	}
+	if len(l.Index.Claims) != 0 {
+		for _, id := range l.Index.Claims[coordinate+"/"] {
+			if !yield(id) {
+				return
+			}
+		}
+		for end, group := range claimpath.Groups(l.Index.Claims, coordinate) {
+			if end == 0 && (coordinate == ".." || strings.HasPrefix(coordinate, "../")) {
+				continue
+			}
+			for _, id := range group {
+				if !yield(id) {
+					return
+				}
+			}
+		}
+	}
+	for reader := range l.Index.ReadersOfFile(coordinate) {
+		if !reader.Exact && !yield(reader.Reader) {
+			return
+		}
+	}
 }
 
 func (a rootAdmission) admits(l *Loader, id manifest.NamedResource, record manifest.DiscoveryRecord) bool {
@@ -282,6 +312,10 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 			return 0, err
 		}
 		l.documents.views[inputRoot] = input.FS.(*gittree.FS).OperationView()
+		l.documents.edgesDirty = true
+	}
+	if l.documents.bootstrap == "" {
+		l.documents.bootstrap = inputRoot
 	}
 	l.ensureScopes()
 	_, builder := l.documents.read(abs)
@@ -440,22 +474,20 @@ func (l *Loader) recordObject(obj manifest.BaseManifest, absPath string) {
 	}
 	delete(l.candidates, id)
 	r := manifest.DiscoveryRecord{Authored: id, Path: absPath, File: l.fileCoordinate(absPath)}
-	r.Refs = discoveryReferences(obj)
+	var refs [16]manifest.NamedResource
+	if captured := discoveryReferences(refs[:0], obj); len(captured) != 0 {
+		r.Refs = slices.Clone(captured)
+	}
 	l.Index.Records[id] = r
 }
 
-func discoveryReferences(obj manifest.BaseManifest) []manifest.NamedResource {
-	var buf [16]manifest.NamedResource
-	refs := buf[:0]
+func discoveryReferences(refs []manifest.NamedResource, obj manifest.BaseManifest) []manifest.NamedResource {
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		if discoveryReference(ref) {
 			refs = append(refs, ref.NamedResource)
 		}
 	}
-	if len(refs) != 0 {
-		return slices.Clone(refs)
-	}
-	return nil
+	return refs
 }
 
 func discoveryReference(ref manifest.Reference) bool {

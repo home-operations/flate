@@ -649,12 +649,11 @@ data:
 	}
 }
 
-// Discovery keeps HelmRelease references even when it defers admission.
 func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hr.yaml")
-	testutil.WriteFile(t, dir, "hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: envoy-gateway, namespace: envoy-gateway}\nspec: {chartRef: {kind: OCIRepository, name: envoy-gateway, namespace: flux-system}}\n")
+	testutil.WriteFile(t, dir, "hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: envoy-gateway, namespace: envoy-gateway}\nspec:\n  chartRef: {kind: OCIRepository, name: envoy-gateway, namespace: flux-system}\n  dependsOn: [{name: parent}]\n  valuesFrom: [{kind: ConfigMap, name: settings}, {kind: Secret, name: credentials, optional: true}]\n")
 	s := store.New()
 	l := loaderFixture(s, nil)
 	l.SourceRoot = dir
@@ -663,7 +662,12 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	}
 	hrID := testutil.HelmReleaseID("envoy-gateway", "envoy-gateway")
 	assert.Equal(t, s.GetObject(hrID), manifest.BaseManifest(nil))
-	assert.Diff(t, l.Index.Records[hrID].Refs, []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"}})
+	want := []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "envoy-gateway"},
+		{Kind: manifest.KindConfigMap, Namespace: "envoy-gateway", Name: "settings"},
+		{Kind: manifest.KindSecret, Namespace: "envoy-gateway", Name: "credentials"},
+	}
+	assert.Diff(t, l.Index.Records[hrID].Refs, want)
 	assert.Equal(t, len(l.documents.cache[path].objects), 1)
 	ksPath := filepath.Join(dir, "ks.yaml")
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("app", "apps", "  {path: ./apps}\n"))
@@ -688,6 +692,19 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 		l.recordObject(ks, ksPath)
 		assert.Equal(t, len(l.Index.Records[ks.Named()].Refs), 0)
 	}
+	ks := &manifest.Kustomization{Name: "references", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}
+	ks.DependsOn = []kustomizev1.DependencyReference{{Name: "parent"}}
+	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		{Kind: manifest.KindConfigMap, Name: "settings"},
+		{Kind: manifest.KindSecret, Name: "credentials"},
+		{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+	}}
+	l.recordObject(ks, ksPath)
+	assert.Diff(t, l.Index.Records[ks.Named()].Refs, []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"},
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
+	})
+	assert.Diff(t, l.Index.Records[hrID].Refs, want)
 }
 
 func TestLoader_DiscoveryRecordsNestedComponentData(t *testing.T) {

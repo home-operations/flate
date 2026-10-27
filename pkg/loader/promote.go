@@ -135,11 +135,7 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 		if raw, ok := l.Index.Lookup(id); ok && manifest.KindOf(obj).DiscoverySeed() && manifest.Equal(obj, l.indexedObject(id, raw).Obj) {
 			record.File, record.Inputs = raw.File, shared
 		}
-		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-			if discoveryReference(ref) {
-				record.Refs = append(record.Refs, ref.NamedResource)
-			}
-		}
+		record.Refs = discoveryReferences(nil, obj)
 		records[i] = record
 	}
 	for id, record := range l.Index.Files() {

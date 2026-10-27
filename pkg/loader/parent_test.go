@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -15,6 +16,107 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/tree"
 )
+
+func TestClaims_RefreshDoesNotPublish(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	admitForTest(st, root)
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [owner.yaml]\n")
+	testutil.WriteFile(t, root, "owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./leaf\n"))
+	l := New(st)
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	id := testutil.KustomizationID("apps", "owner")
+	l.Claims(root)
+	if st.GetObject(id) != nil {
+		t.Fatal("claims published an indexed owner")
+	}
+	l.Admit(root)
+	owner := st.GetObject(id)
+	if owner == nil {
+		t.Fatal("admission did not publish the owner")
+	}
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: []\n")},
+	}})
+	l.Claims(root)
+	if st.GetObject(id) != owner {
+		t.Fatal("claims retired an owner after reader replacement")
+	}
+	l.Admit(root)
+	if st.GetObject(id) != nil {
+		t.Fatal("admission retained the replaced reader's owner")
+	}
+}
+
+func TestClaims_ReadinessViews(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	var reads atomic.Int64
+	input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{FS: fstest.MapFS{
+		"apps/kustomization.yaml": {Data: []byte("resources: []\n")},
+	}, reads: map[string]*atomic.Int64{"apps/kustomization.yaml": &reads}}}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	ks := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}
+	st.AddObject(ks)
+	l := New(st)
+	l.SourceRoot = root
+	if claims := l.Claims(root); len(claims) != 0 {
+		t.Fatalf("unresolved source claimed bootstrap files: %v", claims)
+	}
+	st.SetArtifact(ks.SourceID(), input)
+	l.refreshSources()
+	l.refreshClaims(root, l.kustomizations())
+	assert.Equal(t, reads.Load(), int64(0))
+	claims := l.Claims(root)
+	assert.Diff(t, claims, []manifest.KSClaim{{ID: ks.Named(), Prefix: "apps/"}})
+	assert.Equal(t, reads.Load(), int64(1))
+	derived := &l.scopes.inputs[0].claims[0]
+	claims[0].Prefix = "caller/"
+	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: ks.Named(), Prefix: "apps/"}})
+	assert.Equal(t, reads.Load(), int64(1))
+	if &l.scopes.inputs[0].claims[0] != derived {
+		t.Fatal("unchanged owner claims were derived again")
+	}
+	if len(l.Index.Claims) != 0 {
+		t.Fatal("unready local source established admission coverage")
+	}
+	earlier := *ks
+	earlier.Name = "earlier"
+	st.AddObject(&earlier)
+	claims = l.Claims(root)
+	claims[0].Prefix = "caller/"
+	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}})
+	if &l.scopes.inputs[1].claims[0] != derived {
+		t.Fatal("owner insertion discarded unchanged claim derivation")
+	}
+	_, err := l.Load(t.Context(), filepath.Join(root, "apps"))
+	assert.NoError(t, err)
+	l.Claims(root)
+	assert.Diff(t, l.Index.Claims["apps/"], []manifest.NamedResource{earlier.Named(), ks.Named()})
+	if st.GetObject(ks.Named()) != ks {
+		t.Fatal("claim refresh replaced the owner's immutable declaration")
+	}
+	readsBefore, sourcesBefore := reads.Load(), len(l.scopes.sources)
+	later := *ks
+	later.Name, later.SourceRef.Name = "z-later", "other"
+	st.SetArtifact(later.SourceID(), input)
+	st.AddObject(&later)
+	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}, {ID: later.Named(), Prefix: "apps/"}})
+	assert.Equal(t, len(l.scopes.sources), sourcesBefore+1)
+	assert.Equal(t, reads.Load(), readsBefore)
+	if &l.scopes.inputs[1].claims[0] != derived {
+		t.Fatal("source storage growth discarded unchanged claim derivation")
+	}
+	st.SetArtifact(later.SourceID(), nil)
+	assert.Diff(t, l.Claims(root), []manifest.KSClaim{{ID: earlier.Named(), Prefix: "apps/"}, {ID: ks.Named(), Prefix: "apps/"}})
+	assert.Equal(t, reads.Load(), readsBefore)
+	if &l.scopes.inputs[1].claims[0] != derived {
+		t.Fatal("source withdrawal discarded unrelated claim derivation")
+	}
+}
 
 func TestFinalizeIndex_ParentSegments(t *testing.T) {
 	t.Parallel()

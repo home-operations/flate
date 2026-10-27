@@ -258,7 +258,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "app/kustomization.yaml", "namespace: apps\nresources: [sibling.yaml, source.yaml, ns.yaml]\nreplacements:\n"+nsReplacementRule)
-		testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n"))
+		testutil.WriteFile(t, root, "app/sibling.yaml", testutil.KustomizationYAML("sibling", "flux-system", "  path: ./leaf\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}, {kind: Secret, name: credentials}, {kind: ConfigMap, name: optional, optional: true}]}\n"))
 		testutil.WriteFile(t, root, "app/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source}\nspec: {url: https://fixture.invalid/repo}\n")
 		testutil.WriteFile(t, root, "app/ns.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n")
 		l := New(store.New())
@@ -272,6 +272,8 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		if !ok || candidate.TargetNamespace != "apps" || l.Store.GetObject(id) != candidate {
 			t.Fatalf("initial projection = %+v, published=%v", candidate, l.Store.GetObject(id))
 		}
+		refs := l.Index.Records[id].Refs
+		assert.Diff(t, refs, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}})
 		file := filepath.Join(root, "app/sibling.yaml")
 		authored := l.authoredObject(file, testutil.KustomizationID("flux-system", "sibling")).Obj.(*manifest.Kustomization)
 		snapshot := authored.Clone()
@@ -289,6 +291,9 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(candidate))
 		assert.Equal(t, l.candidates[sourceID].Obj, manifest.BaseManifest(source))
 		assert.Equal(t, l.Store.GetObject(sourceID), publishedSource)
+		if got := l.Index.Records[id].Refs; len(got) != 1 || len(refs) != 1 || &got[0] != &refs[0] {
+			t.Fatal("stable projected identity replaced retained references")
+		}
 
 		published := candidate.Clone()
 		l.Store.DeleteObject(id)
@@ -1116,6 +1121,43 @@ func TestRecordNamespaces_GeneratedCoverage(t *testing.T) {
 			l.scopes.inputs = []scopeInput{{active: false}, {active: true}}
 			l.scopes.visits["child.yaml"] = tc.visits
 			r := manifest.DiscoveryRecord{Path: "child.yaml", Authored: testutil.KustomizationID("", "child")}
+			assert.Diff(t, l.recordNamespaces(r, ""), tc.want)
+		})
+	}
+}
+
+func TestRecordNamespaces_PrefixEligibility(t *testing.T) {
+	t.Parallel()
+	self := testutil.KustomizationID("", "self")
+	projected := testutil.KustomizationID("projected", "self")
+	root := testutil.KustomizationID("control", "root")
+	outer := testutil.KustomizationID("control", "outer")
+	alpha := testutil.KustomizationID("control", "alpha")
+	zeta := testutil.KustomizationID("control", "zeta")
+	for _, tc := range []struct {
+		name, file string
+		claims     map[string][]manifest.NamedResource
+		want       []string
+	}{
+		{name: "empty coordinate", claims: map[string][]manifest.NamedResource{"": {root}}, want: []string{"root"}},
+		{name: "root file", file: "child.yaml", claims: map[string][]manifest.NamedResource{"": {root}}, want: []string{"root"}},
+		{name: "parent relative root", file: "../child.yaml", claims: map[string][]manifest.NamedResource{"": {root}}, want: []string{"root"}},
+		{name: "parent relative depth", file: "../apps/child.yaml", claims: map[string][]manifest.NamedResource{"": {root}, "../apps/": {outer}}, want: []string{"outer"}},
+		{name: "exact directory", file: "apps", claims: map[string][]manifest.NamedResource{"": {root}, "apps/": {outer}}, want: []string{"root"}},
+		{name: "directory slash", file: "apps/", claims: map[string][]manifest.NamedResource{"": {root}, "apps/": {outer}}, want: []string{"outer"}},
+		{name: "self before depth", file: "apps/nested/child.yaml", claims: map[string][]manifest.NamedResource{"apps/": {outer}, "apps/nested/": {self, projected}}, want: []string{"outer"}},
+		{name: "all eligible peers", file: "apps/nested/child.yaml", claims: map[string][]manifest.NamedResource{"apps/": {outer}, "apps/nested/": {self, zeta, projected, alpha}}, want: []string{"alpha", "zeta"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.ensureScopes()
+			for _, id := range []manifest.NamedResource{root, outer, alpha, zeta, projected} {
+				l.Store.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, TargetNamespace: id.Name})
+			}
+			l.Index.Records[projected] = manifest.DiscoveryRecord{Authored: self}
+			l.Index.Claims = tc.claims
+			r := manifest.DiscoveryRecord{Authored: self, Path: "child.yaml", File: tc.file}
 			assert.Diff(t, l.recordNamespaces(r, ""), tc.want)
 		})
 	}

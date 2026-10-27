@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -73,6 +74,147 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 		t.Fatalf("republished source lost its document: %v", doc)
 	}
 
+}
+
+func TestResolveEntrySources_IndexedRoots(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, kind, role string
+		want             bool
+	}{
+		{name: "git", kind: manifest.KindGitRepository, want: true},
+		{name: "oci", kind: manifest.KindOCIRepository, want: true},
+		{name: "bucket", kind: manifest.KindBucket, want: true},
+		{name: "helm repository", kind: manifest.KindHelmRepository},
+		{name: "external artifact", kind: manifest.KindExternalArtifact},
+		{name: "covered", kind: manifest.KindGitRepository, role: "covered"},
+		{name: "terminal", kind: manifest.KindGitRepository, role: "terminal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "entry/release.yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: orphan, namespace: apps}
+spec:
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: %s, name: source}
+`, tc.kind))
+			testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+			testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
+			st := store.New()
+			switch tc.role {
+			case "covered":
+				st.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry"})
+			case "terminal":
+				testutil.WriteFile(t, root, "entry/kustomization.yaml", "configMapGenerator:\n- name: held\n  files: [release.yaml]\n")
+			}
+			l := loader.New(st)
+			l.SourceRoot = root
+			d := discoverer{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st}, loader: l}
+			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := l.Load(t.Context(), d.cfg.Path); err != nil {
+				t.Fatal(err)
+			}
+			id := testutil.HelmReleaseID("apps", "orphan")
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "apps", Name: "source"}
+			l.Admit(root)
+			if tc.role == "terminal" {
+				l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(root, "entry/release.yaml"), File: "entry/release.yaml", Refs: []manifest.NamedResource{source}}
+			}
+			if st.GetObject(id) != nil {
+				t.Fatal("indexed release was published before orphan promotion")
+			}
+			record, ok := l.Index.Lookup(id)
+			if !ok || l.AdmitsRoot(id, record.Path) != (tc.role == "") {
+				t.Fatalf("indexed root admission = %t, record = %+v", l.AdmitsRoot(id, record.Path), record)
+			}
+			count, err := d.resolveEntrySources(t.Context(), true)
+			if err != nil || (count == 1) != tc.want {
+				t.Fatalf("indexed source resolution = %d, %v; want alias %t", count, err, tc.want)
+			}
+			artifact, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			if tc.want && (!ok || !artifact.InputAlias || st.GetObject(source).Named() != source) || !tc.want && (ok || st.GetObject(source) != nil) {
+				t.Fatalf("indexed alias = %+v", artifact)
+			}
+			if st.GetObject(id) != nil {
+				t.Fatal("source census published an orphan release")
+			}
+			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			if tc.kind == manifest.KindGitRepository && tc.want && !slices.Contains(l.Index.Readers["charts/demo/templates/cm.yaml"], manifest.FileReader{Reader: id, Source: source, Exact: true}) {
+				t.Fatalf("source was unavailable when chart readers froze: %+v", l.Index.Readers)
+			}
+		})
+	}
+}
+
+func TestRun_IndexedRootPreparedProjection(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", "namespace: projected\nresources: [release.yaml]\n")
+	testutil.WriteFile(t, root, "entry/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: orphan, namespace: authored}
+spec:
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: source}
+`)
+	testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+	testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
+	entries, err := Plan(t.Context(), Config{Path: filepath.Join(root, "entry"), RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0 {
+		t.Fatalf("plan did not prepare the indexed source: %+v", entries)
+	}
+	id := testutil.HelmReleaseID("projected", "orphan")
+	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "projected", Name: "source"}
+	t.Run("native", func(t *testing.T) {
+		t.Parallel()
+		st := store.New()
+		d := newDiscoverer(Config{Input: entries[0].Input, Entry: &entries[0], Path: entries[0].Path, Store: st})
+		if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.loadManifests(t.Context(), root, false); err != nil {
+			t.Fatal(err)
+		}
+		if st.GetArtifact(source, store.ArtifactContent) == nil || st.GetObject(id) != nil {
+			t.Fatalf("native admission lost projected source or published the release: source=%v release=%v", st.GetArtifact(source, store.ArtifactContent), st.GetObject(id))
+		}
+	})
+	for _, prepared := range []bool{false, true} {
+		t.Run(fmt.Sprint(prepared), func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			cfg := Config{Input: entries[0].Input, Path: entries[0].Path, Store: st, Trees: testTrees(t)}
+			if prepared {
+				cfg.Entry = &entries[0]
+				if newDiscoverer(cfg).loader.Options.ParsedInputs == nil {
+					t.Fatal("matching prepared input was not reused")
+				}
+			}
+			result, err := Run(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.GetObject(id) == nil || st.GetArtifact(source, store.ArtifactContent) == nil || st.GetObject(source) == nil {
+				t.Fatalf("projected release or source missing: release=%v source=%v", st.GetObject(id), st.GetObject(source))
+			}
+			if !slices.Contains(result.Index.Readers["charts/demo/templates/cm.yaml"], manifest.FileReader{Reader: id, Source: source, Exact: true}) {
+				t.Fatalf("projected chart reader missing after prepared=%t: %+v", prepared, result.Index.Readers)
+			}
+		})
+	}
 }
 
 func TestResolveEntrySources_Identity(t *testing.T) {

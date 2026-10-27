@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"cmp"
 	"context"
 	"maps"
 	"path/filepath"
@@ -22,8 +21,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 			for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 				state := l.sourceState(ks.SourceID(), repoRoot)
 				scope := l.scopeSource(state)
-				scope.ready = true
-				l.scopes.sources[state] = scope
+				l.scopes.sources[scope].ready = true
 			}
 		}
 		l.admit(repoRoot)
@@ -36,15 +34,27 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 		})
 		l.scopes.claims = claims
 	}
-	l.Index.Claims = make(map[string][]manifest.NamedResource, len(claims))
 	l.Index.Readers = map[string][]manifest.FileReader{}
 	own := map[manifest.NamedResource]map[string]struct{}{}
-	for _, c := range claims {
-		l.Index.Claims[c.Prefix] = appendUniqueProducer(l.Index.Claims[c.Prefix], c.ID)
-		if own[c.ID] == nil {
-			own[c.ID] = map[string]struct{}{}
+	for prefix, ids := range l.Index.Claims {
+		ids = slices.DeleteFunc(ids, func(id manifest.NamedResource) bool {
+			r, _ := l.Index.Lookup(id)
+			return l.documents.cache[r.Path].eligible == fileInactive
+		})
+		if len(ids) == 0 {
+			delete(l.Index.Claims, prefix)
+			continue
 		}
-		own[c.ID][c.Prefix] = struct{}{}
+		l.Index.Claims[prefix] = ids
+		for _, id := range ids {
+			if _, indexed := l.Index.Lookup(id); !indexed {
+				continue
+			}
+			if own[id] == nil {
+				own[id] = map[string]struct{}{}
+			}
+			own[id][prefix] = struct{}{}
+		}
 	}
 	for id, r := range l.Index.Files() {
 		if origin := l.documents.localPath(r.Path); origin != r.Path {
@@ -69,8 +79,10 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 	if err := l.finalizeRecords(ctx, repoRoot, emittedFiles); err != nil {
 		return err
 	}
-	l.Store.SetDiscoveryIndex(l.Index)
-	l.scopes = nil
+	for file, doc := range l.documents.cache {
+		doc.terminal = l.terminalInput(file)
+		l.documents.cache[file] = doc
+	}
 	for _, file := range slices.Sorted(maps.Keys(l.Index.Errors)) {
 		path := filepath.Join(repoRoot, filepath.FromSlash(file))
 		if l.documents.cache[path].eligible == fileInactive {
@@ -87,19 +99,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
-	for _, readers := range l.Index.Readers {
-		slices.SortFunc(readers, func(a, b manifest.FileReader) int {
-			if order := cmp.Or(a.Reader.Compare(b.Reader), a.Source.Compare(b.Source)); order != 0 {
-				return order
-			}
-			if a.Exact == b.Exact {
-				return 0
-			}
-			if a.Exact {
-				return 1
-			}
-			return -1
-		})
-	}
+	l.Store.SetDiscoveryIndex(l.Index)
+	l.scopes = nil
 	return nil
 }

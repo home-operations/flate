@@ -244,6 +244,30 @@ func acceptCRDGatesForTest(t *testing.T, st *store.Store, obj manifest.BaseManif
 	}
 }
 
+func TestWarnMissingCRDs_NoAcceptedInputs(t *testing.T) {
+	manifest.KindOf(&manifest.RawObject{APIVersion: "apiextensions.k8s.io/v1", Kind: manifest.KindCustomResourceDefinition}).Namespaced()
+	var allocations [2]float64
+	for shape, repeats := range []int{1, 32} {
+		t.Run(fmt.Sprintf("references=%d", repeats*2), func(t *testing.T) {
+			st := store.New()
+			rs := &manifest.ResourceSet{Name: "app", Namespace: "apps"}
+			for range repeats {
+				for _, name := range []string{"a.example.com", "b.example.com"} {
+					rs.DependsOn = append(rs.DependsOn, fluxopv1.Dependency{APIVersion: "apiextensions.k8s.io/v1", Kind: manifest.KindCustomResourceDefinition, Name: name})
+				}
+			}
+			st.AddObject(rs)
+			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady})
+			st.SetArtifact(rs.Named(), &store.Emission{})
+			o := &Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}}}
+			allocations[shape] = testing.AllocsPerRun(10, o.warnMissingCRDs)
+			assert.Equal(t, len(st.Warnings()), 0)
+		})
+	}
+	t.Logf("allocations for 2/64 declared references without accepted inputs: %v", allocations)
+	assert.Equal(t, allocations[1], allocations[0])
+}
+
 func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	t.Parallel()
 	s := store.New()
@@ -258,6 +282,8 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	}{
 		{"z", store.StatusReady, true, true}, {"a", store.StatusReady, true, true}, {"failed", store.StatusFailed, true, true},
 		{"pending", store.StatusPending, true, true}, {"no status", store.StatusReady, false, true}, {"no artifact", store.StatusReady, true, false},
+		{"source artifact", store.StatusReady, true, true}, {"no accepted inputs", store.StatusReady, true, true},
+		{"no CRD inputs", store.StatusReady, true, true},
 	} {
 		rs := &manifest.ResourceSet{Name: tc.name, Namespace: "ns", DependsOn: []fluxopv1.Dependency{{APIVersion: crdB.Group + "/v1", Kind: crdB.Kind, Name: crdB.Name, Namespace: "explicit"}, {APIVersion: crdA.Group + "/v1", Kind: crdA.Kind, Name: crdA.Name}, {APIVersion: crdA.Group + "/v1", Kind: crdA.Kind, Name: crdA.Name, Namespace: "explicit"}, {APIVersion: manifest.CoreAPIVersion, Kind: manifest.KindConfigMap, Name: "missing"}}}
 		rs.DependsOn = append(rs.DependsOn,
@@ -272,6 +298,24 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 		}
 		if tc.artifact {
 			s.SetArtifact(rs.Named(), &store.Emission{})
+			if tc.name == "source artifact" {
+				s.SetArtifact(rs.Named(), &store.SourceArtifact{})
+			}
+		}
+		if tc.name == "no accepted inputs" {
+			continue
+		}
+		if tc.name == "no CRD inputs" {
+			reads := new(store.ReadSet)
+			reads.Init(s, rs.Named(), nil)
+			reads.GetObject(rs.Named())
+			reads.RequireData(manifest.NamedResource{Group: "", Kind: manifest.KindConfigMap, Namespace: "ns", Name: "missing"})
+			reads.Accept()
+			assert.Equal(t, reads.Valid(), true)
+			reads.Retire()
+			for range s.Sweep() {
+			}
+			continue
 		}
 		acceptCRDGatesForTest(t, s, rs)
 	}

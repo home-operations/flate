@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/home-operations/flate/internal/claimpath"
 )
 
 // Production identifies one source-qualified contribution to a queried target.
@@ -90,7 +92,10 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedRes
 	if i == nil || file == "" {
 		return nil, nil
 	}
-	for ids := range i.matchingPrefixes(file) {
+	for end, ids := range claimpath.Groups(i.Claims, file+"/") {
+		if end == 0 && (file == ".." || strings.HasPrefix(file, "../")) {
+			break
+		}
 		if owners == nil {
 			owners = slices.Clone(ids)
 		} else {
@@ -105,24 +110,6 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedRes
 	slices.SortFunc(owners, NamedResource.Compare)
 	slices.SortFunc(ancestors, NamedResource.Compare)
 	return owners, ancestors
-}
-
-func (i *DiscoveryIndex) matchingPrefixes(file string) iter.Seq[[]NamedResource] {
-	return func(yield func([]NamedResource) bool) {
-		prefixed := file + "/"
-		for end := len(prefixed); ; {
-			if end == 0 && (file == ".." || strings.HasPrefix(file, "../")) {
-				return
-			}
-			if ids := i.Claims[prefixed[:end]]; len(ids) != 0 && !yield(ids) {
-				return
-			}
-			if end == 0 {
-				return
-			}
-			end = strings.LastIndexByte(prefixed[:end-1], '/') + 1
-		}
-	}
 }
 
 // ReadersOfFile yields source-qualified readers of a file or any missing ancestor directory.

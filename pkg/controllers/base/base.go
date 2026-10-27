@@ -17,8 +17,6 @@ import (
 type Controller struct {
 	Store *store.Store
 	Tasks *task.Service
-	// SubstituteFrom is the immutable bootstrap-approved substitution snapshot.
-	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 
 	started atomic.Bool
 	filter  *change.Filter
@@ -60,8 +58,6 @@ func (c *Controller) requireNotStarted(method string) {
 type Options struct {
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
-	// SubstituteFrom is the immutable bootstrap-approved substitution snapshot.
-	SubstituteFrom map[manifest.NamedResource]manifest.BaseManifest
 	// DependencySubstitutions is the frozen discovered lookup used before child publication.
 	DependencySubstitutions values.DependencySubstitutions
 	// Filter narrows reconciliation to changed resources in changed-only mode.
@@ -88,7 +84,6 @@ func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.DependencySubstitutions = opts.DependencySubstitutions
 	c.filter = opts.Filter
-	c.SubstituteFrom = opts.SubstituteFrom
 	c.SkipKinds = opts.SkipKinds
 	c.existence = opts.Existence
 	c.preflight = opts.PreflightFailure

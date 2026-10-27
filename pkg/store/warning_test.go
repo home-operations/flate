@@ -27,68 +27,57 @@ func TestAddWarning_DedupAndCount(t *testing.T) {
 	origin := hrID("app")
 	w := manifest.Warning{Resource: origin, Category: manifest.WarnStaleValues, Count: 42,
 		Message: "values not defined by the chart schema", Detail: []string{"a", "b"}}
-	s.AddWarning(origin, w)
-	s.AddWarning(origin, w)
+	s.AddWarning(w)
+	s.AddWarning(w)
 	w.Count = -1
-	s.AddWarning(hrID("other"), w)
+	s.AddWarning(w)
 	w.Count = 0
-	s.AddWarning(origin, w)
+	s.AddWarning(w)
 	detail := w
 	detail.Detail = []string{"c"}
-	s.AddWarning(origin, detail)
+	s.AddWarning(detail)
 	message := w
 	message.Message = "another advisory"
-	s.AddWarning(origin, message)
+	s.AddWarning(message)
 	foreign := w
 	foreign.Resource.Group = "example.test"
-	s.AddWarning(origin, foreign)
+	s.AddWarning(foreign)
 	core := w
 	core.Resource.Kind += "." + core.Resource.Group
 	core.Resource.Group = ""
 	assert.Equal(t, core.Resource.String(), w.Resource.String())
-	s.AddWarning(origin, core)
+	s.AddWarning(core)
 
 	got := s.Warnings()
-	if len(got) != 5 {
-		t.Fatalf("want 5 distinct warnings, got %d: %+v", len(got), got)
-	}
-	for _, warning := range got {
-		want := 1
-		if warning.Resource == w.Resource && warning.Message == w.Message && slices.Equal(warning.Detail, w.Detail) {
-			want = 2
-		}
-		assert.Equal(t, warning.Count, want)
-	}
+	merged := w
+	merged.Count = 1
+	merged.Message = "another advisory; values not defined by the chart schema"
+	merged.Detail = []string{"a", "b", "c"}
+	foreign.Count, core.Count = 1, 1
+	want := []manifest.Warning{merged, foreign, core}
+	slices.SortFunc(want, manifest.CompareWarning)
+	assert.Diff(t, got, want)
 }
 
-func TestAddWarning_OriginIdentity(t *testing.T) {
+func TestAddWarning_ResourceIdentity(t *testing.T) {
 	t.Parallel()
-	origin := hrID("app")
-	core := origin
+	resource := hrID("app")
+	core := resource
 	core.Kind += "." + core.Group
 	core.Group = ""
-	assert.Equal(t, core.String(), origin.String())
-	for _, tc := range []struct {
-		name     string
-		resource manifest.NamedResource
-		origins  []manifest.NamedResource
-		want     int
-	}{
-		{name: "structured origins in global group", origins: []manifest.NamedResource{origin, core, origin, core}, want: 2},
-		{name: "global advisory replay", origins: []manifest.NamedResource{{}, {}}, want: 1},
-		{name: "zero origin independent of display", resource: origin, origins: []manifest.NamedResource{{}, {}, origin, origin}, want: 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			s := New()
-			w := manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Resource: tc.resource, Message: "m"}
-			for _, id := range tc.origins {
-				s.AddWarning(id, w)
-			}
-			w.Count = tc.want
-			assert.Diff(t, s.Warnings(), []manifest.Warning{w})
-		})
+	assert.Equal(t, core.String(), resource.String())
+	s := New()
+	want := []manifest.Warning{
+		{Category: manifest.WarnUnresolvedSubstitution, Message: "global", Count: 1},
+		{Category: manifest.WarnUnresolvedSubstitution, Resource: resource, Message: "grouped", Count: 1},
+		{Category: manifest.WarnUnresolvedSubstitution, Resource: core, Message: "core", Count: 1},
 	}
+	for _, w := range want {
+		s.AddWarning(w)
+		s.AddWarning(w)
+	}
+	slices.SortFunc(want, manifest.CompareWarning)
+	assert.Diff(t, s.Warnings(), want)
 }
 
 func TestAddWarning_DetailCollision(t *testing.T) {
@@ -96,27 +85,26 @@ func TestAddWarning_DetailCollision(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		a, b []string
-		want int
+		want []string
 	}{
-		{name: "comma", a: []string{"a,b"}, b: []string{"a", "b"}, want: 2},
-		{name: "empty element", b: []string{""}, want: 2},
-		{name: "embedded NUL", a: []string{"a\x00b"}, b: []string{"a", "b"}, want: 2},
-		{name: "element order", a: []string{"a", "b"}, b: []string{"b", "a"}, want: 2},
-		{name: "invalid UTF-8", a: []string{"\xff"}, b: []string{"\xfe"}, want: 2},
-		{name: "nil and empty", b: []string{}, want: 1},
+		{name: "comma", a: []string{"a,b"}, b: []string{"a", "b"}, want: []string{"a", "a,b", "b"}},
+		{name: "empty element", b: []string{""}, want: []string{""}},
+		{name: "embedded NUL", a: []string{"a\x00b"}, b: []string{"a", "b"}, want: []string{"a", "a\x00b", "b"}},
+		{name: "element order", a: []string{"a", "b"}, b: []string{"b", "a"}, want: []string{"a", "b"}},
+		{name: "invalid UTF-8", a: []string{"\xff"}, b: []string{"\xfe"}, want: []string{"\xfe", "\xff"}},
+		{name: "nil and empty", b: []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := New()
 			w := manifest.Warning{Resource: hrID("app"), Category: manifest.WarnStaleValues, Message: "m", Detail: tc.a}
-			s.AddWarning(w.Resource, w)
+			s.AddWarning(w)
 			w.Detail = tc.b
-			s.AddWarning(w.Resource, w)
+			s.AddWarning(w)
 			got := s.Warnings()
-			assert.Equal(t, len(got), tc.want)
-			for _, warning := range got {
-				assert.Equal(t, warning.Count, 1)
-			}
+			w.Count = 1
+			w.Detail = tc.want
+			assert.Diff(t, got, []manifest.Warning{w})
 		})
 	}
 }
@@ -132,6 +120,12 @@ func TestWarnings_Sorted(t *testing.T) {
 		{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "z", Count: 1},
 		{Category: manifest.WarnStaleValues, Resource: hrID("z"), Message: "m", Count: 1},
 	}
+	input := slices.Clone(want)
+	want = []manifest.Warning{
+		{Category: manifest.WarnEmptyScan, Message: "scan", Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("a"), Message: "m; z", Detail: []string{"", "a", "b"}, Count: 1},
+		{Category: manifest.WarnStaleValues, Resource: hrID("z"), Message: "m", Count: 1},
+	}
 	for _, reverse := range []bool{false, true} {
 		name := "forward"
 		if reverse {
@@ -140,12 +134,12 @@ func TestWarnings_Sorted(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			s := New()
-			input := slices.Clone(want)
+			input := slices.Clone(input)
 			if reverse {
 				slices.Reverse(input)
 			}
 			for _, w := range input {
-				s.AddWarning(w.Resource, w)
+				s.AddWarning(w)
 			}
 			assert.Diff(t, s.Warnings(), want)
 		})
@@ -156,7 +150,7 @@ func TestAddWarning_DefensiveCopy(t *testing.T) {
 	t.Parallel()
 	s := New()
 	detail := []string{"x"}
-	s.AddWarning(hrID("app"), manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail})
+	s.AddWarning(manifest.Warning{Category: manifest.WarnStaleValues, Resource: hrID("app"), Message: "m", Detail: detail})
 	detail[0] = "MUTATED"
 
 	got := s.Warnings()
@@ -184,21 +178,73 @@ func TestAddWarning_Concurrent(t *testing.T) {
 			added := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
 			w := manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Message: "m", Detail: []string{"k"}}
 			var wg sync.WaitGroup
-			for i, id := range []manifest.NamedResource{hrID("app"), hrID("other")} {
+			for i := range 2 {
 				wg.Go(func() {
+					warning := w
+					warning.Message = []string{"second", "first"}[i]
+					warning.Detail = []string{warning.Message, "k"}
 					<-start[i]
-					s.AddWarning(id, w)
+					s.AddWarning(warning)
 					close(added[i])
 					<-added[1-i]
-					s.AddWarning(id, w)
+					s.AddWarning(warning)
 				})
 			}
 			close(start[first])
 			<-added[first]
 			close(start[1-first])
 			wg.Wait()
-			w.Count = 2
+			w.Count = 1
+			w.Message, w.Detail = "first; second", []string{"first", "k", "second"}
 			assert.Diff(t, s.Warnings(), []manifest.Warning{w})
 		})
 	}
+}
+
+func TestWarnings_AcceptedSuppliedUnion(t *testing.T) {
+	t.Parallel()
+	s := New()
+	first := &manifest.Kustomization{Name: "first", Namespace: "apps"}
+	second := &manifest.Kustomization{Name: "second", Namespace: "apps"}
+	s.AddObject(first)
+	s.AddObject(second)
+	resource := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
+	var a, b ReadSet
+	a.Init(s, first.Named(), nil)
+	a.GetObject(first.Named())
+	defer a.Close()
+	b.Init(s, second.Named(), nil)
+	b.GetObject(second.Named())
+	defer b.Close()
+	ordinary := manifest.Warning{Resource: resource, Category: manifest.WarnStaleValues, Message: "global", Detail: []string{"global"}}
+	s.AddWarning(ordinary)
+	var unaccepted ReadSet
+	unaccepted.Init(s, first.Named(), nil)
+	defer unaccepted.Close()
+	unaccepted.GetObject(first.Named())
+	unaccepted.AddWarning(manifest.Warning{Resource: resource, Category: manifest.WarnStaleValues, Message: "unaccepted", Detail: []string{"unaccepted"}})
+	for _, entry := range []struct {
+		reads *ReadSet
+		keys  []string
+	}{{&a, []string{"a", "z"}}, {&b, []string{"b", "z"}}} {
+		entry.reads.AddWarning(manifest.Warning{Resource: resource, Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over last.yaml", Detail: entry.keys})
+		entry.reads.AddWarning(manifest.Warning{Resource: resource, Category: manifest.WarnStaleValues, Message: entry.reads.ID().Name, Detail: entry.keys})
+		entry.reads.Accept()
+	}
+	warnings := s.Warnings()
+	assert.Diff(t, warnings, []manifest.Warning{
+		{Resource: resource, Category: manifest.WarnStaleValues, Count: 1, Message: "first; global; second", Detail: []string{"a", "b", "global", "z"}},
+		{Resource: resource, Category: manifest.WarnSuppliedPrecedence, Count: 1, Message: "repository data takes precedence over last.yaml", Detail: []string{"a", "b", "z"}},
+	})
+	var replacement ReadSet
+	replacement.Init(s, first.Named(), nil)
+	defer replacement.Close()
+	replacement.GetObject(first.Named())
+	replacement.Accept()
+	a.Retire()
+	warnings = s.Warnings()
+	assert.Diff(t, warnings, []manifest.Warning{
+		{Resource: resource, Category: manifest.WarnStaleValues, Count: 1, Message: "global; second", Detail: []string{"b", "global", "z"}},
+		{Resource: resource, Category: manifest.WarnSuppliedPrecedence, Count: 1, Message: "repository data takes precedence over last.yaml", Detail: []string{"b", "z"}},
+	})
 }

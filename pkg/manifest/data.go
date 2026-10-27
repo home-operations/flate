@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 	"iter"
+	"slices"
 	"strings"
 )
 
@@ -12,6 +13,26 @@ type Data interface {
 	Value(string) (string, bool, error)
 	Keys() iter.Seq[string]
 	Snapshot() map[string]any
+	WithSupplied(Data) (Data, []string)
+}
+
+func fillSupplied(repository, supplied Data, write func(string, string)) []string {
+	var overridden []string
+	supplied.Keys()(func(key string) bool {
+		value, present, err := repository.Value(key)
+		if err != nil {
+			return true
+		}
+		if present && !HasValuePlaceholder(value) {
+			overridden = append(overridden, key)
+			return true
+		}
+		value, _, _ = supplied.Value(key)
+		write(key, value)
+		return true
+	})
+	slices.Sort(overridden)
+	return overridden
 }
 
 func scalarString(v any) (string, error) {

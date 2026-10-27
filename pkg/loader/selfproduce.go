@@ -114,7 +114,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 			details := incomplete[owner]
 			slices.Sort(details)
 			details = slices.Compact(details)
-			l.Store.AddWarning(owner, manifest.Warning{Resource: owner, Category: manifest.WarnIncompleteInputCoverage,
+			l.Store.AddWarning(manifest.Warning{Resource: owner, Category: manifest.WarnIncompleteInputCoverage,
 				Message: "changed-only input coverage is incomplete; run flate build all without --base or --path-orig to validate the full tree", Detail: details})
 		}
 	}
@@ -555,23 +555,7 @@ func (b *selfProduceBuilder) recordProducer(declaration producerDeclaration, can
 				b.idx.Records[producer] = r
 			}
 		}
-		if len(target.DeclaredKeys) > 0 && target.Kind == manifest.KindSecret {
-			b.synthesizePlaceholderSecret(target.NamedResource, target.DeclaredKeys)
-		}
 	}
-}
-
-// synthesizePlaceholderSecret retains declared keys for offline substitution.
-// Existing Store objects and collected stand-ins take precedence.
-func (b *selfProduceBuilder) synthesizePlaceholderSecret(target manifest.NamedResource, keys []string) {
-	if !b.wipeSecrets || b.store == nil || b.store.GetObject(target) != nil || b.secrets[target] != nil {
-		return
-	}
-	stringData := make(map[string]any, len(keys))
-	for _, k := range keys {
-		stringData[k] = manifest.ValuePlaceholder(k)
-	}
-	b.secrets[target] = &manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: stringData}
 }
 
 func appendUniqueProducer[T comparable](dst []T, v T) []T {

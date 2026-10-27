@@ -92,17 +92,13 @@ func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, p
 		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" || !ref.NamedResource.KindInfo().Data {
 			continue
 		}
-		if ref.Use != "substituteFrom" || e.SubstituteFrom[ref.NamedResource] == nil {
-			e.PromoteData(ctx, ref.NamedResource)
-		}
+		e.PromoteData(ctx, ref.NamedResource)
 		input := provider.Lookup(ref.NamedResource)
 		allowMissing := e.AllowMissingSecrets
 		if ref.Use == "substituteFrom" {
 			allowMissing = ref.Kind == manifest.KindSecret
 			if allowMissing && !ref.Optional && (input.Data == nil || !input.Data.HasKeys()) {
-				if e.SubstituteFrom[ref.NamedResource] == nil {
-					e.Unreadable = append(e.Unreadable, ref.NamedResource)
-				}
+				e.Unreadable = append(e.Unreadable, ref.NamedResource)
 				e.unresolved = append(e.unresolved, ref.NamedResource)
 			}
 		}

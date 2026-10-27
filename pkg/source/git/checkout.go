@@ -47,7 +47,7 @@ func (f *Fetcher) updateSubmodules(ctx context.Context, repo *git.Repository, au
 		if err != nil {
 			return err
 		}
-		if err := f.validateRepo(&manifest.GitRepository{URL: remote.Config().URLs[0]}); err != nil {
+		if _, err := f.validateRepo(&manifest.GitRepository{URL: remote.Config().URLs[0]}); err != nil {
 			return fmt.Errorf("validate submodule %q: %w", sub.Config().Name, err)
 		}
 		if err := sub.UpdateContext(ctx, &git.SubmoduleUpdateOptions{Auth: auth}); err != nil {

@@ -634,7 +634,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 				t.Fatalf("warnings = %+v, want one unresolved Secret group", warnings)
 			}
 			assert.Equal(t, warnings[0].Resource, manifest.NamedResource{})
-			assert.Equal(t, warnings[0].Count, 2)
+			assert.Equal(t, warnings[0].Count, 1)
 			t.Logf("replay=%t; both consumers Ready; accepted output reused; warning=%+v", replay, warnings[0])
 		})
 	}

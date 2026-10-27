@@ -1189,10 +1189,10 @@ func TestFetcher_NetworkRoutes(t *testing.T) {
 				testutil.WriteFileAt(t, f.RegistryConfig, fmt.Sprintf(`{"auths":{%q:{"auth":"dXNlcjpwYXNz"}}}`, mustURL(t, registryURL).Host))
 				_, err = f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
-				if !ok || missing.RetryWithRegistryConfig == nil {
+				if !ok || missing.RetryAmbient == nil {
 					t.Fatalf("fallback: %v", err)
 				}
-				_, err = missing.RetryWithRegistryConfig(t.Context(), f.RegistryConfig)
+				_, err = missing.RetryAmbient(t.Context())
 			} else {
 				_, err = f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 			}

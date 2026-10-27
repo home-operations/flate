@@ -202,3 +202,77 @@ func writeModel(e Encoder, m Model, warnings ...manifest.Warning) error {
 	r.Prepare(nil)
 	return e.Report(r, e)
 }
+
+func TestEncoderReport_LocalAgentInformation(t *testing.T) {
+	t.Parallel()
+	var output bytes.Buffer
+	warning := manifest.Warning{Resource: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}, Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Count: 1}
+	if err := writeModel(Encoder{Writer: &output}, Model{}, warning); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "information (1)") || !strings.Contains(text, "[LocalSSHAgent]") || strings.Contains(text, "warnings (") || strings.Contains(text, "failed") {
+		t.Fatalf("agent information = %q", text)
+	}
+}
+
+func TestEncoderReport_AdvisoryNames(t *testing.T) {
+	t.Parallel()
+	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	other := source
+	other.Group = "custom.example"
+	agent := manifest.Warning{Resource: source, Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Count: 1}
+	ordinary := manifest.Warning{Resource: source, Category: manifest.WarnPathConfig, Message: "ordinary", Count: 3}
+	collision := ordinary
+	collision.Resource = other
+	for _, tc := range []struct {
+		name     string
+		groups   []ReportGroup
+		warnings []Warning
+		want     []string
+		absent   []string
+	}{
+		{
+			name:     "two retained clusters",
+			groups:   []ReportGroup{{Cluster: "alpha"}, {Cluster: "omega"}},
+			warnings: []Warning{{Warning: ordinary}, {Warning: agent}, {Warning: ordinary, Group: 1}, {Warning: agent, Group: 1}},
+			want:     []string{"warnings (2)", "information (2)", "GitRepository alpha: apps/source: ordinary (×3)", "GitRepository omega: apps/source: ordinary (×3)", "GitRepository alpha: apps/source: authenticated", "GitRepository omega: apps/source: authenticated"},
+			absent:   []string{"GitRepository.source.toolkit.fluxcd.io", "Cluster:", GlyphFail},
+		},
+		{
+			name:     "one retained cluster",
+			groups:   []ReportGroup{{Cluster: "omega"}},
+			warnings: []Warning{{Warning: ordinary}, {Warning: agent}},
+			want:     []string{"warnings (1)", "information (1)", "GitRepository apps/source: ordinary (×3)", "GitRepository apps/source: authenticated"},
+			absent:   []string{"omega:", "failed", "Cluster:"},
+		},
+		{
+			name:     "kind collision",
+			groups:   []ReportGroup{{Cluster: "alpha"}, {Cluster: "omega"}},
+			warnings: []Warning{{Warning: agent}, {Warning: collision, Group: 1}},
+			want:     []string{"warnings (1)", "information (1)", "GitRepository.source.toolkit.fluxcd.io alpha: apps/source: authenticated", "GitRepository.custom.example omega: apps/source: ordinary (×3)"},
+			absent:   []string{"Cluster:", GlyphFail},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			report := Report{Groups: tc.groups, Warnings: tc.warnings}
+			report.Prepare(nil)
+			var b bytes.Buffer
+			encoder := Encoder{Writer: &b}
+			if err := encoder.Report(report, encoder); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if strings.Count(b.String(), want) != 1 {
+					t.Errorf("missing or duplicate %q: %s", want, b.String())
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(b.String(), absent) {
+					t.Errorf("unexpected %q: %s", absent, b.String())
+				}
+			}
+		})
+	}
+}

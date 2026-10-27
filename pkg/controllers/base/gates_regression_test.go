@@ -146,14 +146,14 @@ func TestRequireRefresh_DataPromotionRefreshesCanonical(t *testing.T) {
 	})
 	first := gateExecution(c, canonical.Named())
 	_ = first.Reads.GetObject(canonical.Named())
-	_ = first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads, false, nil))
+	_ = first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads, false))
 	if first.Reads.Valid() {
 		t.Fatal("promotion did not invalidate the captured declaration")
 	}
 	second := gateExecution(c, canonical.Named())
 	got, _ := second.Reads.Get[*manifest.Kustomization](canonical.Named())
 	assert.Equal(t, got, fresh)
-	inputs := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false, nil))
+	inputs := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
 	assert.Equal(t, len(inputs), 1)
 	assert.Equal(t, inputs[0].NamedResource, replacement.Named())
 	assert.Equal(t, inputs[0].Input.Data, manifest.Data(replacement))
@@ -205,7 +205,7 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
-			inputs := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false, nil))
+			inputs := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
 			assert.Equal(t, len(inputs), 1)
 			assert.Equal(t, inputs[0].Name, "current")
 		})

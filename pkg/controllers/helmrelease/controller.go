@@ -43,7 +43,7 @@ type execution struct {
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
-	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, nil)
+	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
 	return execution
 }
 
@@ -152,7 +152,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	// override is a stale no-op. Advisory only; rides Result.Warnings to the
 	// footer + konflate. See StaleValuePaths.
 	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values, input.Sources); len(stale) > 0 {
-		c.run.Reads.AddWarning(id, manifest.Warning{
+		c.run.Reads.AddWarning(manifest.Warning{
 			Resource: id,
 			Category: manifest.WarnStaleValues,
 			Message:  "values not used by the chart",
@@ -202,7 +202,7 @@ func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (
 	if !ok || ctx.Err() != nil {
 		return nil, false
 	}
-	data := values.NewStoreProvider(reads, c.WipeSecrets, nil)
+	data := values.NewStoreProvider(reads, c.WipeSecrets)
 	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
 	var omittedRefs []manifest.NamedResource
 	for ref := range manifest.References(hr, manifest.ReferenceRelations) {

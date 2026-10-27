@@ -100,9 +100,7 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OC
 	return credStore, nil
 }
 
-// registryFallback preserves the missing Secret until renders are exhausted.
-// A pull retry requires a credential for this registry; unrelated credentials
-// MUST leave producer-backed sources skippable.
+// Unrelated registry credentials MUST NOT enable an ambient retry.
 func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, policy cache.Policy) (credentials.Store, error) {
 	parsed, err := parseOCIRef(repo.URL)
 	if err != nil {
@@ -114,31 +112,26 @@ func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepo
 		return nil, fmt.Errorf("%w: parse registry reference: %w", manifest.ErrInput, err)
 	}
 	mse, _ := errors.AsType[*source.MissingSecretError](missing)
-	credStore, err := loadCredentials(f.RegistryConfig)
-	if err != nil {
-		// A corrupt global config MUST not preempt a later rendered Secret.
-		configErr := fmt.Errorf("%w: %w", manifest.ErrInput, err)
-		mse.RetryWithRegistryConfig = func(_ context.Context, _ string) (*store.SourceArtifact, error) {
-			return nil, configErr
+	credStore, configErr := loadCredentials(f.RegistryConfig)
+	if configErr == nil {
+		if credStore == nil {
+			return nil, missing
 		}
-		return nil, mse
+		if cred, err := credentials.Credential(credStore)(ctx, ref.Host()); err != nil || cred == auth.EmptyCredential {
+			return nil, missing
+		}
 	}
-	if credStore == nil {
-		return nil, missing
-	}
-	// A broken credential helper is treated as no credential, preserving skips.
-	if cred, err := credentials.Credential(credStore)(ctx, ref.Host()); err != nil || cred == auth.EmptyCredential {
-		return nil, missing
-	}
-	mse.RegistryConfig = f.RegistryConfig
-	mse.RetryWithRegistryConfig = func(ctx context.Context, configPath string) (*store.SourceArtifact, error) {
+	mse.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+		if configErr != nil {
+			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, configErr)
+		}
 		slog.Debug("oci: secretRef unresolvable, using registry config",
 			"id", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), "registry", ref.Registry)
-		credStore, err := loadCredentials(configPath)
+		credentials, err := loadCredentials(f.RegistryConfig)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
 		}
-		return f.fetchWithCredentials(ctx, repo, credStore, policy)
+		return f.fetchWithCredentials(ctx, repo, credentials, policy)
 	}
 	return nil, mse
 }

@@ -23,17 +23,25 @@ func BenchmarkSubstitutionProvider_Lookup(b *testing.B) {
 			c := New(st, nil, nil, false)
 			opts := Options{}
 			if supplied {
-				opts.SubstituteFrom = map[manifest.NamedResource]manifest.BaseManifest{cm.Named(): cm}
+				snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: cm}})
+				if err != nil {
+					b.Fatal(err)
+				}
+				st.SetSupplied(snapshot)
 			} else {
 				st.AddObject(cm)
 			}
 			c.Configure(opts, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, c.SubstituteFrom)
+			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
+			expected := provider.Data(cm.Named())
+			if expected == nil {
+				b.Fatal("lookup failed")
+			}
 			b.ReportAllocs()
 			for b.Loop() {
-				if provider.Data(cm.Named()) != cm {
+				if provider.Data(cm.Named()) != expected {
 					b.Fatal("lookup failed")
 				}
 			}

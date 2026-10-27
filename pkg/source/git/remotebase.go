@@ -38,7 +38,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 	repo := &manifest.GitRepository{}
 	repo.URL = request.URL
 	repo.RecurseSubmodules = request.Submodules
-	if err := f.validateRepo(repo); err != nil {
+	if _, err := f.validateRepo(repo); err != nil {
 		return nil, err
 	}
 	if request.Ref != "" {

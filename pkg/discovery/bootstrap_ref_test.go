@@ -307,7 +307,9 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 					t.Fatal("fallback marked source ready")
 				}
 				warnings := st.Warnings()
-				if len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceRefUnavailable || warnings[0].Resource != repository.Named() || warnings[0].Count != 1 || warnings[0].Detail[0] != (*manifest.GitRepositoryRef)(repository.Reference).String() {
+				detail := []string{(*manifest.GitRepositoryRef)(repository.Reference).String(), "ref unavailable in this tree's repository or checkout options require fetching"}
+				slices.Sort(detail)
+				if len(warnings) != 1 || warnings[0].Category != manifest.WarnSourceRefUnavailable || warnings[0].Resource != repository.Named() || warnings[0].Count != 1 || !slices.Equal(warnings[0].Detail, detail) {
 					t.Fatalf("fallback warning = %+v", warnings)
 				}
 				return

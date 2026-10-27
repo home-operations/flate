@@ -47,10 +47,10 @@ type commonFlags struct {
 	selfURLs             []string
 	base                 string
 	namespace            string
-	substituteFrom       []string
+	supply               []string
 	substitute           []string
 	strictSubstitutions  bool
-	substitutionSources  []orchestrator.SubstitutionSource
+	suppliedObjects      []store.SuppliedObject
 	substitutionValues   map[string]string
 	allowMissingSecrets  bool
 	allowMissingCRDs     bool
@@ -79,8 +79,8 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
 	fs.BoolVar(&f.allowMissingCRDs, "allow-missing-crds", false,
 		"accept CRD dependencies absent from the offline inputs because the cluster installs them at runtime")
-	fs.StringArrayVar(&f.substituteFrom, "substitute-from", nil,
-		"ConfigMap/Secret YAML file for postBuild references (repeatable; later identities replace earlier ones)")
+	fs.StringArrayVar(&f.supply, "supply", nil,
+		"Secret/ConfigMap YAML file for supported data and credential references (repeatable; later identities replace earlier ones)")
 	fs.StringArrayVar(&f.substitute, "substitute", nil,
 		"postBuild KEY=VALUE override (repeatable; applied after references and inline values)")
 	fs.BoolVar(&f.strictSubstitutions, "strict-substitutions", false,
@@ -251,7 +251,7 @@ func buildOrchCfg(c commonFlags) orchestrator.Config {
 			Jitter:   sourceRetryJitter,
 		},
 		GitDepth:             c.gitDepth,
-		SubstituteFrom:       c.substitutionSources,
+		Supply:               c.suppliedObjects,
 		Substitute:           c.substitutionValues,
 		StrictSubstitutions:  c.strictSubstitutions,
 		AllowMissingSecrets:  c.allowMissingSecrets,
@@ -370,7 +370,7 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 			}
 		}
 	}
-	if err := c.loadSubstitutions(ctx); err != nil {
+	if err := c.loadInputs(ctx); err != nil {
 		return early(err)
 	}
 	ssrfguard.Restrict(c.restrictEgress)

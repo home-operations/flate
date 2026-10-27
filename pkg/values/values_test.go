@@ -90,7 +90,7 @@ func TestExpandValueReferences_ConfigMap(t *testing.T) {
 	st := store.New()
 	st.AddObject(cm)
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
-	provider := NewStoreProvider(st, true, nil)
+	provider := NewStoreProvider(st, true)
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
@@ -119,7 +119,7 @@ func TestExpandValueReferences_MalformedSiblingTolerated(t *testing.T) {
 			st := store.New()
 			st.AddObject(obj)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra"}}}
-			expandValuesForTest(t, hr, NewStoreProvider(st, true, nil), nil)
+			expandValuesForTest(t, hr, NewStoreProvider(st, true), nil)
 			if got := hr.Values["replicaCount"]; fmt.Sprint(got) != "3" {
 				t.Errorf("replicaCount = %v, want 3", got)
 			}
@@ -139,7 +139,7 @@ func TestExpandValueReferences_MalformedRequestedKeyStillFails(t *testing.T) {
 				st := store.New()
 				st.AddObject(obj)
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: obj.Named().Kind, Name: "extra", Optional: optional}}}
-				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), nil)
+				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
 				if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "data[values.yaml]") {
 					t.Fatalf("malformed requested key must fail with its name: %v", err)
 				}
@@ -285,7 +285,7 @@ func TestExpandValueReferences_MissingReferences(t *testing.T) {
 				}
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Values: map[string]any{"existing": "kept"},
 					ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "vars", ValuesKey: "v", TargetPath: "k", Optional: optional}}}
-				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), nil)
+				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), nil)
 				if optional && tc.kind != "Deployment" && tc.want != nil {
 					assert.NoError(t, err)
 					assert.Diff(t, hr.Values, map[string]any{"existing": "kept"})
@@ -450,7 +450,7 @@ func TestExpandPostBuildSubstituteReference(t *testing.T) {
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindConfigMap, Name: cm.Name, Namespace: cm.Namespace})
 	st.AddObject(&manifest.Secret{Name: "secret-vars", Namespace: cm.Namespace, StringData: map[string]any{"TOKEN": "core"}})
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindSecret, Name: "secret-vars", Namespace: cm.Namespace})
-	provider := NewStoreProvider(st, true, nil)
+	provider := NewStoreProvider(st, true)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 
@@ -554,7 +554,7 @@ func TestStoreProvider_LookupReadability(t *testing.T) {
 			t.Parallel()
 			var reads store.ReadSet
 			reads.Init(s, manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "apps", Name: "reader"}, nil)
-			provider := NewStoreProvider(&reads, true, nil)
+			provider := NewStoreProvider(&reads, true)
 			id := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: tc.name}
 			input := provider.Lookup(id)
 			unreadable := input.Data == nil || !input.Data.HasKeys()
@@ -937,7 +937,7 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 				st := store.New()
 				st.AddObject(&manifest.ConfigMap{Name: "extra", Namespace: "default", Data: map[string]any{"requested.yaml": tc.document}})
 				hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "extra", ValuesKey: "requested.yaml", Optional: optional}}}
-				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true, nil), &Cache{})
+				_, err := ExpandValueReferences(hr, NewStoreProvider(st, true), &Cache{})
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("malformed values must retain input/domain identity: %v", err)
 				}
@@ -1009,6 +1009,10 @@ func (r *countedDataReader) ReferenceFacts(id manifest.NamedResource, index *man
 func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	t.Parallel()
 	s := store.New()
+	supplied := &manifest.Secret{Name: "supplied", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
+	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied}})
+	assert.NoError(t, err)
+	s.SetSupplied(snapshot)
 	first := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "first"}}
 	s.AddObject(first)
 	owner := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "producer"}
@@ -1026,16 +1030,14 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	reads.Init(s, reader, nil)
 	defer reads.Close()
 	counted := &countedDataReader{ReadSet: &reads}
-	provider := NewStoreProvider(counted, true, nil)
+	provider := NewStoreProvider(counted, true)
 	input := provider.Lookup(first.Named())
 	if input.Data != first || !input.Offline || len(input.Materializers) != 0 {
 		t.Fatalf("captured input=%+v", input)
 	}
 	absent := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: first.Namespace, Name: first.Name}
 	other := &manifest.ConfigMap{Name: first.Name, Namespace: "other", Data: map[string]any{"VALUE": "other"}}
-	supplied := &manifest.Secret{Name: "supplied", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
 	s.AddObject(other)
-	provider.supplied = map[manifest.NamedResource]manifest.BaseManifest{supplied.Named(): supplied}
 	missing := provider.Lookup(absent)
 	if missing.Data != nil || missing.Generated || missing.Offline || missing.Private || len(missing.Materializers) != 0 {
 		t.Fatalf("missing input=%+v", missing)
@@ -1046,7 +1048,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	}
 	otherInput := provider.Lookup(other.Named())
 	private := provider.Lookup(supplied.Named())
-	if otherInput.Data != other || private.Data != supplied || !private.Private {
+	if otherInput.Data != other || private.Data == nil || private.Private {
 		t.Fatalf("distinct inputs=%+v %+v", otherInput, private)
 	}
 	s.AddObject(&manifest.Secret{Name: absent.Name, Namespace: absent.Namespace, StringData: map[string]any{"VALUE": "inserted"}})
@@ -1062,7 +1064,7 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	next := *first
 	next.Data = map[string]any{"VALUE": "next"}
 	s.RecordEmitted(owner, &store.Emission{Children: []store.Child{{Obj: &next}}, Complete: true}, nil)
-	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 4 || counted.productions != 4 {
+	if provider.Data(first.Named()) != first || provider.Lookup(first.Named()).Data != first || counted.objects != 5 || counted.productions != 5 {
 		t.Fatalf("expansion rescanned captured input: object=%d productions=%d", counted.objects, counted.productions)
 	}
 	if reads.Valid() {
@@ -1071,11 +1073,72 @@ func TestStoreProvider_LookupRetainsOneSource(t *testing.T) {
 	var fresh store.ReadSet
 	fresh.Init(s, reader, nil)
 	defer fresh.Close()
-	if got := NewStoreProvider(&fresh, true, nil).Data(first.Named()); got != &next {
+	if got := NewStoreProvider(&fresh, true).Data(first.Named()); got != &next {
 		t.Fatalf("next execution retained preceding value: %v", got)
 	}
-	if got := NewStoreProvider(&fresh, true, nil).Data(absent); got == nil {
+	if got := NewStoreProvider(&fresh, true).Data(absent); got == nil {
 		t.Fatal("fresh execution retained frozen absence")
+	}
+}
+
+func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	owner := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+	s.AddObject(owner)
+	s.AddObject(consumer)
+	supplied := &manifest.Secret{Name: "credentials", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied"}}
+	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied, Path: "credentials.yaml"}})
+	assert.NoError(t, err)
+	s.SetSupplied(snapshot)
+	var first store.ReadSet
+	first.Init(s, consumer.Named(), nil)
+	defer first.Close()
+	input := NewStoreProvider(&first, true).Lookup(supplied.Named())
+	if input.Data == nil || input.Private || len(input.Materializers) != 0 || s.GetObject(supplied.Named()) != nil {
+		t.Fatalf("supplied-only input = %+v", input)
+	}
+	value, _, err := input.Data.Value("VALUE")
+	assert.NoError(t, err)
+	assert.Equal(t, value, "supplied")
+	repository := &manifest.Secret{Name: supplied.Name, Namespace: supplied.Namespace, StringData: map[string]any{"VALUE": "repository"}}
+	published := make(chan struct{})
+	go func() {
+		s.RecordEmitted(owner.Named(), &store.Emission{Children: []store.Child{{Obj: repository}}, Complete: true}, nil)
+		close(published)
+	}()
+	<-published
+	if first.Valid() {
+		t.Fatal("repository arrival did not invalidate supplied-only capture")
+	}
+	var second store.ReadSet
+	second.Init(s, consumer.Named(), nil)
+	second.GetObject(consumer.Named())
+	defer second.Close()
+	resolved := NewStoreProvider(&second, true).Data(supplied.Named())
+	if resolved != repository {
+		t.Fatal("accepted repository data did not supersede supply")
+	}
+	second.Accept()
+	warnings := s.Warnings()
+	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSuppliedPrecedence || warnings[0].Count != 1 {
+		t.Fatalf("accepted precedence = %+v", warnings)
+	}
+	assert.Diff(t, warnings[0].Detail, []string{"VALUE"})
+	s.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
+	if second.Valid() {
+		t.Fatal("withdrawal did not invalidate repository capture")
+	}
+	var third store.ReadSet
+	third.Init(s, consumer.Named(), nil)
+	defer third.Close()
+	restored := NewStoreProvider(&third, true).Data(supplied.Named())
+	value, _, err = restored.Value("VALUE")
+	assert.NoError(t, err)
+	assert.Equal(t, value, "supplied")
+	if s.GetObject(supplied.Named()) != nil || len(s.Warnings()) != 0 {
+		t.Fatal("withdrawal retained canonical data or stale precedence")
 	}
 }
 
@@ -1093,13 +1156,13 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	if facts.Data != raw || facts.Accepted {
 		t.Fatalf("covered facts=%+v", facts)
 	}
-	if NewStoreProvider(st, true, nil).Data(id) != raw {
+	if NewStoreProvider(st, true).Data(id) != raw {
 		t.Fatal("data-only provider rejected visible prediction")
 	}
 	var previous store.ReadSet
 	previous.Init(st, owner, nil)
 	defer previous.Retire()
-	if NewStoreProvider(&previous, true, nil).Data(id) != raw {
+	if NewStoreProvider(&previous, true).Data(id) != raw {
 		t.Fatal("captured provider rejected visible prediction")
 	}
 	first, second := facts.Productions, facts.Productions
@@ -1129,11 +1192,32 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	want := []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Declaration: external.Named()}}
 	for _, reader := range []dataReader{st, &current} {
 		assert.Diff(t, reader.ReferenceFacts(id, nil), store.ReferenceFacts{Productions: want})
-		assert.Diff(t, NewStoreProvider(reader, true, nil).Data(id), &manifest.Secret{
+		assert.Diff(t, NewStoreProvider(reader, true).Data(id), &manifest.Secret{
 			Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"VALUE": manifest.ValuePlaceholder("VALUE")},
 		})
-		if NewStoreProvider(reader, false, nil).Data(id) != nil {
+		if NewStoreProvider(reader, false).Data(id) != nil {
 			t.Fatal("provider supplied declared placeholders with wiping disabled")
 		}
 	}
+}
+
+func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
+	t.Parallel()
+	s := store.New()
+	secret := &manifest.Secret{Name: "settings", Namespace: "apps", StringData: map[string]any{"VALUE": "supplied", "VALUES": "greeting: supplied\n", "tag": "supplied-tag"}}
+	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: secret}})
+	assert.NoError(t, err)
+	s.SetSupplied(snapshot)
+	s.AddObject(&manifest.Secret{Name: secret.Name, Namespace: secret.Namespace, StringData: map[string]any{"VALUE": "repository", "tag": ""}})
+	provider := NewStoreProvider(s, true)
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "absent", Optional: true}, {Kind: manifest.KindSecret, Name: secret.Name}}, Substitute: map[string]string{"VALUE": "inline"}}}
+	assert.NoError(t, ExpandPostBuildSubstituteReferenceWithSubstitutions(ks, provider, map[string]string{"VALUE": "explicit"}))
+	assert.Equal(t, ks.PostBuild.Substitute["VALUE"], "explicit")
+	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "absent", Optional: true}, {Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "VALUES"}, {Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "tag", TargetPath: "image.tag"}}, Values: map[string]any{"greeting": "inline"}}
+	omitted, err := ExpandValueReferences(hr, provider, nil)
+	assert.NoError(t, err)
+	if len(omitted) != 0 {
+		t.Fatalf("usable supply omitted: %v", omitted)
+	}
+	assert.Diff(t, hr.Values, map[string]any{"greeting": "inline", "image": map[string]any{"tag": ""}})
 }

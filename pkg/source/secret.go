@@ -9,31 +9,24 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// MissingSecretError reports that a source's auth SecretRef couldn't be
-// resolved offline. It carries the missing Secret's identity so the source
-// controller can consult the producer index (an in-repo ExternalSecret /
-// SealedSecret declaring that Secret) and auto-skip without
-// --allow-missing-secrets. Unwrap returns manifest.ErrMissingSecret so the
-// existing errors.Is(err, ErrMissingSecret) gates (and the flag path) hold.
+// MissingSecretError retains unavailable source material and an optional Secret identity.
+// Acquisition owners supply the ambient continuation; Unwrap returns manifest.ErrMissingSecret.
 type MissingSecretError struct {
-	// Owner is the source CR whose SecretRef couldn't resolve.
+	// Owner is the source requiring unavailable material.
 	Owner manifest.NamedResource
-	// Secret is the missing Secret the SecretRef points at (Kind=Secret,
-	// the source's namespace, the ref name).
+	// Secret identifies the unavailable Secret; zero denotes source-only material.
 	Secret manifest.NamedResource
 	// Detail is the human reason ("not found", "missing username/password").
 	Detail string
-	// RegistryConfig is the global credential path for an eligible retry;
-	// empty selects Docker's default config.
-	RegistryConfig string
-	// RetryWithRegistryConfig retries using global credentials or reports a
-	// config error. Nil means no matching credential. Call only after rendered
-	// Secrets are exhausted.
-	RetryWithRegistryConfig func(context.Context, string) (*store.SourceArtifact, error)
+	// RetryAmbient attempts the acquisition owner's eligible ambient credentials.
+	RetryAmbient func(context.Context) (*store.SourceArtifact, error)
 }
 
 // Error identifies the source and its unavailable Secret material.
 func (e *MissingSecretError) Error() string {
+	if e.Secret == (manifest.NamedResource{}) {
+		return fmt.Sprintf("%s: %s: %s", manifest.ErrMissingSecret, e.Owner, e.Detail)
+	}
 	return fmt.Sprintf("%s: %s %s/%s: secret %s/%s %s",
 		manifest.ErrMissingSecret, e.Owner.Kind, e.Owner.Namespace, e.Owner.Name,
 		e.Secret.Namespace, e.Secret.Name, e.Detail)
@@ -45,11 +38,11 @@ func (e *MissingSecretError) Unwrap() error { return manifest.ErrMissingSecret }
 // MissingSecretErr builds a *MissingSecretError for a source-group owner.
 func MissingSecretErr(owner manifest.NamedResource, secretRef, reason string) error {
 	owner.Group = manifest.SourceDomain
-	return &MissingSecretError{
-		Owner:  owner,
-		Secret: manifest.NamedResource{Kind: manifest.KindSecret, Namespace: owner.Namespace, Name: secretRef},
-		Detail: reason,
+	missing := &MissingSecretError{Owner: owner, Detail: reason}
+	if secretRef != "" {
+		missing.Secret = manifest.NamedResource{Kind: manifest.KindSecret, Namespace: owner.Namespace, Name: secretRef}
 	}
+	return missing
 }
 
 // An unwired getter is configuration failure; missing material retains the
@@ -88,7 +81,7 @@ func SecretLookup(reads *store.ReadSet) SecretGetter {
 	if reads == nil {
 		return nil
 	}
-	provider := values.NewStoreProvider(reads, true, nil)
+	provider := values.NewStoreProvider(reads, true)
 	return func(namespace, name string) *manifest.Secret {
 		secret, _ := provider.Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: namespace, Name: name}).(*manifest.Secret)
 		return secret

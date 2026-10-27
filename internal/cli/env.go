@@ -45,7 +45,7 @@ func applyEnvVars(cmd *cobra.Command) error {
 		if !ok {
 			return
 		}
-		if f.Name == "substitute-from" || f.Name == "substitute" {
+		if f.Name == "supply" || f.Name == "substitute" {
 			entries, err := substitutionEnv(f.Name, v)
 			if err != nil {
 				firstErr = err

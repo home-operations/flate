@@ -431,7 +431,8 @@ func (r *ReadSet) productions(input *Input, index *manifest.DiscoveryIndex) []ma
 func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
 	input := r.input(id)
 	data, _ := r.Capture(input).(manifest.Data)
-	return ReferenceFacts{Data: data, Accepted: input.view.accepted || input.view.owner != nil, Productions: r.Productions(id, index)}
+	supplied, path := r.store.suppliedObject(id)
+	return ReferenceFacts{Data: data, Accepted: input.view.accepted || input.view.owner != nil, Productions: r.Productions(id, index), Supplied: supplied, SupplyPath: path}
 }
 
 // Materializer selects and captures the runnable declaration supplying a production.
@@ -589,7 +590,7 @@ func (r *ReadSet) CarryWarnings(previous RenderedOutput) {
 }
 
 // AddWarning retains a render advisory in this execution's accepted bundle.
-func (r *ReadSet) AddWarning(_ manifest.NamedResource, warning manifest.Warning) {
+func (r *ReadSet) AddWarning(warning manifest.Warning) {
 	warning.Detail = slices.Clone(warning.Detail)
 	r.warnings = append(r.warnings, warning)
 }

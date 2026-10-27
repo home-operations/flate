@@ -353,6 +353,8 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 // ReferenceFacts preserves visible data separately from accepted authority and relations.
 type ReferenceFacts struct {
 	Data        manifest.Data
+	Supplied    manifest.Data
+	SupplyPath  string
 	Accepted    bool
 	Productions []manifest.Production
 }
@@ -375,7 +377,8 @@ func (s *Store) IncomingProductions(child Child, index *manifest.DiscoveryIndex)
 func (s *Store) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) ReferenceFacts {
 	result := productionResult{facts: true}
 	s.visitProductions(id, index, &result)
-	return ReferenceFacts{Data: result.data, Accepted: result.accepted, Productions: result.out}
+	data, path := s.suppliedObject(id)
+	return ReferenceFacts{Data: result.data, Accepted: result.accepted, Productions: result.out, Supplied: data, SupplyPath: path}
 }
 
 // RenderedParent returns the smallest eligible accepted or discovered rendered owner.

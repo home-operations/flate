@@ -897,3 +897,35 @@ func TestRun_GetAll_ChangedOnly(t *testing.T) {
 		})
 	}
 }
+
+func TestRun_ClusterGroups_SuppliedPrecedence(t *testing.T) {
+	base := writeClusterGroupsFixture(t, map[string]string{"alpha": "old-alpha", "omega": "old-omega"})
+	head := writeClusterGroupsFixture(t, map[string]string{"alpha": "new-alpha", "omega": "new-omega"})
+	for _, root := range []string{base, head} {
+		for _, cluster := range []string{"alpha", "omega"} {
+			testutil.WriteFile(t, root, cluster+"/flux.yaml", testutil.KustomizationYAML("shared", "flux-system", "  path: ./"+cluster+"/app\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: settings}]\n"))
+			value := "old-" + cluster
+			if root == head {
+				value = "new-" + cluster
+			}
+			testutil.WriteFile(t, root, cluster+"/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {CLUSTER: "+value+"}\n")
+			testutil.WriteFile(t, root, cluster+"/kustomization.yaml", "resources: [flux.yaml, settings.yaml]\n")
+		}
+	}
+	input := substitutionInput(t, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {CLUSTER: supplied}\n")
+	stdout, stderr, code := runCLI(t, "diff", "all", "--path", head, "--path-orig", base, "--supply", input, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
+	if code != 0 || strings.Count(stderr, "[SuppliedPrecedence]") != 4 || !strings.Contains(stderr, "ConfigMap alpha: flux-system/settings") || !strings.Contains(stderr, "ConfigMap omega: flux-system/settings") || strings.Contains(stderr, "Cluster:") || strings.Contains(stdout, "supplied") {
+		t.Fatalf("cluster supply reduction: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	for _, cluster := range []string{"alpha", "omega"} {
+		for _, side := range []string{"orig", "current"} {
+			row := "[SuppliedPrecedence] " + side + " snapshot: ConfigMap " + cluster + ": flux-system/settings:"
+			assert.Equal(t, strings.Count(stderr, row), 1)
+		}
+	}
+	for _, value := range []string{"old-alpha", "new-alpha", "old-omega", "new-omega"} {
+		if !strings.Contains(stdout, value) {
+			t.Fatalf("cluster precedence lost %q: %s", value, stdout)
+		}
+	}
+}

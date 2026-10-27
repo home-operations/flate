@@ -45,7 +45,7 @@ func (o *Orchestrator) syncPreflightFailures() {
 	cleared := o.replacePreflightFailures(failures)
 	o.preflightMu.Unlock()
 	for _, message := range slices.Compact(slices.Sorted(maps.Values(failures))) {
-		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{Category: manifest.WarnDependencyCycle, Message: "dependency cycle detected", Detail: []string{message}})
+		o.store.AddWarning(manifest.Warning{Category: manifest.WarnDependencyCycle, Message: "dependency cycle detected", Detail: []string{message}})
 	}
 	for id, message := range failures {
 		o.store.SetPreflight(id, message)

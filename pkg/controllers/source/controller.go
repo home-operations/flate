@@ -127,7 +127,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	if art, ok := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
 		if art.FS != nil && art.Reads.Valid() {
 			for _, warning := range art.Warnings {
-				c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
+				c.run.Reads.AddWarning(warning)
 			}
 			c.run.Reused = true
 			return nil
@@ -137,7 +137,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 			captured.Reads = &c.run.Reads
 			c.Store.SetArtifact(id, &captured)
 			for _, warning := range art.Warnings {
-				c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
+				c.run.Reads.AddWarning(warning)
 			}
 			c.run.Reused = true
 			return nil
@@ -170,14 +170,13 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	c.Tasks.YieldSlot(func() {
 		artifact, fetchErr = fetcher.Fetch(ctx, obj, &c.run.Reads, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
 	})
-	// A Kustomization may still emit or patch this Secret. Wait for the
-	// rendered contents; only fall back, fail or skip for a missing Secret
-	// once the scheduler reaches a fixpoint. The wait MUST precede the
-	// fallback so an in-repo Secret takes precedence over the global
-	// registry config.
-	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok && level == manifest.DrainNone {
-		c.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "waiting for source Secret"})
-		return &pendingSource{execution: c, object: obj, missing: missing}
+	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok {
+		pending := &pendingSource{execution: c, object: obj, missing: missing}
+		if level == manifest.DrainNone && missing.Secret != (manifest.NamedResource{}) {
+			c.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Message: "waiting for source Secret"})
+			return pending
+		}
+		return pending.Settle(ctx, level)
 	}
 	return c.completeFetch(obj, artifact, fetchErr)
 }
@@ -196,10 +195,12 @@ func (p *pendingSource) Settle(ctx context.Context, _ manifest.DrainLevel) error
 	c := p.execution
 	var artifact *store.SourceArtifact
 	var err error = p.missing
-	if p.missing.RetryWithRegistryConfig != nil && !c.producerBacked(err) {
-		c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryWithRegistryConfig(ctx, p.missing.RegistryConfig) })
+	if p.missing.RetryAmbient != nil && !c.producerBacked(p.missing) {
+		c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryAmbient(ctx) })
 		if err != nil && c.allowMissingSecrets {
 			err = p.missing
+		} else if err != nil {
+			err = fmt.Errorf("%s: %w", manifest.TrimSentinelPrefix(p.missing.Error()), err)
 		}
 	}
 	return c.completeFetch(p.object, artifact, err)
@@ -208,7 +209,7 @@ func (p *pendingSource) Settle(ctx context.Context, _ manifest.DrainLevel) error
 func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.SourceArtifact, err error) error {
 	if artifact != nil {
 		for _, warning := range artifact.Warnings {
-			c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
+			c.run.Reads.AddWarning(warning)
 		}
 	}
 	if err != nil {
@@ -216,6 +217,8 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 			if c.run.Reads.Valid() {
 				slog.Info("source: skipped (missing secret)", "id", obj.Named().String(), "err", err)
 			}
+			c.run.Reads.AddWarning(manifest.Warning{Resource: obj.Named(), Category: manifest.WarnSourceCredentialsUnavailable,
+				Message: manifest.TrimSentinelPrefix(err.Error())})
 			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(err.Error()))
 		}
 		return err
@@ -233,15 +236,9 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	return nil
 }
 
-// producerBacked reports whether err is a missing-auth-Secret error whose
-// Secret is declared by an in-repo producer (ExternalSecret / SealedSecret) in
-// the shared index — in which case the source is skipped without the global
-// --allow-missing-secrets flag. The structured *src.MissingSecretError carries
-// the Secret identity; a missing-secret error that isn't that type (or whose
-// Secret has no producer) is not producer-backed.
 func (c *execution) producerBacked(err error) bool {
 	mse, ok := errors.AsType[*src.MissingSecretError](err)
-	if !ok {
+	if !ok || mse.Secret == (manifest.NamedResource{}) {
 		return false
 	}
 	for _, p := range c.run.Reads.Productions(mse.Secret, nil) {

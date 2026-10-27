@@ -10,6 +10,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -173,6 +174,45 @@ func TestFetch_OCIBranch(t *testing.T) {
 	}
 	if art.Kind != manifest.KindHelmChart {
 		t.Errorf("artifact Kind = %q, want re-stamped HelmChart", art.Kind)
+	}
+}
+
+func TestFetch_OCIAmbientContinuation(t *testing.T) {
+	t.Parallel()
+	for _, failure := range []error{nil, context.Canceled, context.DeadlineExceeded} {
+		name := "success"
+		if failure != nil {
+			name = failure.Error()
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			repo := ociRepo("oci://fixture/charts")
+			hc := helmChart(repo.Name, "chart", "1.0.0")
+			missing, _ := errors.AsType[*source.MissingSecretError](source.MissingSecretErr(repo.Named(), "auth", "not found"))
+			calls := 0
+			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+				calls++
+				if failure != nil {
+					return nil, failure
+				}
+				return &store.SourceArtifact{Kind: manifest.KindOCIRepository, Content: "chart"}, nil
+			}
+			f := &Fetcher{oci: &stubOCI{err: missing}}
+			reads := (testInputs{repos: func(_, _ string) *manifest.HelmRepository { return repo }}).readSet(hc)
+			defer reads.Close()
+			_, err := f.Fetch(t.Context(), hc, reads, cache.Policy{})
+			wrapped, ok := errors.AsType[*source.MissingSecretError](err)
+			if !ok || wrapped.RetryAmbient == nil || calls != 0 {
+				t.Fatalf("prepare = %v; calls=%d", err, calls)
+			}
+			artifact, err := wrapped.RetryAmbient(t.Context())
+			if !errors.Is(err, failure) || calls != 1 {
+				t.Fatalf("ambient continuation = %v; calls=%d", err, calls)
+			}
+			if failure != nil && artifact != nil || failure == nil && (artifact == nil || artifact.Kind != manifest.KindHelmChart || artifact.Content != "chart") {
+				t.Fatalf("ambient chart artifact = %+v", artifact)
+			}
+		})
 	}
 }
 

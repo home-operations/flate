@@ -28,6 +28,7 @@ import (
 )
 
 func TestFetcher_SubmoduleSchemes(t *testing.T) {
+	identity, _ := testSSHIdentity(t)
 	previous := client.Protocols["ssh"]
 	client.InstallProtocol("ssh", commandTransport{Transport: server.DefaultServer, before: func(context.Context) error { return nil }})
 	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
@@ -85,8 +86,10 @@ func TestFetcher_SubmoduleSchemes(t *testing.T) {
 						if remote {
 							artifact, err = f.FetchRemoteBase(t.Context(), RemoteBaseRequest{URL: url, Ref: hash.String(), Timeout: time.Minute, Submodules: true}, sourcecache.Policy{})
 						} else {
-							repo := &manifest.GitRepository{URL: url, Reference: &sourcev1.GitRepositoryRef{Commit: hash.String()}, RecurseSubmodules: true}
-							artifact, err = f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+							repo := &manifest.GitRepository{URL: url, Name: "parent", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "auth"}, Reference: &sourcev1.GitRepositoryRef{Commit: hash.String()}, RecurseSubmodules: true}
+							artifact, err = f.Fetch(t.Context(), repo, (testInputs{secrets: func(_, _ string) *manifest.Secret {
+								return &manifest.Secret{StringData: map[string]any{"identity": identity}}
+							}}).readSet(repo), sourcecache.Policy{})
 						}
 						if restrict && shape != "relative" {
 							if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), "scheme not allowed") || artifact != nil || len(file.requests) != before {

@@ -54,8 +54,8 @@ func newSubstitutionOrchestrator(t *testing.T, cfg treeConfig) *Orchestrator {
 	return o
 }
 
-func suppliedSubstitution(name string) SubstitutionSource {
-	return SubstitutionSource{Path: "ci-values.yaml", Object: &manifest.ConfigMap{Name: name, Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}}}
+func suppliedSubstitution(name string) store.SuppliedObject {
+	return store.SuppliedObject{Path: "ci-values.yaml", Object: &manifest.ConfigMap{Name: name, Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}}}
 }
 
 func substitutionValue(t *testing.T, res *Result, id manifest.NamedResource) string {
@@ -71,42 +71,33 @@ func substitutionValue(t *testing.T, res *Result, id manifest.NamedResource) str
 func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	source := suppliedSubstitution("external")
 	cm := source.Object.(*manifest.ConfigMap)
-	cm.Data["nested"] = map[string]any{"items": []any{"owned"}}
-	raw := []byte("b3duZWQ=")
+	raw := []byte("owned")
 	cm.Data["BINARY"] = raw
-	const cipher = "ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
-	cm.Data["CIPHER"] = cipher
 	secretData, secretStringData := []byte("b3duZWQ="), []byte("owned")
-	secret := &manifest.Secret{Name: "secret", Namespace: "apps", Data: map[string]any{"VALUE": "b3duZWQ=", "BINARY": secretData}, StringData: map[string]any{"VALUE": "owned", "BINARY": secretStringData}}
-	secret.Data["ENCODED"] = cipher
-	secret.StringData["CIPHER"] = cipher
+	secret := &manifest.Secret{Name: "secret", Namespace: "apps", Data: map[string]any{"ENCODED": secretData}, StringData: map[string]any{"VALUE": secretStringData}}
 	overlay := map[string]string{"VALUE": "owned"}
-	sources := []SubstitutionSource{source, {Object: secret, Path: "secret-values.yaml"}}
-	o := newSubstitutionOrchestrator(t, treeConfig{SubstituteFrom: sources, Substitute: overlay, Path: t.TempDir()})
-	cm.Name = "changed"
-	cm.Data["VALUE"] = "changed"
-	cm.Data["nested"].(map[string]any)["items"].([]any)[0] = "changed"
-	raw[0] = 'A'
-	secretData[0], secretStringData[0] = 'A', 'A'
-	secret.Data["VALUE"] = "changed"
-	secret.StringData["VALUE"] = "changed"
-	sources[0].Path = "changed"
-	overlay["VALUE"] = "changed"
-	owned := o.cfg.SubstituteFrom[0].Object.(*manifest.ConfigMap)
-	if owned.Name != "external" || owned.Data["VALUE"] != "supplied" || owned.Data["nested"].(map[string]any)["items"].([]any)[0] != "owned" || string(owned.Data["BINARY"].([]byte)) != "b3duZWQ=" || o.cfg.SubstituteFrom[0].Path != "ci-values.yaml" || o.cfg.Substitute["VALUE"] != "owned" {
-		t.Fatal("SDK inputs alias caller memory")
+	sources := []store.SuppliedObject{source, {Object: secret, Path: "secret-values.yaml"}}
+	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, Substitute: overlay, Path: t.TempDir()})
+	cm.Name, cm.Data["VALUE"] = "changed", "changed"
+	raw[0], secretData[0], secretStringData[0] = 'x', 'x', 'x'
+	sources[0].Path, overlay["VALUE"] = "changed", "changed"
+	facts := o.store.ReferenceFacts(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"}, nil)
+	assert.Equal(t, facts.SupplyPath, "ci-values.yaml")
+	for key, want := range map[string]string{"VALUE": "supplied", "BINARY": "owned"} {
+		got, _, err := facts.Supplied.Value(key)
+		assert.NoError(t, err)
+		assert.Equal(t, got, want)
 	}
-	ownedSecret := o.cfg.SubstituteFrom[1].Object.(*manifest.Secret)
-	if ownedSecret.Data["VALUE"] != "b3duZWQ=" || ownedSecret.StringData["VALUE"] != "owned" || string(ownedSecret.Data["BINARY"].([]byte)) != "b3duZWQ=" || string(ownedSecret.StringData["BINARY"].([]byte)) != "owned" {
-		t.Fatal("Secret bags alias caller memory")
+	secretFacts := o.store.ReferenceFacts(secret.Named(), nil)
+	for _, key := range []string{"ENCODED", "VALUE"} {
+		got, _, err := secretFacts.Supplied.Value(key)
+		assert.NoError(t, err)
+		assert.Equal(t, got, "owned")
 	}
-	decoded, _, err := ownedSecret.Value("ENCODED")
-	if err != nil || !manifest.HasValuePlaceholder(decoded) || !manifest.HasValuePlaceholder(owned.Data["CIPHER"].(string)) || !manifest.HasValuePlaceholder(ownedSecret.StringData["CIPHER"].(string)) || cm.Data["CIPHER"] != cipher || secret.StringData["CIPHER"] != cipher {
-		t.Fatal("snapshot sanitation lost ciphertext handling or mutated SDK input")
-	}
+	assert.Equal(t, o.cfg.Substitute["VALUE"], "owned")
 	plain := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: t.TempDir()})
-	if plain.cfg.Substitute != nil || plain.cfg.SubstituteFrom != nil || plain.substitutionSources != nil {
-		t.Fatal("zero-option path allocated substitution state")
+	if plain.cfg.Substitute != nil || plain.cfg.supplied != nil || plain.cfg.Supply != nil {
+		t.Fatal("zero-input path allocated state")
 	}
 }
 
@@ -122,7 +113,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}}, Config{SubstituteFrom: []SubstitutionSource{{Object: tc.object}}})
+			_, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: t.TempDir()}}, Config{Supply: []store.SuppliedObject{{Object: tc.object}}})
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected input error, got %v", err)
 			}
@@ -165,7 +156,7 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}")
 	source := suppliedSubstitution("external")
-	cfg := treeConfig{SubstituteFrom: []SubstitutionSource{source}, Substitute: map[string]string{"VALUE": "overlay"}, StrictSubstitutions: true, Path: root}
+	cfg := treeConfig{Supply: []store.SuppliedObject{source}, Substitute: map[string]string{"VALUE": "overlay"}, StrictSubstitutions: true, Path: root}
 	first := newSubstitutionOrchestrator(t, cfg)
 	second := newSubstitutionOrchestrator(t, cfg)
 	cfg.Substitute["VALUE"] = "caller-change"
@@ -202,18 +193,18 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	}
 }
 
-func TestRender_SubstitutionSourcesPreserveRequiredChartFailure(t *testing.T) {
+func TestRender_SuppliedObjectsPreserveRequiredChartFailure(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
 		references    string
-		sources       []SubstitutionSource
+		sources       []store.SuppliedObject
 		missingSecret string
 	}{
 		{
 			name:       "unrelated supplied Secret",
 			references: "[{kind: Secret, name: absent}]",
-			sources: []SubstitutionSource{{
+			sources: []store.SuppliedObject{{
 				Object: &manifest.Secret{Name: "missing", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
 				Path:   "ci.yaml",
 			}},
@@ -222,7 +213,7 @@ func TestRender_SubstitutionSourcesPreserveRequiredChartFailure(t *testing.T) {
 		{
 			name:       "same name in another namespace",
 			references: "[{kind: Secret, name: missing}]",
-			sources: []SubstitutionSource{{
+			sources: []store.SuppliedObject{{
 				Object: &manifest.Secret{Name: "missing", Namespace: "elsewhere", StringData: map[string]any{"OTHER": "unrelated"}},
 				Path:   "ci.yaml",
 			}},
@@ -231,7 +222,7 @@ func TestRender_SubstitutionSourcesPreserveRequiredChartFailure(t *testing.T) {
 		{
 			name:       "supplied and missing references",
 			references: "[{kind: Secret, name: given}, {kind: Secret, name: missing}]",
-			sources: []SubstitutionSource{{
+			sources: []store.SuppliedObject{{
 				Object: &manifest.Secret{Name: "given", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
 				Path:   "ci.yaml",
 			}},
@@ -240,7 +231,7 @@ func TestRender_SubstitutionSourcesPreserveRequiredChartFailure(t *testing.T) {
 		{
 			name:       "only supplied reference",
 			references: "[{kind: Secret, name: missing}]",
-			sources: []SubstitutionSource{{
+			sources: []store.SuppliedObject{{
 				Object: &manifest.Secret{Name: "missing", Namespace: "flux-system", StringData: map[string]any{"OTHER": "unrelated"}},
 				Path:   "ci.yaml",
 			}},
@@ -280,7 +271,7 @@ spec:
 				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
 
 			renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2,
-				SubstituteFrom: tt.sources})
+				Supply: tt.sources})
 			if len(renderedSingleton1) != 1 {
 				t.Fatalf("missing render: %v", err)
 			}
@@ -336,15 +327,15 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 				testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [external-secret.yaml]\n")
 				testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  postBuild:\n    substituteFrom: [{kind: Secret, name: external}]\n"))
 				data := "  data:\n    - secretKey: VALUE\n      remoteRef: {key: fixture}\n"
-				want = "..PLACEHOLDER_VALUE.."
+				want = "private-fixture-value"
 				if kind == "known Secret producer without declared keys" {
 					data = "  dataFrom:\n    - extract: {key: fixture}\n"
-					want = "${VALUE}"
+					want = "private-fixture-value"
 				}
 				testutil.WriteFile(t, root, "producer/external-secret.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: apps}\nspec:\n  target: {name: external}\n"+data)
 				input.Object = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "private-fixture-value"}}
 			}
-			cfg := treeConfig{SubstituteFrom: []SubstitutionSource{input}, Path: root}
+			cfg := treeConfig{Supply: []store.SuppliedObject{input}, Path: root}
 			if kind == "known Kustomization producer" {
 				cfg.ExternalChanges = change.NewSet([]string{"app/cm.yaml"})
 			}
@@ -361,8 +352,8 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 					t.Fatal("test requires a known producer without a synthesized Secret")
 				}
 			}
-			if o.substitutionSources[input.Object.Named()] != nil {
-				t.Fatal("bootstrap collision accepted supplied source")
+			if o.store.ReferenceFacts(input.Object.Named(), nil).Supplied == nil {
+				t.Fatal("repository evidence discarded supplied snapshot")
 			}
 			if kind == "indexed file" && o.store.GetObject(input.Object.Named()) != nil {
 				t.Fatal("test requires unpromoted file identity")
@@ -386,37 +377,33 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			}
 			var collisions []manifest.Warning
 			for _, warning := range res.Warnings {
-				if warning.Category == manifest.WarnSubstitutionPrecedence {
+				if warning.Category == manifest.WarnSuppliedPrecedence {
 					collisions = append(collisions, warning)
 				}
 			}
-			wantWarning := manifest.Warning{Resource: input.Object.Named(), Category: manifest.WarnSubstitutionPrecedence,
-				Message: "repository substitution source takes precedence", Detail: []string{"ci-values.yaml"}, Count: 1}
-			assert.Diff(t, collisions, []manifest.Warning{wantWarning})
+			wantWarning := manifest.Warning{Resource: input.Object.Named(), Category: manifest.WarnSuppliedPrecedence,
+				Message: "repository data takes precedence over ci-values.yaml", Detail: []string{"VALUE"}, Count: 1}
+			var wantWarnings []manifest.Warning
+			if !strings.HasPrefix(kind, "known Secret producer") {
+				wantWarnings = []manifest.Warning{wantWarning}
+			}
+			assert.Diff(t, collisions, wantWarnings)
 		})
 	}
 }
 
-func TestBootstrap_SubstitutionWarningsSortedAndDeduplicated(t *testing.T) {
+func TestSupply_UnreadObjectsHaveNoPrecedenceWarning(t *testing.T) {
 	t.Parallel()
-	sources := []SubstitutionSource{suppliedSubstitution("z"), suppliedSubstitution("a"), suppliedSubstitution("a")}
-	sources[1].Path = "first.yaml"
-	sources[2].Path = "last.yaml"
-	o := newSubstitutionOrchestrator(t, treeConfig{SubstituteFrom: sources, Path: t.TempDir()})
-	for _, s := range sources {
-		o.store.AddObject(s.Object)
+	sources := []store.SuppliedObject{suppliedSubstitution("z"), suppliedSubstitution("a"), suppliedSubstitution("a")}
+	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, Path: t.TempDir()})
+	for _, source := range sources {
+		o.store.AddObject(source.Object)
 	}
-	if err := o.bootstrap(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	warnings := o.store.Warnings()
-	if len(warnings) != 2 || warnings[0].Resource.Name != "a" || warnings[1].Resource.Name != "z" || warnings[0].Detail[0] != "last.yaml" {
-		t.Fatalf("warnings not sorted/final-identity scoped: %+v", warnings)
-	}
-	for _, warning := range warnings {
-		assert.Equal(t, warning.Category, manifest.WarnSubstitutionPrecedence)
-		assert.Equal(t, warning.Count, 1)
+	assert.NoError(t, o.bootstrap(t.Context()))
+	for _, warning := range o.store.Warnings() {
+		if warning.Category == manifest.WarnSuppliedPrecedence {
+			t.Fatal("unconsumed supply emitted precedence warning")
+		}
 	}
 }
 
@@ -439,7 +426,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 			testutil.WriteFile(t, root, "independent/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "independent/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent, namespace: apps}\ndata: {value: independent}\n")
 			source := suppliedSubstitution("late-settings")
-			cfg := treeConfig{CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2, SubstituteFrom: []SubstitutionSource{source}, StrictSubstitutions: true, Path: root, RepoRoot: root}
+			cfg := treeConfig{CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2, Supply: []store.SuppliedObject{source}, StrictSubstitutions: true, Path: root, RepoRoot: root}
 			o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
 			if err != nil {
 				t.Fatal(err)
@@ -451,7 +438,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 				t.Fatal(err)
 			}
 			external := source.Object.Named()
-			if o.substitutionSources[external] == nil || o.store.GetObject(external) != nil || len(renderersForTest(o.index, external)) != 0 {
+			if o.store.ReferenceFacts(external, nil).Supplied == nil || o.store.GetObject(external) != nil || len(renderersForTest(o.index, external)) != 0 {
 				t.Fatal("test requires producer unknown at bootstrap")
 			}
 			var mu sync.Mutex
@@ -470,8 +457,8 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 				t.Fatal(err)
 			}
 			consumer := testutil.KustomizationID("apps", "consumer")
-			if got := substitutionValue(t, res, consumer); got != "supplied" {
-				t.Fatalf("late producer revoked accepted source: %q", got)
+			if got := substitutionValue(t, res, consumer); got != "repository" {
+				t.Fatalf("late repository production did not supersede supply: %q", got)
 			}
 			expected := []string{"consumer", "producer"}
 			if producerFirst {
@@ -506,7 +493,7 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 	if err := os.MkdirAll(scan, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	o := newSubstitutionOrchestrator(t, treeConfig{SubstituteFrom: []SubstitutionSource{suppliedSubstitution("external")}, StrictSubstitutions: true, Path: scan, RepoRoot: root})
+	o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{suppliedSubstitution("external")}, StrictSubstitutions: true, Path: scan, RepoRoot: root})
 	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +525,7 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		testutil.WriteFile(t, root, "stable/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: stable, namespace: apps}\ndata: {value: '${VALUE}'}\n")
 	}
 	source := suppliedSubstitution("external")
-	cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 4, WipeSecrets: true, SubstituteFrom: []SubstitutionSource{source}, Substitute: map[string]string{"VALUE": "overlay"}, StrictSubstitutions: true, Tree: Tree{}}
+	cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 4, WipeSecrets: true, Supply: []store.SuppliedObject{source}, Substitute: map[string]string{"VALUE": "overlay"}, StrictSubstitutions: true, Tree: Tree{}}
 	renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: headRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 	base, head := renderedTrees1[0], renderedTrees1[1]
 	if err != nil {
@@ -579,7 +566,7 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 	for _, value := range []string{"first", "second"} {
 		source := suppliedSubstitution("external")
 		source.Object.(*manifest.ConfigMap).Data["VALUE"] = value
-		o := newSubstitutionOrchestrator(t, treeConfig{SubstituteFrom: []SubstitutionSource{source}, Substitute: map[string]string{"VALUE": value}, Path: headRoot, BaseInput: testDirectoryInput(t, baseRoot)})
+		o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{source}, Substitute: map[string]string{"VALUE": value}, Path: headRoot, BaseInput: testDirectoryInput(t, baseRoot)})
 		res, err := o.render(t.Context())
 		if err != nil {
 			t.Fatal(err)
@@ -591,6 +578,42 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 	}
 }
 
+func TestRenderTrees_SuppliedTransitionsMatchFull(t *testing.T) {
+	t.Parallel()
+	for _, transition := range [][2]string{{"absent", "real"}, {"wiped", "real"}, {"real", "absent"}} {
+		t.Run(strings.Join(transition[:], "-"), func(t *testing.T) {
+			t.Parallel()
+			roots := []string{t.TempDir(), t.TempDir()}
+			for i, root := range roots {
+				writeSubstitutionCluster(t, root, "settings", "${VALUE}")
+				if transition[i] != "absent" {
+					value := "repository"
+					if transition[i] == "wiped" {
+						value = manifest.ValuePlaceholder("VALUE")
+					}
+					testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: '"+value+"'}\n")
+				}
+			}
+			cfg := Config{CacheDir: t.TempDir(), Concurrency: 2, WipeSecrets: true, Supply: []store.SuppliedObject{suppliedSubstitution("settings")}}
+			consumer := testutil.KustomizationID("apps", "consumer")
+			for range 2 {
+				paired, err := RenderTrees(t.Context(), []Tree{{RepoRoot: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}}, {RepoRoot: roots[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, cfg)
+				assert.NoError(t, err)
+				for i, root := range roots {
+					full, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, cfg)
+					assert.NoError(t, err)
+					want := "supplied"
+					if transition[i] == "real" {
+						want = "repository"
+					}
+					assert.Equal(t, substitutionValue(t, full[0].Result, consumer), want)
+					assert.Equal(t, substitutionValue(t, paired[i].Result, consumer), want)
+				}
+			}
+		})
+	}
+}
+
 func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}-${OLD:-gone}")
@@ -598,7 +621,7 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	first.Object.(*manifest.ConfigMap).Data["OLD"] = "old"
 	last := suppliedSubstitution("external")
 	last.Object.(*manifest.ConfigMap).Data["VALUE"] = "last"
-	o := newSubstitutionOrchestrator(t, treeConfig{SubstituteFrom: []SubstitutionSource{first, last}, Path: root})
+	o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{first, last}, Path: root})
 	res, err := o.render(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -607,26 +630,22 @@ func TestBootstrap_SubstitutionDuplicatesReplaceWholeObjects(t *testing.T) {
 	if got := substitutionValue(t, res, id); got != "last-gone" {
 		t.Fatalf("duplicate maps merged: %q", got)
 	}
-	if !maps.Equal(o.substitutionSources[last.Object.Named()].(*manifest.ConfigMap).Data, last.Object.(*manifest.ConfigMap).Data) {
+	if !maps.Equal(o.store.ReferenceFacts(last.Object.Named(), nil).Supplied.(*manifest.ConfigMap).Data, last.Object.(*manifest.ConfigMap).Data) {
 		t.Fatal("accepted input differs from last whole object")
 	}
 }
 
-func TestFreezeSubstitutions_ExactFileIdentity(t *testing.T) {
+func TestSupply_IndexedIdentityDoesNotPublish(t *testing.T) {
 	for _, namespace := range []string{"apps", "", "other"} {
 		t.Run("namespace_"+namespace, func(t *testing.T) {
 			source := suppliedSubstitution("external")
-			o := newSubstitutionOrchestrator(t, treeConfig{SubstituteFrom: []SubstitutionSource{source}, Path: t.TempDir()})
-			o.index = indexForTest(nil)
+			o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{source}, Path: t.TempDir()})
 			id := source.Object.Named()
-			id.Namespace = namespace
-			o.index.Records[id] = manifest.DiscoveryRecord{Path: "repository.yaml"}
-			o.freezeSubstitutions()
-			if got := o.substitutionSources[source.Object.Named()] != nil; got != (namespace != "apps") {
-				t.Fatalf("accepted=%v for indexed namespace %q", got, namespace)
-			}
-			if o.store.GetObject(source.Object.Named()) != nil {
-				t.Fatal("eligibility promoted file/source into store")
+			indexed := id
+			indexed.Namespace = namespace
+			o.store.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{indexed: {Path: "repository.yaml"}}})
+			if o.store.ReferenceFacts(id, nil).Supplied == nil || o.store.GetObject(id) != nil {
+				t.Fatal("indexed evidence changed supply or published it")
 			}
 		})
 	}

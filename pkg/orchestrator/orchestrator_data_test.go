@@ -253,7 +253,7 @@ func TestSelection_AcceptedWarningWithdrawal(t *testing.T) {
 	first := new(store.ReadSet)
 	first.Init(run.store, obj.Named(), nil)
 	first.GetObject(obj.Named())
-	first.AddWarning(obj.Named(), manifest.Warning{Resource: obj.Named(), Category: manifest.WarnUnresolvedSubstitution, Message: "missing key"})
+	first.AddWarning(manifest.Warning{Resource: obj.Named(), Category: manifest.WarnUnresolvedSubstitution, Message: "missing key"})
 	first.Accept()
 	run.Result.Warnings = run.store.Warnings()
 	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{obj.Named()}, nil)
@@ -477,7 +477,7 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 			var previous [2]string
 			for run, state := range []string{"cold", "warm"} {
 				cfg := treeConfig{CacheDir: cache, Concurrency: 2}
-				renderedTrees1, err := RenderTrees(t.Context(), []Tree{Tree{Path: dirs[0], RepoRoot: dirs[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, Tree{Path: dirs[1], RepoRoot: dirs[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+				renderedTrees1, err := RenderTrees(t.Context(), []Tree{{Path: dirs[0], RepoRoot: dirs[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {Path: dirs[1], RepoRoot: dirs[1], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 				base, head := renderedTrees1[0], renderedTrees1[1]
 				assert.NoError(t, err)
 				for side, rendered := range []Rendered{base, head} {

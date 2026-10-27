@@ -494,7 +494,7 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 		return gateErr
 	}
 	for _, ref := range e.unresolved {
-		e.Reads.AddWarning(e.Reads.ID(), manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Message: fmt.Sprintf("substituteFrom Secret %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values", ref.Name)})
+		e.Reads.AddWarning(manifest.Warning{Category: manifest.WarnUnresolvedSubstitution, Message: fmt.Sprintf("substituteFrom Secret %q could not be read offline; its variables are unavailable, so their ${VAR} references may remain unsubstituted or resolve to defaults or empty values", ref.Name)})
 	}
 	return p.wait.Resume(ctx, level, compactDataIDs(omitted))
 }

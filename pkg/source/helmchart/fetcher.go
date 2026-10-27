@@ -80,11 +80,11 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 		syn := synthesizeOCIRepository(r, hc)
 		syn.Interval = r.Interval
 		art, err := f.oci.FetchChart(ctx, syn, f.reads, policy)
-		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryWithRegistryConfig != nil {
-			retry := missing.RetryWithRegistryConfig
+		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryAmbient != nil {
+			retry := missing.RetryAmbient
 			wrapped := *missing
-			wrapped.RetryWithRegistryConfig = func(ctx context.Context, configPath string) (*store.SourceArtifact, error) {
-				art, err := retry(ctx, configPath)
+			wrapped.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+				art, err := retry(ctx)
 				if art != nil {
 					art.Kind = manifest.KindHelmChart
 				}

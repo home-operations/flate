@@ -14,7 +14,7 @@ import (
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/orchestrator"
+	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
 
@@ -32,7 +32,7 @@ func substitutionEnv(flag, input string) ([]string, error) {
 		return nil, nil
 	}
 	key := envKey(flag)
-	if flag == "substitute-from" {
+	if flag == "supply" {
 		paths := filepath.SplitList(input)
 		for i, path := range paths {
 			if path == "" {
@@ -58,7 +58,7 @@ func substitutionEnv(flag, input string) ([]string, error) {
 	return pairs, nil
 }
 
-func (c *commonFlags) loadSubstitutions(ctx context.Context) error {
+func (c *commonFlags) loadInputs(ctx context.Context) error {
 	if len(c.substitute) > 0 {
 		c.substitutionValues = make(map[string]string, len(c.substitute))
 		for i, pair := range c.substitute {
@@ -69,13 +69,13 @@ func (c *commonFlags) loadSubstitutions(ctx context.Context) error {
 			c.substitutionValues[key] = value
 		}
 	}
-	for _, path := range c.substituteFrom {
+	for _, path := range c.supply {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		data, err := os.ReadFile(path) //nolint:gosec // path is an explicitly requested substitution input
 		if err != nil {
-			return fmt.Errorf("%w: --substitute-from %q: %w", manifest.ErrInput, path, err)
+			return fmt.Errorf("%w: --supply %q: %w", manifest.ErrInput, path, err)
 		}
 		decoder := yaml.NewDecoder(bytes.NewReader(data))
 		for ordinal := 1; ; ordinal++ {
@@ -86,7 +86,7 @@ func (c *commonFlags) loadSubstitutions(ctx context.Context) error {
 			}
 			// Decoder diagnostics can contain scalar values from Secret input.
 			if err != nil {
-				return fmt.Errorf("%w: --substitute-from %q document %d: invalid YAML mapping",
+				return fmt.Errorf("%w: --supply %q document %d: invalid YAML mapping",
 					manifest.ErrInput, path, ordinal)
 			}
 			if doc == nil {
@@ -96,23 +96,23 @@ func (c *commonFlags) loadSubstitutions(ctx context.Context) error {
 			name, namespace := manifest.DocMetadata(doc)
 			if manifest.DocAPIVersion(doc) != manifest.CoreAPIVersion ||
 				(kind != manifest.KindConfigMap && kind != manifest.KindSecret) || name == "" || namespace == "" {
-				return fmt.Errorf("%w: --substitute-from %q document %d: expected a core v1 ConfigMap or Secret with name and namespace",
+				return fmt.Errorf("%w: --supply %q document %d: expected a core v1 ConfigMap or Secret with name and namespace",
 					manifest.ErrInput, path, ordinal)
 			}
 			for _, field := range []string{"data", "binaryData", "stringData"} {
 				if value, exists := doc[field]; exists && value != nil {
 					if _, ok := value.(map[string]any); !ok {
-						return fmt.Errorf("%w: --substitute-from %q document %d: %s must be a mapping",
+						return fmt.Errorf("%w: --supply %q document %d: %s must be a mapping",
 							manifest.ErrInput, path, ordinal, field)
 					}
 				}
 			}
 			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
 			if err != nil {
-				return fmt.Errorf("%w: --substitute-from %q document %d: invalid substitution source",
+				return fmt.Errorf("%w: --supply %q document %d: invalid substitution source",
 					manifest.ErrInput, path, ordinal)
 			}
-			c.substitutionSources = append(c.substitutionSources, orchestrator.SubstitutionSource{Object: obj, Path: path})
+			c.suppliedObjects = append(c.suppliedObjects, store.SuppliedObject{Object: obj, Path: path})
 		}
 	}
 	return nil

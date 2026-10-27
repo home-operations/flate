@@ -102,7 +102,7 @@ func TestResolve_SubstitutionProducers(t *testing.T) {
 			ks := &manifest.Kustomization{Name: consumer.Name, Namespace: consumer.Namespace, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}}}
 
 			c.Reads.Init(c.Store, ks.Named(), nil)
-			inputs := c.DataInputs(t.Context(), ks, values.NewStoreProvider(&c.Reads, false, nil))
+			inputs := c.DataInputs(t.Context(), ks, values.NewStoreProvider(&c.Reads, false))
 			err := c.AwaitData(t.Context(), DataWait{Inputs: inputs, Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error { return nil }}, manifest.DrainNone)
 			blocked, waiting := errors.AsType[*depwait.ErrBlocked](err)
 			var want []manifest.NamedResource
@@ -189,7 +189,7 @@ func TestSubstitutionAvailability_ObservesMaterializers(t *testing.T) {
 			if deps := execution.authoredDependenciesForTest(ks); len(deps) != 0 {
 				t.Fatalf("data became authored readiness gate: %v", deps)
 			}
-			input := values.NewStoreProvider(&execution.Reads, false, c.SubstituteFrom).Lookup(id)
+			input := values.NewStoreProvider(&execution.Reads, false).Lookup(id)
 			w := depwait.Waiter{Store: &execution.Reads, Parent: consumer}
 			got := w.Available(t.Context(), depwait.DataDependency{NamedResource: id, Input: input, Optional: tc.optional, AllowMissing: tc.kind == manifest.KindSecret}, manifest.DrainNone)
 			if got.Kind != tc.want {
@@ -234,7 +234,7 @@ func TestSubstitutionAvailability_UnselectedMaterializer(t *testing.T) {
 	c := New(store.New(), nil)
 	c.Configure(Options{Filter: f, Index: index})
 	execution := gateExecution(c, consumerObj.Named())
-	input := values.NewStoreProvider(&execution.Reads, false, c.SubstituteFrom).Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: consumer.Namespace, Name: cmID.Name})
+	input := values.NewStoreProvider(&execution.Reads, false).Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: consumer.Namespace, Name: cmID.Name})
 	if !slices.Equal(input.Materializers, []manifest.NamedResource{producer}) || !input.Offline {
 		t.Fatalf("missing unselected materializer evidence: %+v", input)
 	}
@@ -289,7 +289,7 @@ func TestSubstitutionAvailability_RuntimeDeclaration(t *testing.T) {
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "credentials"}}}}
 	execution := gateExecution(c, consumer.Named())
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: consumer.Namespace, Name: "credentials"}
-	input := values.NewStoreProvider(&execution.Reads, true, c.SubstituteFrom).Lookup(target)
+	input := values.NewStoreProvider(&execution.Reads, true).Lookup(target)
 	if !input.Generated || input.Offline || len(input.Materializers) != 0 {
 		t.Fatalf("runtime declaration evidence=%+v", input)
 	}
@@ -396,7 +396,7 @@ func TestCollectDeps_OrderingFilter(t *testing.T) {
 			producers := []manifest.NamedResource{testutil.KustomizationID("apps", "second"), testutil.KustomizationID("apps", "first")}
 			slices.SortFunc(producers, manifest.NamedResource.Compare)
 			c := New(st, nil)
-			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {Productions: []manifest.Production{{Owner: parent}}}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Productions: testutil.ProductionEvidence(producers)}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Productions: testutil.ProductionEvidence([]manifest.NamedResource{consumer.Named()})}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "ignored"}: &manifest.ConfigMap{}}})
+			c.Configure(Options{Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {Productions: []manifest.Production{{Owner: parent}}}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}: {Productions: testutil.ProductionEvidence(producers)}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "self"}: {Productions: testutil.ProductionEvidence([]manifest.NamedResource{consumer.Named()})}}}, Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}})
 			size := len(filter.KeepNames())
 			deps := gateExecution(c, consumer.Named()).authoredDependenciesForTest(consumer)
 			var want []manifest.DependencyRef

@@ -279,6 +279,11 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifes
 	if info.Outcome() != store.OutcomeUnchanged && info.Outcome() != store.OutcomeSkipped {
 		return
 	}
+	if slices.ContainsFunc(s.run.Result.Warnings, func(w manifest.Warning) bool {
+		return w.Resource == src && w.Category == manifest.WarnSourceCredentialsUnavailable
+	}) {
+		return
+	}
 	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Category: manifest.WarnExternalSource, Message: "external source " + src.String() + " is outside the local tree; not rendered"})
 }
 

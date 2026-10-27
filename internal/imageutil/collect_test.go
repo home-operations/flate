@@ -16,7 +16,12 @@ func TestCollect_SelectedBatches(t *testing.T) {
 		{Parent: selected, Documents: []map[string]any{{"spec": map[string]any{"template": map[string]any{"containers": []any{
 			map[string]any{"image": "ghcr.io/demo/app:v1"}, map[string]any{"image": "ghcr.io/demo/app:v1"},
 		}}}}}},
-		{Documents: []map[string]any{{"data": map[string]any{"image": "ghcr.io/demo/sidecar:v2"}}}},
+		{Documents: []map[string]any{{
+			"spec": map[string]any{"initContainers": []any{
+				map[string]any{"image": "ghcr.io/demo/sidecar:v2"}, map[string]any{"image": "ghcr.io/demo/app:v1"},
+			}},
+			"data": map[string]any{"image": "ghcr.io/demo/config:v1", "record": "apiserver_request:burnrate1d"},
+		}}},
 	}
-	assert.Diff(t, slices.Sorted(maps.Keys(Collect(batches))), []string{"ghcr.io/demo/app:v1", "ghcr.io/demo/sidecar:v2"})
+	assert.Diff(t, slices.Sorted(maps.Keys(Collect(batches))), []string{"ghcr.io/demo/app:v1", "ghcr.io/demo/config:v1", "ghcr.io/demo/sidecar:v2"})
 }

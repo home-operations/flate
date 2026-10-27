@@ -552,7 +552,7 @@ func TestRun_Get_Formats(t *testing.T) {
 								assert.Equal(t, out, combined)
 							}
 							if command == "get images" {
-								want := []string{"count:up0", "example.test/app:first", "example.test/shared:v1"}
+								want := []string{"example.test/app:first", "example.test/shared:v1"}
 								if format == "json" || format == "yaml" {
 									var images []string
 									if len(scope.clusters) == 1 {
@@ -565,7 +565,7 @@ func TestRun_Get_Formats(t *testing.T) {
 										for i, cluster := range scope.clusters {
 											assert.Equal(t, groups[i].Cluster, cluster)
 											if i == 1 {
-												want[1] = "example.test/app:second"
+												want[0] = "example.test/app:second"
 											}
 											assert.Diff(t, groups[i].Images, want)
 										}
@@ -580,7 +580,7 @@ func TestRun_Get_Formats(t *testing.T) {
 									}
 									for i, cluster := range scope.clusters {
 										if i == 1 {
-											want[1] = "example.test/app:second"
+											want[0] = "example.test/app:second"
 										}
 										for _, image := range want {
 											prefix := ""

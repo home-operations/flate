@@ -986,16 +986,65 @@ func TestRun_GetHRChartVersions(t *testing.T) {
 
 func TestRun_Images_GetAndDiffFormatsMatch(t *testing.T) {
 	current, orig := writeFixture(t), writeFixture(t)
-	testutil.WriteFile(t, current, "apps/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: hello, namespace: apps}
-data:
-  z: ghcr.io/example/z:2
-  a: ghcr.io/example/a:1
-  duplicate: ghcr.io/example/z:2
-`)
+	fixture := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: apps
+  annotations:
+    record: apiserver_request:burnrate1d
+    address: 0.0.0.0:80
+spec:
+  selector: {matchLabels: {app: demo}}
+  template:
+    metadata: {labels: {app: demo}}
+    spec:
+      containers:
+        - {name: z, image: ghcr.io/example/z:2}
+        - name: a
+          image: ghcr.io/example/a:1
+          env:
+            - {name: TOOL_IMAGE, value: ghcr.io/example/env:v1}
+        - {name: untagged, image: nginx}
+        - {name: duplicate, image: ghcr.io/example/z:2}
+      initContainers:
+        - {name: init, image: ghcr.io/example/init:1}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: job, namespace: apps}
+spec:
+  schedule: '0 * * * *'
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - {name: cron, image: ghcr.io/example/cron:1}
+          initContainers:
+            - {name: init, image: ghcr.io/example/init:1}
+---
+apiVersion: example.test/v1
+kind: Workload
+metadata:
+  name: worker
+  namespace: apps
+  annotations:
+    tag: 0.10.12@sha256:5338b99662e2e15048b4e14b49e17279d384970fdcb3c29169f509f806f49cbe
+spec:
+  imageName: ghcr.io/example/declared:v1
+  worker:
+    template:
+      spec:
+        containers:
+          - {name: worker, image: ghcr.io/example/a:1}
+        ephemeralContainers:
+          - {name: debug, image: ghcr.io/example/debug:3}
+`
+	testutil.WriteFile(t, current, "apps/cm.yaml", fixture)
 	cache := t.TempDir()
-	want := []string{"ghcr.io/example/a:1", "ghcr.io/example/z:2"}
+	want := []string{"ghcr.io/example/a:1", "ghcr.io/example/cron:1", "ghcr.io/example/debug:3", "ghcr.io/example/declared:v1", "ghcr.io/example/env:v1", "ghcr.io/example/init:1", "ghcr.io/example/z:2", "nginx"}
 	for _, format := range []string{"name", "yaml", "json"} {
 		t.Run(format, func(t *testing.T) {
 			flags := []string{"--path", current, "--cache-dir", cache, "--concurrency", "2"}
@@ -1016,17 +1065,62 @@ data:
 				images = strings.Split(strings.TrimSuffix(get, "\n"), "\n")
 			} else {
 				prefix := "- "
+				wire := "- " + strings.Join(want, "\n- ") + "\n"
 				if format == "json" {
 					prefix = "["
+					wire = "[\n  \"" + strings.Join(want, "\",\n  \"") + "\"\n]\n"
 				}
 				if !strings.HasPrefix(get, prefix) || !strings.HasPrefix(delta, prefix) {
 					t.Fatalf("wrong %s wire format: get=%q diff=%q", format, get, delta)
 				}
+				assert.Equal(t, get, wire)
 				if err := yaml.Unmarshal([]byte(get), &images); err != nil {
 					t.Fatal(err)
 				}
 			}
 			assert.Diff(t, images, want)
+		})
+	}
+	noise, changed := writeFixture(t), writeFixture(t)
+	testutil.WriteFile(t, noise, "apps/cm.yaml", strings.NewReplacer(
+		"apiserver_request:burnrate1d", "apiserver_request:burnrate6h",
+		"0.0.0.0:80", "127.0.0.1:9234",
+	).Replace(fixture))
+	testutil.WriteFile(t, changed, "apps/cm.yaml", strings.NewReplacer(
+		"ghcr.io/example/a:1", "ghcr.io/example/a:2",
+		"ghcr.io/example/declared:v1", "ghcr.io/example/declared:v2",
+		"ghcr.io/example/env:v1", "ghcr.io/example/env:v2",
+	).Replace(fixture))
+	t.Run("noise/get", func(t *testing.T) {
+		stdout, stderr, code := runCLI(t, "get", "images", "--path", noise, "--cache-dir", cache, "--concurrency", "2")
+		if code != 0 {
+			t.Fatalf("noise get images: exit=%d stderr=%s", code, stderr)
+		}
+		assert.Equal(t, stdout, "IMAGE\n"+strings.Join(want, "\n")+"\n")
+	})
+	for _, tc := range []struct {
+		name           string
+		current, orig  string
+		includeRemoved bool
+		want           string
+	}{
+		{name: "noise/additions", current: noise, orig: current},
+		{name: "noise/including removals", current: noise, orig: current, includeRemoved: true},
+		{name: "real/additions", current: changed, orig: current, want: "ghcr.io/example/a:2\nghcr.io/example/declared:v2\nghcr.io/example/env:v2\n"},
+		{name: "real/including removals", current: changed, orig: current, includeRemoved: true, want: "ghcr.io/example/a:1\nghcr.io/example/a:2\nghcr.io/example/declared:v1\nghcr.io/example/declared:v2\nghcr.io/example/env:v1\nghcr.io/example/env:v2\n"},
+		{name: "reversed/additions", current: current, orig: changed, want: "ghcr.io/example/a:1\nghcr.io/example/declared:v1\nghcr.io/example/env:v1\n"},
+		{name: "reversed/including removals", current: current, orig: changed, includeRemoved: true, want: "ghcr.io/example/a:1\nghcr.io/example/a:2\nghcr.io/example/declared:v1\nghcr.io/example/declared:v2\nghcr.io/example/env:v1\nghcr.io/example/env:v2\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"diff", "images", "--path", tc.current, "--path-orig", tc.orig, "--cache-dir", cache, "--concurrency", "2"}
+			if tc.includeRemoved {
+				args = append(args, "--include-removed")
+			}
+			stdout, stderr, code := runCLI(t, args...)
+			if code != 0 {
+				t.Fatalf("diff images: exit=%d stderr=%s", code, stderr)
+			}
+			assert.Equal(t, stdout, tc.want)
 		})
 	}
 	t.Run("empty/default", func(t *testing.T) {

@@ -108,7 +108,7 @@ func (reader documentReader) transformerInjectedNamespace(repoRoot, overlayDir s
 		if td == nil || td.Namespace == "" {
 			continue
 		}
-		if reader.subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}, 0) {
+		if reader.subtreeHasNamespaceTransformer(repoRoot, transformerDir, map[string]struct{}{}) {
 			return nsResolution{ns: td.Namespace, ok: true, transformer: true}
 		}
 	}
@@ -137,36 +137,9 @@ func (reader documentReader) replacementInjectedNamespace(repoRoot, overlayDir s
 	return nsResolution{}
 }
 
-// subtreeHasNamespaceTransformer reports whether the kustomize subtree
-// rooted at dir declares (directly or via resources:/transformers:
-// references) a builtin NamespaceTransformer that targets Kustomization
-// spec/targetNamespace. Bounded by transformerScanMaxDepth and a
-// visited set so malformed reference cycles can't loop.
-func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}, depth int) bool {
-	if depth > transformerScanMaxDepth {
-		return false
-	}
-	if _, seen := visited[dir]; seen {
-		return false
-	}
-	visited[dir] = struct{}{}
-	d, _ := reader.read(filepath.Join(repoRoot, dir))
-	if d == nil {
-		return false
-	}
-	for ref := range kustomizeinput.Kustomization(d) {
-		if ref.Role != kustomizeinput.Resource && (ref.Role != kustomizeinput.Configuration || !strings.HasPrefix(ref.Field, ".transformers")) || ref.Inline {
-			continue
-		}
-		target, ok := kustomizeinput.Local(repoRoot, dir, ref.Path)
-		if !ok {
-			continue
-		}
-		if reader.fileHasNamespaceTransformer(repoRoot, target) || reader.subtreeHasNamespaceTransformer(repoRoot, target, visited, depth+1) {
-			return true
-		}
-	}
-	return false
+func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}) bool {
+	w := traversal{documents: reader, policy: traversalProof, directories: visited}
+	return !w.walk(nil, graphVisit{root: repoRoot, dir: dir}, nil)
 }
 
 // fileHasNamespaceTransformer reads target as a (possibly multi-document)

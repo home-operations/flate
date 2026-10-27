@@ -95,7 +95,7 @@ func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
 			if err != nil {
 				t.Fatalf("loadIgnore: %v", err)
 			}
-			w := walker{ignore: ig, scanRoot: root, visited: map[string]struct{}{}, ignoreCache: map[ignoreKey]bool{}}
+			w := traversal{ignore: ig, directories: map[string]struct{}{}, ignoreCache: map[ignoreKey]bool{}}
 			for _, check := range []struct {
 				rel   string
 				isDir bool
@@ -111,7 +111,7 @@ func TestWalkerIgnoreMatches_MemoMatchesUncached(t *testing.T) {
 					abs := filepath.Join(root, filepath.FromSlash(check.rel))
 					want := ig.matches(abs, root, check.isDir)
 					for range 2 {
-						if got := w.ignoreMatches(abs, check.isDir); got != want {
+						if got := w.ignoreMatches(root, abs, check.isDir); got != want {
 							t.Errorf("ignoreMatches(%q, isDir=%t) = %t, want %t", check.rel, check.isDir, got, want)
 						}
 						if tc.patterns == "" && want {

@@ -29,6 +29,16 @@ type Kustomization struct {
 	Annotations map[string]string `json:"-" yaml:"-"`
 }
 
+// NewEntryKustomization constructs an internal producer for an admitted literal entry.
+func NewEntryKustomization(source NamedResource, path string) *Kustomization {
+	return &Kustomization{
+		Name: entryProducerID.Name, Namespace: entryProducerID.Namespace,
+		Path:       path,
+		SourceRef:  kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name, Namespace: source.Namespace},
+		projection: new(atomic.Pointer[kustomizationProjection]),
+	}
+}
+
 // GetLabels returns the Kustomization's metadata.labels.
 func (k *Kustomization) GetLabels() map[string]string { return k.Labels }
 

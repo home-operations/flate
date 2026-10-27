@@ -35,7 +35,7 @@ func TestRun_RemoteInputFailure(t *testing.T) {
 	testutil.WriteFile(t, root, "orphan.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: orphan, namespace: apps}\ndata: {VALUE: orphan}\n")
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf("configMapGenerator:\n- name: remote\n  envs: [%s]\n", server.URL))
 	st := store.New()
-	result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: root, RepoRoot: root, Store: st})
+	result, err := discovery.Run(t.Context(), discovery.Config{Path: root, RepoRoot: root, Store: st})
 	if !errors.Is(err, manifest.ErrInput) || result != nil {
 		t.Fatalf("fatal finalization published success: result=%+v err=%v", result, err)
 	}
@@ -71,20 +71,21 @@ func TestRun_BuiltRemoteGenerator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Documents) != 1 {
-		t.Fatalf("generated output missing: %v", result.Documents)
+	var id manifest.NamedResource
+	for candidate, record := range result.Index.Records {
+		if strings.HasPrefix(candidate.Name, "generated-") && record.Parent == result.Binding.Producer {
+			id = candidate
+		}
 	}
-	id := manifest.DocIdentity(result.Documents[0])
-	generated, ok := st.GetObject(id).(*manifest.ConfigMap)
-	if !ok || !strings.HasPrefix(id.Name, "generated-") || generated.Data["chosen"] != "selected-remote-value" {
-		t.Fatalf("remote generator lost built identity/content: %s %+v", id, generated)
+	if id.Name == "" || st.GetObject(id) != nil {
+		t.Fatal("prepared generator missing ownership or published early")
 	}
 	if _, raw := result.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}); raw {
 		t.Fatal("raw generator declaration resurrected")
 	}
 	assert.Equal(t, requests.Load(), int32(1))
 	record, _ := result.Index.Lookup(id)
-	if !slices.Contains(record.Inputs, "kustomization.yaml") || len(result.Index.Readers) != 0 {
+	if !slices.Contains(record.Inputs, "kustomization.yaml") || len(result.Index.Readers) == 0 {
 		t.Fatalf("remote generator lost declaration input or acquired render ownership: %+v", record)
 	}
 }
@@ -138,8 +139,8 @@ func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
 		t.Fatal("remote graph lost bootstrap source classification")
 	}
 	assert.Diff(t, ownersForTest(result.Index, "apps/kustomization.yaml"), []manifest.NamedResource{testutil.KustomizationID("flux-system", "owner")})
-	admitted, ok := st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "admitted"}).(*manifest.ConfigMap)
-	if !ok || admitted.Data["value"] != "remote" || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "unowned"}) != nil {
+	record, ok := result.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "admitted"})
+	if !ok || record.Parent != result.Binding.Producer || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "unowned"}) != nil {
 		t.Fatal("markerless output or scoped sibling admission changed")
 	}
 	if probes.Load() != 1 || acquisitions.Load() == 0 {

@@ -87,7 +87,7 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 	if handled {
 		return nil
 	}
-	base.Stamp(rs.EmissionPolicy(), docs)
+	rs.EmissionPolicy().Stamp(docs)
 	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Complete = true
 	return c.run.Emit(id, &attempt, nil)

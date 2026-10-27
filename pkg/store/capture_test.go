@@ -1301,6 +1301,28 @@ func TestReadSet_BoundDeclarationAuthority(t *testing.T) {
 	}
 }
 
+func TestReadSet_RawOwnedSourceMaterializer(t *testing.T) {
+	t.Parallel()
+	st := New()
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	source := &manifest.HelmRepository{Name: "chart", Namespace: "apps", URL: "https://charts.example"}
+	st.AddObjects([]manifest.BaseManifest{parent, source})
+	p := manifest.Production{Owner: parent.Named(), Source: manifest.BootstrapSourceID, Authored: source.Named(), Path: "/input/source.yaml", File: "source.yaml"}
+	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		source.Named(): {Path: p.Path, File: p.File, Authored: p.Authored, Productions: []manifest.Production{p}},
+	}})
+	st.UpdateStatus(parent.Named(), StatusInfo{Status: StatusFailed, Message: "dependency unavailable"})
+	var reads ReadSet
+	reads.Init(st, source.Named(), nil)
+	defer reads.Retire()
+	if got := reads.Materializer(source.Named(), p); got != parent.Named() {
+		t.Fatalf("raw owned source materializer=%s, want %s", got, parent.Named())
+	}
+	if reads.GetDeclaration(source.Named()) != nil {
+		t.Fatal("raw source acquired declaration authority before its failed parent emitted it")
+	}
+}
+
 func TestReadSet_BoundInventoryPublication(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"self_first", "self_last", "borrowed", "remapped"} {

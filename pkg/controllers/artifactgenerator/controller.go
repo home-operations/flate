@@ -7,10 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"maps"
 	"strings"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"

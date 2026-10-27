@@ -257,7 +257,7 @@ func TestStamp_CommonMetadataIntroducesHook(t *testing.T) {
 	t.Parallel()
 	h := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps", CommonMetadata: &helmv2.CommonMetadata{Labels: map[string]string{manifest.HelmReleaseDomain + "/name": "common"}, Annotations: map[string]string{"helm.sh/hook": ""}}}
 	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hook"}}
-	Stamp(h.EmissionPolicy(), testutil.DocumentOccurrences([]map[string]any{doc}))
+	h.EmissionPolicy().Stamp(testutil.DocumentOccurrences([]map[string]any{doc}))
 	metadata := doc["metadata"].(map[string]any)
 	assert.Diff(t, metadata["labels"], map[string]any{manifest.HelmReleaseDomain + "/name": "common"})
 	assert.Diff(t, metadata["annotations"], map[string]any{"helm.sh/hook": ""})
@@ -266,7 +266,10 @@ func TestStamp_CommonMetadataIntroducesHook(t *testing.T) {
 
 func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 	t.Parallel()
-	for _, producer := range []manifest.BaseManifest{
+	for _, producer := range []interface {
+		manifest.BaseManifest
+		EmissionPolicy() manifest.EmissionPolicy
+	}{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps", TargetNamespace: "target"},
 		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps", TargetNamespace: "target"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "target"},
@@ -286,7 +289,7 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 				t.Fatalf("child identities=%v", children)
 			}
 			_, ns := manifest.DocMetadata(visible[0])
-			policy := producer.(emissionProducer).EmissionPolicy()
+			policy := producer.EmissionPolicy()
 			if (ns == "") != policy.InternalNamespace {
 				t.Fatalf("visible namespace=%q, policy=%+v", ns, policy)
 			}
@@ -304,7 +307,10 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 
 func TestEmit_KindExclusionPolicy(t *testing.T) {
 	t.Parallel()
-	for _, producer := range []manifest.BaseManifest{
+	for _, producer := range []interface {
+		manifest.BaseManifest
+		EmissionPolicy() manifest.EmissionPolicy
+	}{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps"},
 		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "apps"},
@@ -322,7 +328,7 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 				t.Fatalf("visible=%v", visible)
 			}
 			wantChildren := 4
-			if producer.(emissionProducer).EmissionPolicy().ExcludeChildren {
+			if producer.EmissionPolicy().ExcludeChildren {
 				wantChildren = 1
 			}
 			if len(children) != wantChildren {

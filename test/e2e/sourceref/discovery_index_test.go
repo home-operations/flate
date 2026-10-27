@@ -85,6 +85,7 @@ func TestE2E_DiscoveryIndex_ChangedOnlyFileBackedProducers(t *testing.T) {
 			root := t.TempDir()
 			orig := t.TempDir()
 			for _, dir := range []string{root, orig} {
+				testutil.GitInit(t, dir)
 				testutil.WriteFile(t, dir, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
@@ -123,7 +124,7 @@ metadata: {name: out, namespace: default}
 data: {v: "${K}"}
 `)
 			}
-			fullArgs := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn"}
+			fullArgs := []string{"build", "all", "--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn"}
 			full, stderr := harness.RequireCLIOK(t, fullArgs...)
 			if !strings.Contains(full, "name: out") || !strings.Contains(full, "v: v") {
 				t.Fatalf("full list consumer missing: %s\n%s", full, stderr)
@@ -144,7 +145,7 @@ data: {v: "${K}"}
 				harness.MutateFile(t, filepath.Join(root, "apps/other/cm.yaml"), "K: v", "K: changed")
 				wantValue = "v: changed"
 			}
-			stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--path-orig", orig, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
+			stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
 			if strings.Contains(stderr, "[") && (strings.Count(stderr, "[") != 1 || !strings.Contains(stderr, "[RenderPersistenceDisabled]")) {
 				t.Fatalf("unexpected changed-only warnings: %s", stderr)
 			}
@@ -195,8 +196,15 @@ spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
 				full[side] = out
 				value := []string{"before", "after"}[side]
 				consumer := generatorConsumer(t, out, "consumer")
-				if !strings.Contains(consumer, `"value": "`+value+`"`) || strings.Contains(out, `"kind": "Secret"`) {
-					t.Fatalf("expected public consumer with %s and suppressed Secrets:\n%s", value, out)
+				if !strings.Contains(consumer, `"value": "`+value+`"`) {
+					t.Fatalf("expected public consumer with %s:\n%s", value, out)
+				}
+				var docs []struct{ Kind string }
+				assert.NoError(t, json.Unmarshal([]byte(out), &docs))
+				for _, doc := range docs {
+					if doc.Kind == "Secret" {
+						t.Fatalf("default output included a Secret:\n%s", out)
+					}
 				}
 				if !strings.Contains(generatorConsumer(t, out, "sibling"), `"value": "unchanged"`) || !strings.Contains(generatorConsumer(t, out, "unrelated"), `"value": "independent"`) {
 					t.Fatalf("missing stable full-side oracles:\n%s", out)
@@ -213,8 +221,15 @@ spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
 				t.Logf("selected side=%d stdout=%x stderr=%x", side, sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
 				assert.Equal(t, generatorConsumer(t, out, "consumer"), generatorConsumer(t, full[side], "consumer"))
 				assert.Equal(t, generatorConsumer(t, out, "sibling"), generatorConsumer(t, full[side], "sibling"))
-				if strings.Contains(out, `"name": "unrelated"`) {
-					t.Fatalf("independent owner selected:\n%s", out)
+				var docs []struct {
+					Kind     string
+					Metadata struct{ Name string }
+				}
+				assert.NoError(t, json.Unmarshal([]byte(out), &docs))
+				for _, doc := range docs {
+					if doc.Kind == "ConfigMap" && doc.Metadata.Name == "unrelated" {
+						t.Fatalf("independent owner selected:\n%s", out)
+					}
 				}
 			}
 		})
@@ -247,13 +262,14 @@ func TestE2E_BootstrapGeneratorFailureIsolation(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			parent := t.TempDir()
 			root := filepath.Join(parent, "repo")
+			testutil.GitInit(t, root)
 			testutil.WriteFile(t, parent, "outside.txt", "OUTSIDE-CONTENT")
 			testutil.WriteFile(t, root, "flux/ks.yaml", testutil.KustomizationYAML("good", "flux-system", "  {path: ./apps/good}\n")+"---\n"+testutil.KustomizationYAML("bad", "flux-system", "  {path: ./apps/bad}\n"))
 			testutil.WriteFile(t, root, "apps/good/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/good/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: good-output}\n")
 			testutil.WriteFile(t, root, "apps/bad/kustomization.yaml", "configMapGenerator:\n- name: bad\n  "+input+"\n")
 			for _, workers := range []string{"2", "8"} {
-				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
+				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", workers, "--cache-dir", t.TempDir(), "--no-progress")
 				if code != 1 || !strings.Contains(stdout, "good-output") || !strings.Contains(stderr, "bad") || !strings.Contains(stderr, "file sources:") {
 					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
@@ -378,7 +394,7 @@ func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
 				}
 				stdout, stderr, code := harness.RunCLIBuffers(args...)
 				if tc.name == "unknown" && mode == "diff" {
-					if code != 0 || stdout != "" || !strings.Contains(stderr, "outside the local tree; not rendered") {
+					if code != 0 || stdout != "" || strings.Contains(stderr, "diff suppressed") {
 						t.Fatalf("unknown diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 					}
 					continue

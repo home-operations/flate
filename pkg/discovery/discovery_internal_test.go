@@ -1,12 +1,8 @@
 package discovery
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,17 +13,18 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
@@ -213,276 +210,112 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 
 func TestRun_SelectedEntryAdmission(t *testing.T) {
 	t.Parallel()
-	for _, ownership := range []string{"unowned", "nested", "reader", "reachable", "preseeded", "ancestor", "alias", "foreign", "pinned", "fragment"} {
+	for _, ownership := range []string{"internal", "authored", "alias", "alias ignored", "alias sparse", "pinned", "fragment", "label collision", "deferred", "optional"} {
 		t.Run(ownership, func(t *testing.T) {
 			t.Parallel()
 			const root = "/virtual/entry-admission"
-			resources := "resources: [child.yaml, source.yaml, cm.yaml]\nnameSuffix: -dev\n"
 			input := fstest.MapFS{
-				"scope/app/kustomization.yaml": {Data: []byte(resources)},
-				"scope/app/child.yaml":         {Data: []byte(testutil.KustomizationYAML("child", "apps", "  path: ./scope/app/nested\n  suspend: true\n"))},
-				"scope/app/source.yaml":        {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: raw-source, namespace: apps}\nspec: {url: https://fixture.invalid/repo}\n")},
-				"scope/app/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\n")},
-				"scope/app/excluded.yaml":      {Data: []byte(testutil.KustomizationYAML("excluded-driver", "apps", "  path: ./excluded\n") + "---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: excluded-source, namespace: apps}\nspec: {url: https://must-not-run.invalid/repo}\n")},
-			}
-			if ownership == "unowned" {
-				for _, file := range []string{"scope/app/child.yaml", "scope/app/source.yaml", "scope/app/cm.yaml"} {
-					input[file].Data = []byte("apiVersion: v1\nkind: List\nitems:\n- " + strings.ReplaceAll(strings.TrimSpace(string(input[file].Data)), "\n", "\n  ") + "\n")
-				}
-			}
-			input["scope/app/nested/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: apps\nresources: [source.yaml]\n")}
-			input["scope/app/nested/source.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: nested-source}\nspec: {url: oci://fixture.invalid/chart}\n")}
-			input["scope/kustomization.yaml"] = &fstest.MapFile{Data: []byte("namespace: outside\nresources: [app]")}
-			if ownership == "nested" || ownership == "reader" {
-				input["scope/app/kustomization.yaml"].Data = []byte("resources: [child.yaml, source.yaml, cm.yaml, nested]\nnameSuffix: -dev\n")
-				if ownership == "reader" {
-					input["scope/app/nested/kustomization.yaml"].Data = append(input["scope/app/nested/kustomization.yaml"].Data,
-						[]byte("configMapGenerator: [{name: read, files: [../kustomization.yaml]}]\n")...)
-				}
+				"app/kustomization.yaml": {Data: []byte("namespace: apps\nresources: [cm.yaml]\n")},
+				"app/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: applied}\ndata: {key: value}\n")},
 			}
 			st := store.New()
-			owner := &manifest.Kustomization{Name: "owner", Namespace: "flux-system", Path: "./scope/app"}
-			if ownership == "reachable" {
-				input["scope/app/kustomization.yaml"].Data = []byte("resources: [owner.yaml, child.yaml, source.yaml, cm.yaml]\nnameSuffix: -dev\n")
-				input["scope/app/owner.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: flux-system, uid: selected-owner, annotations: {fixture: retained}}\nspec: {path: ./scope/app, interval: 1m}\n")}
-			} else if ownership != "unowned" && ownership != "nested" && ownership != "reader" {
-				if ownership == "foreign" || ownership == "pinned" || ownership == "alias" {
-					src := &manifest.GitRepository{Name: ownership, Namespace: owner.Namespace, URL: "https://fixture.invalid/" + ownership}
-					st.AddObject(src)
-					owner.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: src.Name}
-					art := &store.SourceArtifact{LocalPath: "/virtual/" + ownership, FS: input}
-					if ownership == "pinned" {
-						art.LocalRoot, art.Key, art.Content = root, "pinned", "pinned"
+			authored := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"}
+			switch ownership {
+			case "alias", "alias ignored", "alias sparse", "pinned":
+				source := &manifest.GitRepository{Name: "self", Namespace: "apps", URL: "https://fixture.invalid/self"}
+				artifact := &store.SourceArtifact{LocalPath: "/virtual/alias", LocalRoot: root, InputAlias: true, FS: input}
+				if ownership == "alias ignored" || ownership == "alias sparse" {
+					if ownership == "alias ignored" {
+						ignore := "app/cm.yaml"
+						source.Ignore = &ignore
+					} else {
+						source.SparseCheckout = []string{"other"}
 					}
-					if ownership == "alias" {
-						art.LocalRoot, art.InputAlias = root, true
-					}
-					st.SetArtifact(src.Named(), art)
+					artifact.FS = fstest.MapFS{"app/kustomization.yaml": input["app/kustomization.yaml"]}
 				}
-				switch ownership {
-				case "fragment":
-					owner.Path = ""
-				case "ancestor":
-					owner.Path = "./scope"
+				st.AddObject(source)
+				if ownership == "pinned" {
+					artifact.InputAlias = false
+					artifact.Key = "pinned"
+					artifact.Content = "pinned"
 				}
-				st.AddObject(owner)
+				st.SetArtifact(source.Named(), artifact)
+				authored.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: source.Named().Kind, Name: source.Name, Namespace: source.Namespace}
+			case "fragment":
+				authored.Path = ""
+			case "label collision":
+				authored.Name = "entry"
+				authored.Path = "./other"
+			case "deferred", "optional":
+				authored.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values", Optional: ownership == "optional"}}}
 			}
-			result, err := Run(t.Context(), Config{Trees: testTrees(t), Input: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, FS: input}, Path: root + "/scope/app", Store: st})
-			if err != nil {
-				t.Fatal(err)
+			if ownership != "internal" {
+				st.AddObject(authored)
 			}
-			bootstrap := testutil.KustomizationID("flux-system", "flate-bootstrap")
-			bare := ownership != "reachable" && ownership != "preseeded" && ownership != "ancestor" && ownership != "alias" && ownership != "pinned"
-			if st.GetObject(bootstrap) != nil {
-				t.Fatal("entry invented a Flux owner")
+			if ownership == "authored" {
+				input["app/kustomization.yaml"].Data = []byte("namespace: apps\nresources: [cm.yaml, owner.yaml]\n")
+				input["app/owner.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./app\n"))}
 			}
-			admitted := owner.Named()
-			if ownership == "reachable" {
-				_, doc, emission := st.GetEmission(admitted)
+			cacheDir := ""
+			if ownership == "internal" || ownership == "authored" {
+				cacheDir = t.TempDir()
+			}
+			trees, closeCache := testReceiptTrees(t, cacheDir)
+			cfg := Config{Trees: trees, Store: st, Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root + "/app"}
+			result, err := Run(t.Context(), cfg)
+			assert.NoError(t, err)
+			internal := ownership == "internal" || ownership == "alias ignored" || ownership == "alias sparse" || ownership == "pinned" || ownership == "fragment" || ownership == "label collision"
+			if result.Binding.Producer.ReportHidden() != internal {
+				t.Fatalf("wrong entry representative: %+v", result.Binding)
+			}
+			if !internal && result.Binding.Producer != authored.Named() {
+				t.Fatalf("authored owner not reused: %+v", result.Binding)
+			}
+			if ownership == "label collision" && (authored.Named().ReportHidden() || st.GetObject(authored.Named()) != authored) {
+				t.Fatal("valid authored display name was hidden or replaced")
+			}
+			if record, _ := result.Index.Lookup(result.Binding.Producer); record.Parent != (manifest.NamedResource{}) {
+				t.Fatalf("entry is its own child: %+v", record)
+			}
+			applied := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "applied"}
+			record, ok := result.Index.Lookup(applied)
+			if !ok || !slices.ContainsFunc(record.Productions, func(p manifest.Production) bool { return p.Owner == result.Binding.Producer }) {
+				t.Fatalf("root output lacks ordinary ownership: %+v", record)
+			}
+			if (ownership == "alias ignored" || ownership == "alias sparse") && record.Builder != "app/kustomization.yaml" {
+				t.Fatalf("filtered alias changed the prepared literal input: %+v", record)
+			}
+			if _, _, emission := st.GetEmission(result.Binding.Producer); emission.Complete || len(emission.Manifests) != 0 {
 				emission.Finish()
-				if doc == nil || doc["metadata"].(map[string]any)["uid"] != "selected-owner" || doc["metadata"].(map[string]any)["annotations"].(map[string]any)["fixture"] != "retained" {
-					t.Fatalf("selected owner lost authoritative metadata: %v", doc)
-				}
-			}
-			if bare {
-				admitted = testutil.KustomizationID("apps", "child-dev")
-				child, ok := st.GetObject(admitted).(*manifest.Kustomization)
-				if !ok || st.EmissionOwner(admitted) != (manifest.NamedResource{}) {
-					t.Fatalf("built child missing or owned: %+v", child)
-				}
-				sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "raw-source-dev"}
-				if st.GetObject(sourceID) == nil {
-					t.Fatal("built source was not promoted")
-				}
-				want := 3
-				switch ownership {
-				case "nested":
-					want = 4
-				case "reader":
-					want = 5
-				}
-				if len(result.Documents) != want {
-					t.Fatalf("built batch = %v, want %d documents", result.Documents, want)
-				}
-			} else if len(result.Documents) != 0 {
-				t.Fatalf("authored owner acquired bare output: %v", result.Documents)
-			}
-
-			for id, record := range result.Index.Files() {
-				if strings.HasPrefix(id.Name, "excluded-") {
-					t.Fatalf("excluded sibling indexed: %s", id)
-				}
-				if id.Name == "raw-source" || id.Name == "child" || id.Name == "nested-source" {
-					if st.GetObject(id) != nil {
-						t.Fatalf("render-owned authored identity is runnable: %s", id)
-					}
-					for _, production := range record.Productions {
-						if production.Owner == admitted && production.Path != "" {
-							t.Fatalf("render-owned driver has a raw fallback: %+v", production)
-						}
-					}
-				}
-			}
-			builder := "scope/app/kustomization.yaml"
-			if ownership == "pinned" {
-				builder = "../pinned/" + builder
-			}
-			if bare {
-				record, _ := result.Index.Lookup(admitted)
-				if !slices.Contains(record.Inputs, builder) || slices.ContainsFunc(result.Index.Readers[builder], func(r manifest.FileReader) bool { return r.Reader == admitted }) != (ownership == "reader") {
-					t.Fatalf("built seed lost declaration input or acquired render ownership: %+v", record)
-				}
-				if ownership == "reader" {
-					for prefix, owners := range result.Index.Claims {
-						if strings.HasPrefix("scope/app/", prefix) && slices.Contains(owners, admitted) {
-							t.Fatalf("nested reader acquired a covering claim: %s", prefix)
-						}
-					}
-				}
-			} else if !slices.ContainsFunc(result.Index.Readers[builder], func(r manifest.FileReader) bool { return r.Reader == admitted }) {
-				t.Fatalf("builder did not reach its source-qualified owner: %+v", result.Index.Readers)
-			}
-		})
-	}
-	t.Run("plain bootstrap collision preserves native payload", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		for _, dir := range []string{"bootstrap", "flux"} {
-			resources := "resources: [namespace.yaml, objects.yaml]\nnamespace: external-secrets\n"
-			testutil.WriteFile(t, root, dir+"/kustomization.yaml", resources)
-			testutil.WriteFile(t, root, dir+"/namespace.yaml", "apiVersion: v1\nkind: Namespace\nmetadata: {name: _}\n")
-		}
-		testutil.WriteFile(t, root, "bootstrap/objects.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: onepassword-secret}\nstringData: {fixture: value}\n")
-		testutil.WriteFile(t, root, "flux/objects.yaml", testutil.KustomizationYAML("owner", "external-secrets", "  path: ./payload\n"))
-		testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: []\n")
-		before, err := Run(t.Context(), Config{Path: root, Store: store.New(), Trees: testTrees(t)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries, err := Plan(t.Context(), Config{Path: root})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != root {
-			t.Fatalf("plain bootstrap package established a cluster: %+v", entries)
-		}
-		after, err := Run(t.Context(), Config{Input: entries[0].Input, Path: entries[0].Path, Store: store.New(), Trees: testTrees(t)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want, err := json.Marshal(before.Documents)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := json.Marshal(after.Documents)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(before.Documents) == 0 || !bytes.Equal(got, want) {
-			t.Fatalf("singleton discovery payload changed: want %s; got %s", want, got)
-		}
-	})
-
-	t.Run("independent data collision survives a native context", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		testutil.WriteFile(t, root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./payload\n"))
-		for _, dir := range []string{"payload", "independent-data"} {
-			testutil.WriteFile(t, root, dir+"/kustomization.yaml", "namespace: apps\nresources: [configmap.yaml]\n")
-			testutil.WriteFile(t, root, dir+"/configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: "+dir+"}\nspec: {url: oci://fixture.invalid/chart}\n")
-		}
-		entries, err := Plan(t.Context(), Config{Path: root, RepoRoot: root})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) != 2 || entries[0].ID != "entry" || entries[1].ID != "independent-data" {
-			t.Fatalf("native context hid an independent data collision: %+v", entries)
-		}
-	})
-
-	t.Run("native entry contexts omit outside source collisions", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		sides := []string{"amber", "cobalt", "silver"}
-		for _, side := range sides {
-			testutil.WriteFile(t, root, "entries/"+side+"/owner.yaml", testutil.KustomizationYAML("owner-"+side, "flux-system", "  path: ./payload/"+side+"\n"))
-			testutil.WriteFile(t, root, "entries/"+side+"/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cluster-settings, namespace: flux-system}\ndata: {side: "+side+"}\n")
-			testutil.WriteFile(t, root, "payload/"+side+"/kustomization.yaml", "resources: [../../shared]\n")
-		}
-		testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources: [common.yaml]\n")
-		testutil.WriteFile(t, root, "shared/common.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: common, namespace: apps}\n")
-		for _, side := range []string{"first", "second"} {
-			testutil.WriteFile(t, root, "outside/"+side+"/kustomization.yaml", "resources: [chart.yaml]\n")
-			testutil.WriteFile(t, root, "outside/"+side+"/chart.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: repeated-chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart}\n")
-		}
-		testutil.WriteFile(t, root, "outside/unused.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: omitted}\n")
-		entries, err := Plan(t.Context(), Config{Path: root, RepoRoot: root, WipeSecrets: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(entries) != len(sides) {
-			t.Fatalf("native entry plan: %+v", entries)
-		}
-		for i, entry := range entries {
-			want := "entries/" + sides[i]
-			if entry.ID != manifest.ClusterID(want) || entry.Path != filepath.Join(root, filepath.FromSlash(want)) {
-				t.Fatalf("entry lost native coordinates: %+v", entry)
-			}
-			st := store.New()
-			result, err := Run(t.Context(), Config{Input: entry.Input, Path: entry.Path, Store: st, Trees: testTrees(t), WipeSecrets: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, ok := result.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "common"}); !ok {
-				t.Fatal("shared resource disappeared from native entry")
-			}
-			for id := range result.Index.Records {
-				if id.Name == "repeated-chart" || id.Name == "omitted" {
-					t.Fatalf("outside root entered native payload: %s", id)
-				}
-			}
-			for _, warning := range st.Warnings() {
-				if strings.Contains(warning.Message+" "+strings.Join(warning.Detail, " "), "outside") {
-					t.Fatalf("outside omission warned: %+v", warning)
-				}
-			}
-		}
-	})
-
-}
-
-func TestRun_BootstrapNameCollision(t *testing.T) {
-	t.Parallel()
-	for _, origin := range []string{"store", "index"} {
-		t.Run(origin, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			input := fstest.MapFS{"app/kustomization.yaml": {Data: []byte("resources: []\n")}}
-			reserved := &manifest.Kustomization{Name: "flate-bootstrap", Namespace: "flux-system"}
-			st := store.New()
-			if origin == "store" {
-				st.AddObject(reserved)
+				t.Fatal("preparation published output")
 			} else {
-				input["app/kustomization.yaml"].Data = []byte("resources: [reserved.yaml]\n")
-				input["app/reserved.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML(reserved.Name, reserved.Namespace, "  {}\n"))}
+				emission.Finish()
 			}
-			result, err := Run(t.Context(), Config{Trees: testTrees(t), Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: filepath.Join(root, "app"), Store: st})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if origin == "store" && st.GetObject(reserved.Named()) != reserved {
-				t.Fatal("bootstrap overwrote reserved store identity")
-			}
-			if origin == "index" {
-				record, ok := result.Index.Lookup(reserved.Named())
-				if !ok || record.Path != "" || record.Authored != (manifest.NamedResource{}) || st.GetObject(reserved.Named()) == nil {
-					t.Fatalf("authored identity lost or acquired raw fallback: %+v", record)
+			if ownership == "deferred" || ownership == "optional" {
+				if record.Builder != "" {
+					t.Fatalf("referenced-data entry prepared early: %+v", record)
 				}
 			}
-			if got := st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization); len(got) != 1 {
-				t.Fatalf("entry added an invented owner: %v", got)
+			if cacheDir != "" {
+				owner := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
+				source, _, err := kustomize.SourceInput(st, owner)
+				assert.NoError(t, err)
+				req := preparedRequest(t, cfg, owner, source)
+				want := map[manifest.NamedResource]manifest.DiscoveryRecord{applied: {Productions: []manifest.Production{{Owner: owner.Named(), Source: result.Binding.Source}}}}
+				if ownership == "authored" {
+					ownRecord, ok := result.Index.Lookup(owner.Named())
+					if !ok || ownRecord.Parent != (manifest.NamedResource{}) {
+						t.Fatalf("prepared owner declaration became its own child: %+v", ownRecord)
+					}
+					assert.Equal(t, ownRecord.File, "app/owner.yaml")
+					assert.Equal(t, ownRecord.Declaration != nil, true)
+				}
+				assert.Diff(t, packageHistory(t, trees, req, owner.Named()), want)
+				closeCache()
+				trees, closeCache = testReceiptTrees(t, cacheDir)
+				assert.Diff(t, packageHistory(t, trees, req, owner.Named()), want)
 			}
-
+			closeCache()
 		})
 	}
 }
@@ -511,9 +344,9 @@ func testReceiptTrees(t *testing.T, cacheDir string) (*kustomize.TreeCache, func
 	return trees, closeCache
 }
 
-func packageHistory(t *testing.T, trees *kustomize.TreeCache, req kustomize.RenderRequest) map[manifest.NamedResource]manifest.DiscoveryRecord {
+func packageHistory(t *testing.T, trees *kustomize.TreeCache, req kustomize.RenderRequest, owner manifest.NamedResource) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
-	records, ok := trees.PreviousRender(t.Context(), req, manifest.BootstrapSourceID)
+	records, ok := trees.PreviousRender(t.Context(), req, owner)
 	if !ok || records == nil {
 		t.Fatalf("package %q has no complete accepted history", req.SubPath)
 	}
@@ -521,153 +354,228 @@ func packageHistory(t *testing.T, trees *kustomize.TreeCache, req kustomize.Rend
 	return history
 }
 
+func preparedRequest(t *testing.T, cfg Config, ks *manifest.Kustomization, source *store.SourceArtifact) kustomize.RenderRequest {
+	t.Helper()
+	prepared, err := kustomize.Prepare(ks, nil)
+	assert.NoError(t, err)
+	return kustomize.RenderRequest{
+		Source: source, ApplyIgnore: ks.SourceID() == manifest.BootstrapSourceID || source.InputAlias || source.Content == "", SubPath: prepared.Path, Spec: prepared,
+		WipeSecrets: cfg.WipeSecrets, StrictSubstitutions: cfg.StrictSubstitutions, SkipKinds: cfg.SkipKinds,
+	}
+}
+
 func TestRun_BuiltEntryFixedPoint(t *testing.T) {
 	t.Parallel()
 	const root = "/virtual/built-fixed-point"
 	input := fstest.MapFS{
-		"app/kustomization.yaml": {Data: []byte(`resources: [child.yaml, source.yaml]
-nameSuffix: -dev
-patches:
-- target: {kind: Kustomization, name: child}
-  patch: '[{"op":"replace","path":"/spec/path","value":"./leaf"}]'
-configMapGenerator: [{name: generated, literals: [value=selected]}]
-`)},
+		"app/kustomization.yaml":  {Data: []byte("resources: [child.yaml, source.yaml]\nnameSuffix: -dev\npatches:\n- target: {kind: Kustomization, name: child}\n  patch: '[{\"op\":\"replace\",\"path\":\"/spec/path\",\"value\":\"./leaf\"}]'\n")},
 		"app/child.yaml":          {Data: []byte(testutil.KustomizationYAML("child", "apps", "  path: ./untransformed\n  sourceRef: {kind: GitRepository, name: nested-dev}\n"))},
 		"app/source.yaml":         {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: nested, namespace: apps}\nspec: {url: https://fixture.invalid/self}\n")},
 		"leaf/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
 		"leaf/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: leaf}\n")},
 	}
 	st := store.New()
-	result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t), SelfURLs: []string{"https://fixture.invalid/self"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root + "/app", Store: st, Trees: testTrees(t), SelfURLs: []string{"https://fixture.invalid/self"}})
+	assert.NoError(t, err)
 	child := testutil.KustomizationID("apps", "child-dev")
-	if st.GetObject(child) == nil || st.GetObject(testutil.KustomizationID("apps", "child")) != nil {
-		t.Fatal("transformed child did not replace its raw identity")
+	record, ok := result.Index.Lookup(child)
+	if !ok || record.Parent != result.Binding.Producer || st.GetObject(testutil.KustomizationID("apps", "child")) != nil {
+		t.Fatalf("effective declaration not bound: %+v", record)
 	}
 	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "nested-dev"}
-	if st.GetObject(source) == nil || st.GetArtifact(source, store.ArtifactContent) == nil {
-		t.Fatal("transformed source did not resolve in the fixed point")
+	if st.GetArtifact(source, store.ArtifactContent) == nil {
+		t.Fatal("effective self source not admitted")
 	}
 	leaf := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "leaf"}
-	record, ok := result.Index.Lookup(leaf)
+	record, ok = result.Index.Lookup(leaf)
 	if !ok || !slices.ContainsFunc(record.Productions, func(p manifest.Production) bool { return p.Owner == child }) {
-		t.Fatalf("built child did not expand its leaf: %+v", record)
-	}
-	if len(result.Documents) != 1 {
-		t.Fatalf("bare batch lost a generated document: %v", result.Documents)
-	}
-	for _, doc := range result.Documents {
-		id := manifest.DocIdentity(doc)
-		record, ok := result.Index.Lookup(id)
-		if !ok || record.Path != "" || record.Authored != (manifest.NamedResource{}) || st.EmissionOwner(id) != (manifest.NamedResource{}) {
-			t.Fatalf("built document gained raw materialization or ownership: %s %+v", id, record)
-		}
-		if id.Kind == manifest.KindConfigMap && (!strings.HasPrefix(id.Name, "generated-dev-") || len(id.Name) <= len("generated-dev-")) {
-			t.Fatalf("generated identity lost its hash: %s", id)
-		}
+		t.Fatalf("effective path not expanded: %+v", record)
 	}
 }
 
-func TestRun_BuiltEntrySecretPrecedence(t *testing.T) {
+func TestRun_EntryOwnerEligibility(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"sanitized", "preexisting", "current-built"} {
+	t.Run("independent", func(t *testing.T) {
+		t.Parallel()
+		const root = "/virtual/independent-entry-owner"
+		input := fstest.MapFS{
+			"entry/kustomization.yaml": {Data: []byte("resources: [owner.yaml, cm.yaml]\n")},
+			"entry/owner.yaml":         {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n  dependsOn: [{name: ready}]\n"))},
+			"entry/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n")},
+			"ready/kustomization.yaml": {Data: []byte("resources: []\n")},
+		}
+		st := store.New()
+		st.AddObject(&manifest.Kustomization{Name: "ready", Namespace: "apps", Path: "./ready"})
+		result, err := Run(t.Context(), Config{Store: st, Trees: testTrees(t), Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root + "/entry"})
+		assert.NoError(t, err)
+		assert.Equal(t, result.Binding.Producer, testutil.KustomizationID("apps", "owner"))
+	})
+	for _, scenario := range []string{"transitive_index_only", "transitive_admitted", "effective_batch", "generated_target", "production_declaration", "owner_production", "foreign_production", "cycle", "self_cycle", "deferred_required", "deferred_optional", "stable_then_changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			const root = "/virtual/built-secrets"
-			payload := "data: {old: c3RhbGU=}\nstringData: {token: 'ENC[AES256_GCM,data:Zm9v,iv:YmFy,tag:YmF6,type:str]'}\n"
-			wantData := map[string]any{"old": "c3RhbGU="}
-			wantStringData := map[string]any{"token": manifest.ValuePlaceholder("token")}
-			if scenario == "current-built" {
-				payload = "data: {token: YXV0aG9yZWQ=}\n"
-				wantData, wantStringData = map[string]any{"token": "YXV0aG9yZWQ="}, nil
-			}
-			if scenario == "preexisting" {
-				wantData, wantStringData = map[string]any{"current": "cmVhbA=="}, map[string]any{"token": "real-value"}
-			}
-			contents := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: apps, labels: {selected: 'true'}, annotations: {note: authored}}\ntype: Opaque\n" + payload
+			const root = "/virtual/entry-eligibility"
 			input := fstest.MapFS{
-				"package/kustomization.yaml": {Data: []byte("resources: [secret.yaml]\n")},
-				"package/secret.yaml":        {Data: []byte(contents)},
+				"entry/kustomization.yaml": {Data: []byte("resources: [owner.yaml, sibling.yaml]\n")},
+				"entry/owner.yaml":         {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n  dependsOn: [{name: ready}]\n"))},
+				"entry/sibling.yaml":       {Data: []byte(testutil.KustomizationYAML("sibling", "apps", "  path: ./leaf\n"))},
+				"leaf/kustomization.yaml":  {Data: []byte("resources: []\n")},
 			}
-			id := manifest.NamedResource{Kind: manifest.KindSecret, Name: "credentials", Namespace: "apps"}
-			var previous []map[string]any
-			for range 2 {
-				st := store.New()
-				saved := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"current": "cmVhbA=="}, StringData: map[string]any{"token": "real-value"}}
-				if scenario == "preexisting" {
-					st.AddObject(saved)
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./entry"}
+			owner.DependsOn = []kustomizev1.DependencyReference{{Name: "ready"}}
+			ready := &manifest.Kustomization{Name: "ready", Namespace: "apps", Path: "./ready"}
+			ready.DependsOn = []kustomizev1.DependencyReference{{Name: "sibling"}}
+			if scenario == "effective_batch" {
+				input["entry/sibling.yaml"].Data = []byte(testutil.KustomizationYAML("before", "other", "  path: ./leaf\n"))
+				input["entry/kustomization.yaml"].Data = []byte("namespace: apps\nresources: [sibling.yaml]\npatches:\n- target: {kind: Kustomization, name: before}\n  patch: '[{\"op\":\"replace\",\"path\":\"/metadata/name\",\"value\":\"sibling\"}]'\n")
+			}
+			if scenario == "generated_target" {
+				ready.DependsOn = nil
+				ready.SourceRef = kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "generated"}
+				input["entry/kustomization.yaml"].Data = []byte("resources: [generator.yaml]\n")
+				input["entry/generator.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps}\nspec:\n  artifacts: [{name: generated}]\n")}
+			}
+			if scenario == "cycle" {
+				ready.DependsOn[0].Name = "loop"
+			}
+			if scenario == "self_cycle" {
+				owner.DependsOn[0].Name = owner.Name
+			}
+			if scenario == "deferred_required" || scenario == "deferred_optional" {
+				owner.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "values", Optional: scenario == "deferred_optional"}}}
+			}
+			st := store.New()
+			st.AddObject(owner)
+			if scenario == "transitive_admitted" {
+				st.AddObject(ready)
+			}
+			d := newDiscoverer(Config{Store: st, Trees: testTrees(t), Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root + "/entry"})
+			_, err := d.resolveEntrySources(t.Context(), false)
+			assert.NoError(t, err)
+			d.loader.SourceRoot = root
+			_, err = d.loader.Load(t.Context(), root+"/entry")
+			assert.NoError(t, err)
+			d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Declaration: ready}
+			if scenario == "cycle" {
+				loop := &manifest.Kustomization{Name: "loop", Namespace: "apps"}
+				loop.DependsOn = []kustomizev1.DependencyReference{{Name: ready.Name}}
+				d.loader.Index.Records[loop.Named()] = manifest.DiscoveryRecord{Declaration: loop}
+			}
+			if scenario == "production_declaration" || scenario == "owner_production" || scenario == "foreign_production" {
+				ready.DependsOn = nil
+				source := manifest.BootstrapSourceID
+				if scenario == "foreign_production" {
+					source.Name = "foreign"
 				}
-				result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t), WipeSecrets: scenario != "current-built"})
+				d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: testutil.KustomizationID("apps", "producer"), Declaration: testutil.KustomizationID("apps", "sibling"), Source: source}}}
+				if scenario == "owner_production" {
+					d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: owner.Named(), Source: source}}}
+				}
+			}
+			if scenario != "transitive_admitted" && st.GetObject(ready.Named()) != nil || len(d.loader.Index.Records[ready.Named()].Refs) != 0 {
+				t.Fatal("index-only prerequisite gained store or ordering-ref authority")
+			}
+			selected := d.bindEntry(t.Context(), root)
+			wantOwner := scenario == "cycle" || scenario == "self_cycle" || scenario == "foreign_production"
+			assert.Equal(t, selected == owner, wantOwner)
+			if !wantOwner && !selected.Named().ReportHidden() {
+				t.Fatal("captured prerequisite did not select the literal entry")
+			}
+			if scenario == "deferred_required" || scenario == "deferred_optional" {
+				if _, prepared := d.prepared[owner]; prepared {
+					t.Fatal("referenced substitution admitted an incomplete preparation")
+				}
+			}
+			if scenario == "effective_batch" {
+				if !slices.ContainsFunc(d.prepared[owner].children, func(c store.Child) bool { return c.Obj.Named() == testutil.KustomizationID("apps", "sibling") }) {
+					t.Fatal("eligibility did not inspect the transformed batch")
+				}
+			}
+			if scenario == "stable_then_changed" {
+				previous := d.prepared[owner].receipt
+				input, _, err := kustomize.SourceInput(st, selected)
 				assert.NoError(t, err)
-				if len(result.Documents) != 1 {
-					t.Fatalf("selected secret missing: %v", result.Documents)
+				assert.NoError(t, d.prepareEntry(t.Context(), selected, input))
+				declaration := d.loader.Index.Records[owner.Named()].Declaration
+				if declaration == nil || !manifest.Equal(declaration, owner) {
+					t.Fatal("literal registration erased the original authored declaration")
 				}
-				doc := result.Documents[0]
-				assert.Diff(t, doc["data"], wantData)
-				if scenario != "preexisting" {
-					assert.Equal(t, doc["type"], any("Opaque"))
-				} else {
-					_, present := doc["type"]
-					assert.Equal(t, present, false)
+				assert.Equal(t, d.bindEntry(t.Context(), root), selected)
+				assert.Equal(t, d.prepared[owner].receipt, previous)
+				independent := *ready
+				independent.DependsOn = nil
+				d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Declaration: &independent}
+				assert.Equal(t, d.bindEntry(t.Context(), root), owner)
+				assert.Equal(t, d.prepared[owner].receipt, previous)
+				if len(ready.DependsOn) != 1 {
+					t.Fatal("eligibility mutated the borrowed prerequisite")
 				}
-				if scenario == "current-built" {
-					_, present := doc["stringData"]
-					assert.Equal(t, present, false)
-				} else {
-					assert.Diff(t, doc["stringData"], wantStringData)
+				projected := *owner
+				projected.DependsOn = []kustomizev1.DependencyReference{{Name: "${NEXT}", Namespace: "${NS}"}}
+				st.AddObject(&projected)
+				vars := func(value string) values.DependencySubstitutions {
+					return values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"NEXT": value, "NS": "apps"}}}})
 				}
-				obj := st.GetObject(id).(*manifest.Secret)
-				assert.Diff(t, obj.Data, wantData)
-				assert.Diff(t, obj.StringData, wantStringData)
-				if scenario == "preexisting" && obj != saved {
-					t.Fatal("store lost preexisting Secret pointer")
+				d.substitutions = vars("sibling")
+				if !d.bindEntry(t.Context(), root).Named().ReportHidden() {
+					t.Fatal("new owner/snapshot retained the independent decision")
 				}
-				assert.Diff(t, doc["metadata"], map[string]any{"name": "credentials", "namespace": "apps", "labels": map[string]any{"selected": "true"}, "annotations": map[string]any{"note": "authored"}})
-				assert.Equal(t, string(input["package/secret.yaml"].Data), contents)
-				assert.Diff(t, saved.Data, map[string]any{"current": "cmVhbA=="})
-				assert.Diff(t, saved.StringData, map[string]any{"token": "real-value"})
-				if previous != nil {
-					assert.Diff(t, result.Documents, previous)
-				}
-				previous = result.Documents
+				d.substitutions = vars("ready")
+				assert.Equal(t, d.bindEntry(t.Context(), root), &projected)
+				before := d.prepared[&projected]
+				replacement := *before.source
+				replacement.Key = "new-source"
+				replacement.Content = "new-content"
+				st.SetArtifact(manifest.BootstrapSourceID, &replacement)
+				assert.Equal(t, d.bindEntry(t.Context(), root), &projected)
+				assert.Equal(t, d.prepared[&projected].source, &replacement)
 			}
 		})
 	}
 }
 
-func TestRun_BuiltEntryRejectedDocument(t *testing.T) {
+func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	t.Parallel()
-	root := discoveryRefFixture(t)
-	testutil.WriteFile(t, root, "app/kustomization.yaml", `resources: [child.yaml, cm.yaml]
-patches:
-- target: {kind: Kustomization, name: child}
-  patch: '[{"op":"replace","path":"/spec/path","value":"./app"}]'
-`)
-	testutil.WriteFile(t, root, "app/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./leaf\n  sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}\n"))
-	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty, namespace: apps}\n")
+	const root = "/virtual/transformed-entry-owner"
+	input := fstest.MapFS{
+		"app/kustomization.yaml": {Data: []byte("resources: [owner.yaml]\npatches:\n- target: {kind: Kustomization, name: owner}\n  patch: '[{\"op\":\"replace\",\"path\":\"/spec/path\",\"value\":\"./app\"}]'\n")},
+		"app/owner.yaml":         {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./other\n"))},
+	}
 	st := store.New()
-	source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system", URL: "git://fixture.invalid/cluster", Reference: &sourcev1.GitRepositoryRef{Tag: "v1.0.0"}}
-	st.AddObject(source)
-	result, err := Run(t.Context(), Config{Path: filepath.Join(root, "app"), RepoRoot: root, Store: st, Trees: testTrees(t), SelfURLs: []string{source.URL}})
-	if err != nil {
-		t.Fatal(err)
+	cacheDir := t.TempDir()
+	trees, closeCache := testReceiptTrees(t, cacheDir)
+	source := &store.SourceArtifact{LocalPath: root, FS: input}
+	cfg := Config{Input: source, Path: root + "/app", Store: st, Trees: trees}
+	result, err := Run(t.Context(), cfg)
+	assert.NoError(t, err)
+	if !result.Binding.Producer.ReportHidden() {
+		t.Fatalf("transformed child replaced the literal entry: %+v", result.Binding)
 	}
-	rejected := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "dirty"}
-	if st.GetObject(rejected) != nil {
-		t.Fatal("working-tree document survived the built child's pinned claim")
+	owner := testutil.KustomizationID("apps", "owner")
+	record, ok := result.Index.Lookup(owner)
+	declaration, typed := record.Declaration.(*manifest.Kustomization)
+	if !ok || !typed || declaration.Path != "./app" || record.File != "app/kustomization.yaml" || record.Builder != record.File || record.Parent != result.Binding.Producer {
+		t.Fatalf("transformed declaration lost its prepared ownership: %+v", record)
 	}
-	if _, ok := result.Index.Lookup(rejected); ok {
-		t.Fatal("rejected document retained discovery evidence")
+	if st.GetObject(owner) != nil {
+		t.Fatal("prepared child was published before ordinary runtime emission")
 	}
-	child := testutil.KustomizationID("apps", "child")
-	if st.GetObject(child) == nil || len(result.Documents) != 1 || manifest.DocIdentity(result.Documents[0]) != child {
-		t.Fatalf("built output leaked rejected documents or lost its driver: %v", result.Documents)
+	producer := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
+	req := preparedRequest(t, cfg, producer, source)
+	want := map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {
+		Productions:  []manifest.Production{{Owner: producer.Named(), Source: result.Binding.Source}},
+		ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"app"}},
+	}}
+	assert.Diff(t, packageHistory(t, trees, req, producer.Named()), want)
+	closeCache()
+	trees, closeCache = testReceiptTrees(t, cacheDir)
+	assert.Diff(t, packageHistory(t, trees, req, producer.Named()), want)
+	if _, ok := trees.PreviousRender(t.Context(), req, owner); ok {
+		t.Fatal("transformed child replaced the accepted producer")
 	}
+	closeCache()
 }
 
-func TestAdmitEntry_BuildFailurePreservesRawErrors(t *testing.T) {
+func TestPrepareEntry_BuildFailurePreservesRawErrors(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"build", "document"} {
 		t.Run(failure, func(t *testing.T) {
@@ -690,7 +598,10 @@ spec:
 				testutil.WriteFile(t, root, name, string(file.Data))
 			}
 			cacheDir := t.TempDir()
-			trees, closeCache := testReceiptTrees(t, cacheDir)
+			cacheOwner := cachetest.New(t, cacheDir, cache.New)
+			trees := kustomize.NewTreeCache(cacheOwner, nil, task.NewBounded(2))
+			closeCache := trees.Close
+			t.Cleanup(closeCache)
 			source := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, source)
@@ -703,23 +614,28 @@ spec:
 			if !errors.Is(rawError, manifest.ErrInput) {
 				t.Fatalf("raw selected error = %v, want ErrInput", rawError)
 			}
-			if err := d.buildPackage(t.Context(), root, "app"); !errors.Is(err, manifest.ErrFlux) {
+			owner := &manifest.Kustomization{Name: "entry", Path: "./app"}
+			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
+			if err := d.prepareEntry(t.Context(), owner, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)); !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid package build error = %v, want ErrFlux", err)
 			}
 			if got := d.loader.EntryFailure(t.Context(), root); got == nil || got.Error() != rawError.Error() {
 				t.Fatal("failed entry build replaced its raw error")
 			}
-			if len(d.documents) != 0 {
-				t.Fatalf("failed package build published documents: %v", d.documents)
+			_, _, emission := st.GetEmission(owner.Named())
+			defer emission.Finish()
+			if emission.Complete || len(emission.Manifests) != 0 {
+				t.Fatalf("failed package build published documents: %v", emission.Manifests)
 			}
 			first := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "first"}
 			if d.loader.BuiltDocuments(first) != nil || st.GetObject(first) != nil {
 				t.Fatal("failed package published a partial batch")
 			}
 			closeCache()
+			assert.NoError(t, cacheOwner.Close())
 			trees, closeCache = testReceiptTrees(t, cacheDir)
-			req := kustomize.RenderRequest{Source: source, SubPath: "app"}
-			if _, ok := trees.PreviousRender(t.Context(), req, manifest.BootstrapSourceID); ok {
+			req := preparedRequest(t, d.cfg, owner, source)
+			if _, ok := trees.PreviousRender(t.Context(), req, owner.Named()); ok {
 				t.Fatal("failed package persisted a partial accepted batch")
 			}
 			testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [selected.yaml]\n")
@@ -731,18 +647,20 @@ spec:
 			d.loader.SourceRoot = root
 			_, err := d.loader.Load(t.Context(), d.cfg.Path)
 			assert.NoError(t, err)
-			assert.NoError(t, d.buildPackage(t.Context(), root, "app"))
-			assert.Equal(t, len(packageHistory(t, trees, req)), 1)
+			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
+			assert.NoError(t, d.prepareEntry(t.Context(), owner, source))
+			assert.NoError(t, d.acceptEntry(t.Context()))
+			assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 1)
 			closeCache()
 			trees, closeCache = testReceiptTrees(t, cacheDir)
-			assert.Equal(t, len(packageHistory(t, trees, req)), 1)
+			assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 1)
 			closeCache()
 
 		})
 	}
 }
 
-func TestBuildPackage_PublicationFailure(t *testing.T) {
+func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
@@ -756,94 +674,74 @@ func TestBuildPackage_PublicationFailure(t *testing.T) {
 	d.loader.SourceRoot = root
 	_, err := d.loader.Load(t.Context(), d.cfg.Path)
 	assert.NoError(t, err)
+	owner := d.bindEntry(t.Context(), root)
+	req := preparedRequest(t, d.cfg, owner, source)
 	assert.NoError(t, os.RemoveAll(cacheDir))
-	err = d.buildPackage(t.Context(), root, "app")
-	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), `discovery package "app"`) {
-		t.Fatalf("publication failure lost classification, cause or package context: %v", err)
+	assert.NoError(t, d.prepareEntry(t.Context(), owner, source))
+	err = d.acceptEntry(t.Context())
+	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), `discovery entry "app" publish`) {
+		t.Fatalf("publication failure lost classification, cause or entry context: %v", err)
 	}
 	if len(d.loader.BuiltDocuments(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "accepted"})) != 1 {
 		t.Fatal("publication fault preceded successful rendering and registration")
 	}
 	closeCache()
 	trees, closeCache = testReceiptTrees(t, cacheDir)
-	if _, ok := trees.PreviousRender(t.Context(), kustomize.RenderRequest{Source: source, SubPath: "app"}, manifest.BootstrapSourceID); ok {
+	if _, ok := trees.PreviousRender(t.Context(), req, owner.Named()); ok {
 		t.Fatal("failed publication left durable accepted history")
 	}
 	closeCache()
 }
 
-func TestRun_IndependentPackageRounds(t *testing.T) {
-	previous := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	for _, count := range []int{2, 16} {
-		t.Run(fmt.Sprintf("packages=%d", count), func(t *testing.T) {
-			var logs bytes.Buffer
-			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-			const root = "/virtual/independent-packages"
-			input := fstest.MapFS{}
-			for i := range count {
-				dir := fmt.Sprintf("pkg%d/", i)
-				input[dir+"kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [cm.yaml]\npatches: [{path: patch.yaml}]\n")}
-				input[dir+"cm.yaml"] = &fstest.MapFile{Data: fmt.Appendf(nil, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm%d}\ndata: {A: base}\n", i)}
-				input[dir+"patch.yaml"] = &fstest.MapFile{Data: fmt.Appendf(nil, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cm%d}\ndata: {B: patched}\n", i)}
-			}
-			result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: store.New(), Trees: testTrees(t)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(result.Documents) != count {
-				t.Fatalf("built documents = %d, want %d", len(result.Documents), count)
-			}
-			rounds := 0
-			for line := range strings.SplitSeq(logs.String(), "\n") {
-				if !strings.Contains(line, "discovery: loaded objects") {
-					continue
-				}
-				var record struct{ Rounds int }
-				if err := json.Unmarshal([]byte(line), &record); err != nil {
-					t.Fatal(err)
-				}
-				rounds = record.Rounds
-			}
-			if rounds == 0 || rounds > 2 {
-				t.Fatalf("discovery rounds = %d for %d independent packages, want at most 2", rounds, count)
-			}
-		})
+func TestAdmitEntry_BuildFailurePreservesRawErrors(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual/failed-entry"
+	input := fstest.MapFS{
+		"kustomization.yaml": {Data: []byte("resources: [cm.yaml]\npatches: [{path: missing.yaml}]\n")},
+		"cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: first}\n")},
+	}
+	st := store.New()
+	result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t)})
+	assert.NoError(t, err)
+	if st.GetObject(result.Binding.Producer) == nil {
+		t.Fatal("failed preparation lost the ordinary producer")
+	}
+	_, _, emission := st.GetEmission(result.Binding.Producer)
+	defer emission.Finish()
+	if emission.Complete || len(emission.Manifests) != 0 {
+		t.Fatal("failed preparation published a successful or partial emission")
+	}
+	record, ok := result.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "first"})
+	if !ok || !slices.ContainsFunc(record.Productions, func(p manifest.Production) bool { return p.Owner == result.Binding.Producer }) {
+		t.Fatalf("failed root lost structural ancestry: %+v", record)
 	}
 }
 
 func TestRun_BuiltPackages(t *testing.T) {
 	t.Parallel()
-	for _, patch := range []string{"patches: [{path: patch.yaml}]", "patchesStrategicMerge: [patch.yaml]"} {
-		t.Run(patch, func(t *testing.T) {
+	for _, selected := range []string{".", "a"} {
+		t.Run(selected, func(t *testing.T) {
 			t.Parallel()
-			const root = "/virtual/built-packages"
+			const root = "/virtual/prepared-root"
 			input := fstest.MapFS{
-				"consumer.yaml":                 {Data: []byte(testutil.KustomizationYAML("consumer", "apps", "  path: ./output\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings-dev}]}\n"))},
-				"a/kustomization.yaml":          {Data: []byte("namespace: apps\nnameSuffix: -dev\nresources: [child, deleted.yaml]\n" + patch + "\n")},
-				"a/child/kustomization.yaml":    {Data: []byte("resources: [cm.yaml, driver.yaml, source.yaml]\n")},
-				"a/child/driver.yaml":           {Data: []byte(testutil.KustomizationYAML("driver", "apps", "  path: ./output\n  sourceRef: {kind: GitRepository, name: cluster-dev}\n"))},
-				"a/child/source.yaml":           {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://fixture.invalid/self}\n")},
-				"a/child/cm.yaml":               {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {A: base}\n")},
-				"a/deleted.yaml":                {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")},
-				"a/patch.yaml":                  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {B: patched}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n$patch: delete\n")},
-				"a/unlisted/kustomization.yaml": {Data: []byte("resources: [missing.yaml]\n")},
-				"b/kustomization.yaml":          {Data: []byte("configMapGenerator: [{name: generated, literals: [C=second]}]\ngeneratorOptions: {disableNameSuffixHash: true}\n")},
-				"empty/kustomization.yaml":      {Data: []byte("resources: [cm.yaml]\npatches: [{path: patch.yaml}]\n")},
-				"empty/patch.yaml":              {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: empty}\n$patch: delete\n")},
-				"empty/cm.yaml":                 {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: empty}\n")},
+				"a/kustomization.yaml": {Data: []byte("namespace: apps\nresources: [cm.yaml, driver.yaml, source.yaml]\nnameSuffix: -dev\npatches: [{path: patch.yaml}]\n")},
+				"a/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {A: base}\n")},
+				"a/patch.yaml":         {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {B: patched}\n")},
+				"a/driver.yaml":        {Data: []byte(testutil.KustomizationYAML("driver", "apps", "  path: ./output\n  sourceRef: {kind: GitRepository, name: cluster-dev}\n"))},
+				"a/source.yaml":        {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://fixture.invalid/self}\n")},
+				"b/kustomization.yaml": {Data: []byte("configMapGenerator: [{name: generated, literals: [C=second]}]\n")},
 			}
 			cacheDir := t.TempDir()
 			var previousDocs []map[string]any
 			var previousIndex *manifest.DiscoveryIndex
+			var previousHistory map[manifest.NamedResource]manifest.DiscoveryRecord
 			var previousWarnings []manifest.Warning
-			var previousSourcePath string
 			wantValue := "base"
 			for _, lifetime := range []string{"uncached", "cold", "warm-1", "warm-2", "changed", "changed-uncached"} {
 				t.Logf("cache lifetime: %s", lifetime)
 				if lifetime == "changed" {
 					wantValue = "edited"
-					input["a/child/cm.yaml"].Data = []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {A: edited}\n")
+					input["a/cm.yaml"].Data = []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {A: edited}\n")
 				}
 				dir := cacheDir
 				if lifetime == "uncached" || lifetime == "changed-uncached" {
@@ -853,211 +751,93 @@ func TestRun_BuiltPackages(t *testing.T) {
 				st := store.New()
 				source := &store.SourceArtifact{LocalPath: root, FS: input}
 				st.SetArtifact(manifest.BootstrapSourceID, source)
-				d := discoverer{cfg: Config{Path: root, Store: st, Trees: trees, SelfURLs: []string{"https://fixture.invalid/self"}}, loader: loader.New(st)}
+				d := newDiscoverer(Config{Input: source, Path: filepath.Join(root, selected), Store: st, Trees: trees, SelfURLs: []string{"https://fixture.invalid/self"}})
+				_, err := d.resolveEntrySources(t.Context(), false)
+				assert.NoError(t, err)
+				owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, selected)
+				req := preparedRequest(t, d.cfg, owner, source)
 				if lifetime == "changed" {
-					if _, ok := trees.PreviousRender(t.Context(), kustomize.RenderRequest{Source: source, SubPath: "a"}, manifest.BootstrapSourceID); ok {
+					if _, ok := trees.PreviousRender(t.Context(), req, owner.Named()); ok {
 						t.Fatal("changed consumed resource retained stale accepted history")
 					}
 				}
 				if strings.HasPrefix(lifetime, "warm-") {
-					for _, subpath := range []string{"a", "b", "empty"} {
-						packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath})
-					}
+					assert.Diff(t, packageHistory(t, trees, req, owner.Named()), previousHistory)
 				}
-				if err := d.loadManifests(t.Context(), root, true); err != nil {
-					t.Fatal(err)
-				}
-				if roots := d.loader.StandaloneRoots(root); len(roots) != 0 {
-					t.Fatalf("completed or accumulated packages selected again: %v", roots)
-				}
-				if dir != "" {
-					for _, subpath := range []string{"a", "b", "empty"} {
-						want := map[manifest.NamedResource]manifest.DiscoveryRecord{}
-						for id, record := range d.loader.Index.Records {
-							if record.Builder == subpath+"/kustomization.yaml" {
-								want[id] = record
-							}
-						}
-						assert.Diff(t, packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath}), want)
-					}
-				}
-				if err := d.loader.FinalizeIndex(t.Context(), root); err != nil {
-					t.Fatal(err)
-				}
-				d.promoteOrphans(t.Context(), nil)
+				assert.NoError(t, d.loadManifests(t.Context(), root, true))
+				assert.Equal(t, d.binding.Producer, owner.Named())
 				id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings-dev"}
-				cm, ok := st.GetObject(id).(*manifest.ConfigMap)
-				if !ok || cm.Data["A"] != wantValue || cm.Data["B"] != "patched" {
-					t.Fatalf("nested package did not promote built data: %+v", cm)
+				batch := d.loader.BuiltDocuments(id)
+				wantCount := 4
+				if selected == "a" {
+					wantCount = 3
 				}
-				if len(d.documents) != 2 {
-					t.Fatalf("package output = %v, want one transformed and one generated document", d.documents)
-				}
-				for _, id := range []manifest.NamedResource{
-					{Kind: manifest.KindConfigMap, Name: "settings"},
-					{Kind: manifest.KindConfigMap, Name: "removed"},
-					{Kind: manifest.KindConfigMap, Name: "empty"},
-					{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "removed-dev"},
-				} {
-					if _, ok := d.loader.Index.Lookup(id); ok || st.GetObject(id) != nil {
-						t.Errorf("raw, deleted or accumulated output survived: %s", id)
+				assert.Equal(t, len(batch), wantCount)
+				wantHistory := map[manifest.NamedResource]manifest.DiscoveryRecord{}
+				var docs []map[string]any
+				for _, child := range batch {
+					docs = append(docs, child.Doc)
+					record, ok := d.loader.Index.Lookup(child.Obj.Named())
+					if !ok || record.Parent != d.binding.Producer || !slices.ContainsFunc(record.Productions, func(p manifest.Production) bool { return p.Owner == d.binding.Producer }) {
+						t.Fatalf("unowned prepared output: %+v", record)
+					}
+					accepted := manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: owner.Named(), Source: d.binding.Source}}}
+					if child.Obj.Named() == testutil.KustomizationID("apps", "driver-dev") {
+						source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster-dev"}
+						accepted.Refs = []manifest.NamedResource{source}
+						accepted.ContentRoots = map[manifest.NamedResource][]string{source: {"output"}}
+					}
+					wantHistory[child.Obj.Named()] = accepted
+					if child.Obj.Named() == id {
+						cm := child.Obj.(*manifest.ConfigMap)
+						assert.Diff(t, cm.Data, map[string]any{"A": wantValue, "B": "patched"})
 					}
 				}
-				for _, file := range []string{"a/kustomization.yaml", "a/child/kustomization.yaml", "a/child/cm.yaml", "a/child/driver.yaml", "a/child/source.yaml", "a/patch.yaml", "a/deleted.yaml"} {
-					record, _ := d.loader.Index.Lookup(cm.Named())
-					if !slices.Contains(record.Inputs, file) || slices.ContainsFunc(d.loader.Index.Readers[file], func(r manifest.FileReader) bool { return r.Reader == cm.Named() }) {
-						t.Errorf("%s lost built declaration evidence or acquired render ownership", file)
+				assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root))
+				assert.NoError(t, d.acceptEntry(t.Context()))
+				if dir != "" {
+					assert.Diff(t, packageHistory(t, trees, req, owner.Named()), wantHistory)
+				}
+				files := []string{"a/kustomization.yaml", "a/cm.yaml", "a/patch.yaml", "a/driver.yaml", "a/source.yaml"}
+				if selected == "." {
+					files = append(files, "b/kustomization.yaml")
+				}
+				for _, file := range files {
+					if !slices.ContainsFunc(d.loader.Index.Readers[file], func(r manifest.FileReader) bool { return r.Reader == d.binding.Producer }) {
+						t.Errorf("root missing actual reader for %s", file)
 					}
-					filter := change.NewFilter(change.NewSet([]string{file}), d.loader.Index, st, root)
-					if !filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
-						t.Errorf("%s does not reach substitution consumer", file)
-					}
-				}
-				if change.NewFilter(change.NewSet([]string{"a/unlisted/other.yaml"}), d.loader.Index, st, root).ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
-					t.Fatal("unlisted sibling selected substitution consumer")
-				}
-				if docs := d.loader.BuiltDocuments(id); len(docs) != 3 || !slices.ContainsFunc(docs, func(child store.Child) bool { return child.Obj == cm }) {
-					t.Fatalf("package batch = %v", docs)
-				}
-				for id, r := range d.loader.Index.Files() {
-					if id.Kind == manifest.KindConfigMap && (r.Path != "" || r.Authored != (manifest.NamedResource{})) {
-						t.Errorf("built %s retained raw evidence: %+v", id, r)
-					}
-				}
-				driver := testutil.KustomizationID("apps", "driver-dev")
-				sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster-dev"}
-				if st.GetObject(driver) == nil || st.GetObject(sourceID) == nil {
-					t.Fatal("filtered discovery declarations were not promoted")
-				}
-				artifact, ok := st.GetArtifact(sourceID, store.ArtifactContent).(*store.SourceArtifact)
-				if !ok || !artifact.InputAlias || artifact.LocalRoot != root {
-					t.Fatalf("filtered source did not resolve to the bootstrap tree: %+v", artifact)
-				}
-				if previousSourcePath != "" {
-					assert.Equal(t, artifact.LocalPath, previousSourcePath)
-				}
-				previousSourcePath = artifact.LocalPath
-				assert.Diff(t, d.loader.Index.Records[driver].Refs, []manifest.NamedResource{sourceID})
-				for _, id := range []manifest.NamedResource{cm.Named(), driver, sourceID, {Kind: manifest.KindConfigMap, Name: "generated"}} {
-					assert.Equal(t, st.EmissionOwner(id), manifest.NamedResource{})
 				}
 				if lifetime == "uncached" || lifetime == "changed" {
-					previousDocs, previousIndex, previousWarnings = d.documents, d.loader.Index, st.Warnings()
+					previousDocs, previousIndex, previousWarnings = docs, d.loader.Index, st.Warnings()
 				} else {
-					assert.Diff(t, d.documents, previousDocs)
-					assert.Diff(t, d.loader.Index.Records, previousIndex.Records)
-					assert.Diff(t, d.loader.Index.Readers, previousIndex.Readers)
-					assert.Diff(t, d.loader.Index.Claims, previousIndex.Claims)
+					assert.Diff(t, docs, previousDocs)
+					if diff := cmp.Diff(previousIndex, d.loader.Index, cmp.Comparer(manifest.Equal)); diff != "" {
+						t.Errorf("discovery index mismatch (-want +got):\n%s", diff)
+					}
 					assert.Diff(t, st.Warnings(), previousWarnings)
 				}
+				previousHistory = wantHistory
 				closeCache()
 			}
 		})
 	}
 }
 
-func TestRun_BuiltPackageCollisions(t *testing.T) {
+func TestRun_EmptyEntryHistory(t *testing.T) {
 	t.Parallel()
-	const root = "/virtual/package-collisions"
-	input := fstest.MapFS{
-		"a/kustomization.yaml": {Data: []byte("resources: [cm.yaml, secret.yaml]\n")},
-		"a/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\ndata: {VALUE: first}\n")},
-		"a/secret.yaml":        {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: shared}\nstringData: {VALUE: first}\n")},
-		"b/kustomization.yaml": {Data: []byte("resources: [cm.yaml, secret.yaml]\n")},
-		"b/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\ndata: {VALUE: last}\n")},
-		"b/secret.yaml":        {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: shared}\nstringData: {VALUE: last}\n")},
-	}
-	for _, preexisting := range []bool{false, true} {
-		t.Run(fmt.Sprintf("preexisting=%t", preexisting), func(t *testing.T) {
-			t.Parallel()
-			cacheDir := t.TempDir()
-			var previous *Result
-			var previousWarnings []manifest.Warning
-			for _, lifetime := range []string{"uncached", "cold", "warm-1", "warm-2"} {
-				t.Logf("cache lifetime: %s", lifetime)
-				dir := cacheDir
-				if lifetime == "uncached" {
-					dir = ""
-				}
-				trees, closeCache := testReceiptTrees(t, dir)
-				st := store.New()
-				wantValue := "last"
-				if preexisting {
-					wantValue = "preexisting"
-					st.AddObject(&manifest.ConfigMap{Name: "shared", Data: map[string]any{"VALUE": wantValue}})
-					st.AddObject(&manifest.Secret{Name: "shared", StringData: map[string]any{"VALUE": wantValue}})
-				}
-				source := &store.SourceArtifact{LocalPath: root, FS: input}
-				if strings.HasPrefix(lifetime, "warm-") {
-					for _, subpath := range []string{"a", "b"} {
-						packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath})
-					}
-				}
-				result, err := Run(t.Context(), Config{Input: source, Path: root, Store: st, Trees: trees})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(result.Documents) != 2 {
-					t.Fatalf("colliding packages published duplicate output: %v", result.Documents)
-				}
-				for _, doc := range result.Documents {
-					id := manifest.DocIdentity(doc)
-					record, _ := result.Index.Lookup(id)
-					key := "data"
-					if id.Kind == manifest.KindSecret {
-						key = "stringData"
-					}
-					wantDocument := "last"
-					if preexisting && id.Kind == manifest.KindSecret {
-						wantDocument = wantValue
-					}
-					if record.File != "b/kustomization.yaml" || doc[key].(map[string]any)["VALUE"] != wantDocument {
-						t.Errorf("output winner disagrees with record: %v %+v", doc, record)
-					}
-					switch obj := st.GetObject(id).(type) {
-					case *manifest.ConfigMap:
-						if obj.Data["VALUE"] != wantValue {
-							t.Errorf("ConfigMap admission retained losing package: %+v", obj)
-						}
-					case *manifest.Secret:
-						if obj.StringData["VALUE"] != wantValue {
-							t.Errorf("Secret admission retained losing package: %+v", obj)
-						}
-					default:
-						t.Fatalf("missing admitted output: %s", id)
-					}
-				}
-				if dir != "" {
-					for _, subpath := range []string{"a", "b"} {
-						history := packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath})
-						assert.Equal(t, len(history), 2)
-						for id, record := range history {
-							assert.Equal(t, record.File, subpath+"/kustomization.yaml")
-							assert.Equal(t, record.Builder, subpath+"/kustomization.yaml")
-							assert.Equal(t, st.EmissionOwner(id), manifest.NamedResource{})
-						}
-					}
-				}
-				if previous != nil {
-					assert.Diff(t, result.Documents, previous.Documents)
-					assert.Diff(t, result.Index.Records, previous.Index.Records)
-					assert.Diff(t, result.Index.Readers, previous.Index.Readers)
-					assert.Diff(t, result.Index.Claims, previous.Index.Claims)
-					assert.Diff(t, st.Warnings(), previousWarnings)
-				}
-				previous, previousWarnings = result, st.Warnings()
-				closeCache()
-			}
-		})
-	}
-}
-
-func TestRun_BuiltPackageInvalidBuilder(t *testing.T) {
-	t.Parallel()
-	const root = "/virtual/invalid-builder"
+	const root = "/virtual/empty-entry"
+	input := fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: []\n")}}
+	cacheDir := t.TempDir()
+	trees, closeCache := testReceiptTrees(t, cacheDir)
 	st := store.New()
-	input := fstest.MapFS{"kustomization.yaml": {Data: []byte("resources: [broken\n")}}
-	if _, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t)}); !errors.Is(err, manifest.ErrFlux) {
-		t.Fatalf("invalid selected builder error = %v, want ErrFlux", err)
-	}
+	source := &store.SourceArtifact{LocalPath: root, FS: input}
+	result, err := Run(t.Context(), Config{Input: source, Path: root, Store: st, Trees: trees})
+	assert.NoError(t, err)
+	owner := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
+	req := preparedRequest(t, Config{}, owner, source)
+	assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 0)
+	closeCache()
+	trees, closeCache = testReceiptTrees(t, cacheDir)
+	assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 0)
+	closeCache()
 }

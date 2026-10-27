@@ -27,13 +27,34 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	var generators []generatorRecord
 	incomplete := map[manifest.NamedResource][]string{}
 	var declarations []producerDeclaration
+	prepared := map[string][]store.Child{}
+	preparedOwners := map[manifest.NamedResource]manifest.NamedResource{}
+	var pinned map[manifest.NamedResource]bool
+	for _, input := range l.scopes.inputs {
+		if l.scopes.sources[input.source].pinned {
+			if pinned == nil {
+				pinned = map[manifest.NamedResource]bool{}
+			}
+			pinned[input.owner.Named()] = true
+		}
+	}
 	remaining := map[string]struct{}{}
 	for dir, doc := range l.documents.cache {
+		b.scanExclusions = b.scanExclusions || doc.scanExcluded
 		if doc.body != nil && !doc.selected && len(doc.body.ConfigMapGenerator)+len(doc.body.SecretGenerator) != 0 {
 			remaining[dir] = struct{}{}
 		}
 	}
 	record := func(v graphVisit) error {
+		if b.scanExclusions && l.documents.scanExcluded(v.file) {
+			return nil
+		}
+		if file := cmp.Or(v.origin, v.file); len(pinned) != 0 && !pinned[v.owner] && safepath.Contains(repoRoot, file) {
+			owners, _ := l.Index.OwnersOfFile(l.fileCoordinate(file))
+			if slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool { return pinned[owner] }) {
+				return nil
+			}
+		}
 		if v.owner != (manifest.NamedResource{}) && v.coordinate != "" {
 			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: v.owner, Source: v.source})
 		}
@@ -46,7 +67,26 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		if v.document != nil {
 			delete(remaining, filepath.Dir(v.file))
 		}
-		if v.role != kustomizeinput.Resource || l.documents.cache[v.file].selected {
+		if v.role != kustomizeinput.Resource {
+			return nil
+		}
+		if l.documents.cache[v.file].selected {
+			for _, child := range prepared[v.coordinate] {
+				id := child.Obj.Named()
+				r := l.Index.Records[id]
+				if v.owner == (manifest.NamedResource{}) || v.owner == id || v.owner == r.Parent {
+					continue
+				}
+				p := manifest.Production{Owner: v.owner, Source: v.source, File: r.File}
+				if !slices.Contains(r.Productions, p) {
+					r.Productions = append(r.Productions, p)
+				}
+				if manifest.KindOf(child.Obj).Structural && (r.Parent == preparedOwners[id] || r.Parent == (manifest.NamedResource{})) {
+					r.Parent = manifest.NamedResource{}
+					b.emittedFiles[r.File] = appendUniqueProducer(b.emittedFiles[r.File], v.owner)
+				}
+				l.Index.Records[id] = r
+			}
 			return nil
 		}
 		if v.document != nil {
@@ -75,7 +115,14 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	for _, dir := range builtDirs {
 		doc := l.documents.cache[dir]
 		rel, _ := filepath.Rel(repoRoot, dir)
-		root := graphVisit{root: repoRoot, dir: filepath.ToSlash(rel)}
+		root := graphVisit{root: repoRoot, dir: filepath.ToSlash(rel), owner: doc.builtInput.Owner, source: doc.builtInput.Source}
+		if record, ok := l.Index.Lookup(root.owner); ok {
+			self := manifest.Production{Owner: root.owner, Authored: record.Authored, Path: record.Path, File: record.File, Source: root.source}
+			if !slices.Contains(record.Productions, self) {
+				record.Productions = append(record.Productions, self)
+			}
+			l.Index.Records[root.owner] = record
+		}
 		var candidates []manifest.NamedResource
 		for _, child := range doc.built {
 			obj := child.Obj
@@ -85,12 +132,20 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		}
 		slices.SortFunc(candidates, manifest.NamedResource.Compare)
 		candidates = slices.Compact(candidates)
-		root.source = manifest.BootstrapSourceID
 		_, builder := l.documents.read(dir)
-		root.coordinate = l.fileCoordinate(builder)
+		root.coordinate = l.fileCoordinate(cmp.Or(builder, dir))
+		sourceRoot := l.documents.mountedRoot(dir)
+		for name, exact := range doc.builtInput.Reads {
+			file := filepath.Join(sourceRoot, filepath.FromSlash(name))
+			coordinate := l.fileCoordinate(file)
+			local := l.fileCoordinate(l.documents.localPath(file))
+			l.recordReader(coordinate, local, manifest.FileReader{Reader: root.owner, Source: root.source, Exact: exact})
+		}
 		for _, child := range doc.built {
 			obj := child.Obj
 			if record, ok := l.Index.Lookup(obj.Named()); ok && record.Builder == root.coordinate {
+				prepared[record.File] = append(prepared[record.File], child)
+				preparedOwners[obj.Named()] = doc.builtInput.Owner
 				b.recordProducer(producerDeclaration{obj: obj, identity: obj.Named(), authored: obj.Named(), visit: root}, candidates)
 			}
 		}
@@ -166,10 +221,6 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 }
 
 func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]struct{}) []string {
-	pinned := map[manifest.NamedResource]bool{}
-	for _, input := range l.scopes.inputs {
-		pinned[input.owner.Named()] = l.scopes.sources[input.source].pinned
-	}
 	var roots []string
 	for _, dir := range slices.Sorted(maps.Keys(remaining)) {
 		if !l.documents.cache[dir].traversed || l.documents.cache[l.documents.cache[dir].file].eligible < fileEligible {
@@ -177,10 +228,6 @@ func (l *Loader) unreachedGeneratorRoots(repoRoot string, remaining map[string]s
 		}
 		rel, err := filepath.Rel(repoRoot, l.documents.cache[dir].file)
 		if err != nil {
-			continue
-		}
-		owners, _ := l.Index.OwnersOfFile(filepath.ToSlash(rel))
-		if slices.ContainsFunc(owners, func(owner manifest.NamedResource) bool { return pinned[owner] }) {
 			continue
 		}
 		roots = append(roots, filepath.ToSlash(filepath.Dir(rel)))
@@ -259,41 +306,6 @@ func (v graphVisit) localCoordinate() string {
 		return local
 	}
 	return path.Join(v.localBase, local)
-}
-
-// StandaloneRoots returns sorted, unbuilt bootstrap packages outside Flux ownership.
-// Coordinates are borrowed until the next loader admission.
-func (l *Loader) StandaloneRoots(repoRoot string) []string {
-	l.Admit(repoRoot)
-	l.scopes.roots = slices.DeleteFunc(l.scopes.roots, func(dir string) bool {
-		root := filepath.Join(repoRoot, filepath.FromSlash(dir))
-		doc := l.documents.cache[root]
-		if doc.buildExcluded || doc.selected || doc.built != nil || isKustomizeComponent(doc.body) && root != l.entryPath {
-			return true
-		}
-		if root == l.entryPath {
-			for _, claim := range l.scopes.claims {
-				if strings.HasPrefix(dir+"/", claim.Prefix) {
-					return true
-				}
-			}
-			return false
-		}
-		for _, visit := range l.scopeWalk(graphVisit{root: repoRoot, dir: dir}) {
-			if visit.role == kustomizeinput.Resource {
-				found := false
-				l.fileOwners(visit.file, visit.coordinate, func(manifest.NamedResource) bool {
-					found = true
-					return false
-				})
-				if found {
-					return true
-				}
-			}
-		}
-		return false
-	})
-	return l.scopes.roots
 }
 
 func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
@@ -387,12 +399,13 @@ type producerDeclaration struct {
 }
 
 type selfProduceBuilder struct {
-	reader       documentReader
-	idx          *manifest.DiscoveryIndex
-	emittedFiles map[string][]manifest.NamedResource
-	store        *store.Store
-	wipeSecrets  bool
-	err          error
+	reader         documentReader
+	idx            *manifest.DiscoveryIndex
+	emittedFiles   map[string][]manifest.NamedResource
+	store          *store.Store
+	wipeSecrets    bool
+	scanExclusions bool
+	err            error
 }
 
 func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject, declarations []producerDeclaration, l *Loader) ([]producerDeclaration, error) {
@@ -431,7 +444,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 			r.Refs = discoveryReferences(nil, projected)
 		}
 		p := manifest.Production{Owner: v.owner, Authored: obj.Named(), Path: v.file, File: coordinate, Source: v.source}
-		if v.owner != (manifest.NamedResource{}) && info.Runnable && b.store.GetObject(id) == nil {
+		if p.Materializer(id) != (manifest.NamedResource{}) && info.Runnable && b.store.GetObject(id) == nil {
 			p.Path = ""
 		}
 		if ks, ok := b.store.Get[*manifest.Kustomization](v.owner); ok {
@@ -444,7 +457,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 			r.Productions = append(r.Productions, p)
 		}
 		b.idx.Records[id] = r
-		if !v.deferMaterialization || info.Runnable && b.store.GetObject(id) != nil {
+		if !v.deferMaterialization || info.Runnable && (b.reader.cache[v.file].loaded || b.store.GetObject(id) != nil) {
 			declaration := producerDeclaration{obj: projected, identity: id, authored: obj.Named(), visit: v}
 			if needsCandidates {
 				declarations = append(declarations, declaration)
@@ -493,7 +506,7 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 	}
 	var candidates []manifest.NamedResource
 	for _, v := range scope {
-		if v.role != kustomizeinput.Resource || v.document != nil || !v.readable {
+		if v.role != kustomizeinput.Resource || v.document != nil || !v.readable || b.scanExclusions && b.reader.scanExcluded(v.file) {
 			continue
 		}
 		record := func(child store.Child) {
@@ -505,7 +518,7 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 			if ns != obj.Named().Namespace {
 				obj = obj.WithNamespace(ns)
 			}
-			if v.deferMaterialization && b.store.GetObject(obj.Named()) == nil {
+			if v.deferMaterialization && !b.reader.cache[v.file].loaded && b.store.GetObject(obj.Named()) == nil {
 				return
 			}
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {

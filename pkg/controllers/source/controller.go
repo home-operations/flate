@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -46,6 +47,7 @@ type Controller struct {
 	// skip (StatusReady with ReasonSkipped). Wired from
 	// FetchOptions.AllowMissingSecrets via Configure.
 	allowMissingSecrets bool
+	admission           *discovery.Admission
 }
 
 // FetchOptions carries the post-bootstrap state the orchestrator wires
@@ -54,6 +56,8 @@ type Controller struct {
 type FetchOptions struct {
 	Filter              *change.Filter
 	AllowMissingSecrets bool
+	// Admission resolves runtime sources against immutable discovery policy.
+	Admission *discovery.Admission
 }
 
 type execution struct {
@@ -77,6 +81,7 @@ func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
 	c.Controller.Configure(base.Options{Filter: opts.Filter})
 	c.retry = retry
 	c.allowMissingSecrets = opts.AllowMissingSecrets
+	c.admission = opts.Admission
 }
 
 // Owns reports whether id is a node this controller reconciles — the dag
@@ -156,6 +161,16 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	obj, err = c.run.RequireRefresh(ctx, obj, manifest.GateInputs, level)
 	if err != nil {
 		return err
+	}
+
+	if c.admission != nil {
+		_, artifact, err := c.admission.Resolve(ctx, obj.Named(), obj, nil)
+		if err != nil {
+			return err
+		}
+		if artifact != nil {
+			return c.completeFetch(obj, artifact, nil)
+		}
 	}
 
 	if level == manifest.DrainNone {

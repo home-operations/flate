@@ -1,4 +1,4 @@
-package kustomization
+package kustomize
 
 import (
 	"encoding/json"

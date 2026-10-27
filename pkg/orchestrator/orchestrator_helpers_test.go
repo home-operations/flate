@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
@@ -98,4 +99,15 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 	return o.collectResult(o.run(ctx))
+}
+
+func reconcileEntryForTest(t *testing.T, o *Orchestrator) {
+	t.Helper()
+	o.configureControllers()
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+		Tasks: o.tasks, Store: o.store, ID: o.entryBinding.Producer, ReconcileNode: o.ksc.ReconcileNode,
+	})
+	if info.Status != store.StatusReady {
+		t.Fatalf("entry staging failed: %v", info)
+	}
 }

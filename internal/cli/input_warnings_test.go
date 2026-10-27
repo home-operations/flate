@@ -65,6 +65,10 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 						},
 					},
 					"data": map[string]any{"value": "unchanged"},
+				}, {
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization",
+					"metadata": map[string]any{"name": "selected", "namespace": "infra"},
+					"spec":     map[string]any{"interval": "10m", "path": "./infra"},
 				}})
 				return
 			}
@@ -86,7 +90,7 @@ func TestRun_BuildAll_FullTreeIncompleteInputCoverage(t *testing.T) {
 	}
 	docs, err := testutil.SplitDocs([]byte(stdout))
 	assert.NoError(t, err)
-	assert.Equal(t, len(docs), 2)
+	assert.Equal(t, len(docs), 4)
 	if !strings.Contains(stdout, "name: unchanged") || !strings.Contains(stdout, "name: stable-") ||
 		!strings.Contains(stdout, "hidden.txt: stable") {
 		t.Fatalf("full build lost normal manifest output: %s", stdout)
@@ -112,7 +116,11 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 				args = append(args, "--namespace", namespace)
 			}
 			stdout, stderr, code := runCLI(t, args...)
-			if code != 0 || stdout != "" {
+			want := ""
+			if verb == "all" {
+				want = "\nspec.interval  (kustomize.toolkit.fluxcd.io/v1/Kustomization/infra/selected)\n  ± value change\n    - 5m\n    + 10m\n\n"
+			}
+			if code != 0 || stdout != want {
 				t.Fatalf("comparison changed output or failed: code=%d stdout=%q stderr=%s", code, stdout, stderr)
 			}
 			message := "changed-only input coverage is incomplete"
@@ -145,6 +153,7 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 func writeInputWarningsFixture(t *testing.T, interval string) string {
 	t.Helper()
 	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/affected.yaml, flux/selected.yaml]\n")
 	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [affected.yaml, selected.yaml]\n")
 	testutil.WriteFile(t, root, "flux/affected.yaml", testutil.KustomizationYAML("affected", "apps", "  path: ./apps\n  interval: 5m\n"))
 	testutil.WriteFile(t, root, "flux/selected.yaml", testutil.KustomizationYAML("selected", "infra", "  path: ./infra\n  interval: "+interval+"\n"))

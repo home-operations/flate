@@ -8,6 +8,9 @@ import (
 // WriteGeneratedValuesCluster creates two ordered releases using a generated values ConfigMap.
 func WriteGeneratedValuesCluster(tb testing.TB, root string) {
 	tb.Helper()
+	WriteFile(tb, root, "kustomization.yaml", "resources: [flux, standalone]\n")
+	WriteFile(tb, root, "flux/kustomization.yaml", "resources: [apps.yaml]\n")
+	WriteFile(tb, root, "standalone/kustomization.yaml", "resources: [b.yaml]\n")
 	WriteFile(tb, root, "flux/apps.yaml", dependencyKS("apps", "apps", "")+`  postBuild:
     substituteFrom:
     - kind: ConfigMap
@@ -69,9 +72,11 @@ spec:
 	writeDependencyChart(tb, root)
 }
 
-// WriteFilteredOrderingCluster keeps required data beside excluded controllers and sources.
+// WriteFilteredOrderingCluster applies required sources beside excluded controllers and sources.
 func WriteFilteredOrderingCluster(tb testing.TB, root, greeting string, brokenSource bool) {
 	tb.Helper()
+	WriteFile(tb, root, "kustomization.yaml", "resources: [flux]\n")
+	WriteFile(tb, root, "flux/kustomization.yaml", "resources: [selected.yaml, monitor-a.yaml, monitor-b.yaml, source.yaml]\n")
 	// Excluded resources are marked Ready, so a rejected CEL gate makes
 	// the dependsOn prune necessary even when the target is skipped.
 	selected := dependencyKS("selected", "apps/selected", "monitor-a")
@@ -106,14 +111,22 @@ data:
   values.yaml: |
     shared: selected
 `)
-	WriteFile(tb, root, "apps/monitor-a/bundle.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+	WriteFile(tb, root, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmChart
 metadata: {name: shared-chart, namespace: flux-system}
 spec:
   chart: charts/app
   sourceRef: {kind: GitRepository, name: shared}
 ---
-apiVersion: v1
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata: {name: selected-source, namespace: flux-system}
+spec:
+  url: oci://example.invalid/app
+  ref: {tag: 0.1.0}
+  secretRef: {name: absent}
+`)
+	WriteFile(tb, root, "apps/monitor-a/bundle.yaml", `apiVersion: v1
 kind: ConfigMap
 metadata: {name: excluded-values, namespace: flux-system}
 data: {values.yaml: "shared: excluded"}
@@ -123,14 +136,6 @@ kind: GitRepository
 metadata: {name: excluded-source, namespace: flux-system}
 spec:
   url: https://example.invalid/excluded.git
-  secretRef: {name: absent}
----
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata: {name: selected-source, namespace: flux-system}
-spec:
-  url: oci://example.invalid/app
-  ref: {tag: 0.1.0}
   secretRef: {name: absent}
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -177,6 +182,8 @@ data:
 // WriteSubstitutionProducerCluster creates a generator whose rendered data differs from discovery.
 func WriteSubstitutionProducerCluster(tb testing.TB, root, kind string) {
 	tb.Helper()
+	WriteFile(tb, root, "kustomization.yaml", "resources: [flux]\n")
+	WriteFile(tb, root, "flux/kustomization.yaml", "resources: [producer.yaml, consumer.yaml]\n")
 	version := "4.6.2"
 	if kind == "Secret" {
 		version = "NC42LjI="
@@ -201,6 +208,8 @@ func WriteSubstitutionProducerCluster(tb testing.TB, root, kind string) {
 // WriteSubstitutionCycleCluster creates mutually dependent file-backed substitution producers.
 func WriteSubstitutionCycleCluster(tb testing.TB, root string) {
 	tb.Helper()
+	WriteFile(tb, root, "kustomization.yaml", "resources: [flux]\n")
+	WriteFile(tb, root, "flux/kustomization.yaml", "resources: [a.yaml, b.yaml]\n")
 	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
 		body := strings.Replace(dependencyKS(pair.name, pair.name, ""), "name: shared", "name: flux-system", 1)
 		WriteFile(tb, root, "flux/"+pair.name+".yaml", body+"  postBuild: {substituteFrom: [{kind: ConfigMap, name: "+pair.peer+"-settings}]}\n")

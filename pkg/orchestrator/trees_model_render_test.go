@@ -789,6 +789,11 @@ func writeRenderModelWorld(t *testing.T, root string, w modelWorld) {
 			if err := os.MkdirAll(filepath.Join(root, file.path), 0o750); err != nil {
 				t.Fatal(err)
 			}
+			if !slices.ContainsFunc(keys, func(candidate modelPath) bool {
+				return candidate.source == file.source && strings.HasPrefix(candidate.path, file.path+"/")
+			}) {
+				testutil.WriteFile(t, root, file.path+"/.keep", "")
+			}
 			continue
 		}
 		testutil.WriteFile(t, root, file.path, string(content.body))
@@ -877,6 +882,61 @@ func renderModelUniverse(w modelWorld) (modelSet, error) {
 	return ids, nil
 }
 
+func observeRenderModelEntry(w modelWorld, side Rendered, selected bool) error {
+	id := side.entryBinding.Producer
+	if !id.ReportHidden() {
+		return nil
+	}
+	want, got := modelObservation{}, modelObservation{}
+	for _, batch := range side.Result.Manifests {
+		if batch.Parent != nil && batch.Parent.Named() == id {
+			for _, doc := range batch.Documents {
+				got.documents = append(got.documents, renderModelDocument(renderModelSource(w), doc))
+			}
+		}
+	}
+	if selected && !side.filter.ShouldReconcile(id) {
+		if side.store.GetArtifact(id, store.ArtifactContent) != nil || len(got.documents) != 0 {
+			return errors.New("unselected entry published output")
+		}
+		return nil
+	}
+	status, ok := side.store.GetStatus(id)
+	emission, complete := side.store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
+	if !ok || status.Outcome() != store.OutcomePassed || !complete || !emission.Complete {
+		return fmt.Errorf("entry lacks successful complete emission: status=%+v artifact=%T", status, side.store.GetArtifact(id, store.ArtifactContent))
+	}
+	prefix := strings.TrimSuffix(side.entryBinding.Path, "/") + "/"
+	for file, content := range w.files {
+		if file.source != renderModelSource(w) || !content.included || content.directory || !strings.HasPrefix(file.path, prefix) || !strings.HasSuffix(file.path, ".yaml") {
+			continue
+		}
+		decoder := yaml.NewDecoder(bytes.NewReader(content.body))
+		for {
+			var doc map[string]any
+			if err := decoder.Decode(&doc); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				return fmt.Errorf("model entry input %s: %w", file.path, err)
+			}
+			if doc["kind"] != nil {
+				want.documents = append(want.documents, renderModelDocument(file.source, doc))
+			}
+		}
+	}
+	for i := range want.documents {
+		want.documents[i].sdk = nil
+	}
+	for i := range got.documents {
+		got.documents[i].sdk = nil
+	}
+	if err := compareModelObservation(want, got); err != nil {
+		return fmt.Errorf("literal entry declaration output: %w", err)
+	}
+	return nil
+}
+
 func observeRenderModel(w modelWorld, side Rendered, selected bool) (modelObservation, modelSet, error) {
 	out := modelObservation{producers: make(map[modelID]modelStatus)}
 	admitted := make(modelSet)
@@ -893,13 +953,16 @@ func observeRenderModel(w modelWorld, side Rendered, selected bool) (modelObserv
 		}
 		out.errorClass = "flux"
 	}
+	if err := observeRenderModelEntry(w, side, selected); err != nil {
+		return out, admitted, err
+	}
 	universe, err := renderModelUniverse(w)
 	if err != nil {
 		return out, admitted, err
 	}
 	for _, obj := range side.store.ListObjects("", "") {
 		id := obj.Named()
-		if id == manifest.BootstrapSourceID {
+		if id == manifest.BootstrapSourceID || id == side.entryBinding.Producer && id.ReportHidden() {
 			continue
 		}
 		key := actualRenderModelID(w, side, id)
@@ -950,6 +1013,9 @@ func observeRenderModel(w modelWorld, side Rendered, selected bool) (modelObserv
 		out.producers[key] = state
 	}
 	for _, batch := range side.Result.Manifests {
+		if batch.Parent != nil && batch.Parent.Named() == side.entryBinding.Producer && batch.Parent.Named().ReportHidden() {
+			continue
+		}
 		source := renderModelSource(w)
 		if batch.Parent != nil {
 			key := actualRenderModelID(w, side, batch.Parent.Named())
@@ -1209,6 +1275,9 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 	var canonical []any
 	for _, batches := range [][]manifest.DocumentBatch{old.Result.Manifests, current.Result.Manifests} {
 		for _, batch := range batches {
+			if batch.Parent != nil && batch.Parent.Named().ReportHidden() {
+				continue
+			}
 			var id manifest.NamedResource
 			if batch.Parent != nil {
 				id = batch.Parent.Named()

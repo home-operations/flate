@@ -458,7 +458,7 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 	for id := range objects {
 		r := next[id]
 		if r.Path == "" && r.Authored == (manifest.NamedResource{}) {
-			allowed[id] = true
+			allowed[id] = r.Parent == (manifest.NamedResource{})
 			continue
 		}
 		doc := l.documents.cache[r.Path]

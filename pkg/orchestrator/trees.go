@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -159,10 +160,18 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 				continue
 			}
 		}
-		changes = changes.WithReaders(before, after)
-		current.cfg.ExternalChanges = changes
-		if other != nil {
-			other.cfg.ExternalChanges = changes
+		if other == nil {
+			current.cfg.ExternalChanges = changes.WithReaders(before, after)
+		} else {
+			projectedOther := projectEntryReaders(other.index, other.entryBinding, current.entryBinding)
+			projectedCurrent := projectEntryReaders(current.index, current.entryBinding, other.entryBinding)
+			if current.cfg.ID.Side == manifest.TreeBase {
+				current.cfg.ExternalChanges = changes.WithReaders(current.index, projectedOther)
+				other.cfg.ExternalChanges = changes.WithReaders(projectedCurrent, other.index)
+			} else {
+				current.cfg.ExternalChanges = changes.WithReaders(projectedOther, current.index)
+				other.cfg.ExternalChanges = changes.WithReaders(other.index, projectedCurrent)
+			}
 		}
 	}
 	for i := range results {
@@ -235,8 +244,6 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 	}
 	changes := make(map[[2]*store.SourceArtifact]*change.Set)
 	var planned []Tree
-	var canonical []discovery.Entry
-	partitioned := false
 	sides := make(map[manifest.TreeSide]bool)
 	for _, tree := range trees {
 		sides[tree.ID.Side] = true
@@ -267,20 +274,7 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 		for _, entry := range entries {
 			side := tree
 			side.Input, side.Path, side.entry = entry.Input, entry.Path, &entry
-			if entry.ID != "." {
-				partitioned = true
-				side.ID.Cluster = entry.ID
-			}
 			planned = append(planned, side)
-			canonical = append(canonical, entry)
-		}
-	}
-	if partitioned {
-		for i := range planned {
-			if planned[i].ID.Cluster == "." {
-				planned[i].ID.Cluster = canonical[i].Structural
-				planned[i].Path = canonical[i].NativePath
-			}
 		}
 	}
 	byID := make(map[manifest.TreeID]Tree, len(planned))
@@ -327,3 +321,24 @@ func (e *treeError) Error() string {
 }
 
 func (e *treeError) Unwrap() error { return e.err }
+
+func projectEntryReaders(index *manifest.DiscoveryIndex, from, to discovery.Binding) *manifest.DiscoveryIndex {
+	if index == nil || from.Producer == to.Producer || from.Producer == (manifest.NamedResource{}) || to.Producer == (manifest.NamedResource{}) {
+		return index
+	}
+	projected := *index
+	projected.Readers = maps.Clone(index.Readers)
+	for file, readers := range index.Readers {
+		if !slices.ContainsFunc(readers, func(reader manifest.FileReader) bool { return reader.Reader == from.Producer }) {
+			continue
+		}
+		readers = slices.Clone(readers)
+		for i := range readers {
+			if readers[i].Reader == from.Producer {
+				readers[i].Reader = to.Producer
+			}
+		}
+		projected.Readers[file] = readers
+	}
+	return &projected
+}

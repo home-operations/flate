@@ -13,6 +13,7 @@ import (
 	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -267,13 +268,13 @@ spec:
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, *l.Index, snapshot)
+			assertFilterIndexForTest(t, *l.Index, snapshot)
 			assert.Equal(t, input.opens, 0)
 			fresh, freshInput, _ := newLoader()
 			if err := fresh.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, *fresh.Index, snapshot)
+			assertFilterIndexForTest(t, *fresh.Index, snapshot)
 			assert.Equal(t, freshInput.opens, 0)
 		})
 	}
@@ -298,7 +299,7 @@ spec:
 		chart.Chart = "charts/demo"
 		chart.SourceRef.Kind, chart.SourceRef.Name = source.Named().Kind, source.Name
 		chart.ValuesFiles = []string{"config/prod.yaml", "config/prod.yaml", "entry/kustomization.yaml"}
-		l.RegisterBuilt(filepath.Join(root, "entry"), []store.Child{{Obj: chart}})
+		l.RegisterBuilt(loader.BuiltInput{Root: filepath.Join(root, "entry"), Source: manifest.BootstrapSourceID, Owner: manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "entry"}}, []store.Child{{Obj: chart}})
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 		consumer := testutil.HelmReleaseID("apps", "demo")
 		want := []manifest.FileReader{{Reader: consumer, Source: source.Named(), Exact: true}, {Reader: chartID, Source: source.Named(), Exact: true}}
@@ -319,7 +320,7 @@ spec:
 		assert.Equal(t, input.opens, 0)
 		snapshot := snapshotIndexForFilter(l.Index)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
-		assert.Diff(t, *l.Index, snapshot)
+		assertFilterIndexForTest(t, *l.Index, snapshot)
 		assert.Equal(t, input.opens, 0)
 	})
 }
@@ -524,6 +525,13 @@ func snapshotIndexForFilter(index *manifest.DiscoveryIndex) manifest.DiscoveryIn
 	}
 
 	return snapshot
+}
+
+func assertFilterIndexForTest(t *testing.T, got, want manifest.DiscoveryIndex) {
+	t.Helper()
+	if diff := cmp.Diff(want, got, cmp.Comparer(manifest.Equal)); diff != "" {
+		t.Errorf("discovery index differs (-want +got):\n%s", diff)
+	}
 }
 
 func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {

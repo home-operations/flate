@@ -499,6 +499,7 @@ func TestResolve_ArtifactPredictionSource(t *testing.T) {
 			assert.NoError(t, err)
 			t.Cleanup(func() { o.stop() })
 			assert.NoError(t, o.bootstrap(t.Context()))
+			reconcileEntryForTest(t, o)
 			o.configureControllers()
 			d := dagDispatcher{o}
 			producer := testutil.KustomizationID("apps", "producer")

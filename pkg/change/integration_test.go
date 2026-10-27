@@ -95,7 +95,7 @@ data:
 `)
 
 	runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{
-		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: dir,
+		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(dir, "kubernetes/flux"), RepoRoot: dir,
 		ExternalChanges: change.NewSet([]string{"kubernetes/apps/media/plex/app/cm.yaml"}),
 	}}, orchestrator.Config{WipeSecrets: true, Concurrency: 2})
 	if err != nil {

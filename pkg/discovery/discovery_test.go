@@ -19,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -33,12 +34,6 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// TestRun_SmallTree exercises the discovery phase end-to-end on a
-// minimal three-file repo: a parent KS that points at apps/, a child
-// KS under apps/, and an unrelated GR. After Run we expect the store
-// populated with both KSes + the GR + the synthetic bootstrap GR, with
-// SourceFiles tracking each one and ParentOf wiring the child to the
-// parent.
 func TestRun_SmallTree(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -66,8 +61,8 @@ func TestRun_SmallTree(t *testing.T) {
 		if _, ok := filesForTest(res.Index)[id]; !ok {
 			t.Errorf("SourceFiles missing %s", id)
 		}
-		if st.GetObject(id) == nil {
-			t.Errorf("Store missing %s", id)
+		if st.GetObject(id) != nil {
+			t.Errorf("prepared child published before entry emission: %s", id)
 		}
 	}
 
@@ -119,15 +114,29 @@ spec:
 %s`, repo.url, repo.ref))
 					}
 					st := store.New()
-					if _, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
+					result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
 						Path: filepath.Join(root, "flux"), Store: st,
 						SelfURLs: []string{"https://example.invalid/self.git"},
-					}); err != nil {
+					})
+					if err != nil {
 						t.Fatal(err)
 					}
-					var ids []string
+					admitted := map[manifest.NamedResource]struct{}{}
 					for _, ks := range st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
-						ids = append(ids, ks.Named().NamespacedName())
+						if !ks.Named().ReportHidden() {
+							admitted[ks.Named()] = struct{}{}
+						}
+					}
+					for id, record := range result.Index.Files() {
+						if id.Group == manifest.FluxKustomizeDomain && id.Kind == manifest.KindKustomization && record.Builder != "" {
+							admitted[id] = struct{}{}
+							assert.Equal(t, st.GetObject(id) == nil, true)
+							assert.Equal(t, record.Parent, result.Binding.Producer)
+						}
+					}
+					var ids []string
+					for id := range admitted {
+						ids = append(ids, id.NamespacedName())
 					}
 					slices.Sort(ids)
 					assert.Diff(t, ids, []string{"flux-system/a", "flux-system/b", "flux-system/c", "flux-system/c2", "team/x"})
@@ -196,8 +205,8 @@ spec: {target: {name: values}}
 		t.Fatal("foreign HelmRelease borrowed the real declaration record")
 	}
 	orphan := testutil.HelmReleaseID("apps", "orphan")
-	if _, gated := parentsForTest(res.Index)[orphan]; gated || st.GetObject(orphan) == nil {
-		t.Error("standalone HelmRelease must be available without a parent gate")
+	if record, ok := res.Index.Lookup(orphan); !ok || record.Parent != res.Binding.Producer || st.GetObject(orphan) != nil {
+		t.Error("standalone declaration lacks entry ownership")
 	}
 }
 
@@ -451,21 +460,22 @@ spec:
 `)
 
 	st := store.New()
-	if _, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
+	res, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t),
 		Path: dir, Store: st, WipeSecrets: true,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
 	// The RS itself is loaded into the store as a node for the run phase.
 	rsID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "late-rs"}
-	if st.GetObject(rsID) == nil {
+	if _, ok := res.Index.Lookup(rsID); !ok {
 		t.Errorf("expected ResourceSet %s loaded into store", rsID)
 	}
 	// The deep RSIP behind the parent KS's path is loaded — discovery
 	// walked the spec.path even though it no longer expands the RS.
 	rsipID := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "flux-system", Name: "rsip"}
-	if st.GetObject(rsipID) == nil {
+	if _, ok := res.Index.Lookup(rsipID); !ok {
 		t.Errorf("expected ResourceSetInputProvider %s loaded into store (parent KS path walked)", rsipID)
 	}
 	// Discovery does NOT expand the RS anymore — the child Kustomization
@@ -483,17 +493,12 @@ func TestRun_RequiresStoreAndLoader(t *testing.T) {
 	}
 }
 
-// TestRun_CrossTreeBaseEmissionGate pins the #777 gate: a Flux KS stored as a
-// cross-tree kustomize base (apps/base/app-a/ks.yaml pulled in by cluster-apps
-// via apps/test/app-a -> ../../base/app-a) gets cluster-apps wired as its
-// structural parent in ParentOf, even though its source file sits under no KS
-// spec.path. A self-emitting KS (spec.path covering its own definition file)
-// must NOT be gated on itself, or it would deadlock waiting for itself.
 func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
 	testutil.WriteFile(t, dir, "cluster/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./apps/test\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
+	testutil.WriteFile(t, dir, "cluster/kustomization.yaml", "resources: [cluster-apps.yaml, ../self/ks.yaml]\n")
 	testutil.WriteFile(t, dir, "apps/test/kustomization.yaml", "resources:\n  - ./app-a\n")
 	testutil.WriteFile(t, dir, "apps/test/app-a/kustomization.yaml", "resources:\n  - ../../base/app-a\n")
 	testutil.WriteFile(t, dir, "apps/base/app-a/kustomization.yaml", "resources:\n  - ks.yaml\n")
@@ -506,7 +511,7 @@ func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
 	testutil.WriteFile(t, dir, "self/ks.yaml", testutil.KustomizationYAML("selfish", "flux-system", "  path: ./self\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 
 	st := store.New()
-	res, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t), Path: dir, Store: st, WipeSecrets: true})
+	res, err := discovery.Run(context.Background(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "cluster"), RepoRoot: dir, Store: st, WipeSecrets: true})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -518,8 +523,8 @@ func TestRun_CrossTreeBaseEmissionGate(t *testing.T) {
 	}
 
 	selfish := testutil.KustomizationID("flux-system", "selfish")
-	if got, gated := parentsForTest(res.Index)[selfish]; gated {
-		t.Errorf("ParentOf[selfish] = %v, want absent (a self-emit must not gate on itself)", got)
+	if got := parentsForTest(res.Index)[selfish]; got != res.Binding.Producer {
+		t.Errorf("ParentOf[selfish] = %v, want entry %v", got, res.Binding.Producer)
 	}
 }
 
@@ -546,7 +551,7 @@ func TestRun_SymlinkEntryResolved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != want || entries[0].Input.LocalPath != want {
+	if len(entries) != 1 || entries[0].Path != want || entries[0].Input.LocalPath != want {
 		t.Fatalf("entry plan changed resolved source/scan bounds: %+v", entries)
 	}
 }
@@ -782,9 +787,11 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 	testutil.WriteFileAt(t, filepath.Join(dir, "override.krmignore"), "drop.yaml\n")
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "leaf.yaml"), ks("leaf", "./apps/leaf"))
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "hidden.yaml"), ks("hidden", "./apps/leaf"))
-	testutil.WriteFileAt(t, filepath.Join(dir, "apps", ".krmignore"), "hidden.yaml\n")
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "hidden-nested", "hidden.yaml"), ks("nested-hidden", "./apps/leaf"))
+	testutil.WriteFileAt(t, filepath.Join(dir, "apps", ".krmignore"), "hidden.yaml\nhidden-nested/\n")
 	testutil.WriteFileAt(t, filepath.Join(dir, "apps", "leaf", "kustomization.yaml"), "resources: []\n")
 
+	testutil.WriteFile(t, dir, "cluster/kustomization.yaml", "resources: [keep.yaml]\n")
 	st := store.New()
 	result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t),
 		Path: filepath.Join(dir, "cluster"), RepoRoot: dir, Store: st, WipeSecrets: true,
@@ -796,22 +803,24 @@ func TestRun_KRMIgnoreFileScopesInitialScanOnly(t *testing.T) {
 	id := func(name string) manifest.NamedResource {
 		return testutil.KustomizationID("flux-system", name)
 	}
-	for name, want := range map[string]bool{"keep": true, "drop": false, "leaf": true, "hidden": false} {
-		if got := st.GetObject(id(name)) != nil; got != want {
-			t.Errorf("Store has %s = %v, want %v", name, got, want)
+	for name, want := range map[string]bool{"keep": true, "drop": false, "leaf": true, "hidden": false, "nested-hidden": false} {
+		if _, got := result.Index.Lookup(id(name)); got != want {
+			t.Errorf("index has Kustomization %s = %v, want %v", name, got, want)
 		}
 		generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "flux-system", Name: name}
-		obj := st.GetObject(generator)
-		assert.Equal(t, obj != nil, want)
+		_, present := result.Index.Lookup(generator)
+		if present != want {
+			t.Errorf("index has ArtifactGenerator %s = %v, want %v", name, present, want)
+		}
 		if want {
-			_, doc, attempt := st.GetEmission(generator)
-			attempt.Finish()
-			assert.Equal(t, doc["metadata"].(map[string]any)["uid"], any(name))
 			record, _ := result.Index.Lookup(generator)
 			assert.Diff(t, record.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}})
 		}
 		output := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "flux-system", Name: name + "-output"}
-		assert.Equal(t, slices.ContainsFunc(st.Productions(output, result.Index), func(p manifest.Production) bool { return p.Declaration == generator }), want)
+		productions := st.Productions(output, result.Index)
+		if got := slices.ContainsFunc(productions, func(p manifest.Production) bool { return p.Declaration == generator }); got != want {
+			t.Errorf("ArtifactGenerator %s output productions = %+v, want declaration %t", name, productions, want)
+		}
 	}
 }
 
@@ -863,16 +872,19 @@ data: {value: fixture}
 			if len(repos) != 1 || repos[0].Name != "demo" || repos[0].Namespace != "demo" {
 				t.Errorf("repositories = %+v, want only demo/demo", repos)
 			}
-			if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "demo", Name: "standalone"}) == nil {
-				t.Error("standalone ConfigMap not promoted")
+			standalone := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "demo", Name: "standalone"}
+			record, indexed := res.Index.Lookup(standalone)
+			if !indexed || st.GetObject(standalone) != nil {
+				t.Fatalf("standalone ConfigMap ownership = %+v, published=%v", record, st.GetObject(standalone))
 			}
+			assert.Diff(t, testutil.Owners(st.Productions(standalone, res.Index)), []manifest.NamedResource{res.Binding.Producer})
 		})
 	}
 }
 
-func TestRun_StandaloneSecretPreservesProducerEvidence(t *testing.T) {
+func TestRun_SecretPreparationPreservesPrecedence(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"standalone", "preexisting", "graph-owned"} {
+	for _, scenario := range []string{"entry-owned", "preexisting", "graph-owned"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
@@ -881,6 +893,11 @@ func TestRun_StandaloneSecretPreservesProducerEvidence(t *testing.T) {
 			if scenario == "graph-owned" {
 				resources += ", ../secret.yaml"
 			}
+			entry := "flux/ks.yaml"
+			if scenario == "entry-owned" {
+				entry += ", secret.yaml"
+			}
+			testutil.WriteFile(t, dir, "kustomization.yaml", "resources: ["+entry+"]\n")
 			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "namespace: secure\nresources: ["+resources+"]\n")
 			testutil.WriteFile(t, dir, "apps/producer.yaml", `apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -905,30 +922,27 @@ stringData: {HOST: fixture-value}
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := "fixture-value"
-			if scenario == "preexisting" {
-				want = "preexisting-value"
-			}
-			input := values.NewStoreProvider(st, true).Lookup(id)
-			secret, ok := input.Data.(*manifest.Secret)
-			if scenario == "graph-owned" {
-				want = manifest.ValuePlaceholder("HOST")
+			secret, ok := st.GetObject(id).(*manifest.Secret)
+			if scenario != "preexisting" {
 				if st.GetObject(id) != nil {
-					t.Fatal("lookup placeholder entered canonical inventory")
+					t.Fatalf("%s Secret published before rendering: %+v", scenario, secret)
+				}
+			} else if !ok || secret != preexisting || secret.StringData["HOST"] != "preexisting-value" {
+				t.Fatalf("preexisting Secret replaced: %+v", secret)
+			}
+			if scenario == "graph-owned" {
+				lookup, ok := values.NewStoreProvider(st, true).Data(id).(*manifest.Secret)
+				if !ok || lookup.StringData["HOST"] != manifest.ValuePlaceholder("HOST") {
+					t.Fatalf("lookup Secret = %+v, want declared-key placeholder", lookup)
 				}
 			}
-			if !ok || secret.StringData["HOST"] != want {
-				t.Fatalf("Secret=%+v, want HOST=%q", secret, want)
-			}
-			if scenario == "preexisting" && secret != preexisting {
-				t.Error("preexisting immutable Secret replaced")
-			}
-			for _, doc := range result.Documents {
-				if manifest.DocIdentity(doc) == id {
-					if scenario == "graph-owned" {
-						t.Fatal("graph-owned Secret entered discovery output")
-					}
-					assert.Diff(t, doc["stringData"], map[string]any{"HOST": want})
+			if scenario == "entry-owned" {
+				declared, ok := result.Index.Records[id].Declaration.(*manifest.Secret)
+				if !ok || declared.StringData["HOST"] != "fixture-value" || declared == secret {
+					t.Fatalf("prepared Secret = %+v, published=%+v", declared, secret)
+				}
+				if _, indexed := result.Index.Lookup(id); !indexed || !slices.Contains(testutil.Owners(st.Productions(id, result.Index)), result.Binding.Producer) {
+					t.Fatalf("prepared Secret lost entry ownership: %+v", result.Index.Records[id])
 				}
 			}
 			data, err := os.ReadFile(filepath.Join(dir, "secret.yaml"))
@@ -1216,7 +1230,9 @@ spec:
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
 					assert.Equal(t, len(result.Index.Claims["config/"]), 0)
 					if previous != nil {
-						assert.Diff(t, result.Index.Records, previous.Records)
+						if diff := cmp.Diff(previous.Records, result.Index.Records, cmp.Comparer(manifest.Equal)); diff != "" {
+							t.Fatalf("records changed (-want +got):\n%s", diff)
+						}
 					}
 					previous = result.Index
 				}
@@ -1236,11 +1252,12 @@ spec:
 			result, st := discover("standalone")
 			standalone := testutil.HelmReleaseID("apps", "standalone")
 			assert.Equal(t, slices.ContainsFunc(result.Index.Readers["config/prod.yaml"], func(r manifest.FileReader) bool { return r.Reader == standalone }), true)
-			assert.Equal(t, st.GetObject(standalone) != nil, true)
+			assert.Equal(t, st.GetObject(standalone) == nil, true)
 			record, ok := result.Index.Lookup(standalone)
 			assert.Equal(t, ok, true)
 			assert.Equal(t, record.Path, "")
 			assert.Equal(t, record.Authored, manifest.NamedResource{})
+			assert.Equal(t, record.Parent, result.Binding.Producer)
 		})
 	}
 }
@@ -1279,15 +1296,25 @@ items:
 	assert.NoError(t, err)
 	id := testutil.HelmReleaseID("apps", "demo")
 	owner := testutil.KustomizationID("flux-system", "owner")
-	record, ok := result.Index.Lookup(id)
-	if !ok || record.Builder != "app/kustomization.yaml" || record.Parent != owner {
-		t.Fatalf("built member index = %+v", record)
+	if !result.Binding.Producer.ReportHidden() || st.GetObject(result.Binding.Producer) == nil {
+		t.Fatalf("list member replaced the literal entry: %+v", result.Binding)
 	}
-	if st.GetObject(id) != nil {
-		t.Fatal("list-emitted owned HelmRelease promoted as an orphan")
-	}
-	if st.GetObject(owner) == nil {
-		t.Fatal("list-emitted owner was not admitted")
+	for _, member := range []manifest.NamedResource{id, owner} {
+		record, ok := result.Index.Lookup(member)
+		if !ok || record.Builder != "app/kustomization.yaml" || record.File != record.Builder || record.BuilderOwner != result.Binding.Producer || record.Parent != result.Binding.Producer {
+			t.Fatalf("list member lacks entry ownership: %s: %+v", member, record)
+		}
+		if record.Path != "" || record.Authored != (manifest.NamedResource{}) || record.Declaration == nil || record.Declaration.Named() != member {
+			t.Fatalf("list member lost its prepared declaration provenance: %s: %+v", member, record)
+		}
+		if !slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+			return p.Owner == result.Binding.Producer && p.Source == result.Binding.Source && p.File == record.Builder
+		}) {
+			t.Fatalf("list member lacks its ordinary entry production: %s: %+v", member, record)
+		}
+		if st.GetObject(member) != nil || st.EmissionOwner(member) != (manifest.NamedResource{}) {
+			t.Fatalf("list member was promoted as an orphan before runtime emission: %s", member)
+		}
 	}
 }
 
@@ -1306,24 +1333,21 @@ func TestRun_StandaloneListPackage(t *testing.T) {
 			st := store.New()
 			result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "app"), RepoRoot: dir, Store: st})
 			if invalid {
-				if err == nil || !errors.Is(err, manifest.ErrFlux) || result != nil {
+				if err != nil || result == nil || st.GetObject(result.Binding.Producer) == nil {
 					t.Fatalf("invalid standalone package = %v, %v", result, err)
 				}
 				return
 			}
 			assert.NoError(t, err)
 			id := testutil.KustomizationID("apps", "child")
-			child, ok := st.GetObject(id).(*manifest.Kustomization)
-			if !ok || child.Path != "./missing" || child.SourceID() != manifest.BootstrapSourceID {
-				t.Fatalf("built child/source = %+v", child)
-			}
 			record, ok := result.Index.Lookup(id)
-			if !ok || record.Builder != "app/kustomization.yaml" || record.Parent != (manifest.NamedResource{}) {
-				t.Fatalf("standalone index = %+v", record)
+			if !ok || record.Builder != "app/kustomization.yaml" || record.Parent != result.Binding.Producer {
+				t.Fatalf("prepared member lacks producer ownership: %+v", record)
 			}
-			if st.EmissionOwner(id) != (manifest.NamedResource{}) || len(result.Documents) != 1 || manifest.DocIdentity(result.Documents[0]) != id {
-				t.Fatalf("standalone ownership/output = %v", result.Documents)
+			if st.GetObject(id) != nil || st.EmissionOwner(id) != (manifest.NamedResource{}) {
+				t.Fatal("preparation published a child before its ordinary producer")
 			}
+
 		})
 	}
 }
@@ -1348,9 +1372,9 @@ spec:
 				testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 				testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input}\n")
 				st := store.New()
-				_, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, scan), RepoRoot: root, Store: st})
+				result, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(root, scan), RepoRoot: root, Store: st})
 				assert.NoError(t, err)
-				if st.GetObject(testutil.HelmReleaseID("apps", "release")) == nil {
+				if result.Index.Records[testutil.HelmReleaseID("apps", "release")].Declaration == nil {
 					t.Fatal("inline release was not admitted")
 				}
 				generated := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "apps-release"}

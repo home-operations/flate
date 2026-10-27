@@ -213,7 +213,7 @@ func TestRender_SourceignoreCacheReplaysFilteredView(t *testing.T) {
 			if err != nil {
 				t.Fatalf("first render: %v", err)
 			}
-			if err := cache.RecordRender(ctx, demoSpec.Named(), receipt, emptyRenderInventory); err != nil {
+			if err := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt, Records: emptyRenderInventory}); err != nil {
 				t.Fatal(err)
 			}
 			if hasRenderField(out1, "name", "b") {

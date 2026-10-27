@@ -247,7 +247,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 			for range st.Sweep() {
 			}
 		}()
-		records, narrow := c.PreviousRender(t.Context(), reads)
+		records, narrow := c.PreviousRender(t.Context(), hr, reads)
 		if records != nil {
 			assert.Equal(t, narrow, true)
 		}
@@ -332,7 +332,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 				}
 				reads := &store.ReadSet{}
 				reads.Init(st, hr.Named(), nil)
-				records, _ := c.PreviousRender(t.Context(), reads)
+				records, _ := c.PreviousRender(t.Context(), hr, reads)
 				reads.Retire()
 				if (records != nil) != selected {
 					t.Fatalf("history admitted=%t selected=%t", records != nil, selected)

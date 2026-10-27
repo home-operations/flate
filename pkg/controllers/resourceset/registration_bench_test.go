@@ -181,7 +181,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						}
 						id := sets[i].Named()
 						outcomes := artifacts[i].Manifests
-						base.Stamp(sets[i].EmissionPolicy(), outcomes)
+						sets[i].EmissionPolicy().Stamp(outcomes)
 						_, _, next := s.GetEmission(id)
 						next.Children, next.Manifests, next.Failures = c.ParseChildren(c.Store.GetObject(id), outcomes, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
 						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
@@ -348,7 +348,7 @@ func selectorFixture(name, color string) *manifest.ResourceSet {
 func publishResourceSetDocuments(tb testing.TB, c *Controller, id manifest.NamedResource, docs []manifest.DocOccurrence) {
 	tb.Helper()
 	parent := c.Store.GetObject(id).(*manifest.ResourceSet)
-	base.Stamp(parent.EmissionPolicy(), docs)
+	parent.EmissionPolicy().Stamp(docs)
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Failures = c.ParseChildren(parent, docs, manifest.ParseDocOptions{})

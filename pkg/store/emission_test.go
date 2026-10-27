@@ -3149,7 +3149,7 @@ func TestGetDeclaration_CoveredAuthority(t *testing.T) {
 			peer := &manifest.Kustomization{Name: "peer", Namespace: "apps"}
 			raw := &manifest.OCIRepository{Name: "source", Namespace: "apps", URL: "oci://raw.example"}
 			st.AddObjects([]manifest.BaseManifest{parent, peer, raw})
-			proofs := []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}
+			proofs := []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID, Authored: raw.Named(), Path: "/input/source.yaml", File: "source.yaml"}}
 			switch state {
 			case "self":
 				proofs = append(proofs, manifest.Production{Owner: raw.Named()})

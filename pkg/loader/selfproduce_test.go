@@ -13,6 +13,7 @@ import (
 	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/kustomizeinput"
@@ -618,7 +619,11 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			want := manifest.DiscoveryRecord{Authored: id, Path: path, File: file, Parent: tc.wantParent}
+			declaration := manifest.BaseManifest(&manifest.Kustomization{Name: "child", Namespace: "flux-system", Path: "./apps/${ENV}/child"})
+			if tc.nonStructural {
+				declaration = &manifest.ConfigMap{Name: "cluster-settings", Namespace: "flux-system"}
+			}
+			want := manifest.DiscoveryRecord{Authored: id, Path: path, File: file, Parent: tc.wantParent, Declaration: declaration}
 			for _, owner := range tc.emitters {
 				production := manifest.Production{Owner: owner, Authored: id, File: file, Source: manifest.BootstrapSourceID}
 				if !id.KindInfo().Runnable || l.Store.GetObject(id) != nil {
@@ -629,7 +634,9 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			if len(want.Productions) == 0 {
 				want.Productions = []manifest.Production{{Authored: id, Path: path, File: file, Source: manifest.BootstrapSourceID}}
 			}
-			assert.Diff(t, l.Index.Records[id], want)
+			if diff := cmp.Diff(want, l.Index.Records[id], cmp.Comparer(manifest.Equal)); diff != "" {
+				t.Errorf("discovery record differs (-want +got):\n%s", diff)
+			}
 			if tc.repeated {
 				peer := testutil.KustomizationID("flux-system", "peer")
 				assert.Equal(t, l.Index.Records[peer].Parent, parent)
@@ -645,7 +652,9 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, l.Index.Records, snapshot.Records)
+			if diff := cmp.Diff(snapshot.Records, l.Index.Records, cmp.Comparer(manifest.Equal)); diff != "" {
+				t.Errorf("discovery records differ (-want +got):\n%s", diff)
+			}
 			assert.Diff(t, l.Index.Readers, snapshot.Readers)
 			owners, ancestors = l.Index.OwnersOfFile(file)
 			assert.Diff(t, owners, wantOwners)
@@ -654,7 +663,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			if err := fresh.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, *fresh.Index, snapshot)
+			assertIndexForTest(t, *fresh.Index, snapshot)
 		})
 	}
 }

@@ -15,6 +15,8 @@ import (
 type Snapshot struct {
 	Manifests   []manifest.DocumentBatch
 	Unavailable map[manifest.NamedResource]store.StatusInfo
+	// ProducerKeys maps actual producers to their paired comparison identities.
+	ProducerKeys map[manifest.NamedResource]manifest.NamedResource
 }
 
 // Compare compares two selected snapshots in orig/current order. Selected errors

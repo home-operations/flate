@@ -113,6 +113,9 @@ spec:
 				}
 			}
 			id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
+			if err := o.run(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			artifact := o.Store().GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			if artifact.FS == nil || artifact.Key == "" {
 				t.Fatalf("selected cache %s did not reach discovery: %+v", selectedRoot, artifact)

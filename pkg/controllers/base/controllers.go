@@ -11,7 +11,7 @@ import (
 type nodeController interface {
 	Owns(manifest.NamedResource) bool
 	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel) *Execution
-	PreviousRender(context.Context, *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
+	PreviousRender(context.Context, manifest.BaseManifest, *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
 }
 
 // Controllers binds objects to their controller for execution and render history.
@@ -32,16 +32,16 @@ func (c *Controllers) ReconcileNode(ctx context.Context, id manifest.NamedResour
 	return nil
 }
 
-// PreviousRender returns the owning controller's accepted history and narrowing decision.
-func (c *Controllers) PreviousRender(ctx context.Context, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+// PreviousRender returns accepted history for the immutable declaration candidate.
+func (c *Controllers) PreviousRender(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	if owner := c.owner(reads.ID()); owner != nil {
-		return owner.PreviousRender(ctx, reads)
+		return owner.PreviousRender(ctx, obj, reads)
 	}
 	return nil, false
 }
 
 // PreviousRender reports unknown history for controllers without a renderer.
-func (*Controller) PreviousRender(context.Context, *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+func (*Controller) PreviousRender(context.Context, manifest.BaseManifest, *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	return nil, false
 }
 

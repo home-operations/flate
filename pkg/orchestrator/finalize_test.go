@@ -16,7 +16,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -25,27 +24,55 @@ import (
 
 func TestReportOwnership_LocalPartition(t *testing.T) {
 	t.Parallel()
-	st := store.New()
-	source := &manifest.GitRepository{Name: "external", Namespace: "apps"}
-	external := &manifest.Kustomization{Name: "external", Namespace: "apps", Path: "apps/deeper", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name}}
-	local := &manifest.Kustomization{Name: "local", Namespace: "apps", Path: "elsewhere"}
-	child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
-	st.AddObjects([]manifest.BaseManifest{source, external, local, child})
-	st.UpdateStatus(external.Named(), store.StatusInfo{Status: store.StatusReady})
-	st.UpdateStatus(local.Named(), store.StatusInfo{Status: store.StatusReady})
-	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
-	index := indexForTest(map[manifest.NamedResource]string{child.Named(): "apps/deeper/child.yaml"})
-	o := &Orchestrator{store: st, index: index}
-	all := loader.Claims(o.store, o.repoRoot)
-	localClaims := o.reportOwnership(all)
-	assert.Diff(t, all, []manifest.KSClaim{{ID: external.Named(), Prefix: "apps/deeper/"}, {ID: local.Named(), Prefix: "elsewhere/"}})
-	assert.Diff(t, localClaims, []manifest.KSClaim{{ID: local.Named(), Prefix: "elsewhere/"}})
-	_, owned := manifest.StrictParent(all, "apps/deeper/invalid.yaml", manifest.NamedResource{}, nil)
-	assert.Equal(t, owned, true)
-	o.classifyCompleted()
-	info, _ := st.GetStatus(child.Named())
-	assert.Equal(t, info.Status, store.StatusFailed)
-	assert.Equal(t, len(o.orphans), 0)
+	for _, tc := range []struct {
+		name    string
+		indexed bool
+	}{
+		{name: "published"},
+		{name: "unchanged declaration", indexed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			source := &manifest.GitRepository{Name: "external", Namespace: "apps"}
+			external := &manifest.Kustomization{Name: "external", Namespace: "apps", Path: "apps/deeper", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name}}
+			local := &manifest.Kustomization{Name: "local", Namespace: "apps", Path: "elsewhere"}
+			child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+			st.AddObjects([]manifest.BaseManifest{source, child})
+			index := indexForTest(map[manifest.NamedResource]string{child.Named(): "apps/deeper/child.yaml"})
+			entry := testutil.KustomizationID("apps", "entry")
+			for _, owner := range []*manifest.Kustomization{external, local} {
+				if tc.indexed {
+					index.Records[owner.Named()] = manifest.DiscoveryRecord{File: "entry.yaml", Parent: entry, Declaration: owner}
+				} else {
+					st.AddObject(owner)
+					st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady})
+				}
+			}
+			st.UpdateStatus(entry, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged})
+			st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
+			o := &Orchestrator{store: st, index: index}
+			all := o.reportingClaims()
+			localClaims := o.reportOwnership(all)
+			assert.Diff(t, all, []manifest.KSClaim{{ID: external.Named(), Prefix: "apps/deeper/"}, {ID: local.Named(), Prefix: "elsewhere/"}})
+			assert.Diff(t, localClaims, []manifest.KSClaim{{ID: local.Named(), Prefix: "elsewhere/"}})
+			_, owned := manifest.StrictParent(all, "apps/deeper/invalid.yaml", manifest.NamedResource{}, nil)
+			assert.Equal(t, owned, true)
+			o.classifyCompleted()
+			info, _ := st.GetStatus(child.Named())
+			assert.Equal(t, info.Status, store.StatusFailed)
+			assert.Equal(t, len(o.orphans), 0)
+			if tc.indexed {
+				assert.Equal(t, st.GetObject(external.Named()) == nil, true)
+				assert.Equal(t, st.GetObject(local.Named()) == nil, true)
+				st.UpdateStatus(entry, store.StatusInfo{Status: store.StatusReady})
+				all = o.reportingClaims()
+				assert.Equal(t, len(all), 0)
+				_, owned = manifest.StrictParent(all, "apps/deeper/invalid.yaml", manifest.NamedResource{}, nil)
+				assert.Equal(t, owned, false)
+			}
+		})
+	}
 }
 
 func TestReportOwnership_FreshPasses(t *testing.T) {
@@ -122,7 +149,7 @@ func TestReportOwnership_FreshPasses(t *testing.T) {
 					}
 				}
 				st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
-				all := loader.Claims(o.store, o.repoRoot)
+				all := o.reportingClaims()
 				localClaims := o.reportOwnership(all)
 				_, owned := manifest.StrictParent(all, base+"/invalid.yaml", manifest.NamedResource{}, nil)
 				assert.Equal(t, owned, tc.owned[pass])
@@ -198,6 +225,44 @@ func TestLogResourceFailures_Deterministic(t *testing.T) {
 		assert.Diff(t, got, want)
 		assert.Equal(t, failed[a].String(), fmt.Errorf("%w: invalid input", manifest.ErrInput).Error())
 	}
+}
+
+func TestFinalize_ProjectedDeclarationCount(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [ks.yaml]\n")
+	testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./app\n  targetNamespace: apps\n"))
+	testutil.WriteFile(t, root, "app/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child}\nspec: {suspend: true, chartRef: {kind: OCIRepository, name: missing}}\n")
+	o, err := newTestOrchestrator(t, Tree{Path: root, RepoRoot: root}, Config{Concurrency: 2})
+	assert.NoError(t, err)
+	_, err = o.render(t.Context())
+	assert.NoError(t, err)
+	assert.Equal(t, len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease)), 1)
+	projected := testutil.HelmReleaseID("apps", "child")
+	assert.Equal(t, o.store.GetObject(projected) != nil, true)
+	info, _ := o.store.GetStatus(projected)
+	assert.Equal(t, info.Outcome(), store.OutcomeSuspended)
+	raw := testutil.HelmReleaseID("", "child")
+	record, known := o.index.Lookup(raw)
+	assert.Equal(t, known && record.Declaration != nil, true)
+	assert.Equal(t, o.store.GetObject(raw) == nil, true)
+	parent, _ := o.store.GetStatus(record.Parent)
+	assert.Equal(t, parent.Outcome(), store.OutcomePassed)
+	var counts []int
+	for line := range bytes.Lines(logs.Bytes()) {
+		var event struct {
+			Message      string `json:"msg"`
+			HelmReleases int    `json:"helm_releases"`
+		}
+		assert.NoError(t, json.Unmarshal(line, &event))
+		if event.Message == "orchestrator: reconcile complete" {
+			counts = append(counts, event.HelmReleases)
+		}
+	}
+	assert.Diff(t, counts, []int{1})
 }
 
 func TestFinalize_DispatchPanic(t *testing.T) {

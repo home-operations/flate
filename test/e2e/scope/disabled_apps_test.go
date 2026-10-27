@@ -86,6 +86,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 		root := t.TempDir()
 		testutil.GitInit(t, root)
 		disabledAppFixture(t, root, "single", false)
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux, active.yaml]\n")
 		testutil.WriteFile(t, root, "active.yaml", testutil.KustomizationYAML("active", "games", "  path: ./targets/game\n  components: [../backup]\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 		out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", "2", "--no-progress")
 		if code != 0 {
@@ -108,6 +109,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 		root := t.TempDir()
 		testutil.GitInit(t, root)
 		disabledAppFixture(t, root, "single", false)
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux, independent]\n")
 		testutil.WriteFile(t, root, "independent/kustomization.yaml", "resources: [../apps/games/disabled.yaml]\n")
 		out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", "2", "--no-progress")
 		if code != 0 || !strings.Contains(out, "name: game-cm") || !strings.Contains(out, "name: backup-cm") {
@@ -390,6 +392,7 @@ func disabledAppFixture(t *testing.T, root, layout string, enabled bool) {
 	t.Helper()
 	if layout == "nested" {
 		const entry = "kube/clusters/main/flux"
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: ["+entry+"]\n")
 		ref := "  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
 		testutil.WriteFile(t, root, entry+"/kustomization.yaml", "resources: [sync.yaml, external.yaml, ../../../deploy/app]\n")
 		testutil.WriteFile(t, root, entry+"/sync.yaml", testutil.KustomizationYAML("sync", "flux-system", "  path: ./"+entry+"\n"))
@@ -412,7 +415,9 @@ func disabledAppFixture(t *testing.T, root, layout string, enabled bool) {
 	if layout == "multi" {
 		entry, games = "flux/main", "apps/main/games"
 	}
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux]\n")
 	ref := "  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
+	testutil.WriteFile(t, root, entry+"/kustomization.yaml", "resources: [parent.yaml]\n")
 	testutil.WriteFile(t, root, entry+"/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./"+games+"\n"+ref))
 	resources := "namespace: games\nresources: []\n"
 	if enabled {
@@ -425,6 +430,8 @@ func disabledAppFixture(t *testing.T, root, layout string, enabled bool) {
 	testutil.WriteFile(t, root, "targets/backup/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "targets/backup/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: backup-cm}\n")
 	if layout == "multi" {
+		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [main, test]\n")
+		testutil.WriteFile(t, root, "flux/test/kustomization.yaml", "resources: [parent.yaml]\n")
 		testutil.WriteFile(t, root, "flux/test/parent.yaml", testutil.KustomizationYAML("test-parent", "flux-system", "  path: ./targets/test\n"+ref))
 		testutil.WriteFile(t, root, "targets/test/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, root, "targets/test/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: test-cm}\n")
@@ -450,6 +457,7 @@ func TestE2E_SelectedEntrySelfOwnership(t *testing.T) {
 			}
 			if tc.foreign {
 				pkg, target = "target", "./target"
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [controls]\n")
 				testutil.WriteFile(t, root, "controls/kustomization.yaml", "resources: []\n")
 				testutil.WriteFile(t, root, "controls/disabled.yaml", testutil.KustomizationYAML("disabled", "flux-system", "  path: ./target\n"))
 				testutil.WriteFile(t, root, pkg+"/kustomization.yaml", "resources: [sync.yaml, cm.yaml]\n")
@@ -464,6 +472,74 @@ func TestE2E_SelectedEntrySelfOwnership(t *testing.T) {
 			out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, tc.entry), "--concurrency", "2", "--no-progress")
 			if code != 0 || strings.Contains(out, "name: anchored") != tc.want {
 				t.Fatalf("exit=%d want output=%t, stdout=%s stderr=%s", code, tc.want, out, stderr)
+			}
+		})
+	}
+}
+
+func TestE2E_EntryPrerequisiteDiffSides(t *testing.T) {
+	before, after := t.TempDir(), t.TempDir()
+	for _, side := range []struct{ root, dependency, value string }{
+		{before, "", "original"},
+		{after, "  dependsOn: [{name: sibling}]\n", "changed"},
+	} {
+		testutil.GitInit(t, side.root)
+		testutil.WriteFile(t, side.root, "entry/kustomization.yaml", "resources: [owner.yaml, sibling.yaml, cm.yaml]\n")
+		testutil.WriteFile(t, side.root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n"+side.dependency))
+		testutil.WriteFile(t, side.root, "entry/sibling.yaml", testutil.KustomizationYAML("sibling", "apps", "  path: ./prerequisite\n"))
+		testutil.WriteFile(t, side.root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: entry-output, namespace: apps}\ndata: {value: "+side.value+"}\n")
+		testutil.WriteFile(t, side.root, "prerequisite/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, side.root, "prerequisite/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: prerequisite-output, namespace: apps}\ndata: {value: "+side.value+"}\n")
+	}
+	for _, direction := range []struct{ name, current, original, value string }{
+		{"forward", after, before, "changed"},
+		{"reverse", before, after, "original"},
+	} {
+		t.Run(direction.name, func(t *testing.T) {
+			for _, command := range []string{"build", "diff"} {
+				args := []string{command, "all", "--path", filepath.Join(direction.current, "entry"), "--path-orig", filepath.Join(direction.original, "entry"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+				if command == "diff" {
+					args = append(args, "-o", "json")
+				}
+				out, _ := harness.RequireCLIOK(t, args...)
+				again, _ := harness.RequireCLIOK(t, args...)
+				assert.Equal(t, again, out)
+				if command == "build" {
+					docs, err := testutil.SplitDocs([]byte(out))
+					assert.NoError(t, err)
+					found := map[string]bool{}
+					for _, doc := range docs {
+						name, _ := manifest.DocMetadata(doc)
+						if name == "entry-output" || name == "prerequisite-output" {
+							assert.Equal(t, doc["data"].(map[string]any)["value"], any(direction.value))
+							found[name] = true
+						}
+					}
+					if len(found) != 2 {
+						t.Fatalf("changed-only entry/prerequisite output missing: %s", out)
+					}
+					continue
+				}
+				var result struct {
+					Changes []struct {
+						Kind, Name, Status string
+						Parent             struct{ Name string }
+					}
+				}
+				assert.NoError(t, json.Unmarshal([]byte(out), &result))
+				found := map[string]bool{}
+				for _, change := range result.Changes {
+					if change.Kind == manifest.KindConfigMap && (change.Name == "entry-output" || change.Name == "prerequisite-output") {
+						assert.Equal(t, change.Status, "changed")
+						if change.Name == "prerequisite-output" {
+							assert.Equal(t, change.Parent.Name, "sibling")
+						}
+						found[change.Name] = true
+					}
+				}
+				if len(found) != 2 {
+					t.Fatalf("diff lost entry/prerequisite output: %s", out)
+				}
 			}
 		})
 	}

@@ -265,14 +265,28 @@ func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner
 	return frame.history(owner)
 }
 
+// RenderAcceptance binds a complete inventory to its final owner and dependency snapshot.
+type RenderAcceptance struct {
+	Owner                   manifest.NamedResource
+	Receipt                 *manifest.RenderReceipt
+	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+	DependencySubstitutions values.DependencySubstitutions
+}
+
 // RecordRender persists a receipt only with a complete accepted inventory.
-func (c *TreeCache) RecordRender(ctx context.Context, owner manifest.NamedResource, receipt *manifest.RenderReceipt, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]) error {
+func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
+	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
 	if receipt == nil || records == nil {
 		return nil
 	}
 	frame, ok := receipt.Value().(renderFrame)
 	if !ok || frame.header.Key == "" {
 		return fmt.Errorf("%w: invalid kustomize receipt", manifest.ErrFlux)
+	}
+	if !frame.binding.Dependencies.Equal(acceptance.DependencySubstitutions) {
+		frame.binding.Dependencies = acceptance.DependencySubstitutions
+		frame.header.Binding, frame.lookup, frame.raw = "", "", ""
+		frame.encoded, frame.accepted, frame.acceptedKey, frame.identity = nil, nil, "", ""
 	}
 	descriptor, identity, enabled, err := c.owner.RenderMetadata(ctx, frame.header.Key, frame.lookup)
 	if err != nil && !errors.Is(err, errdef.ErrNotFound) {

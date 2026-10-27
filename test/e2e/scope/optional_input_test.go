@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
@@ -22,7 +23,16 @@ func TestE2E_CrossSourceOptionalInputRemoval(t *testing.T) {
 	for side, root := range roots {
 		full, _ := harness.RequireCLIOK(t, append([]string{"build", "all", "--path", filepath.Join(root, "flux")}, flags...)...)
 		want := []string{"available", "fallback"}[side]
-		if !strings.Contains(full, "value: "+want) || !strings.Contains(full, "sentinel: active") || strings.Contains(full, "name: optional") != (side == 0) {
+		docs, err := testutil.DecodeDocs(strings.NewReader(full))
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := false
+		for _, doc := range docs {
+			name, _ := manifest.DocMetadata(doc)
+			input = input || manifest.DocKind(doc) == manifest.KindConfigMap && name == "optional"
+		}
+		if !strings.Contains(full, "value: "+want) || !strings.Contains(full, "sentinel: active") || input != (side == 0) {
 			t.Fatalf("side %d full render lost consumer substitution or supplying input: %s", side, full)
 		}
 		rendered[side] = t.TempDir()
@@ -157,13 +167,18 @@ func TestE2E_OptionalInputDiffSides(t *testing.T) {
 				testutil.GitInit(t, rendered[i])
 				testutil.WriteFile(t, rendered[i], "flux/app.yaml", testutil.KustomizationYAML("app", "flux-system", "  path: ./apps/app\n"))
 				testutil.WriteFile(t, rendered[i], "apps/app/kustomization.yaml", "resources: [output.yaml]\n")
-				appOutput, inputOutput := "", ""
+				appOutput, inputOutput, rootOutput := "", "", ""
 				for doc := range strings.SplitSeq(full, "---\n") {
 					if strings.Contains(doc, "kustomize.toolkit.fluxcd.io/name: inputs") {
 						inputOutput += "---\n" + doc
-					} else if doc != "" {
+					} else if strings.Contains(doc, "kustomize.toolkit.fluxcd.io/name: app") {
 						appOutput += "---\n" + doc
+					} else if strings.Contains(doc, "\nkind: ConfigMap\n") && !strings.Contains(doc, "kustomize.toolkit.fluxcd.io/name:") {
+						rootOutput += "---\n" + doc
 					}
+				}
+				if rootOutput != "" {
+					testutil.WriteFile(t, rendered[i], "flux/plain.yaml", rootOutput)
 				}
 				testutil.WriteFile(t, rendered[i], "apps/app/output.yaml", appOutput)
 				if strings.HasPrefix(operation, "projected") {

@@ -12,7 +12,6 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -524,22 +523,14 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 			if tc.emitted {
 				want[parent.Named()] = append(generated, generatorDocs...)
 			}
-			bare := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "bare", "namespace": "apps"}}
-			unchanged := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "unchanged", "namespace": "apps"}}
-			index.Records[manifest.DocIdentity(bare)] = manifest.DiscoveryRecord{File: "entry/bare.yaml"}
-			index.Records[manifest.DocIdentity(unchanged)] = manifest.DiscoveryRecord{File: "entry/unchanged.yaml"}
-			o := &Orchestrator{store: st, index: index, documents: []map[string]any{bare, unchanged, outputs["z"][0]}}
-			if tc.skip {
-				o.cfg.HelmOptions.SkipKinds = []string{manifest.KindExternalArtifact}
-			}
-			batches := o.collectManifests()
-			assert.Diff(t, outputByParent(batches), want)
-			assert.Diff(t, batches[len(batches)-1].Documents, []map[string]any{bare, unchanged})
-			assert.Equal(t, batches[len(batches)-1].Parent, manifest.BaseManifest(nil))
-			o.filter = change.NewFilter(change.NewSet([]string{"entry/bare.yaml"}), index, st, "")
-			batches = o.collectManifests()
-			assert.Diff(t, outputByParent(batches), want)
-			assert.Diff(t, batches[len(batches)-1].Documents, []map[string]any{bare})
+			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".")
+			st.AddObject(entry)
+			bare := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "bare"}}
+			children, docs, failures := base.New(st, nil).ParseChildren(entry, testutil.DocumentOccurrences([]map[string]any{bare}), manifest.ParseDocOptions{})
+			st.RecordEmitted(entry.Named(), &store.Emission{Children: children, Manifests: docs, Failures: failures, Complete: true}, nil)
+			want[entry.Named()] = []map[string]any{bare}
+			o := &Orchestrator{store: st, index: index}
+			assert.Diff(t, outputByParent(o.collectManifests()), want)
 
 		})
 	}

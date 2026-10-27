@@ -69,6 +69,14 @@ data: {value: '${VALUE}'}
 	root, _, want := fixture(t, "  path: ./\n")
 	wantOutput := harness.RunCLIStdout(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir())
+	wantDocs, err := testutil.DecodeDocs(strings.NewReader(wantOutput))
+	assert.NoError(t, err)
+	for _, doc := range wantDocs {
+		name, _ := manifest.DocMetadata(doc)
+		if manifest.DocKind(doc) == manifest.KindKustomization && name == "root" {
+			delete(doc["spec"].(map[string]any), "path")
+		}
+	}
 	for _, path := range []struct{ name, field string }{
 		{name: "explicit", field: "  path: ./\n"},
 		{name: "omitted"},
@@ -105,7 +113,21 @@ data: {value: '${VALUE}'}
 					if !strings.Contains(out, "name: leaf-owned") {
 						t.Fatalf("child's rendered objects missing:\n%s", out)
 					}
-					assert.Equal(t, out, wantOutput)
+					docs, err := testutil.DecodeDocs(strings.NewReader(out))
+					assert.NoError(t, err)
+					for _, doc := range docs {
+						name, _ := manifest.DocMetadata(doc)
+						if manifest.DocKind(doc) == manifest.KindKustomization && name == "root" {
+							spec := doc["spec"].(map[string]any)
+							if path.name == "explicit" {
+								assert.Equal(t, spec["path"], "./")
+							} else if _, present := spec["path"]; present {
+								t.Fatalf("omitted path was added to the root declaration: %s", out)
+							}
+							delete(spec, "path")
+						}
+					}
+					assert.Diff(t, docs, wantDocs)
 				})
 			}
 		})
@@ -1068,15 +1090,82 @@ spec:
 			path := filepath.Join(current, scope)
 			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", path,
 				"--concurrency", "2", "--cache-dir", t.TempDir())
-			if !strings.Contains(out, "value: v1.0.0") || strings.Contains(out, "phantom") || strings.Contains(out, "added-") {
-				t.Fatalf("working-tree discovery objects escaped the pin:\n%s", out)
-			}
-			for _, paths := range [][2]string{{current, original}, {original, current}} {
-				out, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(paths[0], scope),
-					"--path-orig", filepath.Join(paths[1], scope), "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
-				if out != "" {
-					t.Fatalf("working-tree discovery objects changed the pinned diff:\n%s", out)
+			docs, err := testutil.DecodeDocs(strings.NewReader(out))
+			assert.NoError(t, err)
+			ids := map[string]int{}
+			pinned := 0
+			for _, doc := range docs {
+				name, namespace := manifest.DocMetadata(doc)
+				ids[manifest.DocKind(doc)+"/"+namespace+"/"+name]++
+				if manifest.DocKind(doc) == manifest.KindConfigMap && name == "hello" {
+					metadata := doc["metadata"].(map[string]any)
+					labels := metadata["labels"].(map[string]any)
+					assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/name"], "apps")
+					assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/namespace"], "flux-system")
+					assert.Equal(t, doc["data"].(map[string]any)["value"], "v1.0.0")
+					pinned++
 				}
+			}
+			assert.Equal(t, pinned, 1)
+			if scope == "flux" {
+				if strings.Contains(out, "phantom") || strings.Contains(out, "added-") {
+					t.Fatalf("working-tree discovery objects escaped the pin:\n%s", out)
+				}
+			} else {
+				assert.Diff(t, ids, map[string]int{
+					"ConfigMap/apps/hello":               1,
+					"ConfigMap/apps/added-ks-output":     1,
+					"ConfigMap/apps/added-rs-output":     1,
+					"GitRepository/flux-system/cluster":  1,
+					"GitRepository/flux-system/working":  1,
+					"Kustomization/flux-system/apps":     1,
+					"Kustomization/flux-system/added-ks": 1,
+					"ResourceSet/flux-system/added-rs":   1,
+				})
+			}
+			for direction, paths := range [][2]string{{current, original}, {original, current}} {
+				args := []string{"diff", "all", "--path", filepath.Join(paths[0], scope),
+					"--path-orig", filepath.Join(paths[1], scope), "--concurrency", "2", "--cache-dir", t.TempDir()}
+				if scope == "flux" {
+					out, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+					if out != "" {
+						t.Fatalf("working-tree discovery objects changed the pinned diff:\n%s", out)
+					}
+					continue
+				}
+				product, _ := harness.RequireCLIOK(t, append(args, "-o", "json")...)
+				var result struct {
+					Changes []struct {
+						Kind, Namespace, Name, Status string
+						Parent                        struct{ Kind, Namespace, Name, Path string }
+					}
+					Suppressed []any
+				}
+				assert.NoError(t, json.Unmarshal([]byte(product), &result))
+				assert.Equal(t, len(result.Suppressed), 0)
+				changed := map[string]int{}
+				for _, change := range result.Changes {
+					id := change.Kind + "/" + change.Namespace + "/" + change.Name
+					changed[id]++
+					assert.Equal(t, change.Status, []string{"added", "removed"}[direction])
+					wantKind, wantNamespace, wantName, wantPath := "Kustomization", "\x00", "entry", "."
+					if change.Kind == "ConfigMap" && change.Name == "added-ks-output" {
+						wantNamespace, wantName, wantPath = "flux-system", "added-ks", ""
+					}
+					assert.Equal(t, change.Parent.Kind, wantKind)
+					assert.Equal(t, change.Parent.Namespace, wantNamespace)
+					assert.Equal(t, change.Parent.Name, wantName)
+					if change.Kind != "ConfigMap" {
+						assert.Equal(t, change.Parent.Path, wantPath)
+					}
+				}
+				assert.Diff(t, changed, map[string]int{
+					"ConfigMap/apps/added-ks-output":     1,
+					"ConfigMap/apps/added-rs-output":     1,
+					"GitRepository/flux-system/working":  1,
+					"Kustomization/flux-system/added-ks": 1,
+					"ResourceSet/flux-system/added-rs":   1,
+				})
 			}
 		})
 	}
@@ -1157,7 +1246,7 @@ data:
 	}
 	testutil.WriteFile(t, root, "apps/added.yaml", strings.Replace(string(release), "name: existing", "name: added", 1))
 	harness.MutateFile(t, filepath.Join(root, "apps/kustomization.yaml"), "- release.yaml\n", "- release.yaml\n- added.yaml\n")
-	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", root,
+	out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "json")
 	if loader.calls.Load() != 0 {
 		t.Fatalf("local pin accessed transport %d times", loader.calls.Load())
@@ -1186,9 +1275,11 @@ data:
 		}
 	}
 	want := map[manifest.NamedResource]int{
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}:       1,
-		testutil.HelmReleaseID("apps", "existing"):                             1,
-		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "existing-cm"}: 1,
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "hello"}:                                                 1,
+		testutil.KustomizationID("flux-system", "apps"):                                                                  1,
+		{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}: 1,
+		testutil.HelmReleaseID("apps", "existing"):                                                                       1,
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "existing-cm"}:                                           1,
 	}
 	if diff := cmp.Diff(want, ids); diff != "" {
 		t.Fatalf("pinned object ids (-want +got):\n%s\n%s", diff, out)
@@ -1382,6 +1473,43 @@ spec:
 	testutil.CopyTree(t, current, original)
 	transport := installSourceRefTransport(t, repo.Storer)
 	harness.MutateFile(t, filepath.Join(current, "apps/cm.yaml"), "value: v2.0.0", "value: dirty")
+	for _, dir := range []string{original, current} {
+		full, _ := harness.RequireCLIOK(t, "build", "all", "--path", dir, "--concurrency", "2", "--cache-dir", t.TempDir())
+		docs, err := testutil.DecodeDocs(strings.NewReader(full))
+		assert.NoError(t, err)
+		pinned := 0
+		ids := map[string]int{}
+		declarations := map[string]int{}
+		for _, doc := range docs {
+			name, namespace := manifest.DocMetadata(doc)
+			ids[manifest.DocKind(doc)+"/"+namespace+"/"+name]++
+			if manifest.DocKind(doc) == manifest.KindKustomization {
+				metadata := doc["metadata"].(map[string]any)
+				labels, _ := metadata["labels"].(map[string]any)
+				owner, _ := labels[manifest.FluxKustomizeDomain+"/name"].(string)
+				declarations[owner]++
+				if owner != "" {
+					assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/namespace"], "flux-system")
+				}
+				spec := doc["spec"].(map[string]any)
+				assert.Equal(t, spec["path"], "./")
+				assert.Diff(t, spec["sourceRef"], map[string]any{"kind": manifest.KindGitRepository, "name": "cluster", "namespace": "flux-system"})
+			}
+			if manifest.DocKind(doc) != manifest.KindConfigMap || name != "hello" {
+				continue
+			}
+			metadata := doc["metadata"].(map[string]any)
+			labels, _ := metadata["labels"].(map[string]any)
+			if labels[manifest.FluxKustomizeDomain+"/name"] == "apps" {
+				assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/namespace"], "flux-system")
+				assert.Equal(t, doc["data"].(map[string]any)["value"], "v1.0.0")
+				pinned++
+			}
+		}
+		assert.Equal(t, pinned, 1)
+		assert.Diff(t, declarations, map[string]int{"": 1, "apps": 1})
+		assert.Diff(t, ids, map[string]int{"ConfigMap/apps/hello": 1, "Kustomization/flux-system/apps": 2, "GitRepository/flux-system/cluster": 1})
+	}
 	for _, stage := range []string{"dirty-only", "tag-change"} {
 		t.Run(stage, func(t *testing.T) {
 			if stage == "tag-change" {
@@ -1398,6 +1526,19 @@ spec:
 								"--path-orig", filepath.Join(side.original, scope), "--concurrency", "2", "--cache-dir", t.TempDir()}
 							out, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
 							if stage == "dirty-only" {
+								again, _ := harness.RequireCLIOK(t, append(args, "-o", "diff")...)
+								assert.Equal(t, again, out)
+								assert.Equal(t, out, "")
+							}
+							if stage == "dirty-only" && scope == "." {
+								product, _ := harness.RequireCLIOK(t, append(args, "-o", "json")...)
+								var result struct {
+									Changes, Suppressed []any
+								}
+								assert.NoError(t, json.Unmarshal([]byte(product), &result))
+								assert.Equal(t, len(result.Changes), 0)
+								assert.Equal(t, len(result.Suppressed), 0)
+							} else if stage == "dirty-only" {
 								if out != "" {
 									t.Fatalf("dirty content changed the root-pin diff:\n%s", out)
 								}
@@ -1406,7 +1547,23 @@ spec:
 							}
 							args[0] = "build"
 							out, _ = harness.RequireCLIOK(t, args...)
-							if stage == "dirty-only" {
+							if stage == "dirty-only" && scope == "." {
+								docs, err := testutil.DecodeDocs(strings.NewReader(out))
+								assert.NoError(t, err)
+								ids := map[string]int{}
+								for _, doc := range docs {
+									name, namespace := manifest.DocMetadata(doc)
+									ids[manifest.DocKind(doc)+"/"+namespace+"/"+name]++
+									if manifest.DocKind(doc) == manifest.KindConfigMap {
+										assert.Diff(t, doc["data"].(map[string]any)["value"], "v1.0.0")
+										metadata := doc["metadata"].(map[string]any)
+										labels, _ := metadata["labels"].(map[string]any)
+										assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/name"], "apps")
+										assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/namespace"], "flux-system")
+									}
+								}
+								assert.Diff(t, ids, map[string]int{"ConfigMap/apps/hello": 1, "Kustomization/flux-system/apps": 2, "GitRepository/flux-system/cluster": 1})
+							} else if stage == "dirty-only" {
 								if out != "" {
 									t.Fatalf("dirty content selected the pinned root:\n%s", out)
 								}

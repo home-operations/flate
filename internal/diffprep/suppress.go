@@ -23,6 +23,8 @@ const (
 type Snapshot struct {
 	Manifests   []manifest.DocumentBatch
 	Unavailable map[manifest.NamedResource]store.StatusInfo
+	// ProducerKeys maps actual producers to their paired comparison identities.
+	ProducerKeys map[manifest.NamedResource]manifest.NamedResource
 }
 
 // Suppression discloses withheld producer output.
@@ -132,7 +134,11 @@ func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.Docu
 				continue
 			}
 			id := batch.Parent.Named()
-			plan, ok := plans[id]
+			key := id
+			if comparison, ok := snapshot.ProducerKeys[id]; ok {
+				key = comparison
+			}
+			plan, ok := plans[key]
 			if !ok {
 				out = append(out, batch)
 				continue
@@ -141,7 +147,7 @@ func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.Docu
 			if plan.note.Side == SideBoth || plan.note.Side != side {
 				plan.note.Count += len(batch.Documents)
 			}
-			plans[id] = plan
+			plans[key] = plan
 		}
 		return out
 	}

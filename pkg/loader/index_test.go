@@ -10,6 +10,8 @@ import (
 	"slices"
 	"testing"
 
+	gocmp "github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -134,6 +136,13 @@ func snapshotIndexForTest(index *manifest.DiscoveryIndex) manifest.DiscoveryInde
 	return snapshot
 }
 
+func assertIndexForTest(t *testing.T, got, want manifest.DiscoveryIndex) {
+	t.Helper()
+	if diff := gocmp.Diff(want, got, gocmp.Comparer(manifest.Equal)); diff != "" {
+		t.Errorf("discovery index differs (-want +got):\n%s", diff)
+	}
+}
+
 func TestFinalizeIndex_Productions(t *testing.T) {
 	t.Parallel()
 
@@ -180,10 +189,10 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, *l.Index, snapshot)
+			assertIndexForTest(t, *l.Index, snapshot)
 			fresh := newLoader()
 			rendererFixture(t, fresh, root)
-			assert.Diff(t, *fresh.Index, snapshot)
+			assertIndexForTest(t, *fresh.Index, snapshot)
 		})
 	}
 }
@@ -248,17 +257,19 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 			if err := l.FinalizeIndex(t.Context(), ""); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, l.Index.Records[id], tc.want)
+			if diff := gocmp.Diff(tc.want, l.Index.Records[id], gocmp.Comparer(manifest.Equal)); diff != "" {
+				t.Errorf("discovery record differs (-want +got):\n%s", diff)
+			}
 			snapshot := snapshotIndexForTest(l.Index)
 			if err := l.FinalizeIndex(t.Context(), ""); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, *l.Index, snapshot)
+			assertIndexForTest(t, *l.Index, snapshot)
 			fresh := newLoader()
 			if err := fresh.FinalizeIndex(t.Context(), ""); err != nil {
 				t.Fatal(err)
 			}
-			assert.Diff(t, *fresh.Index, snapshot)
+			assertIndexForTest(t, *fresh.Index, snapshot)
 		})
 	}
 }

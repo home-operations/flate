@@ -116,10 +116,13 @@ func TestE2E_LoaderIncidentalParseFailure(t *testing.T) {
 	for _, site := range []string{"sibling", "component"} {
 		t.Run(site, func(t *testing.T) {
 			root := t.TempDir()
+			testutil.GitInit(t, root)
 			testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
 			if site == "component" {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, component-indexer.yaml]\n")
+				testutil.WriteFile(t, root, "component-indexer.yaml", testutil.KustomizationYAML("component-indexer", "flux-system", "  path: ./component\n  suspend: true\n"))
 				testutil.WriteFile(t, root, "component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [bad.yaml]\n")
 				testutil.WriteFile(t, root, "component/bad.yaml", "apiVersion: v1\nkind: ConfigMap\nbroken: [unclosed\n")
 			} else {
@@ -149,10 +152,11 @@ func TestE2E_LoaderIncidentalParseFailure(t *testing.T) {
 
 func TestE2E_KustomizationParseFailure(t *testing.T) {
 	root := t.TempDir()
+	testutil.GitInit(t, root)
 	testutil.WriteFile(t, root, "flux/apps.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [unclosed\n")
 	for _, verb := range []string{"build", "test"} {
-		stdout, stderr, code := harness.RunCLIBuffers(verb, "all", "--path", root, "--concurrency=2")
+		stdout, stderr, code := harness.RunCLIBuffers(verb, "all", "--path", filepath.Join(root, "flux"), "--concurrency=2")
 		if code != 1 || !strings.Contains(stdout+stderr, "flux kustomize generator") || !strings.Contains(stdout+stderr, "error converting YAML") || strings.Contains(stdout, "[InputParseFailed]") || strings.Contains(stderr, "[InputParseFailed]") {
 			t.Fatalf("malformed builder input: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 		}

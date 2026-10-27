@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -44,14 +46,16 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 	writeCollectionEntry(t, root, "omega", "second")
 	var first []*Result
 	for run := range 2 {
-		grouped, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: root}}, Config{Concurrency: 2})
+		grouped, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "alpha")}, {ID: manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "omega")}}, Config{Concurrency: 2})
 		assert.NoError(t, err)
 		assert.Equal(t, len(grouped), 2)
 		for i, entry := range []string{"alpha", "omega"} {
 			assert.Equal(t, grouped[i].ID, manifest.TreeID{Cluster: manifest.ClusterID(entry), Side: manifest.TreeHead})
 			explicit, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(root, entry), RepoRoot: root}}, Config{Concurrency: 2})
 			assert.NoError(t, err)
-			assert.Diff(t, grouped[i].Result.Manifests, explicit[0].Result.Manifests)
+			if delta := cmp.Diff(grouped[i].Result.Manifests, explicit[0].Result.Manifests, cmpopts.IgnoreUnexported(manifest.Kustomization{})); delta != "" {
+				t.Fatal(delta)
+			}
 			assert.Diff(t, grouped[i].Result.Failed, explicit[0].Result.Failed)
 			vars := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "cluster-vars"}
 			data, ok := grouped[i].Store().Get[*manifest.ConfigMap](vars)
@@ -64,7 +68,9 @@ func TestRenderTrees_CollectionPayloadIsolation(t *testing.T) {
 		if run == 0 {
 			first = results
 		} else {
-			assert.Diff(t, results, first)
+			if delta := cmp.Diff(results, first, cmpopts.IgnoreUnexported(manifest.Kustomization{})); delta != "" {
+				t.Fatal(delta)
+			}
 		}
 	}
 }
@@ -86,12 +92,19 @@ func TestRenderTrees_ClusterUnion(t *testing.T) {
 			for _, entry := range tc.after {
 				writeCollectionEntry(t, after, entry, "new")
 			}
-			runs, err := RenderTrees(t.Context(), []Tree{
-				{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, RepoRoot: before},
-				{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: after},
-			}, Config{Concurrency: 2})
+			var trees []Tree
+			for side, entries := range [][]string{tc.before, tc.after} {
+				root := before
+				if side == 1 {
+					root = after
+				}
+				for _, entry := range entries {
+					trees = append(trees, Tree{ID: manifest.TreeID{Cluster: manifest.ClusterID(entry), Side: manifest.TreeSide(side)}, RepoRoot: root, Path: filepath.Join(root, entry)})
+				}
+			}
+			runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
 			assert.NoError(t, err)
-			roots := []manifest.NamedResource{{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "workload"}}
+			roots := []manifest.NamedResource{testutil.KustomizationID("", "")}
 			for i := 0; i < len(runs); i += 2 {
 				pair := runs[i : i+2]
 				assert.Equal(t, pair[0].ID.Cluster, pair[1].ID.Cluster)
@@ -107,8 +120,8 @@ func TestRenderTrees_ClusterUnion(t *testing.T) {
 				selected, err, _ := Select(pair, errors.Join(pair[0].Err, pair[1].Err), roots, nil)
 				assert.NoError(t, err)
 				changes, _, _, err := diff.Compare(
-					diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-					diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable}, nil, diff.Options{Format: diff.FormatJSON})
+					diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys},
+					diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys}, nil, diff.Options{Format: diff.FormatJSON})
 				assert.NoError(t, err)
 				if pair[0].Absent || pair[1].Absent {
 					want := "removed"
@@ -133,7 +146,7 @@ func TestRenderTrees_IndependentBootstrapFailure(t *testing.T) {
 		{ID: manifest.TreeID{Cluster: "failed", Side: manifest.TreeHead}, RepoRoot: failed},
 		{ID: manifest.TreeID{Cluster: "healthy", Side: manifest.TreeHead}, RepoRoot: healthy},
 	}, Config{Concurrency: 2})
-	if err == nil || len(runs) != 2 || runs[0].Orchestrator != nil || runs[0].Result == nil || runs[1].Orchestrator == nil || runs[1].Err != nil || len(runs[1].Result.Manifests) == 0 {
+	if err == nil || len(runs) != 2 || runs[0].Orchestrator == nil || runs[0].Result == nil || runs[1].Orchestrator == nil || runs[1].Err != nil || len(runs[1].Result.Manifests) == 0 {
 		t.Fatalf("bootstrap failure affected sibling: runs=%+v error=%v", runs, err)
 	}
 }

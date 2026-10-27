@@ -23,8 +23,11 @@ func BenchmarkPlan_RepeatedIdentity(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				if len(entries) != 2 {
-					b.Fatalf("entries: got %d, want 2", len(entries))
+				if len(entries) != 1 {
+					b.Fatalf("entries: got %d, want 1", len(entries))
+				}
+				if entries[0].Path != root {
+					b.Fatalf("entry: got %+v, want path %q", entries[0], root)
 				}
 			}
 		})

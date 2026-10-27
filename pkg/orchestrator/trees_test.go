@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,13 +32,54 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
+	t.Parallel()
+	authored := testutil.KustomizationID("apps", "owner")
+	internal := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".").Named()
+	other := testutil.KustomizationID("apps", "other")
+	for _, pair := range [][2]manifest.NamedResource{{authored, internal}, {internal, authored}} {
+		t.Run(pair[0].NamespacedName(), func(t *testing.T) {
+			t.Parallel()
+			from, to := pair[0], pair[1]
+			readers := []manifest.FileReader{
+				{Reader: from, Source: manifest.BootstrapSourceID, Exact: true},
+				{Reader: other, Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "other"}},
+			}
+			index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"removed.yaml": readers}}
+			projected := projectEntryReaders(index, discovery.Binding{Producer: from}, discovery.Binding{Producer: to})
+			assert.Diff(t, index.Readers["removed.yaml"], readers)
+			want := append([]manifest.FileReader{}, readers...)
+			want[0].Reader = to
+			assert.Diff(t, projected.Readers["removed.yaml"], want)
+
+			changes := change.NewSet([]string{"removed.yaml"})
+			assert.NoError(t, changes.CollectInputs(t.Context(), fstest.MapFS{"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")}}, "removed.yaml", true))
+			paired := changes.WithReaders(projected, &manifest.DiscoveryIndex{})
+			st := store.New()
+			local := &manifest.Kustomization{Name: to.Name, Namespace: to.Namespace}
+			st.AddObject(local)
+			root := t.TempDir()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			filter := change.NewFilter(paired, &manifest.DiscoveryIndex{}, st, root)
+			assert.Equal(t, filter.ShouldReconcile(to), true)
+			assert.Equal(t, filter.ShouldReconcile(from), false)
+			assert.Diff(t, changes.Paths(), []string{"removed.yaml"})
+			assert.Diff(t, index.Readers["removed.yaml"], readers)
+			projected.Readers["removed.yaml"][0].Exact = false
+			assert.Equal(t, index.Readers["removed.yaml"][0].Exact, true)
+		})
+	}
+}
 
 // writeCluster lays out a two-app Flux cluster under dir: app-a renders
 // ConfigMap cfg-a (data k=aVal), app-b renders ConfigMap cfg-b (data
@@ -52,6 +94,7 @@ func writeCluster(t *testing.T, dir, aVal, bVal string) {
 	cm := func(name, val string) string {
 		return "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: " + name + "}\ndata: {k: " + val + "}\n"
 	}
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks-a.yaml, ks-b.yaml]\n")
 	testutil.WriteFile(t, dir, "ks-a.yaml", ks("app-a"))
 	testutil.WriteFile(t, dir, "ks-b.yaml", ks("app-b"))
 	testutil.WriteFile(t, dir, "apps/app-a/kustomization.yaml", "resources:\n- cm.yaml\n")
@@ -144,6 +187,8 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks-a.yaml, ks-b.yaml, inputs]\n")
+				testutil.WriteFile(t, dir, "inputs/kustomization.yaml", "resources: [values.yaml]\n")
 				testutil.WriteFile(t, dir, "inputs/values.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: render-values, namespace: flux-system}\ndata: {VALUE: v%d}\n", i+1))
 				testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources:\n- cm.yaml\n")
 				testutil.WriteFile(t, dir, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cfg-a}\ndata: {k: '${VALUE}'}\n")
@@ -247,8 +292,8 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 			selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 				[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 			body, _, _, err := diff.Compare(
-				diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-				diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+				diff.Snapshot{Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+				diff.Snapshot{Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
 				selectedErr, diff.Options{Format: diff.FormatJSON})
 			if err != nil {
 				t.Fatal(err)
@@ -259,7 +304,15 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 			if err := json.Unmarshal(body, &output); err != nil {
 				t.Fatal(err)
 			}
-			changes := output.Changes
+			assert.Equal(t, len(output.Changes), 2)
+			changes := slices.DeleteFunc(output.Changes, func(change diff.Change) bool {
+				if change.Name == "render-values" {
+					assert.Equal(t, change.Parent.NamedResource, head.entryBinding.Producer)
+					assert.Equal(t, change.Status, diff.StatusChanged)
+					return true
+				}
+				return false
+			})
 			if len(changes) != 1 {
 				t.Fatalf("want exactly 1 change (cfg-a), got %d: %+v", len(changes), changes)
 			}
@@ -457,8 +510,8 @@ spec:
 	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
-		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-		diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+		diff.Snapshot{Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})
 	assert.NoError(t, err)
 	var output struct {
@@ -524,8 +577,8 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
-		diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable},
-		diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable},
+		diff.Snapshot{Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})
 	if err != nil {
 		t.Fatal(err)
@@ -684,6 +737,11 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/head_only_%t", scenario, headOnly), func(t *testing.T) {
 				root := t.TempDir()
 				writeCluster(t, root, "same", "same")
+				for _, name := range []string{"ks-a.yaml", "ks-b.yaml"} {
+					data, err := os.ReadFile(filepath.Join(root, name))
+					assert.NoError(t, err)
+					testutil.WriteFile(t, root, "flux/"+name, string(data))
+				}
 				input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 				assert.NoError(t, err)
 				cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 2, HeadOnly: headOnly, Tree: Tree{}}
@@ -692,14 +750,14 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 					filtered := scenario == "filtered_addition" && side == 0 || scenario == "filtered_deletion" && side == 1
 					if filtered {
 						current, _, err = gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{
-							Mode: gittree.Source, Current: current, Ignore: "ks-a.yaml\napps/app-a/\n",
-							Sparse: []string{"ks-b.yaml", "apps/app-b"},
+							Mode: gittree.Source, Current: current, Ignore: "flux/ks-a.yaml\napps/app-a/\n",
+							Sparse: []string{"flux/ks-b.yaml", "apps/app-b"},
 						})
 						assert.NoError(t, err)
 					}
 					opts := gittree.ViewOptions{Mode: gittree.Direct, Current: current}
 					if scenario == "differing_options" && side == 1 {
-						opts.Ignore, opts.Sparse = "ks-a.yaml\napps/app-a/\n", []string{"ks-b.yaml", "apps/app-b"}
+						opts.Ignore, opts.Sparse = "flux/ks-a.yaml\napps/app-a/\n", []string{"flux/ks-b.yaml", "apps/app-b"}
 					}
 					view, key, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, opts)
 					assert.NoError(t, err)
@@ -707,9 +765,9 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 					if view.Location() == nil || view.Location().ContentRoot == "" || view.Location().ContentRoot != input.LocalPath {
 						t.Fatalf("side %d location = %+v, want content root %s", side, view.Location(), input.LocalPath)
 					}
-					for _, name := range []string{"ks-a.yaml", "apps/app-a/kustomization.yaml", "apps/app-a/cm.yaml", "ks-b.yaml", "apps/app-b/cm.yaml"} {
+					for _, name := range []string{"flux/ks-a.yaml", "apps/app-a/kustomization.yaml", "apps/app-a/cm.yaml", "flux/ks-b.yaml", "apps/app-b/cm.yaml"} {
 						body, readErr := fs.ReadFile(view, name)
-						if filtered && (name == "ks-a.yaml" || strings.HasPrefix(name, "apps/app-a/")) {
+						if filtered && (name == "flux/ks-a.yaml" || strings.HasPrefix(name, "apps/app-a/")) {
 							assert.Equal(t, errors.Is(readErr, fs.ErrNotExist), true)
 						} else {
 							assert.NoError(t, readErr)
@@ -732,7 +790,7 @@ func TestRenderTrees_SuppliedViews(t *testing.T) {
 				case "explicit_empty":
 					cfg.ExternalChanges = change.NewSet(nil)
 				}
-				renderedTrees9, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+				renderedTrees9, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, Path: filepath.Join(root, "flux"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: root, Path: filepath.Join(root, "flux"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 				base, head := renderedTrees9[0], renderedTrees9[1]
 				assert.NoError(t, err)
 				for side, rendered := range []Rendered{base, head} {
@@ -948,6 +1006,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						inputs := [2]*store.SourceArtifact{}
 						for i := range inputs {
 							input := &joinedTreeFS{payloadPath: "app/payload.txt", FS: fstest.MapFS{
+								"kustomization.yaml":     {Data: []byte("resources: [flux.yaml]\n")},
 								"flux.yaml":              {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
 								"app/kustomization.yaml": {Data: []byte("configMapGenerator: [{name: held, files: [payload.txt]}]\n")},
 								"app/payload.txt":        {Data: []byte("fixture")},
@@ -1101,4 +1160,109 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 			})
 		}
 	})
+}
+
+type countedNodeController struct {
+	reconcileController
+	calls, admitted map[manifest.NamedResource]*atomic.Int64
+}
+
+type reconcileController interface {
+	Owns(manifest.NamedResource) bool
+	ReconcileNode(context.Context, manifest.NamedResource, manifest.DrainLevel) *base.Execution
+	PreviousRender(context.Context, manifest.BaseManifest, *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool)
+}
+
+func (c countedNodeController) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+	c.calls[id].Add(1)
+	execution := c.reconcileController.ReconcileNode(ctx, id, level)
+	if execution != nil && execution.Reads.Admitted() {
+		c.admitted[id].Add(1)
+	}
+	return execution
+}
+
+type countedChartFetcher struct {
+	chart string
+	calls atomic.Int64
+}
+
+func (f *countedChartFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
+	f.calls.Add(1)
+	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: f.chart, FS: os.DirFS(f.chart),
+		Digest: digest, Revision: "1.0.0@" + digest, Key: digest}, nil
+}
+
+func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	for side, root := range roots {
+		writeCluster(t, root, "same", "same")
+		testutil.WriteFile(t, root, "ks-a.yaml", testutil.KustomizationYAML("app-a", "flux-system", "  interval: "+[]string{"1h", "2h"}[side]+"\n  path: ./apps/app-a\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [ks-a.yaml, ks-b.yaml, chart.yaml, release.yaml]\n")
+		testutil.WriteFile(t, root, "chart.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: unrelated-chart, namespace: flux-system}\nspec: {url: 'oci://fixture.invalid/chart', ref: {tag: 1.0.0}}\n")
+		testutil.WriteFile(t, root, "release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated-release, namespace: flux-system}\nspec: {interval: 1h, chartRef: {kind: OCIRepository, name: unrelated-chart}}\n")
+	}
+	chart := t.TempDir()
+	testutil.WriteFile(t, chart, "fixture/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+	testutil.WriteFile(t, chart, "fixture/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: from-chart}\n")
+	inputs := [2]*store.SourceArtifact{testDirectoryInput(t, roots[0]), testDirectoryInput(t, roots[1])}
+	changes, err := change.Detect(t.Context(), inputs[0], inputs[1])
+	assert.NoError(t, err)
+	assert.Diff(t, changes.Paths(), []string{"ks-a.yaml"})
+	for side, root := range roots {
+		for _, changedOnly := range []bool{false, true} {
+			t.Run(fmt.Sprintf("side_%d/changed_%t", side, changedOnly), func(t *testing.T) {
+				tree := Tree{Path: root, RepoRoot: root, Input: inputs[side], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}}
+				if changedOnly {
+					tree.BaseInput, tree.ExternalChanges = inputs[1-side], changes
+				}
+				o, err := newTestOrchestrator(t, tree, Config{Concurrency: 2})
+				assert.NoError(t, err)
+				fetcher := &countedChartFetcher{chart: chart}
+				o.src.Fetchers[manifest.KindOCIRepository] = fetcher
+				assert.NoError(t, o.bootstrap(t.Context()))
+				ids := []manifest.NamedResource{o.entryBinding.Producer, testutil.KustomizationID("flux-system", "app-a"), testutil.KustomizationID("flux-system", "app-b"), {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "unrelated-release"}}
+				calls, admitted := map[manifest.NamedResource]*atomic.Int64{}, map[manifest.NamedResource]*atomic.Int64{}
+				for _, id := range ids {
+					calls[id], admitted[id] = new(atomic.Int64), new(atomic.Int64)
+				}
+				o.controllers.Kustomization = countedNodeController{o.ksc, calls, admitted}
+				o.controllers.HelmRelease = countedNodeController{o.hrc, calls, admitted}
+				runErr := o.run(t.Context())
+				assert.NoError(t, runErr)
+				for _, id := range ids {
+					t.Logf("work %s calls=%d admitted=%d", id, calls[id].Load(), admitted[id].Load())
+				}
+				t.Logf("chart acquisitions=%d", fetcher.calls.Load())
+				if changedOnly {
+					assert.Equal(t, admitted[ids[2]].Load(), int64(0))
+					assert.Equal(t, admitted[ids[3]].Load(), int64(0))
+					assert.Equal(t, fetcher.calls.Load(), int64(0))
+					assert.Equal(t, o.store.GetArtifact(ids[2], store.ArtifactContent), store.Artifact(nil))
+					assert.Equal(t, o.store.GetArtifact(ids[3], store.ArtifactContent), store.Artifact(nil))
+				} else {
+					assert.Equal(t, admitted[ids[2]].Load(), int64(1))
+					if admitted[ids[3]].Load() < 1 {
+						t.Fatal("full-render control did not reconcile the release")
+					}
+					assert.Equal(t, fetcher.calls.Load(), int64(1))
+				}
+				assert.Equal(t, admitted[ids[0]].Load(), int64(1))
+				assert.Equal(t, admitted[ids[1]].Load(), int64(1))
+				result, err := o.collectResult(runErr)
+				assert.NoError(t, err)
+				var interval any
+				for _, batch := range result.Manifests {
+					for _, doc := range batch.Documents {
+						metadata, _ := doc["metadata"].(map[string]any)
+						if doc["kind"] == manifest.KindKustomization && metadata["name"] == "app-a" {
+							interval = doc["spec"].(map[string]any)["interval"]
+						}
+					}
+				}
+				assert.Equal(t, interval, any([]string{"1h", "2h"}[side]))
+			})
+		}
+	}
 }

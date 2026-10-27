@@ -26,6 +26,7 @@ func TestBootstrap_RemoteGeneratorSharedAcquisition(t *testing.T) {
 	}))
 	defer server.Close()
 	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml]\n")
 	testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  interval: 5m\n"))
 	testutil.WriteFile(t, root, "apps/kustomization.yaml", fmt.Sprintf(`namespace: apps
 configMapGenerator:
@@ -43,6 +44,7 @@ generatorOptions:
 	assert.NoError(t, err)
 	defer func() { o.stop() }()
 	assert.NoError(t, o.bootstrap(t.Context()))
+	reconcileEntryForTest(t, o)
 	for name, want := range map[string]map[string]any{
 		"env": {"VALUE": "stable"}, "file": {"payload": "VALUE=stable\n"},
 	} {

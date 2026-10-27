@@ -89,8 +89,8 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 	if _, _, _, err := cache.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil); !errors.Is(err, errdef.ErrNotFound) {
 		t.Fatalf("standalone render wrote durable output: %v", err)
 	}
-	assert.NoError(t, cache.RecordRender(t.Context(), owner, receipt, nil))
-	assert.NoError(t, cache.RecordRender(t.Context(), owner, nil, emptyRenderInventory))
+	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: nil}))
+	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: nil, Records: emptyRenderInventory}))
 	if records, complete := cache.PreviousRender(t.Context(), req, owner); complete || records != nil {
 		t.Fatal("unaccepted output supplied history")
 	}
@@ -102,7 +102,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		child := owner
 		child.Name = "child"
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/red"}}}}
-		assert.NoError(t, cache.RecordRender(t.Context(), owner, receipt, maps.All(records)))
+		assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: maps.All(records)}))
 		fresh := newTestTreeCache(t, cacheDir)
 		previous, complete := fresh.PreviousRender(t.Context(), req, owner)
 		assert.Equal(t, complete, true)
@@ -119,7 +119,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			publisher := newTestTreeCache(t, directory)
 			_, pending, err := Render(t.Context(), publisher, input, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
-			assert.NoError(t, publisher.RecordRender(t.Context(), owner, pending, maps.All(records)))
+			assert.NoError(t, publisher.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: pending, Records: maps.All(records)}))
 			reader := newTestTreeCache(t, directory)
 			counted.opens.Store(0)
 			previous, complete := reader.PreviousRender(t.Context(), input, owner)
@@ -170,7 +170,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			isolated := newTestTreeCache(t, t.TempDir())
 			_, current, err := testutil.RenderMaps(Render(t.Context(), isolated, mutable, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
-			assert.NoError(t, isolated.RecordRender(t.Context(), owner, current, maps.All(records)))
+			assert.NoError(t, isolated.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: current, Records: maps.All(records)}))
 			if _, complete := isolated.PreviousRender(t.Context(), mutable, owner); !complete {
 				t.Fatal("unchanged mutable history missed")
 			}
@@ -192,7 +192,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			_, pending, err := testutil.RenderMaps(Render(t.Context(), renderer, input, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			input.SkipKinds[0] = "Different"
-			assert.NoError(t, renderer.RecordRender(t.Context(), owner, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: pending, Records: maps.All(records)}))
 			before := input
 			before.SkipKinds = []string{"Skipped"}
 			if _, complete := renderer.PreviousRender(t.Context(), before, owner); !complete {
@@ -246,7 +246,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 					}
 				}
 			}
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			initialKey := storedKey()
 			_, pending, err = testutil.RenderMaps(Render(t.Context(), renderer, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
@@ -255,7 +255,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 				t.Fatal("warm receipt did not carry decoded accepted evidence")
 			}
 			check := unchanged()
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			check()
 			reader, _, _, err := renderer.owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
 			assert.NoError(t, err)
@@ -267,17 +267,17 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			})
 			assert.NoError(t, err)
 
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			assert.Equal(t, storedKey(), initialKey)
 			closeTestTreeCache(t, renderer)
 			renderer = open()
 			assert.Equal(t, storedKey(), initialKey)
 			check = unchanged()
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			check()
 			initialIndex, err := os.ReadFile(indexPath)
 			assert.NoError(t, err)
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, emptyRenderInventory))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: emptyRenderInventory}))
 			changedIndex, err := os.ReadFile(indexPath)
 			assert.NoError(t, err)
 			if storedKey() == initialKey {
@@ -295,34 +295,34 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			assert.NoError(t, err)
 			foreign := accepting
 			foreign.Namespace = "foreign"
-			assert.NoError(t, renderer.RecordRender(t.Context(), foreign, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: foreign, Receipt: pending, Records: maps.All(records)}))
 			if _, complete := renderer.PreviousRender(t.Context(), req, accepting); complete {
 				t.Fatal("foreign overwrite retained the previous owner's history")
 			}
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, borrowedReceipt, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: borrowedReceipt, Records: maps.All(records)}))
 			assert.Equal(t, storedKey(), initialKey)
 			previous, complete = renderer.PreviousRender(t.Context(), req, accepting)
 			assert.Equal(t, complete, true)
 			got := maps.Collect(previous)
 			assert.Diff(t, got, records)
 			check = unchanged()
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			check()
 			canceled, cancel := context.WithCancel(t.Context())
 			cancel()
 			check = unchanged()
-			if err := renderer.RecordRender(canceled, accepting, pending, maps.All(records)); !errors.Is(err, context.Canceled) {
+			if err := renderer.RecordRender(canceled, RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled same-frame publication: %v", err)
 			}
 			check()
 			check = unchanged()
-			if err := renderer.RecordRender(t.Context(), accepting, manifest.NewRenderReceipt("invalid", nil), maps.All(records)); !errors.Is(err, manifest.ErrFlux) {
+			if err := renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: manifest.NewRenderReceipt("invalid", nil), Records: maps.All(records)}); !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("failed receipt publication: %v", err)
 			}
 			check()
 			check = unchanged()
 			closeTestTreeCache(t, renderer)
-			if err := renderer.RecordRender(t.Context(), accepting, pending, emptyRenderInventory); !errors.Is(err, manifest.ErrFlux) {
+			if err := renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: emptyRenderInventory}); !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("closed owner lookup: %v", err)
 			}
 			check()
@@ -347,7 +347,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				isolated := newTestTreeCache(t, t.TempDir())
-				assert.NoError(t, isolated.RecordRender(t.Context(), owner, receipt, maps.All(records)))
+				assert.NoError(t, isolated.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: maps.All(records)}))
 				changed := req
 				tc.mutate(&changed)
 				if _, complete := isolated.PreviousRender(t.Context(), changed, owner); complete {
@@ -365,7 +365,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		}
 		canceled, cancel := context.WithCancel(t.Context())
 		cancel()
-		if err := cache.RecordRender(canceled, owner, receipt, emptyRenderInventory); !errors.Is(err, context.Canceled) {
+		if err := cache.RecordRender(canceled, RenderAcceptance{Owner: owner, Receipt: receipt, Records: emptyRenderInventory}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled acceptance: %v", err)
 		}
 		previous, complete = fresh.PreviousRender(t.Context(), req, owner)
@@ -373,7 +373,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		for id := range previous {
 			assert.Equal(t, id, child)
 		}
-		assert.NoError(t, cache.RecordRender(t.Context(), owner, receipt, emptyRenderInventory))
+		assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: emptyRenderInventory}))
 		previous, complete = fresh.PreviousRender(t.Context(), req, owner)
 		assert.Equal(t, complete && previous != nil, true)
 		for range previous {
@@ -383,7 +383,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		remote.Reads.Remotes = []remoteEntry{{Input: remoteInput{URL: "https://example.invalid/remote"}}}
 		remoteReceipt, err := encodeFrame(remote, frame.output)
 		assert.NoError(t, err)
-		assert.NoError(t, cache.RecordRender(t.Context(), owner, manifest.NewRenderReceipt(renderFrame{header: remote, binding: frame.binding, output: frame.output, encoded: remoteReceipt}, equalRenderFrame), maps.All(records)))
+		assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: manifest.NewRenderReceipt(renderFrame{header: remote, binding: frame.binding, output: frame.output, encoded: remoteReceipt}, equalRenderFrame), Records: maps.All(records)}))
 		fresh.SetGitBaseFetcher(func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 			t.Fatal("history acquired a remote")
 			return nil, nil
@@ -427,7 +427,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			renderer := newTestTreeCache(t, t.TempDir())
 			_, receipt, err := testutil.RenderMaps(Render(t.Context(), renderer, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
-			assert.NoError(t, renderer.RecordRender(t.Context(), owner, receipt, emptyRenderInventory))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: emptyRenderInventory}))
 			if _, complete := renderer.PreviousRender(t.Context(), req, owner); !complete {
 				t.Fatal("matching source binding missed")
 			}
@@ -473,7 +473,115 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	frame := renderFrame{header: renderHeader{Key: "oversized-accepted"}, output: payload}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {File: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))}}
-	if err := renderer.RecordRender(t.Context(), owner, receipt, maps.All(records)); !errors.Is(err, manifest.ErrFlux) {
+	if err := renderer.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: maps.All(records)}); !errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("oversized accepted inventory was published: %v", err)
 	}
+}
+
+func TestRenderKey_DependsOnProjection(t *testing.T) {
+	t.Parallel()
+	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
+	spec := &manifest.Kustomization{Name: "emitter", Namespace: "apps", Path: "."}
+	spec.DependsOn = []kustomizev1.DependencyReference{{Name: "${PREFIX:-dev-}ready", Namespace: "${TEAM:-apps}"}}
+	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
+	snapshot := values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"PREFIX": "prod-", "TEAM": "control"}}}})
+	projected := req
+	projected.Spec = manifest.MapDependsOn(spec, snapshot.Resolve, snapshot.Resolve).(*manifest.Kustomization)
+	cache := newTestTreeCache(t, t.TempDir())
+	before, err := cache.prepareRender(t.Context(), req)
+	assert.NoError(t, err)
+	after, err := cache.prepareRender(t.Context(), projected)
+	assert.NoError(t, err)
+	assert.Equal(t, before.key, after.key)
+	assert.Equal(t, spec.DependsOn[0].Name, "${PREFIX:-dev-}ready")
+	for _, change := range []struct {
+		name   string
+		mutate func(*manifest.Kustomization)
+	}{
+		{"path", func(k *manifest.Kustomization) { k.Path = "other" }},
+		{"name", func(k *manifest.Kustomization) { k.Name = "other" }},
+		{"namespace", func(k *manifest.Kustomization) { k.Namespace = "other" }},
+		{"target namespace", func(k *manifest.Kustomization) { k.TargetNamespace = "other" }},
+		{"inline", func(k *manifest.Kustomization) {
+			k.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "other"}}
+		}},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			t.Parallel()
+			changed := req
+			changed.Spec = spec.Clone()
+			change.mutate(changed.Spec)
+			next, err := cache.prepareRender(t.Context(), changed)
+			assert.NoError(t, err)
+			if next.key == before.key {
+				t.Fatal("render-affecting change retained key")
+			}
+		})
+	}
+}
+
+func TestRecordRender_FinalDependencyBinding(t *testing.T) {
+	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Skip("requires a clean VCS-stamped build for positive persistence")
+	}
+	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
+	cacheDir := t.TempDir()
+	renderer := newTestTreeCache(t, cacheDir)
+	spec := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: ".", DependsOn: []kustomizev1.DependencyReference{{Name: "${DEP}"}}}
+	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
+	_, pending, err := Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: spec.Named(), Receipt: pending, Records: emptyRenderInventory}))
+	renderer = newTestTreeCache(t, cacheDir)
+	_, pending, err = Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	before := pending.Value().(renderFrame)
+	if before.accepted == nil || before.acceptedKey == "" || before.identity == "" || before.raw == "" {
+		t.Fatal("warm receipt lacks publication memos")
+	}
+	before.encoded, err = encodeFrame(before.header, before.output)
+	assert.NoError(t, err)
+	_, _, before.lookup, err = renderer.owner.Blob(t.Context(), sourcecache.BlobKey{Content: before.header.Key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	assert.NoError(t, err)
+	pending = manifest.NewRenderReceipt(before, equalRenderFrame)
+	wire, output := bytes.Clone(before.encoded), bytes.Clone(before.output)
+	final := values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"DEP": "ready"}}}})
+	projected := req
+	projected.Spec = manifest.MapDependsOn(spec, final.Resolve, nil).(*manifest.Kustomization)
+	projected.DependencySubstitutions = final
+	if _, complete := renderer.PreviousRender(t.Context(), projected, spec.Named()); complete {
+		t.Fatal("unaccepted snapshot supplied history")
+	}
+	acceptance := RenderAcceptance{Owner: spec.Named(), Receipt: pending, Records: emptyRenderInventory, DependencySubstitutions: final}
+	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	if records, complete := renderer.PreviousRender(t.Context(), projected, spec.Named()); !complete || records == nil {
+		t.Fatal("final projected binding missed accepted history")
+	}
+	if _, complete := renderer.PreviousRender(t.Context(), req, spec.Named()); complete {
+		t.Fatal("displaced snapshot retained history")
+	}
+	original := pending.Value().(renderFrame)
+	assert.Equal(t, original.binding.Dependencies.Equal(before.binding.Dependencies), true)
+	assert.Equal(t, original.header.Binding, before.header.Binding)
+	assert.Equal(t, original.raw, before.raw)
+	assert.Equal(t, original.lookup, before.lookup)
+	assert.Equal(t, original.acceptedKey, before.acceptedKey)
+	assert.Equal(t, original.identity, before.identity)
+	assert.Equal(t, original.accepted == before.accepted, true)
+	assert.Equal(t, bytes.Equal(original.encoded, wire) && bytes.Equal(original.output, output), true)
+	_, rebound, err := Render(t.Context(), renderer, projected, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	after := rebound.Value().(renderFrame)
+	assert.Equal(t, after.header.Key, before.header.Key)
+	assert.Equal(t, bytes.Equal(after.output, output), true)
+	assert.Diff(t, after.header.Reads, before.header.Reads)
+	index := filepath.Join(cacheDir, "oci", "index.json")
+	stamp := time.Unix(1, 0)
+	assert.NoError(t, os.Chtimes(index, stamp, stamp))
+	acceptance.Receipt = rebound
+	assert.NoError(t, renderer.RecordRender(t.Context(), acceptance))
+	info, err := os.Stat(index)
+	assert.NoError(t, err)
+	assert.Equal(t, info.ModTime().Equal(stamp), true)
 }

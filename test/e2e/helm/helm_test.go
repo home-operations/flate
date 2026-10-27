@@ -24,13 +24,12 @@ func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
 		{"explicit override", "  targetNamespace: target\n  releaseName: chosen\n", "chosen"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+			dir := simpleFixture(t)
 			file := filepath.Join(dir, "cluster", "helmrelease.yaml")
 			body, err := os.ReadFile(file)
 			assert.NoError(t, err)
 			testutil.WriteFileAt(t, file, string(body)+tc.spec)
-			out := harness.RunCLIOutputOnly(t, "get", "hr", "--path", dir, "-o", "yaml")
+			out := harness.RunCLIOutputOnly(t, "get", "hr", "--path", filepath.Join(dir, "cluster"), "-o", "yaml")
 			for _, want := range []string{"sourceRef:", "releaseName: " + tc.want} {
 				if !strings.Contains(out, want) {
 					t.Errorf("missing %q in projected hr YAML:\n%s", want, out)
@@ -41,8 +40,7 @@ func TestE2E_GetHR_YAMLExposesProjectedFields(t *testing.T) {
 }
 
 func TestE2E_BuildHR(t *testing.T) {
-	dir := t.TempDir()
-	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+	dir := simpleFixture(t)
 	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", `apiVersion: v1
 kind: ConfigMapList
 items:
@@ -63,7 +61,7 @@ stringData: {greeting: hello-from-secret}
 		{name: "secret included", wantSecret: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := harness.RunCLIStdout(t, "build", "hr", "--path", dir,
+			out := harness.RunCLIStdout(t, "build", "hr", "--path", filepath.Join(dir, "cluster"),
 				"--skip-kinds="+tc.skip, "--concurrency", "2", "--cache-dir", t.TempDir())
 			if !strings.Contains(out, "demo-cm") {
 				t.Errorf("missing rendered HR ConfigMap:\n%s", out)
@@ -75,7 +73,7 @@ stringData: {greeting: hello-from-secret}
 				t.Errorf("Secret present=%v, want %v:\n%s", got, tc.wantSecret, out)
 			}
 			if !tc.wantSecret {
-				again := harness.RunCLIStdout(t, "build", "hr", "--path", dir,
+				again := harness.RunCLIStdout(t, "build", "hr", "--path", filepath.Join(dir, "cluster"),
 					"--skip-kinds="+tc.skip, "--concurrency", "2", "--cache-dir", t.TempDir())
 				if out != again {
 					t.Errorf("build hr output differs between runs (length %d vs %d)", len(out), len(again))
@@ -94,10 +92,9 @@ func TestE2E_MalformedChartCRD(t *testing.T) {
 		{"included", "Secret"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+			dir := simpleFixture(t)
 			testutil.WriteFile(t, dir, "charts/mychart/crds/bad.yaml", "apiVersion: [\n")
-			out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", dir,
+			out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
 				"--skip-kinds="+tc.skip, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 			if code != 1 {
 				t.Fatalf("got exit %d, want 1:\n%s", code, out)
@@ -145,7 +142,8 @@ func TestE2E_HelmSourceRootValuesFiles(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := sourceValuesFixture(t, tc.files, tc.ignore, false)
-			args := []string{"build", "hr", "--path", dir,
+			testutil.GitInit(t, dir)
+			args := []string{"build", "hr", "--path", filepath.Join(dir, "cluster"),
 				"--concurrency", "2", "--cache-dir", t.TempDir()}
 			out := harness.RunCLIStdout(t, args...)
 			if !strings.Contains(out, "greeting: production") {
@@ -319,6 +317,22 @@ spec:
 	}
 }
 
+func simpleFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+	testutil.GitInit(t, dir)
+	file := filepath.Join(dir, "cluster/helmrelease.yaml")
+	body, err := os.ReadFile(file)
+	assert.NoError(t, err)
+	_, release, found := strings.Cut(string(body), "---\n")
+	if !found {
+		t.Fatal("simple fixture has no HelmRelease document")
+	}
+	testutil.WriteFileAt(t, file, release)
+	return dir
+}
+
 func sourceValuesFixture(t *testing.T, files string, ignore, chartRef bool) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -404,8 +418,7 @@ func initGitFixtureFrom(t *testing.T, src string) (clusterPath, repoRoot string)
 }
 
 func TestE2E_ReadyExpr_HelmRelease(t *testing.T) {
-	dir := t.TempDir()
-	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+	dir := simpleFixture(t)
 	for _, name := range []string{"dependency", "consumer"} {
 		dependsOn := ""
 		if name == "consumer" {
@@ -432,7 +445,7 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 `)
 	var previousOut, previousErr string
 	for run := range 2 {
-		stdout, stderr := harness.RequireCLIOK(t, "build", "all", "--path", dir, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn")
+		stdout, stderr := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(dir, "cluster"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn")
 		if !strings.Contains(stdout, "name: consumer-output") || !strings.Contains(stdout, "greeting: desired-spec") || !strings.Contains(stdout, "version: v1") || strings.Contains(stderr, "readyExpr") {
 			t.Fatalf("Helm desired-spec readiness: stdout=%s stderr=%s", stdout, stderr)
 		}
@@ -444,8 +457,7 @@ data: {greeting: '{{ .Values.greeting }}', version: '{{ .Values.releaseVersion }
 }
 
 func TestE2E_InvalidHelmList(t *testing.T) {
-	dir := t.TempDir()
-	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+	dir := simpleFixture(t)
 	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: invalid}}]\n")
 	for _, tc := range []struct {
 		name string
@@ -455,7 +467,7 @@ func TestE2E_InvalidHelmList(t *testing.T) {
 		{name: "excluded", skip: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"build", "hr", "--path", dir, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			args := []string{"build", "hr", "--path", filepath.Join(dir, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
 			if tc.skip {
 				args = append(args, "--skip-kinds=ConfigMapList")
 			}
@@ -474,8 +486,7 @@ func TestE2E_InvalidHelmList(t *testing.T) {
 }
 
 func TestE2E_HelmListMemberDiff(t *testing.T) {
-	before, after := t.TempDir(), t.TempDir()
-	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), before)
+	before, after := simpleFixture(t), t.TempDir()
 	body := `apiVersion: v1
 kind: ConfigMapList
 items:
@@ -487,7 +498,7 @@ items:
 	testutil.WriteFile(t, after, "charts/mychart/templates/configmap.yaml", body+"- metadata: {name: added}\n  data: {value: extra}\n")
 	for _, tc := range []struct{ current, original, status string }{{after, before, "added"}, {before, after, "removed"}} {
 		t.Run(tc.status, func(t *testing.T) {
-			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", tc.current, "--path-orig", tc.original, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+			out, stderr := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", filepath.Join(tc.current, "cluster"), "--path-orig", filepath.Join(tc.original, "cluster"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 			var result struct {
 				Changes []struct {
 					Name, Status string
@@ -598,10 +609,9 @@ func TestE2E_MalformedChartFailsProducer(t *testing.T) {
 		{"typed child", "null\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: invalid}\nspec:\n  interval: []\n  suspend: true\n  chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: charts}}}\n", "cannot unmarshal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+			dir := simpleFixture(t)
 			testutil.WriteFile(t, dir, "charts/mychart/templates/invalid.yaml", tc.body+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-sibling}\n")
-			args := []string{"build", "hr", "--path", dir, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+			args := []string{"build", "hr", "--path", filepath.Join(dir, "cluster"), "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
 			stdout, stderr, code := harness.RunCLIBuffers(args...)
 			if code != 1 || (!strings.Contains(stderr, "HelmRelease") || !strings.Contains(stderr, "apps/demo")) || strings.Count(stderr, tc.symptom) != 1 || !strings.Contains(stdout, "chart-sibling") {
 				t.Fatalf("exit=%d\n%s\n%s", code, stdout, stderr)

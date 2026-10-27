@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-func writeMemoryCluster(t *testing.T, producers int) string {
+func writeMemoryCluster(t *testing.T, producers int) (string, []manifest.NamedResource) {
 	t.Helper()
 	root := t.TempDir()
 	payload := strings.Repeat("x", 1024)
@@ -38,25 +39,49 @@ func writeMemoryCluster(t *testing.T, producers int) string {
 	testutil.WriteFile(t, root, "shared/kustomization.yaml", "resources:\n"+resources.String())
 	testutil.WriteFile(t, root, "charts/shared/Chart.yaml", "apiVersion: v2\nname: shared\nversion: 0.1.0\n")
 	testutil.WriteFile(t, root, "charts/shared/templates/objects.yaml", templates.String())
+	var declarations []manifest.NamedResource
 	for n := range producers {
 		name := fmt.Sprintf("producer-%04d", n)
 		var declaration string
 		if n%2 == 0 {
 			testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [../../shared]\nnamePrefix: "+name+"-\n")
 			declaration = fmt.Sprintf("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: %s, namespace: flux-system}\nspec:\n  interval: 10m\n  path: ./apps/%s\n  sourceRef: {kind: GitRepository, name: cluster}\n", name, name)
+			declarations = append(declarations, testutil.KustomizationID("flux-system", name))
 		} else {
 			declaration = fmt.Sprintf("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: %s, namespace: flux-system}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/shared\n      sourceRef: {kind: GitRepository, name: cluster}\n", name)
+			declarations = append(declarations, testutil.HelmReleaseID("flux-system", name))
 		}
 		testutil.WriteFile(t, root, "flux/"+name+".yaml", declaration)
 	}
-	return root
+	return root, declarations
+}
+
+func memoryWorkloadBatches(t *testing.T, result *Result, entry manifest.NamedResource, want []manifest.NamedResource) []manifest.DocumentBatch {
+	t.Helper()
+	var workloads []manifest.DocumentBatch
+	var declarations []manifest.NamedResource
+	for _, batch := range result.Manifests {
+		if batch.Parent == nil || !batch.Parent.Named().ReportHidden() {
+			workloads = append(workloads, batch)
+			continue
+		}
+		assert.Equal(t, batch.Parent.Named(), entry)
+		for _, doc := range batch.Documents {
+			declarations = append(declarations, manifest.DocIdentity(doc))
+		}
+	}
+	slices.SortFunc(declarations, manifest.NamedResource.Compare)
+	want = slices.Clone(want)
+	slices.SortFunc(want, manifest.NamedResource.Compare)
+	assert.Diff(t, declarations, want)
+	return workloads
 }
 
 func TestRender_MemorySharedOwner(t *testing.T) {
 	t.Parallel()
 	t.Run("local", func(t *testing.T) {
 		t.Parallel()
-		root := writeMemoryCluster(t, 2)
+		root, declarations := writeMemoryCluster(t, 2)
 		var calls int
 		var fingerprints [2][32]byte
 		func() {
@@ -69,7 +94,7 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 				result, renderErr := render.render(t.Context())
 				assert.NoError(t, renderErr)
 				count := 0
-				for _, batch := range result.Manifests {
+				for _, batch := range memoryWorkloadBatches(t, result, render.entryBinding.Producer, declarations) {
 					count += len(batch.Documents)
 				}
 				assert.Equal(t, count, 20)
@@ -178,7 +203,7 @@ func TestRender_MemorySparseGit(t *testing.T) {
 						t.Fatal("unrelated sibling reconciled")
 					}
 					count := 0
-					for _, batch := range side.Result.Manifests {
+					for _, batch := range memoryWorkloadBatches(t, side.Result, side.entryBinding.Producer, []manifest.NamedResource{app, sibling}) {
 						if batch.Parent == nil || batch.Parent.Named().Name != "app" {
 							t.Fatalf("unrelated output parent=%v", batch.Parent)
 						}
@@ -208,14 +233,14 @@ func TestRender_MemoryContained(t *testing.T) {
 	if os.Getenv("FLATE_E8_SLOW") != "1" {
 		t.Skip("MEM-CONTAINED not-run: env FLATE_E8_SLOW=1 go test ./pkg/orchestrator -run '^TestRender_MemoryContained$' -count=1 -v")
 	}
-	root := writeMemoryCluster(t, 1000)
+	root, declarations := writeMemoryCluster(t, 1000)
 	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: 16})
 	assert.NoError(t, err)
 	result, renderErr := o.render(t.Context())
 	assert.NoError(t, renderErr)
 	parents := make(map[manifest.NamedResource]int)
 	objects := make(map[string]bool)
-	for _, batch := range result.Manifests {
+	for _, batch := range memoryWorkloadBatches(t, result, o.entryBinding.Producer, declarations) {
 		if batch.Parent == nil {
 			t.Fatal("ownerless workload output")
 		}

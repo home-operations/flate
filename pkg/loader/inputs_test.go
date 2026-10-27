@@ -627,7 +627,7 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 		assert.Equal(t, len(result.ancestors), 0)
 		assert.Diff(t, result.readers, frozen.Readers["missing"])
 	}
-	if diff := cmp.Diff(frozen, *l.Index, cmpopts.EquateErrors()); diff != "" {
+	if diff := cmp.Diff(frozen, *l.Index, cmpopts.EquateErrors(), cmp.Comparer(manifest.Equal)); diff != "" {
 		t.Fatalf("frozen index changed (-want +got): %s", diff)
 	}
 }

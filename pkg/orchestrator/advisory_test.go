@@ -93,6 +93,7 @@ func TestRenderTrees_ClusterAdvisories(t *testing.T) {
 					}
 					root := t.TempDir()
 					writeSubstitutionCluster(t, root, "settings", fmt.Sprintf("${VALUE}-%d", side))
+					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, settings.yaml]\n")
 					testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
 					failed := scenario == "head_failed" && side == manifest.TreeHead || scenario == "base_failed" && side == manifest.TreeBase
 					if failed {
@@ -136,6 +137,7 @@ func TestRenderTrees_ClusterAdvisories(t *testing.T) {
 func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "settings", "${VALUE}")
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, source.yaml, settings.yaml]\n")
 	testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  sourceRef: {kind: GitRepository, name: remote, namespace: apps}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: settings}]\n"))
 	testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: apps}\nspec: {url: 'https://fixture.invalid/source', interval: 1h}\n")
 	testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")

@@ -718,7 +718,7 @@ func (r *ReadSet) Bind(emission *Emission) {
 		emission.entriesOwned = !shared && !entriesMatch(emission.Children, previous.entries)
 	}
 	if emission.entriesOwned {
-		emission.entries = r.store.prepareChildren(emission.Children)
+		emission.entries = r.store.prepareChildren(emission.Children, r.store.index.Load())
 	} else {
 		emission.entries = previous.entries
 	}

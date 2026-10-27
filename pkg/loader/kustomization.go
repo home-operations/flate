@@ -24,6 +24,7 @@ type document struct {
 	file          string
 	objects       []parsedObject
 	built         []store.Child
+	builtInput    *BuiltInput
 	selected      bool
 	eligible      fileEligibility
 	rootKnown     bool
@@ -32,6 +33,7 @@ type document struct {
 	lookup        map[manifest.NamedResource]store.Child
 	plugins       *[]pluginInputs
 	loaded        bool
+	scanExcluded  bool
 	bootstrap     bool
 	traversed     bool
 	adHoc         bool
@@ -68,6 +70,23 @@ type documentReader struct {
 	changed    []string
 	bootstrap  string
 	edgesDirty bool
+}
+
+func (r documentReader) scanExcluded(file string) bool {
+	for {
+		doc := r.cache[file]
+		if doc.loaded || doc.selected {
+			return false
+		}
+		if doc.scanExcluded {
+			return true
+		}
+		parent := filepath.Dir(file)
+		if parent == file {
+			return false
+		}
+		file = parent
+	}
 }
 
 type sourceReader interface {
@@ -123,7 +142,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 			if file == root || strings.HasPrefix(file, root+string(filepath.Separator)) {
 				cached := r.cache[file]
 				if cached.selected || cached.built != nil {
-					r.cache[file] = document{selected: cached.selected, built: cached.built}
+					r.cache[file] = document{selected: cached.selected, built: cached.built, builtInput: cached.builtInput}
 				} else {
 					delete(r.cache, file)
 				}

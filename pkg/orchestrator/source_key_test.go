@@ -202,9 +202,15 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 					accepted.URL = "oci://accepted.example"
 					s.AddObject(parent)
 					s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
+					production := manifest.Production{Owner: parent.Named(), Source: manifest.BootstrapSourceID}
+					if order == "excluded then refire" {
+						production.Authored = raw.Named()
+						production.Path = filepath.Join(dir, "unchanged.yaml")
+						production.File = "unchanged.yaml"
+					}
 					o.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 						parent.Named(): {File: "changed.yaml"},
-						raw.Named():    {File: "unchanged.yaml", Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID, Authored: raw.Named(), Path: filepath.Join(dir, "unchanged.yaml"), File: "unchanged.yaml"}}},
+						raw.Named():    {File: "unchanged.yaml", Productions: []manifest.Production{production}},
 					}}
 					if order == "excluded then refire" {
 						o.filter = change.NewFilter(change.NewSet([]string{"changed.yaml"}), o.index, s, "")

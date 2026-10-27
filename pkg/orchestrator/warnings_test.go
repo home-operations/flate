@@ -65,6 +65,7 @@ func TestRender_ScanAndPathWarnings(t *testing.T) {
 // consumes .Values wholesale (toYaml) produces no warning.
 func TestRender_StaleValuesWarning(t *testing.T) {
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [hr.yaml]\n")
 	testutil.WriteFile(t, dir, "hr.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:

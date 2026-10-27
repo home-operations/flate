@@ -894,6 +894,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [consumer.yaml, bridge.yaml, pin.yaml]\n")
 	testutil.WriteFile(t, root, "consumer.yaml", ksYAML("consumer", "consumer", "")+`  postBuild:
     substituteFrom: [{kind: ConfigMap, name: bridge-settings, optional: true}]
 `)
@@ -918,6 +919,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	reconcileEntryForTest(t, o)
 	o.configureControllers()
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()

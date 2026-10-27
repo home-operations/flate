@@ -1,4 +1,4 @@
-package kustomization
+package kustomize
 
 import (
 	"encoding/json"
@@ -10,8 +10,33 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 	sigsyaml "sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/pkg/kustomize"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/home-operations/flate/pkg/manifest"
 )
+
+// Shape applies producer metadata and effective substitutions to private decoded documents.
+func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict bool) error {
+	ks.EmissionPolicy().Stamp(docs)
+	if (ks.PostBuild == nil || len(ks.PostBuild.Substitute) == 0) && ks.SubstituteStrategy() != kustomizev1.SubstituteStrategyAlways {
+		return nil
+	}
+	var vars map[string]string
+	if ks.PostBuild != nil {
+		vars = manifest.VarsMap(ks.PostBuild.Substitute)
+	}
+	for i, occurrence := range docs {
+		doc := occurrence.Document
+		if occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) {
+			continue
+		}
+		substituted, err := substituteDoc(doc, vars, strict)
+		if err != nil {
+			return fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, ks.Named().NamespacedName(), err)
+		}
+		docs[i].Document = substituted
+	}
+	return nil
+}
 
 // Only expansion/escape text and scalars changed by JSON decoding need a
 // round trip. Both map keys and values must be inspected.
@@ -24,7 +49,7 @@ func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map
 	if err != nil {
 		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
 	}
-	out, err := kustomize.Substitute(raw, vars, strict)
+	out, err := Substitute(raw, vars, strict)
 	if err != nil {
 		return nil, err
 	}

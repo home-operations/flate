@@ -13,11 +13,30 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+func (o *Orchestrator) reportingClaims() []manifest.KSClaim {
+	candidates := o.store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)
+	for id, record := range o.index.Files() {
+		if !id.KindInfo().Structural {
+			continue
+		}
+		if ks, ok := o.unchangedDeclaration(id, record).(*manifest.Kustomization); ok {
+			candidates = append(candidates, ks)
+		}
+	}
+	slices.SortFunc(candidates, func(a, b *manifest.Kustomization) int { return a.Named().Compare(b.Named()) })
+	return loader.Claims(o.store, o.repoRoot, candidates)
+}
+
 // External sources cannot parent local-tree orphans.
 func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSClaim {
 	local := make([]manifest.KSClaim, 0, len(claims))
 	for _, claim := range claims {
-		source, _, _ := o.store.GetObject(claim.ID).SourcePath()
+		obj := o.store.GetObject(claim.ID)
+		if obj == nil {
+			record, _ := o.index.Lookup(claim.ID)
+			obj = o.unchangedDeclaration(claim.ID, record)
+		}
+		source, _, _ := obj.SourcePath()
 		if _, _, external := loader.SourceView(o.store, source, o.repoRoot); !external {
 			local = append(local, claim)
 		}
@@ -72,7 +91,7 @@ func (o *Orchestrator) classifyCompleted() {
 	if len(failed) == 0 {
 		return
 	}
-	claims := loader.Claims(o.store, o.repoRoot)
+	claims := o.reportingClaims()
 	orphans := o.detectOrphans(failed, o.reportOwnership(claims))
 	if len(orphans) != 0 && o.orphans == nil {
 		o.orphans = make(map[manifest.NamedResource]string)
@@ -85,8 +104,23 @@ func (o *Orchestrator) classifyCompleted() {
 
 func (o *Orchestrator) finalize() error {
 	failed := o.store.FailedResources()
-	ksCount := len(o.store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
-	hrCount := len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease))
+	counts := map[string]int{}
+	for info := range manifest.Kinds() {
+		if !info.Render {
+			continue
+		}
+		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
+			if !obj.Named().ReportHidden() {
+				counts[info.Kind]++
+			}
+		}
+	}
+	for id, record := range o.index.Files() {
+		if id.KindInfo().Render && !id.ReportHidden() && o.unchangedDeclaration(id, record) != nil {
+			counts[id.Kind]++
+		}
+	}
+	ksCount, hrCount := counts[manifest.KindKustomization], counts[manifest.KindHelmRelease]
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
 		o.store.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource, Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
 	}
@@ -169,14 +203,10 @@ func (o *Orchestrator) warnMissingCRDs() {
 }
 
 func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.StatusInfo, ksCount, hrCount int) {
-	// Counts describe the final supported inventory.
 	slog.Debug("orchestrator: reconcile complete",
 		"kustomizations", ksCount,
 		"helm_releases", hrCount,
 		"failed", len(failed))
-	// Surface a clear advisory when the scan turned up nothing — covers
-	// the "typo'd --path that happens to be an empty directory" case
-	// where flate would otherwise look like a silent success.
 	if ksCount == 0 && hrCount == 0 {
 		o.store.AddWarning(manifest.Warning{
 			Category: manifest.WarnEmptyScan,

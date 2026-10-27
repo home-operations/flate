@@ -446,6 +446,11 @@ func (w *traversal) ignoreMatches(root, path string, isDir bool) bool {
 	}
 	v := w.ignore.matches(path, root, isDir)
 	w.ignoreCache[key] = v
+	if v && w.policy == traversalAdmission {
+		doc := w.documents.cache[path]
+		doc.scanExcluded = true
+		w.documents.cache[path] = doc
+	}
 	return v
 }
 

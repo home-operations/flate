@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"context"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -10,6 +9,7 @@ import (
 
 func TestOrchestrator_UnreferencedBaseKSNotAdmitted(t *testing.T) {
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [cluster/flux-system.yaml]\n")
 
 	testutil.WriteFile(t, dir, "cluster/flux-system.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./apps/test\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/test/kustomization.yaml", "resources:\n  - ./app-a\n  - ./app-b\n")
@@ -23,7 +23,7 @@ func TestOrchestrator_UnreferencedBaseKSNotAdmitted(t *testing.T) {
 	testutil.WriteFile(t, dir, "apps/base/app-a/ks.yaml", testutil.KustomizationYAML("app-a", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 	testutil.WriteFile(t, dir, "apps/base/app-b/ks.yaml", testutil.KustomizationYAML("app-b", "flux-system", "  path: ./apps/${CLUSTER_ENV}/app-b\n  dependsOn:\n    - name: app-a\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n"))
 
-	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+	renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
 	if len(renderedSingleton1) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}

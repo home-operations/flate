@@ -42,9 +42,11 @@ func (p Production) Materializer(target NamedResource) NamedResource {
 // Path is empty for generated or projected objects that have no raw resource file.
 // Slices are borrowed and MUST remain immutable after discovery publishes the index.
 type DiscoveryRecord struct {
+	Declaration   BaseManifest               `json:"-"` // Immutable parsed input; absence does not imply publication.
 	Authored      NamedResource              // Proven raw identity; zero for generated records.
 	Path          string                     // Absolute raw resource path; empty for generated or projected records.
 	File          string                     // Diff coordinate; generator records use the declaration file.
+	BuilderOwner  NamedResource              // Actual owner of the immutable prepared declaration.
 	Builder       string                     // Authoritative package coordinate; empty for file-seeded objects.
 	Inputs        []string                   // Additional declaration inputs; these do not establish render ownership.
 	Refs          []NamedResource            // Authored chart/source references under the discovery identity.

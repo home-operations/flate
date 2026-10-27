@@ -905,6 +905,49 @@ func TestRun_ClusterReport_KindCollisionInventory(t *testing.T) {
 	assert.Diff(t, omega.Warnings, []manifest.Warning{warning})
 }
 
+func TestFinishSelected_FailureContext(t *testing.T) {
+	t.Parallel()
+	for _, pair := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pair_%t", pair), func(t *testing.T) {
+			t.Parallel()
+			root := testutil.KustomizationID("ns", "root")
+			missing := testutil.KustomizationID("ns", "missing")
+			leaf := testutil.KustomizationID("ns", "leaf")
+			dependent := testutil.KustomizationID("ns", "dependent")
+			labels := []string{"single"}
+			if pair {
+				labels = []string{"orig", "current"}
+			}
+			var sides []*selection.Selection
+			var rows []string
+			for _, label := range labels {
+				sides = append(sides, &selection.Selection{
+					Failed:  map[manifest.NamedResource]store.StatusInfo{root: {Status: store.StatusFailed, Message: label + " failure\nunchanged details"}},
+					Blocked: map[manifest.NamedResource][]manifest.NamedResource{leaf: {root}, dependent: {missing}},
+					Causes:  map[manifest.NamedResource][]manifest.NamedResource{root: {leaf}, missing: {dependent}},
+				})
+				prefix := ""
+				if pair {
+					prefix = label + " snapshot: "
+				}
+				rows = append(rows, "  ✗  "+prefix+"Kustomization  ns/root  "+label+" failure\n"+
+					"         unchanged details\n"+
+					"         "+prefix+"blocks ns/leaf\n"+
+					"  ✗  "+prefix+"Kustomization  ns/missing  not found\n"+
+					"         "+prefix+"required by ns/dependent")
+			}
+			var stderr bytes.Buffer
+			err := finishSelected(selectedRequest{pair: pair, stdout: io.Discard, stderr: &stderr},
+				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: errors.New("render failed")}}}, selectedPayload{})
+			if _, reported := errors.AsType[reportedError](err); !reported {
+				t.Fatalf("failure was not marked reported: %v", err)
+			}
+			want := "\n" + strings.Join(rows, "\n\n") + fmt.Sprintf("\n\n  ✗ %d failed · %d blocked\n", 2*len(sides), 2*len(sides))
+			assert.Equal(t, stderr.String(), want)
+		})
+	}
+}
+
 func TestFinishSelected_ReportOrder(t *testing.T) {
 	t.Parallel()
 	id := testutil.KustomizationID("ns", "same")

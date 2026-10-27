@@ -511,11 +511,12 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 					return slices.ContainsFunc(g.Test.Cases, func(c output.Case) bool { return c.ID == p.ID && c.Outcome == output.OutcomeFailed })
 				})
 			}
-			g.Models = append(g.Models, model)
 			context := ""
 			if req.pair {
 				context = []string{"orig snapshot", "current snapshot"}[j]
 			}
+			model.Context = context
+			g.Models = append(g.Models, model)
 			for _, warning := range selectedWarnings(side) {
 				report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i, Context: context})
 			}

@@ -33,6 +33,7 @@ type Missing struct {
 
 // Model is the partitioned, deterministic view the renderer consumes.
 type Model struct {
+	Context string
 	Primary []Primary
 	Missing []Missing
 	// Blocked is the count of distinct derived (cascaded) failures. It is the
@@ -177,26 +178,31 @@ func (e Encoder) Report(r Report, results Encoder) error {
 	return writeErr
 }
 
-// failuresBlock renders the root-cause rows: each primary failure (its inline
-// message and the resources it blocks) followed by each missing dependency.
 func (m Model) failuresBlock(names Names, color bool) string {
 	rows := make([]string, 0, len(m.Primary)+len(m.Missing))
 	for _, p := range m.Primary {
 		row := fmt.Sprintf("  %s  %s  %s",
-			Fail(GlyphFail, color), Dim(names.Subjects[p.ID].Kind, color), names.Subjects[p.ID].Name) +
+			Fail(GlyphFail, color), Dim(withContext(m.Context, names.Subjects[p.ID].Kind), color), names.Subjects[p.ID].Name) +
 			MessageTail(p.Msg, nil, color)
 		if len(p.Blocks) > 0 {
-			row += "\n" + msgIndent + Dim("blocks "+summarize(p.Blocks, names), color)
+			row += "\n" + msgIndent + Dim(withContext(m.Context, "blocks "+summarize(p.Blocks, names)), color)
 		}
 		rows = append(rows, row)
 	}
 	for _, mr := range m.Missing {
 		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s\n%s%s",
-			Fail(GlyphFail, color), Dim(names.Subjects[mr.ID].Kind, color), names.Subjects[mr.ID].Name,
+			Fail(GlyphFail, color), Dim(withContext(m.Context, names.Subjects[mr.ID].Kind), color), names.Subjects[mr.ID].Name,
 			Fail("not found", color), msgIndent,
-			Dim("required by "+summarize(mr.RequiredBy, names), color)))
+			Dim(withContext(m.Context, "required by "+summarize(mr.RequiredBy, names)), color)))
 	}
 	return strings.Join(rows, "\n")
+}
+
+func withContext(context, text string) string {
+	if context == "" {
+		return text
+	}
+	return context + ": " + text
 }
 
 func warningsBlock(warnings []Warning, color bool) string {
@@ -207,9 +213,7 @@ func warningsBlock(warnings []Warning, color bool) string {
 		if wn.Resource != (manifest.NamedResource{}) {
 			head = w.Subject.Kind + " " + w.Subject.Name + ": " + wn.Message
 		}
-		if w.Context != "" {
-			head = w.Context + ": " + head
-		}
+		head = withContext(w.Context, head)
 		if wn.Category != "" {
 			head = "[" + wn.Category + "] " + head
 		}

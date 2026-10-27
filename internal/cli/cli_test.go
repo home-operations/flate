@@ -17,6 +17,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/diff"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/orchestrator"
@@ -884,26 +885,52 @@ func (w failingWriter) Write(_ []byte) (int, error) {
 }
 
 func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
-	orig := writeFixture(t)
-	current := writeFixture(t)
-	testutil.WriteFileAt(t, filepath.Join(current, "apps", "kustomization.yaml"),
-		"resources:\n- missing.yaml\n")
+	for _, side := range []string{"orig", "current"} {
+		t.Run(side, func(t *testing.T) {
+			orig, current := writeFixture(t), writeFixture(t)
+			broken := current
+			if side == "orig" {
+				broken = orig
+			}
+			testutil.WriteFile(t, broken, "apps/kustomization.yaml", "resources:\n- missing.yaml\n")
 
-	stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", "github")
-	if code == 0 {
-		t.Fatal("expected non-zero exit: the current side failed to render")
-	}
-	if strings.Contains(stdout, "document removed") || strings.Contains(stdout, "greeting") {
-		t.Errorf("the orig-only objects must be suppressed, not diffed as removals:\n%s", stdout)
-	}
-	if strings.Count(stderr, "1 object not rendered on the current side; diff suppressed (") != 1 || stdout != "" {
-		t.Errorf("suppression must appear once on stderr with no product: stdout=%s stderr=%s", stdout, stderr)
-	}
-	if !strings.Contains(stderr, "✗ 1 failed") {
-		t.Errorf("stderr should carry the failure summary:\n%s", stderr)
-	}
-	if strings.Count(stderr, "✗ 1 failed") != 1 || strings.Contains(stderr, "flate error:") {
-		t.Errorf("failure summary should be printed exactly once:\n%s", stderr)
+			for _, format := range []string{"github", "json"} {
+				t.Run(format, func(t *testing.T) {
+					stdout, stderr, code := runCLI(t, "diff", "ks", "--path", current, "--path-orig", orig, "-o", format, "--concurrency", "2")
+					assert.Equal(t, code, 1)
+					if format == "github" {
+						assert.Equal(t, stdout, "")
+					} else {
+						var result struct {
+							Changes    []diff.Change      `json:"changes"`
+							Suppressed []diff.Suppression `json:"suppressed"`
+						}
+						assert.NoError(t, json.Unmarshal([]byte(stdout), &result))
+						assert.Equal(t, len(result.Changes), 0)
+						if len(result.Suppressed) != 1 {
+							t.Fatalf("lost suppression: %s", stdout)
+						}
+						note := result.Suppressed[0]
+						assert.Equal(t, string(note.Side), side)
+						assert.Equal(t, note.Count, 1)
+						assert.Equal(t, note.Parent.NamedResource, testutil.KustomizationID("flux-system", "apps"))
+						assert.Equal(t, note.Parent.Path, "apps")
+						if !strings.Contains(note.Reason, "missing.yaml") {
+							t.Fatalf("lost render failure: %s", stdout)
+						}
+					}
+					if strings.Count(stderr, "  ✗  "+side+" snapshot: Kustomization  flux-system/apps  ") != 1 {
+						t.Errorf("failure row must identify the %s snapshot:\n%s", side, stderr)
+					}
+					if strings.Count(stderr, "1 object not rendered on the "+side+" side; diff suppressed (") != 1 {
+						t.Errorf("suppression must appear once on stderr: %s", stderr)
+					}
+					if strings.Count(stderr, "✗ 1 failed") != 1 || strings.Contains(stderr, "flate error:") {
+						t.Errorf("failure summary should be printed exactly once:\n%s", stderr)
+					}
+				})
+			}
+		})
 	}
 }
 

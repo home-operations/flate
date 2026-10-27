@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/homeport/dyff/pkg/dyff"
+	"sigs.k8s.io/yaml"
 )
 
 func writeClusterGroupsFixture(t *testing.T, values map[string]string) string {
@@ -130,10 +131,10 @@ func TestRun_ClusterGroups_DiffAbsenceAndFailure(t *testing.T) {
 			}
 			stdout, stderr, code := runCLI(t, "diff", "all", "--path", current, "--path-orig", base, "-o", "json", "--concurrency", "2")
 			var groups []struct {
-				Cluster    string            `json:"cluster"`
-				Removed    bool              `json:"removed"`
-				Changes    []map[string]any  `json:"changes"`
-				Suppressed []json.RawMessage `json:"suppressed"`
+				Cluster    string             `json:"cluster"`
+				Removed    bool               `json:"removed"`
+				Changes    []map[string]any   `json:"changes"`
+				Suppressed []diff.Suppression `json:"suppressed"`
 			}
 			assert.NoError(t, json.Unmarshal([]byte(stdout), &groups))
 			hasPod := func(change map[string]any) bool { return change["kind"] == "Pod" }
@@ -157,8 +158,37 @@ func TestRun_ClusterGroups_DiffAbsenceAndFailure(t *testing.T) {
 				if status != 0 || images != "omega: example.test/app:new\n" {
 					t.Fatalf("empty removed image group disappeared: code=%d stdout=%s stderr=%s", status, images, diagnostics)
 				}
-			} else if code != 1 || groups[0].Removed || slices.ContainsFunc(groups[0].Changes, hasPod) || len(groups[0].Suppressed) == 0 || !strings.Contains(stderr, "alpha: flux-system/missing") || !strings.Contains(stderr, "current") {
-				t.Fatalf("failed side looked absent: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+			} else {
+				if code != 1 || groups[0].Removed || slices.ContainsFunc(groups[0].Changes, hasPod) || len(groups[0].Suppressed) == 0 {
+					t.Fatalf("failed side looked absent: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				for _, note := range groups[0].Suppressed {
+					assert.Equal(t, note.Side, diff.SideCurrent)
+				}
+				for _, row := range []string{
+					"  ✗  current snapshot: Kustomization  alpha: flux-system/missing  not found\n",
+					"         current snapshot: required by alpha: flux-system/shared\n",
+				} {
+					assert.Equal(t, strings.Count(stderr, row), 1)
+				}
+				for _, format := range []string{"json", "yaml"} {
+					t.Run("images/"+format, func(t *testing.T) {
+						images, diagnostics, status := runCLI(t, "diff", "images", "--path", current, "--path-orig", base, "-o", format, "--concurrency", "2")
+						assert.Equal(t, status, 1)
+						var imageGroups []output.ImageGroup
+						assert.NoError(t, yaml.Unmarshal([]byte(images), &imageGroups))
+						if len(imageGroups) != 2 || imageGroups[0].Cluster != "alpha" || imageGroups[1].Cluster != "omega" || len(imageGroups[0].Images) != 0 || imageGroups[0].Removed {
+							t.Fatalf("failed image side looked absent: %s", images)
+						}
+						assert.Diff(t, imageGroups[1].Images, []string{"example.test/app:new"})
+						for _, row := range []string{
+							"  ✗  current snapshot: Kustomization  alpha: flux-system/missing  not found\n",
+							"         current snapshot: required by alpha: flux-system/shared\n",
+						} {
+							assert.Equal(t, strings.Count(diagnostics, row), 1)
+						}
+					})
+				}
 			}
 		})
 	}

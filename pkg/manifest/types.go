@@ -3,7 +3,6 @@ package manifest
 import (
 	"cmp"
 	"iter"
-	"reflect"
 	"strings"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -105,18 +104,6 @@ type BaseManifest interface {
 	kind() KindInfo
 	producerTargets([]NamedResource) []ProducerTarget
 	overlayPayload(map[string]any) map[string]any
-}
-
-// Equal compares manifest content without derived projection-cache state.
-func Equal(a, b BaseManifest) bool {
-	if a == b {
-		return true
-	}
-	if k, ok := a.(*Kustomization); ok {
-		other, ok := b.(*Kustomization)
-		return ok && k.equal(other)
-	}
-	return reflect.DeepEqual(a, b)
 }
 
 // DependencyRef is a compact prerequisite identity and optional CEL gate.
@@ -254,6 +241,13 @@ type RawObject struct {
 	Namespace  string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Spec       map[string]any `json:"spec,omitempty"      yaml:"spec,omitempty"`
 }
+
+func (r *RawObject) equal(other *RawObject) bool {
+	return r != nil && other != nil && r.Kind == other.Kind && r.APIVersion == other.APIVersion &&
+		r.Name == other.Name && r.Namespace == other.Namespace && ValueEqual(r.Spec, other.Spec)
+}
+
+func (r *RawObject) labelInput() map[string]any { return r.Spec }
 
 // Named identifies the resource.
 func (r *RawObject) Named() NamedResource {

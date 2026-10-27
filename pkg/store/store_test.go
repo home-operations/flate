@@ -104,7 +104,7 @@ func TestStore_AddObject_ContentDedup(t *testing.T) {
 		}
 		_, retained, attempt := s.GetEmission(obj.Named())
 		defer attempt.Finish()
-		if !specValueEqual(retained, next) {
+		if !manifest.ValueEqual(retained, next) {
 			t.Fatal("suppressed arrival lost the authoritative document")
 		}
 	})
@@ -327,8 +327,8 @@ func TestObjectEqual_KustomizationContent(t *testing.T) {
 				second = second.Clone()
 				tc.change(second)
 			}
-			assert.Equal(t, objectEqual(first, second), tc.equal)
-			assert.Equal(t, objectEqual(second, first), tc.equal)
+			assert.Equal(t, manifest.Equal(first, second), tc.equal)
+			assert.Equal(t, manifest.Equal(second, first), tc.equal)
 			s := New()
 			seen := 0
 			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen++ }, false)
@@ -355,7 +355,7 @@ func TestObjectEqual_RawObjectFields(t *testing.T) {
 		Kind: "Widget", APIVersion: "example.test/v1", Name: "app", Namespace: "ns",
 		Spec: map[string]any{"items": []any{map[string]any{"value": "same"}}},
 	}
-	assert.Equal(t, objectEqual(base, base), true)
+	assert.Equal(t, manifest.Equal(base, base), true)
 	for _, tc := range []struct {
 		name   string
 		change func(*manifest.RawObject)
@@ -378,13 +378,12 @@ func TestObjectEqual_RawObjectFields(t *testing.T) {
 			if tc.change != nil {
 				tc.change(candidate)
 			}
-			assert.Equal(t, objectEqual(base, candidate), tc.equal)
-			assert.Equal(t, objectEqual(candidate, base), tc.equal)
+			assert.Equal(t, manifest.Equal(base, candidate), tc.equal)
+			assert.Equal(t, manifest.Equal(candidate, base), tc.equal)
 		})
 	}
 	assert.Diff(t, base.Spec, map[string]any{"items": []any{map[string]any{"value": "same"}}})
-	// nil and empty maps stay distinct, as under reflect.DeepEqual.
-	assert.Equal(t, objectEqual(&manifest.RawObject{Spec: map[string]any{}}, &manifest.RawObject{}), false)
+	assert.Equal(t, manifest.Equal(&manifest.RawObject{Spec: map[string]any{}}, &manifest.RawObject{}), false)
 }
 
 func TestStore_AddObjectIdempotent(t *testing.T) {

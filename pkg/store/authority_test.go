@@ -626,7 +626,7 @@ func TestStore_AnchorRechecksEffective(t *testing.T) {
 		}
 		_, retained, attempt := st.GetEmission(obj.Named())
 		defer attempt.Finish()
-		if !specValueEqual(retained, changed) {
+		if !manifest.ValueEqual(retained, changed) {
 			t.Fatal("stale anchor replaced the latest authoritative document")
 		}
 	})

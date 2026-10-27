@@ -255,32 +255,72 @@ spec:
 
 func TestRegisterBuilt_SharedInputs(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [release.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n")
-	release := `apiVersion: helm.toolkit.fluxcd.io/v2
+	t.Run("typed", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [release.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n")
+		release := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: retained, namespace: apps}
 spec:
   chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: charts}}}
 `
-	testutil.WriteFile(t, root, "release.yaml", release)
-	testutil.WriteFile(t, root, "value.txt", "input")
-	st := store.New()
-	admitForTest(st, root)
-	l := New(st)
-	l.SourceRoot = root
-	if _, err := l.Load(t.Context(), root); err != nil {
-		t.Fatal(err)
+		testutil.WriteFile(t, root, "release.yaml", release)
+		testutil.WriteFile(t, root, "value.txt", "input")
+		st := store.New()
+		admitForTest(st, root)
+		l := New(st)
+		l.SourceRoot = root
+		if _, err := l.Load(t.Context(), root); err != nil {
+			t.Fatal(err)
+		}
+		docs := builtObjectsForTest(t, release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n")
+		l.RegisterBuilt(root, docs)
+		hr, _ := l.Index.Lookup(docs[0].Obj.Named())
+		generated, _ := l.Index.Lookup(docs[1].Obj.Named())
+		assert.Equal(t, hr.File, "release.yaml")
+		assert.Diff(t, hr.Inputs, []string{"kustomization.yaml", "value.txt"})
+		assert.Equal(t, generated.File, "kustomization.yaml")
+		assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
+		assert.Diff(t, hr.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
+	})
+	for _, tc := range []struct {
+		name   string
+		value  string
+		file   string
+		inputs []string
+	}{
+		{"raw equal content", "app", "generator.yaml", []string{"kustomization.yaml", "value.txt"}},
+		{"raw changed nested content", "other", "kustomization.yaml", []string{"generator.yaml", "kustomization.yaml", "value.txt"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [generator.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n")
+			generator := `apiVersion: source.extensions.fluxcd.io/v1beta1
+kind: ArtifactGenerator
+metadata: {name: generator, namespace: apps}
+spec:
+  artifacts: [{name: app}]
+`
+			testutil.WriteFile(t, root, "generator.yaml", generator)
+			testutil.WriteFile(t, root, "value.txt", "input")
+			st := store.New()
+			admitForTest(st, root)
+			l := New(st)
+			l.SourceRoot = root
+			if _, err := l.Load(t.Context(), root); err != nil {
+				t.Fatal(err)
+			}
+			docs := builtObjectsForTest(t, strings.Replace(generator, "artifacts: [{name: app}]", "artifacts: [{name: "+tc.value+"}]", 1))
+			raw := docs[0].Obj.(*manifest.RawObject)
+			l.RegisterBuilt(root, docs)
+			record, ok := l.Index.Lookup(raw.Named())
+			assert.Equal(t, ok, true)
+			assert.Equal(t, record.File, tc.file)
+			assert.Diff(t, record.Inputs, tc.inputs)
+		})
 	}
-	docs := builtObjectsForTest(t, release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n")
-	l.RegisterBuilt(root, docs)
-	hr, _ := l.Index.Lookup(docs[0].Obj.Named())
-	generated, _ := l.Index.Lookup(docs[1].Obj.Named())
-	assert.Equal(t, hr.File, "release.yaml")
-	assert.Diff(t, hr.Inputs, []string{"kustomization.yaml", "value.txt"})
-	assert.Equal(t, generated.File, "kustomization.yaml")
-	assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
-	assert.Diff(t, hr.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
 }
 
 func TestRegisterBuilt_RemoteGenerator(t *testing.T) {

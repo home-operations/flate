@@ -974,10 +974,10 @@ func (e *Emission) sameOutput(other *Emission) bool {
 	sameDocuments := len(e.Manifests) == len(other.Manifests) &&
 		(len(e.Manifests) == 0 || &e.Manifests[0] == &other.Manifests[0])
 	sameInput := other.inputHead.owner == e.inputHead.owner && other.inputHead.generation == e.inputHead.generation &&
-		other.inputHead.revision == e.inputHead.revision && other.inputHead.binding.equal(&e.inputHead.binding) && objectEqual(other.input, e.input) ||
+		other.inputHead.revision == e.inputHead.revision && other.inputHead.binding.equal(&e.inputHead.binding) && manifest.Equal(other.input, e.input) ||
 		e.input != nil && semanticEqual(Child{Obj: other.input, Doc: other.inputDoc}, Child{Obj: e.input, Doc: e.inputDoc})
 	return sameInput && other.family == e.family &&
-		(sameDocuments || slices.EqualFunc(other.Manifests, e.Manifests, func(a, b map[string]any) bool { return specValueEqual(a, b) })) &&
+		(sameDocuments || slices.EqualFunc(other.Manifests, e.Manifests, func(a, b map[string]any) bool { return manifest.ValueEqual(a, b) })) &&
 		other.Fingerprint == e.Fingerprint &&
 		slices.Equal(other.documentOwners, e.documentOwners) &&
 		other.binding.equal(&e.binding) &&
@@ -1211,7 +1211,7 @@ func (s *Store) changedTargets(prev, proposal *Emission, storage []regionState) 
 				continue
 			}
 			entry := proposal.entries[next]
-			direct := entry.objectChanged || entry.changed && !sameLabels(old.child, entry.child, ownershipLabel) ||
+			direct := entry.objectChanged || entry.changed && !manifest.LabelsEqual(old.child.Obj, entry.child.Obj, [2]map[string]any{old.child.Doc, entry.child.Doc}, ownershipLabel) ||
 				!old.binding.equal(&entry.binding) || !slices.Equal(old.child.Productions, entry.child.Productions) ||
 				!slices.EqualFunc(old.targets, entry.targets, func(a, b manifest.ProducerTarget) bool {
 					return a.NamedResource == b.NamedResource && slices.Equal(a.DeclaredKeys, b.DeclaredKeys)
@@ -1266,7 +1266,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 			id := old.child.Obj.Named()
 			if i, ok := byID[id]; ok {
 				entry := prepared[i]
-				entry.changed = !objectEqual(entry.child.Obj, old.child.Obj) || !specValueEqual(entry.child.Doc, old.child.Doc)
+				entry.changed = !manifest.Equal(entry.child.Obj, old.child.Obj) || !manifest.ValueEqual(entry.child.Doc, old.child.Doc)
 				entry.objectChanged = !reconcileEqual(entry.child, old.child)
 				entry.objectHead = old.objectHead
 				entry.objectGeneration = old.objectGeneration
@@ -1302,7 +1302,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 			}
 		}
 	}
-	inherited := prev != nil && slices.EqualFunc(next.Manifests, prev.Manifests, func(a, b map[string]any) bool { return specValueEqual(a, b) })
+	inherited := prev != nil && slices.EqualFunc(next.Manifests, prev.Manifests, func(a, b map[string]any) bool { return manifest.ValueEqual(a, b) })
 	if inherited && (!next.Complete || slices.EqualFunc(prev.entries, e.entries, func(a, b admission) bool { return a.child.Obj.Named() == b.child.Obj.Named() })) {
 		e.documentOwners = prev.documentOwners
 	} else {
@@ -1327,7 +1327,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 				}
 				present := false
 				for _, j := range available[manifest.DocIdentity(doc)] {
-					if !used[j] && specValueEqual(doc, e.Manifests[j]) {
+					if !used[j] && manifest.ValueEqual(doc, e.Manifests[j]) {
 						used[j], present = true, true
 						break
 					}
@@ -1361,7 +1361,7 @@ func bindDocuments(docs []map[string]any, entries []admission) []manifest.NamedR
 	owners := make([]manifest.NamedResource, len(docs))
 	for i, doc := range docs {
 		for _, entry := range byDocument[manifest.DocIdentity(doc)] {
-			if specValueEqual(doc, entry.child.Doc) {
+			if manifest.ValueEqual(doc, entry.child.Doc) {
 				owners[i] = entry.child.Obj.Named()
 				break
 			}
@@ -1379,7 +1379,7 @@ func sameMembership(a, b *Emission) bool {
 	for i, x := range a.entries {
 		y := b.entries[i]
 		if x.child.Obj.Named() != y.child.Obj.Named() || !x.binding.equal(&y.binding) ||
-			!slices.Equal(x.child.Productions, y.child.Productions) || !sameLabels(x.child, y.child, ownershipLabel) ||
+			!slices.Equal(x.child.Productions, y.child.Productions) || !manifest.LabelsEqual(x.child.Obj, y.child.Obj, [2]map[string]any{x.child.Doc, y.child.Doc}, ownershipLabel) ||
 			!slices.EqualFunc(x.targets, y.targets, func(a, b manifest.ProducerTarget) bool { return a.NamedResource == b.NamedResource }) {
 			return false
 		}
@@ -1387,39 +1387,16 @@ func sameMembership(a, b *Emission) bool {
 	return true
 }
 
-func sameLabels(a, b Child, excluded func(string) bool) bool {
-	type labeled interface{ GetLabels() map[string]string }
-	if x, ok := a.Obj.(labeled); ok {
-		y, ok := b.Obj.(labeled)
-		return ok && maps.Equal(x.GetLabels(), y.GetLabels())
-	}
-	adoc, bdoc := a.Doc, b.Doc
-	if raw, ok := a.Obj.(*manifest.RawObject); ok && adoc == nil {
-		adoc = raw.Spec
-	}
-	if raw, ok := b.Obj.(*manifest.RawObject); ok && bdoc == nil {
-		bdoc = raw.Spec
-	}
-	am, _ := adoc["metadata"].(map[string]any)
-	bm, _ := bdoc["metadata"].(map[string]any)
-	al, _ := am["labels"].(map[string]any)
-	bl, _ := bm["labels"].(map[string]any)
-	if excluded == nil {
-		return maps.EqualFunc(al, bl, specValueEqual)
-	}
-	return mapEqualExcept(al, bl, excluded)
-}
-
 func admissionEqual(a, b admission) bool {
 	return a.binding.equal(&b.binding) && childEqual(a.child, b.child)
 }
 
 func childEqual(a, b Child) bool {
-	return objectEqual(a.Obj, b.Obj) && specValueEqual(a.Doc, b.Doc) && slices.Equal(a.Productions, b.Productions) && a.payload == b.payload && a.output == b.output
+	return manifest.Equal(a.Obj, b.Obj) && manifest.ValueEqual(a.Doc, b.Doc) && slices.Equal(a.Productions, b.Productions) && a.payload == b.payload && a.output == b.output
 }
 func semanticEqual(a, b Child) bool {
 	if a.Doc == nil || b.Doc == nil {
-		if objectEqual(a.Obj, b.Obj) {
+		if manifest.Equal(a.Obj, b.Obj) {
 			return true
 		}
 		type metadata interface {
@@ -1434,7 +1411,7 @@ func semanticEqual(a, b Child) bool {
 		if !maps.Equal(am.GetAnnotations(), bm.GetAnnotations()) {
 			return false
 		}
-		if !mapEqualExcept(am.GetLabels(), bm.GetLabels(), ownershipLabel) {
+		if !manifest.MapEqualExcept(am.GetLabels(), bm.GetLabels(), ownershipLabel) {
 			return false
 		}
 		ad, aerr := json.Marshal(a.Obj)
@@ -1450,7 +1427,7 @@ func semanticEqual(a, b Child) bool {
 			return false
 		}
 		if key != "metadata" {
-			if !specValueEqual(value, other) {
+			if !manifest.ValueEqual(value, other) {
 				return false
 			}
 			continue
@@ -1458,34 +1435,15 @@ func semanticEqual(a, b Child) bool {
 		am, aok := value.(map[string]any)
 		bm, bok := other.(map[string]any)
 		if !aok || !bok {
-			return specValueEqual(value, other)
+			return manifest.ValueEqual(value, other)
 		}
-		if !mapEqualExcept(am, bm, func(key string) bool { return key == "labels" }) {
+		if !manifest.MapEqualExcept(am, bm, func(key string) bool { return key == "labels" }) {
 			return false
 		}
 		al, _ := am["labels"].(map[string]any)
 		bl, _ := bm["labels"].(map[string]any)
-		if !mapEqualExcept(al, bl, ownershipLabel) {
+		if !manifest.MapEqualExcept(al, bl, ownershipLabel) {
 			return false
-		}
-	}
-	return true
-}
-func mapEqualExcept[V any](a, b map[string]V, excluded func(string) bool) bool {
-	for key, value := range a {
-		if excluded(key) {
-			continue
-		}
-		other, ok := b[key]
-		if !ok || !specValueEqual(value, other) {
-			return false
-		}
-	}
-	for key := range b {
-		if !excluded(key) {
-			if _, ok := a[key]; !ok {
-				return false
-			}
 		}
 	}
 	return true

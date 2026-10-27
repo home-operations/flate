@@ -3,8 +3,6 @@ package store
 import (
 	"cmp"
 	"hash/fnv"
-	"maps"
-	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -279,7 +277,7 @@ type objectUpdate struct {
 }
 
 func (u *objectUpdate) compare() {
-	equal := objectEqual(u.cell.static, u.obj)
+	equal := manifest.Equal(u.cell.static, u.obj)
 	if !u.explicit {
 		u.document = nil
 		if equal {
@@ -287,13 +285,13 @@ func (u *objectUpdate) compare() {
 		}
 	}
 	u.staticEqual = u.cell.binding == u.binding && u.cell.support == u.support && equal
-	u.membershipEqual = u.staticEqual || u.cell.static != nil && sameLabels(Child{Obj: u.cell.static}, Child{Obj: u.obj}, nil)
+	u.membershipEqual = u.staticEqual || u.cell.static != nil && manifest.LabelsEqual(u.cell.static, u.obj, [2]map[string]any{}, nil)
 	u.effectiveEqual = equal
 	if u.effectiveEqual {
 		u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.cell.document, u.document)
 	}
 	if u.effective.child.Obj != u.cell.static {
-		u.effectiveEqual = objectEqual(u.effective.child.Obj, u.obj)
+		u.effectiveEqual = manifest.Equal(u.effective.child.Obj, u.obj)
 		if u.effectiveEqual {
 			u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.effective.child.Doc, u.document)
 		}
@@ -336,7 +334,7 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 		}
 		sh.mu.RUnlock()
 		u.compare()
-		if u.staticEqual && u.effectiveEqual && (!u.explicit || specValueEqual(u.cell.document, u.document)) && !u.cell.hidden && !u.cell.retired && !u.needsRoot {
+		if u.staticEqual && u.effectiveEqual && (!u.explicit || manifest.ValueEqual(u.cell.document, u.document)) && !u.cell.hidden && !u.cell.retired && !u.needsRoot {
 			return
 		}
 		u.independent = declarationIndependent(s.index.Load(), id)
@@ -584,37 +582,6 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 	return true
 }
 
-// objectEqual MUST compare manifest content only, excluding derived cache state.
-// The RawObject fast path MUST cover every field and preserve nil/empty distinctions.
-func objectEqual(a, b manifest.BaseManifest) bool {
-	if a == b {
-		return true
-	}
-	if prev, ok := a.(*manifest.RawObject); ok {
-		cur, ok := b.(*manifest.RawObject)
-		return ok && prev.Kind == cur.Kind && prev.APIVersion == cur.APIVersion &&
-			prev.Name == cur.Name && prev.Namespace == cur.Namespace && specValueEqual(prev.Spec, cur.Spec)
-	}
-	return manifest.Equal(a, b)
-}
-
-// Raw rendered specs contain JSON-shaped maps and slices. Comparing those
-// directly avoids reflection's per-entry allocations on replayed charts.
-func specValueEqual(a, b any) bool {
-	switch v := a.(type) {
-	case map[string]any:
-		other, ok := b.(map[string]any)
-		return ok && (v == nil) == (other == nil) && maps.EqualFunc(v, other, specValueEqual)
-	case []any:
-		other, ok := b.([]any)
-		return ok && (v == nil) == (other == nil) && slices.EqualFunc(v, other, specValueEqual)
-	case nil, string, bool, int, int64, float64:
-		return a == b
-	default:
-		return reflect.DeepEqual(a, b)
-	}
-}
-
 // GetObject returns the manifest for id, or nil if not present.
 func (s *Store) GetObject(id manifest.NamedResource) manifest.BaseManifest {
 	sh := s.shardFor(id)
@@ -772,7 +739,7 @@ type objectPublication struct {
 func dispatchPublications(publications []objectPublication) {
 	slices.SortStableFunc(publications, func(a, b objectPublication) int { return a.event.id.Compare(b.event.id) })
 	for _, p := range publications {
-		changed := p.force || p.before == nil || p.after == nil || !objectEqual(p.before, p.after)
+		changed := p.force || p.before == nil || p.after == nil || !manifest.Equal(p.before, p.after)
 		if !changed && p.document != nil {
 			equal, _ := reconcileInputEqual(p.after, p.document, p.nextDocument)
 			changed = !equal
@@ -804,7 +771,7 @@ func reconcileInputEqual(obj manifest.BaseManifest, a, b map[string]any) (bool, 
 func reconcileEqual(a, b Child) bool {
 	equal, consumes := reconcileInputEqual(a.Obj, a.Doc, b.Doc)
 	if consumes {
-		return objectEqual(a.Obj, b.Obj) && equal
+		return manifest.Equal(a.Obj, b.Obj) && equal
 	}
 	return semanticEqual(a, b)
 }

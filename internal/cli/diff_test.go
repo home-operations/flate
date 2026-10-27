@@ -65,13 +65,13 @@ kind: ConfigMap
 metadata: {name: '{{ .Release.Name }}', namespace: apps}
 data:
   greeting: {{ .Values.greeting }}
-  image: ghcr.io/demo/private:v1
 ---
 apiVersion: v1
-kind: ConfigMap
+kind: Pod
 metadata: {name: '{{ .Release.Name }}-second', namespace: apps}
-data:
-  image: ghcr.io/demo/private:v1
+spec:
+  containers:
+    - {name: app, image: ghcr.io/demo/private:v1}
 `)
 				chart := `  chart:
     spec:

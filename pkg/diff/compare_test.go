@@ -117,10 +117,10 @@ func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 			t.Parallel()
 			left, right := hrDocs(tc.leftN), hrDocs(tc.rightN)
 			for _, doc := range left {
-				doc.Manifest["data"] = map[string]any{"k": "ghcr.io/demo/orig:v1"}
+				doc.Manifest["spec"] = map[string]any{"containers": []any{map[string]any{"image": "ghcr.io/demo/orig:v1"}}}
 			}
 			for _, doc := range right {
-				doc.Manifest["data"] = map[string]any{"k": "ghcr.io/demo/current:v2"}
+				doc.Manifest["spec"] = map[string]any{"containers": []any{map[string]any{"image": "ghcr.io/demo/current:v2"}}}
 			}
 			selected := []Snapshot{selectedSnapshot(hrParent, left, tc.left), selectedSnapshot(hrParent, right, tc.right)}
 			var runErr error
@@ -222,26 +222,89 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 	t.Parallel()
 	left := selectedSnapshot(hrParent, hrDocs(2), store.StatusInfo{})
 	right := selectedSnapshot(hrParent, hrDocs(1), store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
-	left.Manifests[0].Documents[0]["data"] = map[string]any{"images": []any{"ghcr.io/demo/shared:v1", "ghcr.io/demo/shared:v1"}}
-	left.Manifests[0].Documents[1]["data"] = map[string]any{"image": "ghcr.io/demo/withheld:v1"}
-	right.Manifests[0].Documents[0]["data"] = map[string]any{"image": "ghcr.io/demo/stale:v1"}
+	left.Manifests[0].Documents[0]["spec"] = map[string]any{"containers": []any{map[string]any{"image": "ghcr.io/demo/shared:v1"}, map[string]any{"image": "ghcr.io/demo/shared:v1"}}}
+	left.Manifests[0].Documents[1]["spec"] = map[string]any{"initContainers": []any{map[string]any{"image": "ghcr.io/demo/withheld:v1"}}}
+	right.Manifests[0].Documents[0]["spec"] = map[string]any{"ephemeralContainers": []any{map[string]any{"image": "ghcr.io/demo/stale:v1"}}}
 	other := &manifest.HelmRelease{Name: "healthy", Namespace: "monitoring"}
-	left.Manifests = append(left.Manifests, manifest.DocumentBatch{Parent: other, Documents: []map[string]any{{"image": "ghcr.io/demo/removed:v1"}}})
-	right.Manifests = append(right.Manifests, manifest.DocumentBatch{Parent: other, Documents: []map[string]any{{"images": []any{"ghcr.io/demo/shared:v1", "ghcr.io/demo/new:v2", "ghcr.io/demo/new:v2"}, "unencoded": func() {}}}})
+	left.Manifests = append(left.Manifests, manifest.DocumentBatch{Parent: other, Documents: []map[string]any{{"containers": []any{map[string]any{"image": "ghcr.io/demo/removed:v1"}}}}})
+	right.Manifests = append(right.Manifests, manifest.DocumentBatch{Parent: other, Documents: []map[string]any{{"containers": []any{
+		map[string]any{"image": "ghcr.io/demo/shared:v1"}, map[string]any{"image": "ghcr.io/demo/new:v2"}, map[string]any{"image": "ghcr.io/demo/new:v2"},
+	}, "unencoded": func() {}}}})
 	selectedErr := errors.New("partial render")
-	for _, includeRemoved := range []bool{false, true} {
-		images, notes, err := CompareImages(left, right, selectedErr, includeRemoved)
-		want := []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/shared:v1"}
-		if includeRemoved {
-			want = []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/removed:v1", "ghcr.io/demo/shared:v1"}
-		}
-		if !slices.Equal(images, want) || !errors.Is(err, selectedErr) {
-			t.Errorf("images=%v err=%v; want %v and selected error", images, err, want)
-		}
-		wantSuppression := Suppression{Parent: hrParent, Side: SideCurrent, Count: 2, Reason: "failed"}
-		if !slices.Equal(notes, []Suppression{wantSuppression}) {
-			t.Errorf("suppression must count documents: %+v", notes)
-		}
+	for _, tc := range []struct {
+		name           string
+		reverse        bool
+		includeRemoved bool
+		want           []string
+	}{
+		{name: "additions", want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/shared:v1"}},
+		{name: "including removals", includeRemoved: true, want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/removed:v1", "ghcr.io/demo/shared:v1"}},
+		{name: "reversed additions", reverse: true, want: []string{"ghcr.io/demo/removed:v1"}},
+		{name: "reversed including removals", reverse: true, includeRemoved: true, want: []string{"ghcr.io/demo/new:v2", "ghcr.io/demo/removed:v1", "ghcr.io/demo/shared:v1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			orig, current, side := left, right, SideCurrent
+			if tc.reverse {
+				orig, current, side = right, left, SideOrig
+			}
+			images, notes, err := CompareImages(orig, current, selectedErr, tc.includeRemoved)
+			if !slices.Equal(images, tc.want) || !errors.Is(err, selectedErr) {
+				t.Errorf("images=%v err=%v; want %v and selected error", images, err, tc.want)
+			}
+			wantSuppression := Suppression{Parent: hrParent, Side: side, Count: 2, Reason: "failed"}
+			if !slices.Equal(notes, []Suppression{wantSuppression}) {
+				t.Errorf("suppression must count documents: %+v", notes)
+			}
+		})
+	}
+}
+
+func TestCompareImages_DeclaredAndFullReferences(t *testing.T) {
+	t.Parallel()
+	left := Snapshot{Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{
+		"kind": "UnknownResource",
+		"spec": map[string]any{"imageName": "ghcr.io/demo/declared:v1", "image": "nginx"},
+		"data": map[string]any{"tool": "ghcr.io/demo/config:v1", "record": "apiserver_request:burnrate1d", "address": "0.0.0.0:80"},
+	}}}}}
+	right := Snapshot{Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{
+		"kind": "UnknownResource",
+		"spec": map[string]any{"imageName": "ghcr.io/demo/declared:v2", "image": "nginx"},
+		"data": map[string]any{"tool": "ghcr.io/demo/config:v2", "record": "apiserver_request:burnrate6h", "address": "127.0.0.1:9234"},
+	}}}}}
+	junk := Snapshot{Manifests: []manifest.DocumentBatch{{Documents: []map[string]any{{
+		"kind": "UnknownResource",
+		"spec": map[string]any{"imageName": "ghcr.io/demo/declared:v1", "image": "nginx"},
+		"data": map[string]any{"tool": "ghcr.io/demo/config:v1", "record": "count:up0", "address": "127.0.0.1:9234"},
+	}}}}}
+	for _, tc := range []struct {
+		name           string
+		reverse        bool
+		includeRemoved bool
+		junkOnly       bool
+		want           []string
+	}{
+		{name: "additions", want: []string{"ghcr.io/demo/config:v2", "ghcr.io/demo/declared:v2"}},
+		{name: "including removals", includeRemoved: true, want: []string{"ghcr.io/demo/config:v1", "ghcr.io/demo/config:v2", "ghcr.io/demo/declared:v1", "ghcr.io/demo/declared:v2"}},
+		{name: "reversed additions", reverse: true, want: []string{"ghcr.io/demo/config:v1", "ghcr.io/demo/declared:v1"}},
+		{name: "reversed including removals", reverse: true, includeRemoved: true, want: []string{"ghcr.io/demo/config:v1", "ghcr.io/demo/config:v2", "ghcr.io/demo/declared:v1", "ghcr.io/demo/declared:v2"}},
+		{name: "junk additions", junkOnly: true},
+		{name: "junk including removals", junkOnly: true, includeRemoved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			orig, current := left, right
+			if tc.junkOnly {
+				current = junk
+			}
+			if tc.reverse {
+				orig, current = current, orig
+			}
+			images, notes, err := CompareImages(orig, current, nil, tc.includeRemoved)
+			if err != nil || !slices.Equal(images, tc.want) || len(notes) != 0 {
+				t.Fatalf("images=%v notes=%v err=%v; want %v", images, notes, err, tc.want)
+			}
+		})
 	}
 }
 

@@ -1,47 +1,63 @@
-// Package image discovers tagged or digested named references in rendered
-// Kubernetes manifests using distribution/reference. Discovery is advisory:
-// strings in arbitrary fields and unknown kinds are included when they parse,
-// so unrelated values such as "count:up0" may appear in image reports.
+// Package image discovers declared image fields and full tagged or digested
+// references in rendered manifests using distribution/reference.
 package image
 
 import (
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/distribution/reference"
 )
 
-// Extract returns nil when no images are found.
+// Extract returns sorted, unique references from image, imageName and Image-suffixed
+// fields, their direct reference strings, and full tagged or digested references
+// elsewhere, or nil when no images are found.
 func Extract(doc map[string]any) []string {
 	set := map[string]struct{}{}
-	walk(doc, set)
+	walk(doc, false, set)
 	if len(set) == 0 {
 		return nil
 	}
 	return slices.Sorted(maps.Keys(set))
 }
 
-func walk(v any, set map[string]struct{}) {
+func walk(v any, declared bool, set map[string]struct{}) {
 	switch tv := v.(type) {
 	case map[string]any:
-		for _, child := range tv {
-			walk(child, set)
+		for key, child := range tv {
+			childDeclared := key == "image" || key == "imageName" || strings.HasSuffix(key, "Image")
+			if declared && key == "reference" {
+				_, childDeclared = child.(string)
+			}
+			walk(child, childDeclared, set)
 		}
 	case []any:
 		for _, item := range tv {
-			walk(item, set)
+			walk(item, false, set)
 		}
 	case string:
-		if isImageRef(tv) {
+		if isImageRef(tv, declared) {
 			set[tv] = struct{}{}
 		}
 	}
 }
 
-func isImageRef(s string) bool {
+func isImageRef(s string, declared bool) bool {
+	if !declared {
+		if len(s) < 5 || strings.Contains(s, "://") || strings.HasPrefix(s, "/") {
+			return false
+		}
+		if !strings.ContainsAny(s, ":@") || strings.Contains(s, "${") || !strings.Contains(s, "/") {
+			return false
+		}
+	}
 	ref, err := reference.ParseNormalizedNamed(s)
 	if err != nil {
 		return false
+	}
+	if declared {
+		return true
 	}
 	_, tagged := ref.(reference.Tagged)
 	_, digested := ref.(reference.Digested)

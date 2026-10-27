@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,16 @@ import (
 	"oras.land/oras-go/v2/errdef"
 )
 
+type historyCountingFS struct {
+	fs.FS
+	opens atomic.Int64
+}
+
+func (f *historyCountingFS) Open(name string) (fs.File, error) {
+	f.opens.Add(1)
+	return f.FS.Open(name)
+}
+
 func TestRenderFlux_AcceptedHistory(t *testing.T) {
 	t.Parallel()
 	root := testutil.WriteTree(t, map[string]string{"kustomization.yaml": existingKustomization("cm.yaml"), "cm.yaml": cmYAML("original")})
@@ -32,6 +43,32 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 	req := RenderRequest{Source: localSource(t, root), Spec: spec, SubPath: "."}
 	owner := spec.Named()
 	owner.Namespace = "inherited"
+	var absent *TreeCache
+	if previous, complete := absent.PreviousRender(t.Context(), req, owner); previous != nil || complete {
+		t.Fatal("nil renderer supplied history")
+	}
+	t.Run("disabled preparation", func(t *testing.T) {
+		t.Parallel()
+		counted := &historyCountingFS{FS: os.DirFS(root)}
+		artifact := *req.Source
+		artifact.FS = counted
+		input := req
+		input.Source, input.ApplyIgnore = &artifact, true
+		fresh := newTestTreeCache(t, "")
+		counted.opens.Store(0)
+		if previous, complete := fresh.PreviousRender(t.Context(), input, owner); previous != nil || complete {
+			t.Fatal("disabled renderer supplied history")
+		}
+		if count := counted.opens.Load(); count != 0 {
+			t.Fatalf("disabled history prepared source: opens=%d", count)
+		}
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		if previous, complete := fresh.PreviousRender(canceled, input, owner); previous != nil || complete {
+			t.Fatal("canceled disabled renderer supplied history")
+		}
+		assert.Equal(t, counted.opens.Load(), 0)
+	})
 	docs, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
 	if receipt == nil {
@@ -71,6 +108,38 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		assert.Equal(t, complete, true)
 		got := maps.Collect(previous)
 		assert.Diff(t, got, records)
+		t.Run("preparation", func(t *testing.T) {
+			t.Parallel()
+			counted := &historyCountingFS{FS: os.DirFS(root)}
+			artifact := *req.Source
+			artifact.FS = counted
+			input := req
+			input.Source, input.ApplyIgnore = &artifact, true
+			directory := t.TempDir()
+			publisher := newTestTreeCache(t, directory)
+			_, pending, err := Render(t.Context(), publisher, input, sourcecache.RetryConfig{})
+			assert.NoError(t, err)
+			assert.NoError(t, publisher.RecordRender(t.Context(), owner, pending, maps.All(records)))
+			reader := newTestTreeCache(t, directory)
+			counted.opens.Store(0)
+			previous, complete := reader.PreviousRender(t.Context(), input, owner)
+			assert.Equal(t, complete && previous != nil, true)
+			assert.Diff(t, maps.Collect(previous), records)
+			if counted.opens.Load() == 0 {
+				t.Fatal("enabled history did not prepare source")
+			}
+			canceled, cancel := context.WithCancel(t.Context())
+			cancel()
+			counted.opens.Store(0)
+			if previous, complete := reader.PreviousRender(canceled, input, owner); previous != nil || complete {
+				t.Fatal("canceled enabled renderer supplied history")
+			}
+			assert.Equal(t, counted.opens.Load(), 0)
+			input.Source = nil
+			if previous, complete := reader.PreviousRender(t.Context(), input, owner); previous != nil || complete {
+				t.Fatal("unavailable source supplied history")
+			}
+		})
 
 		t.Run("request key", func(t *testing.T) {
 			t.Parallel()

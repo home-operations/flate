@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -103,6 +104,34 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 		}
 		if len(out) == 0 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
 			b.Fatalf("missing rendered name")
+		}
+	}
+}
+
+func BenchmarkTemplate_Cold(b *testing.B) {
+	dir := b.TempDir()
+	testutil.WriteFile(b, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(b, dir, "mychart/templates/cm.yaml", "{{ range $i := until 64 }}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: 'example-{{ $i }}'}\ndata:\n  marker: {{ $.Values.marker | quote }}\n  payload: {{ $.Values.payload | quote }}\n{{ end }}\n")
+	sources := benchChartResolver(b, dir, os.DirFS(dir))
+	hr := newHR()
+	values := map[string]any{"marker": "fresh", "payload": strings.Repeat("x", 1024)}
+	b.ReportAllocs()
+	for b.Loop() {
+		owner, err := sourcecache.New(b.Context(), "")
+		if err != nil {
+			b.Fatal(err)
+		}
+		cli := NewClient(owner)
+		docs, _, err := cli.Template(b.Context(), hr, values, RenderOptions{Sources: sources})
+		closeErr := owner.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if closeErr != nil {
+			b.Fatal(closeErr)
+		}
+		if len(docs) != 64 || docs[0]["data"].(map[string]any)["marker"] != "fresh" {
+			b.Fatal("cold render omitted documents")
 		}
 	}
 }

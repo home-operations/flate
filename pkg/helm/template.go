@@ -140,27 +140,37 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	if key == "" || loaded.valuesErr != nil || capabilityErr != nil {
 		return render(ctx, nil)
 	}
-	var docs []map[string]any
-	var receipt *manifest.RenderReceipt
+	// Callback state MUST share one allocation to preserve cache-hit allocation counts.
+	var result struct {
+		docs     []map[string]any
+		produced *renderRecord
+		receipt  *manifest.RenderReceipt
+	}
 	blobKey := cache.BlobKey{Content: key, Render: cache.RenderPending, Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
 		identity := cache.AcquisitionIdentity(generation)
-		record := loaded.record
-		if record == nil || record.key != key || record.identity != identity {
-			data, err := fs.ReadFile(generation, "content")
-			if err != nil {
-				return false, fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
+		record := result.produced
+		if record == nil {
+			record = loaded.record
+			if record == nil || record.key != key || record.identity != identity {
+				data, err := fs.ReadFile(generation, "content")
+				if err != nil {
+					return false, fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
+				}
+				frame, err := decodeFrame(data)
+				if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
+					return false, nil
+				}
+				frame.identity = identity
+				record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
 			}
-			frame, err := decodeFrame(data)
-			if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
+			var err error
+			result.docs, err = manifest.DecodeRender(record.Output)
+			if err != nil {
 				return false, nil
 			}
-			frame.identity = identity
-			record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
-		}
-		var err error
-		docs, err = manifest.DecodeRender(record.Output)
-		if err != nil {
-			return false, nil
+		} else {
+			record.identity = identity
+			record.frame.identity = identity
 		}
 		if record.Analysis.RequiresLoader {
 			if err := c.decodeChart(ctx, &loaded); err != nil {
@@ -188,19 +198,19 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if record != loaded.record {
 			c.rememberDescription(loaded, record)
 		}
-		receipt = record.receipt
+		result.receipt = record.receipt
 		return true, nil
 	}}
 	_, _, _, err = c.cache.Blob(ctx, blobKey, cache.Policy{MaxAge: cache.Forever}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		var err error
-		docs, receipt, err = render(ctx, nil)
+		result.docs, result.receipt, err = render(ctx, nil)
 		if err != nil {
 			return cache.ProducerResult{}, err
 		}
-		if receipt == nil {
+		if result.receipt == nil {
 			return cache.ProducerResult{}, errUncacheableRender
 		}
-		frame := receipt.Value().(renderFrame)
+		frame := result.receipt.Value().(renderFrame)
 		if frame.header.Analysis == nil {
 			frame.header.Analysis = loaded.analyze()
 		}
@@ -208,19 +218,23 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if err == nil {
 			_, err = w.Write(data)
 		}
+		if err == nil {
+			frame.chart = nil
+			result.produced = &renderRecord{key: key, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
+		}
 		return cache.ProducerResult{}, err
 	})
 	if err != nil {
 		if _, storage := errors.AsType[*cache.CacheError](err); !storage {
 			if errors.Is(err, errUncacheableRender) {
-				return docs, nil, nil
+				return result.docs, nil, nil
 			}
 			return nil, nil, err
 		}
 		return render(ctx, err)
 	}
-	docs, err = normalizeLists(docs)
-	return docs, receipt, err
+	docs, err := normalizeLists(result.docs)
+	return docs, result.receipt, err
 }
 
 type templateRequest struct {

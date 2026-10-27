@@ -920,116 +920,126 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 			}
 		})
 	})
-	for _, headOnly := range []bool{false, true} {
-		for _, tc := range []struct {
-			backing  string
-			injected bool
-		}{{"memory", true}, {"disk", true}, {"disk", false}} {
-			t.Run(fmt.Sprintf("head_only_%t/%s/injected_%t", headOnly, tc.backing, tc.injected), func(t *testing.T) {
-				synctest.Test(t, func(t *testing.T) {
-					root := ""
-					if tc.backing == "disk" {
-						root = t.TempDir()
-					}
-					owner, err := sourcecache.New(t.Context(), root)
-					assert.NoError(t, err)
-					externalShare := true
-					t.Cleanup(func() {
-						if externalShare {
+	for _, workers := range []int{2, 16} {
+		for _, headOnly := range []bool{false, true} {
+			for _, tc := range []struct {
+				backing  string
+				injected bool
+			}{{"memory", true}, {"disk", true}, {"disk", false}} {
+				t.Run(fmt.Sprintf("workers_%d/head_only_%t/%s/injected_%t", workers, headOnly, tc.backing, tc.injected), func(t *testing.T) {
+					synctest.Test(t, func(t *testing.T) {
+						root := ""
+						if tc.backing == "disk" {
+							root = t.TempDir()
+						}
+						owner, err := sourcecache.New(t.Context(), root)
+						assert.NoError(t, err)
+						externalShare := true
+						t.Cleanup(func() {
+							if externalShare {
+								assert.NoError(t, owner.Close())
+							}
+						})
+						ctx, cancel := context.WithCancel(t.Context())
+						defer cancel()
+						release := make(chan struct{})
+						defer close(release)
+						entered, canceled, completed := make(chan struct{}, 2), make(chan struct{}, 2), make(chan struct{}, 2)
+						inputs := [2]*store.SourceArtifact{}
+						for i := range inputs {
+							input := &joinedTreeFS{payloadPath: "app/payload.txt", FS: fstest.MapFS{
+								"flux.yaml":              {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
+								"app/kustomization.yaml": {Data: []byte("configMapGenerator: [{name: held, files: [payload.txt]}]\n")},
+								"app/payload.txt":        {Data: []byte("fixture")},
+							}}
+							input.acquire = func() error {
+								_, _, _, err := owner.Blob(ctx, sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
+									func(ctx context.Context, _ sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+										entered <- struct{}{}
+										<-ctx.Done()
+										canceled <- struct{}{}
+										<-release
+										completed <- struct{}{}
+										return sourcecache.ProducerResult{}, ctx.Err()
+									})
+								return err
+							}
+							inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
+						}
+						cfg := treeConfig{CacheDir: root, Concurrency: workers, HeadOnly: headOnly,
+							StatusListener: func(id manifest.TreeID, _ manifest.NamedResource, _ store.StatusInfo) {
+								inputs[id.Side].FS.(*joinedTreeFS).armed.Store(true)
+							}, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
+						if tc.injected {
+							cfg.Cache = owner
+						}
+						done := make(chan error, 1)
+						go func() {
+							_, err := RenderTrees(ctx, []Tree{{RepoRoot: inputs[0].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: inputs[1].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
+							done <- err
+						}()
+						for range 2 {
+							<-entered
+						}
+						if !tc.injected {
 							assert.NoError(t, owner.Close())
+							externalShare = false
 						}
-					})
-					ctx, cancel := context.WithCancel(t.Context())
-					defer cancel()
-					release := make(chan struct{})
-					defer close(release)
-					entered, canceled, completed := make(chan struct{}, 2), make(chan struct{}, 2), make(chan struct{}, 2)
-					inputs := [2]*store.SourceArtifact{}
-					for i := range inputs {
-						input := &joinedTreeFS{payloadPath: "app/payload.txt", FS: fstest.MapFS{
-							"flux.yaml":              {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
-							"app/kustomization.yaml": {Data: []byte("configMapGenerator: [{name: held, files: [payload.txt]}]\n")},
-							"app/payload.txt":        {Data: []byte("fixture")},
-						}}
-						input.acquire = func() error {
-							_, _, _, err := owner.Blob(ctx, sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
-								func(ctx context.Context, _ sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-									entered <- struct{}{}
-									<-ctx.Done()
-									canceled <- struct{}{}
-									<-release
-									completed <- struct{}{}
-									return sourcecache.ProducerResult{}, ctx.Err()
-								})
-							return err
+						cancel()
+						for range 2 {
+							<-canceled
 						}
-						inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
-					}
-					cfg := treeConfig{CacheDir: root, Concurrency: 2, HeadOnly: headOnly,
-						StatusListener: func(id manifest.TreeID, _ manifest.NamedResource, _ store.StatusInfo) {
-							inputs[id.Side].FS.(*joinedTreeFS).armed.Store(true)
-						}, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
-					if tc.injected {
-						cfg.Cache = owner
-					}
-					done := make(chan error, 1)
-					go func() {
-						_, err := RenderTrees(ctx, []Tree{{RepoRoot: inputs[0].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: inputs[1].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
-						done <- err
-					}()
-					for range 2 {
-						<-entered
-					}
-					if !tc.injected {
-						assert.NoError(t, owner.Close())
-						externalShare = false
-					}
-					cancel()
-					for range 2 {
-						<-canceled
-					}
-					synctest.Wait()
-					select {
-					case err := <-done:
-						t.Fatalf("render returned before acquisition cleanup: %v", err)
-					default:
-					}
-					if root != "" {
-						res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-						if err == nil && len(res.Errors) == 0 {
-							t.Fatal("backing released before held acquisitions joined")
+						synctest.Wait()
+						select {
+						case err := <-done:
+							t.Fatalf("render returned before acquisition cleanup: %v", err)
+						default:
 						}
-					}
-					key := sourcecache.BlobKey{Content: "backing-survives"}
-					_, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-						_, err := io.WriteString(w, "live")
-						return sourcecache.ProducerResult{}, err
-					})
-					assert.NoError(t, err)
-
-					release <- struct{}{}
-					release <- struct{}{}
-					if err := <-done; !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "orig snapshot:") != 1 || strings.Count(err.Error(), "current snapshot:") != 1 {
-						t.Fatalf("joined cancellation lost a side: %v", err)
-					}
-					for range 2 {
-						<-completed
-					}
-					if tc.injected {
-						_, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+						if root != "" {
+							res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+							if err == nil && len(res.Errors) == 0 {
+								t.Fatal("backing released before held acquisitions joined")
+							}
+						}
+						key := sourcecache.BlobKey{Content: "backing-survives"}
+						_, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+							_, err := io.WriteString(w, "live")
+							return sourcecache.ProducerResult{}, err
+						})
 						assert.NoError(t, err)
 
-						assert.NoError(t, owner.Close())
-						externalShare = false
-					}
-					if root != "" {
-						res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
-						if err != nil || len(res.Errors) != 0 {
-							t.Fatalf("joined render retained owner: %+v %v", res, err)
+						release <- struct{}{}
+						release <- struct{}{}
+						if err := <-done; !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "orig snapshot:") != 1 || strings.Count(err.Error(), "current snapshot:") != 1 {
+							t.Fatalf("joined cancellation lost a side: %v", err)
 						}
-					}
+						for range 2 {
+							<-completed
+						}
+						if tc.injected {
+							_, _, _, err = owner.Blob(t.Context(), key, sourcecache.Policy{MaxAge: time.Hour}, nil)
+							assert.NoError(t, err)
+
+							assert.NoError(t, owner.Close())
+							externalShare = false
+						}
+						var reacquired atomic.Int64
+						_, _, _, err = owner.Blob(ctx, sourcecache.BlobKey{Content: "post-close-canceled"}, sourcecache.Policy{}, func(context.Context, sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+							reacquired.Add(1)
+							return sourcecache.ProducerResult{}, nil
+						})
+						if !errors.Is(err, context.Canceled) || reacquired.Load() != 0 {
+							t.Fatalf("canceled run acquired after owner close: calls=%d error=%v", reacquired.Load(), err)
+						}
+						if root != "" {
+							res, err := sourcecache.Sweep(t.Context(), root, sourcecache.SweepOpts{})
+							if err != nil || len(res.Errors) != 0 {
+								t.Fatalf("joined render retained owner: %+v %v", res, err)
+							}
+						}
+					})
 				})
-			})
+			}
 		}
 	}
 	t.Run("http-bootstrap", func(t *testing.T) {

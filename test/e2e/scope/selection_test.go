@@ -208,6 +208,54 @@ func TestE2E_DiffAutoBaseline_Base(t *testing.T) {
 	}
 }
 
+func TestE2E_DiffAutoBaseline_CommittedMembership(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rename bool
+	}{
+		{name: "delete"}, {name: "rename", rename: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clusterPath, root := initGitFixture(t)
+			repo, err := gogit.PlainOpen(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base, err := repo.Head()
+			if err != nil {
+				t.Fatal(err)
+			}
+			wt, err := repo.Worktree()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := wt.Remove("kubernetes/apps/cm.yaml"); err != nil {
+				t.Fatal(err)
+			}
+			resources := "resources: []\n"
+			if tc.rename {
+				resources = "resources: [renamed.yaml]\n"
+				testutil.WriteFile(t, root, "kubernetes/apps/renamed.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: renamed, namespace: apps}\ndata: {value: committed}\n")
+			}
+			testutil.WriteFile(t, root, "kubernetes/apps/kustomization.yaml", resources)
+			testutil.WriteFile(t, root, "kubernetes/flux/peer.yaml", testutil.KustomizationYAML("apps", "other", "  path: ./peer\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+			testutil.WriteFile(t, root, "peer/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "peer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: peer-output}\n")
+			testutil.GitCommitAll(t, repo, "membership change", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(1, 0)}})
+			testutil.WriteFile(t, root, "notes/dirty.txt", "dirty-unconsumed\n")
+			testutil.WriteFile(t, root, "kubernetes/apps/stray.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-unconsumed}\n")
+			stdout, stderr := harness.RequireCLIOK(t, "diff", "ks", "apps", "-n", "flux-system", "--path", clusterPath,
+				"--base", base.Hash().String(), "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
+			if !strings.Contains(stdout, "hello") || strings.Contains(stdout, "peer-output") || strings.Contains(stdout, "dirty-unconsumed") {
+				t.Fatalf("committed old side or name/namespace scope lost:\n%s\n%s", stdout, stderr)
+			}
+			if got := strings.Contains(stdout, "renamed"); got != tc.rename {
+				t.Fatalf("rename present=%t, want %t:\n%s", got, tc.rename, stdout)
+			}
+		})
+	}
+}
+
 func TestE2E_DiffSelfRefBaselineRenders(t *testing.T) {
 	repoRoot := initSelfRefGitFixture(t)
 	testutil.WriteFileAt(t, filepath.Join(repoRoot, "k8s", "apps", "cm.yaml"), `---

@@ -1,11 +1,12 @@
 package scope
 
 import (
-	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/test/e2e/internal/harness"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_ExcludedSiblingsDeterministic(t *testing.T) {
@@ -19,21 +20,19 @@ func TestE2E_ExcludedSiblingsDeterministic(t *testing.T) {
 	clock := regexp.MustCompile(`   \d+(?:\.\d+s|m\d+s)\n$`)
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
-			var wantOut, wantErr string
-			for run := range 2 {
-				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", root, "--cache-dir", cache, "--no-progress", "--concurrency=2")
+			firstOut, firstErr := harness.RequireCLIOK(t, verb, "all", "--path", root, "--cache-dir", cache, "--no-progress", "--concurrency=2")
+			secondOut, secondErr := harness.RequireCLIOK(t, verb, "all", "--path", root, "--cache-dir", cache, "--no-progress", "--concurrency=2")
+			for _, result := range []struct{ stdout, stderr string }{{firstOut, firstErr}, {secondOut, secondErr}} {
+				stdout, stderr := result.stdout, result.stderr
 				if strings.Contains(stderr, "[OrphanedResource]") || strings.Contains(stdout, "stray-") || strings.Contains(stderr, "stray-") || strings.Contains(stdout, "warnings") || strings.Contains(stdout, "notes (") || strings.Contains(stderr, "level=WARN") {
 					t.Fatalf("orphan destination: stdout=%s stderr=%s", stdout, stderr)
 				}
 				if verb == "build" && !strings.Contains(stdout, "name: rendered") || verb == "test" && (!strings.Contains(stdout, "passed") || strings.Contains(stdout, "failed")) {
 					t.Fatalf("orphan product changed: %s", stdout)
 				}
-				stdout = clock.ReplaceAllString(stdout, "   <elapsed>\n")
-				if run == 0 {
-					wantOut, wantErr = stdout, stderr
-				} else if stdout != wantOut || stderr != wantErr {
-					t.Fatalf("unstable orphan output: stdout=%s stderr=%s", stdout, stderr)
-				}
+			}
+			if clock.ReplaceAllString(firstOut, "   <elapsed>\n") != clock.ReplaceAllString(secondOut, "   <elapsed>\n") || firstErr != secondErr {
+				t.Fatalf("unstable orphan output: first stdout=%s stderr=%s; second stdout=%s stderr=%s", firstOut, firstErr, secondOut, secondErr)
 			}
 		})
 	}

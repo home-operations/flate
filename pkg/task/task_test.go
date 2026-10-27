@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -92,15 +93,22 @@ func TestService_BlockTillDone(t *testing.T) {
 
 func TestService_PanicCountedAndRecovered(t *testing.T) {
 	t.Parallel()
-	parent := NewBounded(2)
-	first, second := parent.Fork(), parent.Fork()
-	first.Go(t.Context(), "boom", func(context.Context) { panic("oops") })
-	second.Go(t.Context(), "complete", func(context.Context) {})
-	first.BlockTillDone()
-	second.BlockTillDone()
-	assert.Equal(t, first.Failures(), int64(1))
-	assert.Equal(t, second.Failures(), int64(0))
-	assert.Equal(t, parent.Failures(), int64(0))
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			parent := NewBounded(workers)
+			s, sibling := parent.Fork(), parent.Fork()
+			sibling.Go(t.Context(), "complete", func(context.Context) {})
+			s.Go(t.Context(), "boom", func(context.Context) { panic("oops") })
+			s.BlockTillDone()
+			assert.Equal(t, s.Failures(), int64(1))
+			sibling.BlockTillDone()
+			assert.Equal(t, sibling.Failures(), int64(0))
+			assert.Equal(t, parent.Failures(), int64(0))
+			assert.Equal(t, len(parent.sem), 0)
+			assert.Equal(t, t.Context().Err(), nil)
+		})
+	}
 }
 
 func TestYieldSlot_AllowsChildrenWhenParentsFillPool(t *testing.T) {

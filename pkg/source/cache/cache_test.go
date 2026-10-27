@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
+	"github.com/home-operations/flate/pkg/task"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -1405,9 +1407,74 @@ func (c *archiveCancelContext) Err() error {
 	return err
 }
 
+func TestAcquire_SharedWaiterCancellation(t *testing.T) {
+	t.Parallel()
+	for _, workers := range []int{2, 16} {
+		for _, disk := range []bool{false, true} {
+			t.Run(fmt.Sprintf("workers=%d/disk=%t", workers, disk), func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					root := ""
+					if disk {
+						root = t.TempDir()
+					}
+					c := cachetest.New(t, root, New)
+					tasks := task.NewBounded(workers)
+					started, release := make(chan struct{}), make(chan struct{})
+					unblock := sync.OnceFunc(func() { close(release) })
+					defer unblock()
+					var calls atomic.Int64
+					fill := func(ctx context.Context, input ProducerInput) (ProducerResult, error) {
+						if calls.Add(1) == 1 {
+							close(started)
+						}
+						<-release
+						return producer([]byte("shared"), ocispec.Descriptor{})(ctx, input)
+					}
+					key := BlobKey{Content: "shared-cancel"}
+					launch := func(ctx context.Context, done chan<- error) {
+						tasks.Go(ctx, "consumer", func(ctx context.Context) {
+							reader, _, _, err := c.Blob(ctx, key, Policy{MaxAge: time.Hour}, fill)
+							if reader != nil {
+								data, readErr := fs.ReadFile(reader, "content")
+								err = errors.Join(err, readErr)
+								if string(data) != "shared" {
+									err = fmt.Errorf("payload=%q, want shared", data)
+								}
+							}
+							done <- err
+						})
+					}
+					survivor, canceled := make(chan error, 1), make(chan error, 1)
+					launch(t.Context(), survivor)
+					<-started
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					launch(ctx, canceled)
+					synctest.Wait()
+					cancel()
+					if err := <-canceled; !errors.Is(err, context.Canceled) {
+						t.Errorf("canceled waiter=%v", err)
+					}
+					unblock()
+					assert.NoError(t, <-survivor)
+					tasks.BlockTillDone()
+					assert.Equal(t, calls.Load(), int64(1))
+					assert.Equal(t, tasks.Failures(), int64(0))
+					assert.NoError(t, c.Close())
+					_, _, _, err := c.Blob(ctx, key, Policy{}, fill)
+					if !errors.Is(err, context.Canceled) || calls.Load() != 1 {
+						t.Fatalf("canceled run reacquired after close: calls=%d error=%v", calls.Load(), err)
+					}
+				})
+			})
+		}
+	}
+}
+
 func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 	t.Parallel()
-	for _, concurrency := range []int{2, 4} {
+	for _, concurrency := range []int{2, 16} {
 		for _, backing := range []string{"memory", "disk"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, backing), func(t *testing.T) {
 				t.Parallel()
@@ -2313,5 +2380,94 @@ func TestAcquire_ExtractPolicy(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAcquire_MemoryRetirement(t *testing.T) {
+	t.Parallel()
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
+			root := ""
+			if backing == "disk" {
+				root = t.TempDir()
+			}
+			files, bytesPerFile := 8, 32<<10
+			if os.Getenv("FLATE_E8_SLOW") == "1" {
+				files, bytesPerFile = 64, 1<<20
+			}
+			calls := 0
+			fill := func(value string) func(context.Context, ProducerInput) (ProducerResult, error) {
+				return func(_ context.Context, out ProducerInput) (ProducerResult, error) {
+					calls++
+					archive := tar.NewWriter(out)
+					for n := range files {
+						if err := archive.WriteHeader(&tar.Header{Name: fmt.Sprintf("file-%03d", n), Size: int64(bytesPerFile), Mode: 0o600}); err != nil {
+							return ProducerResult{}, err
+						}
+						if _, err := io.CopyN(archive, strings.NewReader(strings.Repeat(value, bytesPerFile)), int64(bytesPerFile)); err != nil {
+							return ProducerResult{}, err
+						}
+					}
+					return ProducerResult{}, archive.Close()
+				}
+			}
+			check := func(input fs.FS, value byte) {
+				t.Helper()
+				entries, err := fs.ReadDir(input, ".")
+				assert.NoError(t, err)
+				assert.Equal(t, len(entries), files)
+				for _, name := range []string{"file-000", fmt.Sprintf("file-%03d", files-1)} {
+					body, err := fs.ReadFile(input, name)
+					assert.NoError(t, err)
+					if len(body) != bytesPerFile || bytes.Count(body, []byte{value}) != bytesPerFile {
+						t.Fatalf("retained payload %s invalid", name)
+					}
+				}
+			}
+			var retained [2]uint64
+			func() {
+				c, err := New(t.Context(), root)
+				assert.NoError(t, err)
+				defer func() { assert.NoError(t, c.Close()) }()
+				key := ArchiveKey{Content: "E8 B11 retirement", Policy: "fixed"}
+				first, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill("a"))
+				assert.NoError(t, err)
+				warm, _, _, err := c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill("a"))
+				assert.NoError(t, err)
+				assert.Equal(t, calls, 1)
+				check(warm, 'a')
+				next, _, _, err := c.Acquire(t.Context(), key, Policy{}, fill("b"))
+				assert.NoError(t, err)
+				assert.Equal(t, calls, 2)
+				check(first, 'a')
+				check(next, 'b')
+				runtime.GC()
+				var stats runtime.MemStats
+				runtime.ReadMemStats(&stats)
+				retained[0] = stats.HeapAlloc
+				runtime.KeepAlive(first)
+				runtime.KeepAlive(warm)
+				runtime.KeepAlive(next)
+			}()
+			runtime.GC()
+			var stats runtime.MemStats
+			runtime.ReadMemStats(&stats)
+			retained[1] = stats.HeapAlloc
+			func() {
+				c, err := New(t.Context(), root)
+				assert.NoError(t, err)
+				defer func() { assert.NoError(t, c.Close()) }()
+				input, _, _, err := c.Acquire(t.Context(), ArchiveKey{Content: "E8 B11 retirement", Policy: "fixed"}, Policy{MaxAge: Forever}, fill("b"))
+				assert.NoError(t, err)
+				check(input, 'b')
+				wantCalls := 3
+				if backing == "disk" {
+					wantCalls = 2
+				}
+				assert.Equal(t, calls, wantCalls)
+			}()
+			t.Logf("B11 retirement backing=%s files=%d bytes_per_file=%d fills=%d held_heap=%d released_closed_gc_heap=%d GOMEMLIMIT=%q GOGC=%q; process-wide samples, not RSS/attributed retention; persistent source reuse is distinct from render-cache build eligibility", backing, files, bytesPerFile, calls, retained[0], retained[1], os.Getenv("GOMEMLIMIT"), os.Getenv("GOGC"))
+		})
 	}
 }

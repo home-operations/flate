@@ -25,44 +25,62 @@ import (
 
 func TestRemoteInput_CancelQueuedGitBase(t *testing.T) {
 	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		c := newTestTreeCache(t, "")
-		c.tasks = task.NewBounded(2)
-		entered, release := make(chan struct{}, 2), make(chan struct{})
-		for range 2 {
-			c.tasks.Go(t.Context(), "blocker", func(context.Context) {
-				entered <- struct{}{}
-				<-release
+	for _, workers := range []int{2, 16} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := newTestTreeCache(t, "")
+				c.tasks = task.NewBounded(workers)
+				entered, release := make(chan struct{}, workers), make(chan struct{})
+				for range workers {
+					c.tasks.Go(t.Context(), "blocker", func(context.Context) {
+						entered <- struct{}{}
+						<-release
+					})
+				}
+				for range workers {
+					<-entered
+				}
+				calls := 0
+				c.gitBase = func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
+					calls++
+					return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "key", Content: "key-generation", Revision: "revision"}, nil
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				descriptor := remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo"}
+				done := make(chan error, 1)
+				go func() {
+					acquired, identity, err := descriptor.acquire(ctx, c, &treeFS{})
+					if acquired != nil || identity != (remoteIdentity{}) {
+						t.Errorf("canceled acquisition filesystem=%v identity=%+v", acquired, identity)
+					}
+					done <- err
+				}()
+				synctest.Wait()
+				cancel()
+				close(release)
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Errorf("queued acquisition=%v, want context cancellation", err)
+				}
+				c.tasks.BlockTillDone()
+				if _, _, err := descriptor.acquire(ctx, c, &treeFS{}); !errors.Is(err, context.Canceled) {
+					t.Errorf("canceled reacquisition=%v", err)
+				}
+				c.tasks.BlockTillDone()
+				if calls != 0 {
+					t.Fatalf("canceled git fetches=%d, want 0", calls)
+				}
+				if _, _, err := descriptor.acquire(t.Context(), c, &treeFS{}); err != nil {
+					t.Fatal(err)
+				}
+				c.tasks.BlockTillDone()
+				if calls != 1 {
+					t.Fatalf("surviving acquisition calls=%d, want 1", calls)
+				}
 			})
-		}
-		<-entered
-		<-entered
-		calls := 0
-		c.gitBase = func(context.Context, GitBaseRequest, sourcecache.RetryConfig) (*store.SourceArtifact, error) {
-			calls++
-			return &store.SourceArtifact{FS: fstest.MapFS{}, Key: "key", Content: "key-generation", Revision: "revision"}, nil
-		}
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		done := make(chan error, 1)
-		go func() {
-			acquired, identity, err := (remoteInput{Operation: remoteGit, URL: "https://example.invalid/repo"}).acquire(ctx, c, &treeFS{})
-			if acquired != nil || identity != (remoteIdentity{}) {
-				t.Errorf("canceled acquisition filesystem=%v identity=%+v", acquired, identity)
-			}
-			done <- err
-		}()
-		synctest.Wait()
-		cancel()
-		close(release)
-		if err := <-done; !errors.Is(err, context.Canceled) {
-			t.Errorf("queued acquisition=%v, want context cancellation", err)
-		}
-		c.tasks.BlockTillDone()
-		if calls != 0 {
-			t.Fatalf("canceled queued git fetches=%d, want 0", calls)
-		}
-	})
+		})
+	}
 }
 
 func TestRemoteInput_AcquisitionIdentity(t *testing.T) {

@@ -677,6 +677,46 @@ func (p templateActionProbe) String() string { p <- struct{}{}; return "fresh" }
 
 func TestTemplateCache_TemplateIntegration(t *testing.T) {
 	t.Parallel()
+	t.Run("fresh analysis handoff", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+		testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: example}\ndata: {marker: {{ .Values.marker | quote }}}\n")
+		cli := NewClient(cachetest.New(t, "", cache.New))
+		sources := localChartResolver(t, "chart-repo", "flux-system", dir)
+		for _, marker := range []string{"first", "second"} {
+			hr := newHR()
+			values := map[string]any{"marker": marker}
+			input := RenderOptions{Sources: sources}
+			prepared, err := cli.prepareTemplate(t.Context(), hr, values, input)
+			assert.NoError(t, err)
+			docs, receipt, err := cli.Template(t.Context(), hr, values, input)
+			assert.NoError(t, err)
+			if len(docs) != 1 || receipt == nil {
+				t.Fatalf("fresh render %s returned %d documents and receipt %v", marker, len(docs), receipt)
+			}
+			cli.chartMu.RLock()
+			canonical := cli.chartCache[prepared.loaded.key].analysis
+			cli.chartMu.RUnlock()
+			frame := receipt.Value().(renderFrame)
+			if frame.header.Analysis != canonical {
+				t.Fatalf("fresh render %s cloned immutable chart analysis", marker)
+			}
+			if frame.chart != nil || frame.encoded != nil {
+				t.Fatal("fresh receipt retained noncompact backing")
+			}
+			again, reused, err := cli.Template(t.Context(), hr, values, input)
+			assert.NoError(t, err)
+			assert.Diff(t, docs, again)
+			cached := reused.Value().(renderFrame)
+			if cached.header.Analysis != canonical {
+				t.Fatal("cached render reconstructed canonical analysis")
+			}
+			assert.Diff(t, frame.output, cached.output)
+			docs[0]["data"].(map[string]any)["marker"] = "mutated"
+			assert.Equal(t, again[0]["data"].(map[string]any)["marker"].(string), marker)
+		}
+	})
 	for _, tc := range []struct {
 		name, input string
 		invalid     bool

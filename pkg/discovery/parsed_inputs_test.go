@@ -48,6 +48,13 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 			}
 		}
 	})
+	t.Run("different content", func(t *testing.T) {
+		t.Parallel()
+		changed := *input
+		changed.Content = "next-generation"
+		d := newDiscoverer(Config{Input: &changed, Entry: &entries[0], Path: entries[0].Path, Store: store.New(), WipeSecrets: true})
+		assert.Equal(t, d.loader.Options.ParsedInputs == nil, true)
+	})
 	t.Run("native admissions", func(t *testing.T) {
 		t.Parallel()
 		for _, entry := range entries {

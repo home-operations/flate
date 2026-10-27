@@ -31,8 +31,8 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 				case "dispatcher":
 					d.Dispatch(b.Context(), rs.Named(), manifest.DrainNone)
 				case "observation_reads":
-					before, _ := s.GetArtifact(rs.Named()).(*store.Emission)
-					if s.GetArtifact(rs.Named()) != before {
+					before, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+					if s.GetArtifact(rs.Named(), store.ArtifactContent) != before {
 						b.Fatal("artifact changed")
 					}
 					info, _ := s.GetStatus(rs.Named())

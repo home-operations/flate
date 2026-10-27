@@ -44,7 +44,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 	successor := hr.Clone()
 	successor.Chart.Name = "different"
 	st.AddObject(successor)
-	if st.GetArtifact(failedHR) != nil {
+	if st.GetArtifact(failedHR, store.ArtifactContent) != nil {
 		t.Fatal("successor exposed a current-input artifact")
 	}
 	failure := "values don't meet the specifications of the schema(s)"
@@ -103,7 +103,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		successor := *owners[1]
 		successor.ResourcesTemplate = "invalid successor"
 		st.AddObject(&successor)
-		assert.Equal(t, st.GetArtifact(winner), store.Artifact(nil))
+		assert.Equal(t, st.GetArtifact(winner, store.ArtifactContent), store.Artifact(nil))
 		st.UpdateStatus(winner, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "invalid ResourceSet template"})
 		o := &Orchestrator{store: st, index: index}
 		assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: winningDocs})
@@ -499,7 +499,7 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 				assert.Diff(t, declaration, rivalDoc)
 				assert.Equal(t, st.EmissionOwner(shared), rs.Named())
 			}
-			assert.Equal(t, st.GetArtifact(shared), store.Artifact(byteWinner))
+			assert.Equal(t, st.GetArtifact(shared, store.ArtifactContent), store.Artifact(byteWinner))
 			want := map[manifest.NamedResource][]map[string]any{}
 			if tc.emitted {
 				want[parent.Named()] = generatorDocs

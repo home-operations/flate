@@ -535,7 +535,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 	}
 	id := testutil.HelmReleaseID("apps", "selected")
 	hr, _ := o.Store().Get[*manifest.HelmRelease](id)
-	artifact := o.Store().GetArtifact(id)
+	artifact := o.Store().GetArtifact(id, store.ArtifactContent)
 	if artifact == nil {
 		t.Fatal("fresh render has no artifact")
 	}
@@ -564,7 +564,7 @@ func TestScopedFailures_CanonicalReplacementWithStaleArtifact(t *testing.T) {
 		t.Fatal("stale artifact weakened selected failure")
 	}
 	if len(selection[0].Failed) != 2 || selection[0].Failed[current].String() != "current input failure" ||
-		len(selection[0].Unrelated) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id) != nil {
+		len(selection[0].Unrelated) != 1 || selection[0].Unrelated[0].Resource != old || o.Store().GetArtifact(id, store.ArtifactContent) != nil {
 		t.Fatalf("projection did not follow current canonical refs: %+v", selection[0])
 	}
 	_, _, accepted := o.Store().GetEmission(id)

@@ -22,7 +22,7 @@ func TestReconcile_SharedAdmission(t *testing.T) {
 	if err := c.newExecution(rs.Named()).reconcile(t.Context(), rs, manifest.DrainNone); err != nil {
 		t.Fatal(err)
 	}
-	if s.GetArtifact(rs.Named()) == nil {
+	if s.GetArtifact(rs.Named(), store.ArtifactContent) == nil {
 		t.Fatal("missing completed output")
 	}
 }

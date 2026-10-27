@@ -32,7 +32,7 @@ type RenderRequest struct {
 	// Standalone callers leave it nil.
 	HeldSlot *task.Service
 	// Source.FS supplies content; nil Source or FS is unavailable.
-	// Empty Source.Key denotes mutable content validated on every cache hit.
+	// Empty Source.Content denotes mutable content validated on every cache hit.
 	Source *store.SourceArtifact
 	// ApplyIgnore selects source-controller exclusions for admitted local aliases.
 	ApplyIgnore bool
@@ -81,7 +81,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 			slog.Debug("kustomize: decode render frame", "err", err)
 			return false, nil
 		}
-		valid, err := frame.header.Reads.stillValid(ctx, cache, &treeFS{lower: lower, retry: retry, maxAge: maxAge}, req.Source.Key != "")
+		valid, err := frame.header.Reads.stillValid(ctx, cache, &treeFS{lower: lower, retry: retry, maxAge: maxAge}, req.Source.Content != "")
 		if err != nil || !valid {
 			return false, err
 		}
@@ -102,7 +102,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 	acquire := func() {
 		_, _, _, err = cache.owner.Blob(ctx, blobKey, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(ctx context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 			rec := newReadSet(root)
-			rec.immutable = req.Source.Key != ""
+			rec.immutable = req.Source.Content != ""
 			memFS := newTreeFS(lower, root, rec)
 			memFS.retry = retry
 			memFS.maxAge = maxAge
@@ -247,8 +247,8 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 // of the render content. Filesystem handles and retry/storage policy are never encoded.
 func renderKey(req RenderRequest, root string, ignore any) string {
 	var immutable any
-	if req.Source.Key != "" {
-		immutable = struct{ Key, Revision, Digest string }{req.Source.Key, req.Source.Revision, req.Source.Digest}
+	if req.Source.Content != "" {
+		immutable = req.Source.Input(store.ArtifactContent)
 	}
 	var spec any
 	if req.Spec != nil {

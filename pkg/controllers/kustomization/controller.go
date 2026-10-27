@@ -124,15 +124,25 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err != nil {
 		return err
 	}
-	sourceContent := struct{ Path, Key, Revision, Digest string }{source.LocalPath, source.Key, source.Revision, source.Digest}
+	sourceContent := struct {
+		Input       store.ArtifactInput
+		ApplyIgnore bool
+		Output      []map[string]any
+	}{Input: source.Input(store.ArtifactContent), ApplyIgnore: applyIgnore}
 	var attempt store.Emission
 	defer attempt.Finish()
-	fp, handled, err := c.run.FingerprintDedup(id, ks.Content(sourceContent), &attempt)
-	if handled || err != nil {
-		if err != nil {
-			return err
+	var fp string
+	if source.Content != "" {
+		var handled bool
+		fp, handled, err = c.run.FingerprintDedup(id, ks.Content(sourceContent), &attempt)
+		if handled || err != nil {
+			if err != nil {
+				return err
+			}
+			return c.Trees.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
 		}
-		return c.Trees.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+	} else if err := c.run.Checkpoint(); err != nil {
+		return err
 	}
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
@@ -142,6 +152,18 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	}, c.retry)
 	if err != nil {
 		return err
+	}
+	if source.Content == "" {
+		// Mutable reads MUST be validated before replay can suppress readiness transitions.
+		var handled bool
+		sourceContent.Output = docs
+		fp, handled, err = c.run.FingerprintDedup(id, ks.Content(sourceContent), &attempt)
+		if handled || err != nil {
+			if err != nil {
+				return err
+			}
+			return c.Trees.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+		}
 	}
 	base.Stamp(ks.EmissionPolicy(), docs)
 
@@ -189,9 +211,9 @@ func sourceInput(reads *store.ReadSet, ks *manifest.Kustomization) (*store.Sourc
 		}
 		srcID = manifest.BootstrapSourceID
 	}
-	art := reads.GetArtifact(srcID)
+	art := reads.GetArtifact(srcID, store.ArtifactContent)
 	if sa, ok := art.(*store.SourceArtifact); ok {
-		return sa, srcID == manifest.BootstrapSourceID || sa.Digest == "" && sa.Revision == "", nil
+		return sa, srcID == manifest.BootstrapSourceID || sa.InputAlias || sa.Content == "", nil
 	}
 	return nil, false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
 		manifest.ErrFlux, art, srcID.String())

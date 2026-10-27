@@ -58,6 +58,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 	key := sourcecache.GitKey{Content: content, Ref: cmp.Or(request.Ref, "HEAD"), RecurseSubmodules: request.Submodules}
 	policy.Timeout = nil
 	var input *gittree.FS
+	var identity string
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
 		// Opaque base refs require upstream rev-parse over all advertised heads and tags.
@@ -105,7 +106,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 				return plumbing.ZeroHash, err
 			}
 		}
-		input, _, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase, Worktree: worktree})
+		input, identity, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase, Worktree: worktree})
 		if err != nil {
 			return plumbing.ZeroHash, fmt.Errorf("%w: validate git view: %w", manifest.ErrInput, err)
 		}
@@ -115,7 +116,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		return gitWarningArtifact(input, manifest.NamedResource{}, request.URL, request.Ref), err
 	}
 	if input == nil {
-		input, _, err = gittree.New(ctx, generation.Backing, generation.Commit, gittree.ViewOptions{
+		input, identity, err = gittree.New(ctx, generation.Backing, generation.Commit, gittree.ViewOptions{
 			Content: content, Mode: gittree.RemoteBase, Worktree: generation.Worktree,
 		})
 	}
@@ -123,5 +124,5 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		return gitWarningArtifact(input, manifest.NamedResource{}, request.URL, request.Ref), fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: id, FS: input, Warnings: gitWarnings(input, manifest.NamedResource{}, request.URL, request.Ref)}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: id, Content: identity, FS: input, Warnings: gitWarnings(input, manifest.NamedResource{}, request.URL, request.Ref)}, nil
 }

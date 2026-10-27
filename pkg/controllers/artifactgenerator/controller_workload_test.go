@@ -46,12 +46,12 @@ func TestArtifactGenerator_GeneratedWorkloads(t *testing.T) {
 					input.opens.Store(0)
 					input.bytes.Store(0)
 					st := reconcileWorkload(t, owner, store.Child{Obj: obj, Doc: doc}, input)
-					emission := st.GetArtifact(obj.Named()).(*store.Emission)
+					emission := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.Emission)
 					if !emission.Complete || len(emission.Children) != count {
 						t.Fatalf("%s inventory = %d, complete=%t", phase, len(emission.Children), emission.Complete)
 					}
 					for i, child := range emission.Children {
-						artifact := st.GetArtifact(child.Obj.Named()).(*store.SourceArtifact)
+						artifact := st.GetArtifact(child.Obj.Named(), store.ArtifactContent).(*store.SourceArtifact)
 						data, err := fs.ReadFile(artifact.FS, "input")
 						if err != nil || string(data) != "selected\n" {
 							t.Fatalf("%s output %d = %q, %v", phase, i, data, err)

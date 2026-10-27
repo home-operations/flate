@@ -55,7 +55,7 @@ func withFakeGitBase(t *testing.T, c *TreeCache, worktree string, calls *atomic.
 		if calls != nil {
 			calls.Add(1)
 		}
-		return &store.SourceArtifact{FS: input, Key: "fake-base", Revision: "deadbeef"}, nil
+		return &store.SourceArtifact{FS: input, Key: "fake-base", Content: "fake-base-generation", Revision: "deadbeef"}, nil
 	})
 }
 
@@ -480,7 +480,7 @@ func TestRender_RemoteRetryPolicies(t *testing.T) {
 						return nil, ctx.Err()
 					}
 					body := fmt.Sprintf("resources:\n  - %s/%d\n", srv.URL, retry.Attempts)
-					return &store.SourceArtifact{Key: "family", Revision: fmt.Sprint(retry.Attempts), FS: fstest.MapFS{"kustomization.yaml": {Data: []byte(body)}}}, nil
+					return &store.SourceArtifact{Key: "family", Content: fmt.Sprint(retry.Attempts), Revision: fmt.Sprint(retry.Attempts), FS: fstest.MapFS{"kustomization.yaml": {Data: []byte(body)}}}, nil
 				})
 				type result struct {
 					attempts int
@@ -568,7 +568,7 @@ func TestPreflightGitBase_PolicyMounts(t *testing.T) {
 	var requests []GitBaseRequest
 	c.SetGitBaseFetcher(func(_ context.Context, r GitBaseRequest, _ sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 		requests = append(requests, r)
-		return &store.SourceArtifact{Key: "same", Revision: "same", FS: memoryTree(t, map[string]string{"one/kustomization.yaml": "resources: []\n", "two/kustomization.yaml": "resources: []\n"})}, nil
+		return &store.SourceArtifact{Key: "same", Content: "same-content", Revision: "same", FS: memoryTree(t, map[string]string{"one/kustomization.yaml": "resources: []\n", "two/kustomization.yaml": "resources: []\n"})}, nil
 	})
 	view := memFSWith(t, map[string]string{"kustomization.yaml": `resources:
 - file:///org/repo//one?timeout=1s&submodules=false

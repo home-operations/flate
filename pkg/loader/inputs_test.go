@@ -552,7 +552,7 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 				art.InputAlias, art.LocalRoot = true, filepath.Join(root, "subtree")
 			}
 			if mode == "pinned" {
-				art.Key = "pinned"
+				art.Key, art.Content = "pinned", "pinned"
 			}
 			s.SetArtifact(source.Named(), art)
 			l := New(s)

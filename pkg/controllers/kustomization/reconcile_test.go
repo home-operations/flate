@@ -1,6 +1,7 @@
 package kustomization
 
 import (
+	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
@@ -82,6 +83,23 @@ data: {greeting: hi}
 	return c, s, root
 }
 
+func freezeSourceForTest(t *testing.T, st *store.Store) {
+	t.Helper()
+	original := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	owner := cachetest.New(t, "", sourcecache.New)
+	input, _, key, err := owner.Acquire(t.Context(), sourcecache.ArchiveKey{Policy: "fixed", Content: t.Name()}, sourcecache.Policy{MaxAge: sourcecache.Forever}, func(_ context.Context, target sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+		writer := tar.NewWriter(target)
+		if err := writer.AddFS(original.FS); err != nil {
+			return sourcecache.ProducerResult{}, err
+		}
+		return sourcecache.ProducerResult{}, writer.Close()
+	})
+	assert.NoError(t, err)
+	pinned := *original
+	pinned.FS, pinned.Key, pinned.Content = input, key, sourcecache.AcquisitionIdentity(input)
+	st.SetArtifact(manifest.BootstrapSourceID, &pinned)
+}
+
 const namespaceIdentityDocs = `apiVersion: v1
 kind: ConfigMap
 metadata: {name: hello}
@@ -113,6 +131,7 @@ func TestReconcile_HappyPath(t *testing.T) {
 		list += "- " + strings.ReplaceAll(strings.TrimSpace(doc), "\n", "\n  ") + "\n"
 	}
 	testutil.WriteFile(t, root, "apps/cm.yaml", list)
+	freezeSourceForTest(t, s)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Path:            "./apps",
@@ -130,7 +149,7 @@ func TestReconcile_HappyPath(t *testing.T) {
 	if info.Message != "" {
 		t.Errorf("unexpected Ready message: %q", info.Message)
 	}
-	art, _ := s.GetArtifact(ks.Named()).(*store.Emission)
+	art, _ := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	if art == nil {
 		t.Fatal("Emission not stored")
 	}
@@ -211,7 +230,7 @@ spec:
 		guard.deny.Store(persisted)
 		renderSource := &manifest.GitRepository{Name: "render-source", Namespace: "apps"}
 		s.AddObject(renderSource)
-		s.SetArtifact(renderSource.Named(), &store.SourceArtifact{FS: guard, LocalPath: root, Key: "render-pin", Digest: "sha256:render", Revision: "render-revision"})
+		s.SetArtifact(renderSource.Named(), &store.SourceArtifact{FS: guard, LocalPath: root, Key: "render-pin", Content: "render-content", Digest: "sha256:render", Revision: "render-revision"})
 		s.UpdateStatus(renderSource.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 		ks := &manifest.Kustomization{Name: "apps", Namespace: "apps", Path: "./apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: renderSource.Name}}
 		s.AddObject(ks)
@@ -250,7 +269,7 @@ spec:
 			t.Fatalf("persisted=%t generator status=%+v", persisted, info)
 		}
 		target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "output"}
-		payload, ok := s.GetArtifact(target).(*store.SourceArtifact)
+		payload, ok := s.GetArtifact(target, store.ArtifactContent).(*store.SourceArtifact)
 		if !ok {
 			t.Fatal("generated payload missing")
 		}
@@ -403,7 +422,7 @@ spec:
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
-			art, _ := s.GetArtifact(ks.Named()).(*store.Emission)
+			art, _ := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 			if art == nil || len(art.Manifests) != 4 {
 				t.Fatalf("expected four rendered manifests, got %+v", art)
 			}
@@ -481,7 +500,7 @@ func TestReconcile_UnresolvedWarningRequiresData(t *testing.T) {
 	if warnings := s.Warnings(); len(warnings) != 0 {
 		t.Fatalf("failed data gate published warnings: %+v", warnings)
 	}
-	if artifact := s.GetArtifact(ks.Named()); artifact != nil {
+	if artifact := s.GetArtifact(ks.Named(), store.ArtifactContent); artifact != nil {
 		t.Fatalf("failed data gate published output: %+v", artifact)
 	}
 }
@@ -496,6 +515,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			c, s, _ := newControllerWithFixture(t)
+			freezeSourceForTest(t, s)
 			consumers := make([]*manifest.Kustomization, 2)
 			for i := range consumers {
 				obj, _, _, err := manifest.ParseDoc(map[string]any{
@@ -535,7 +555,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 						t.Errorf("blocked dependencies = %v", deps)
 					}
 					if i == 0 {
-						accepted, _ = s.GetArtifact(first).(*store.Emission)
+						accepted, _ = s.GetArtifact(first, store.ArtifactContent).(*store.Emission)
 						close(completed)
 					}
 				})
@@ -550,7 +570,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			assert.Equal(t, s.GetObject(first), manifest.BaseManifest(stamped))
 			if replay {
 				authority.Init(s, manifest.NamedResource{Name: "output-reader"}, nil)
-				authority.GetArtifact(first)
+				authority.GetArtifact(first, store.ArtifactContent)
 				if !authority.Valid() {
 					t.Fatal("captured output was already invalid before metadata replay")
 				}
@@ -584,7 +604,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			if accepted == nil || accepted.Fingerprint == "" || len(accepted.Manifests) != 1 {
 				t.Fatalf("first emission = %+v", accepted)
 			}
-			current := s.GetArtifact(first).(*store.Emission)
+			current := s.GetArtifact(first, store.ArtifactContent).(*store.Emission)
 			if current.Fingerprint != accepted.Fingerprint {
 				t.Fatal("metadata replay changed accepted fingerprint")
 			}
@@ -603,7 +623,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			for _, ks := range consumers {
 				info, _ := s.GetStatus(ks.Named())
 				assert.Equal(t, info.Status, store.StatusReady)
-				other := s.GetArtifact(ks.Named()).(*store.Emission)
+				other := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 				if other.Fingerprint == "" || len(other.Manifests) != 1 {
 					t.Fatalf("consumer emission = %+v", other)
 				}
@@ -640,8 +660,8 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
-	firstFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
-	art := s.GetArtifact(ks.Named()).(*store.Emission)
+	firstFP := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
+	art := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	before := make([]map[string]any, len(art.Manifests))
 	for i, doc := range art.Manifests {
 		before[i] = manifest.DeepCopyMap(doc)
@@ -659,7 +679,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	s.AddObject(stamped)
 	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
 	c.Tasks.BlockTillDone()
-	secondFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
+	secondFP := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
 	}
@@ -680,62 +700,56 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	}
 }
 
-// TestReconcile_AlreadyReady_NoTransientPending pins Part A of the
-// re-emission-churn fix: a re-reconcile of an already-Ready KS that
-// turns out to be a no-op (fingerprint unchanged, dedup-skip) must NOT
-// transiently flip the status Ready→Pending. That transient window is
-// exactly what a dependent's quiescence-bound depwait can re-read at a
-// transient pool drain and give up on ("parent Kustomization not
-// ready"). Pre-fix the unconditional UpdateStatus(Pending) at the top
-// of reconcile fired on every re-run; post-fix it is suppressed when
-// the object is already Ready.
 func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 	t.Parallel()
-	c, s, _ := newControllerWithFixture(t)
-	ks := &manifest.Kustomization{
-		Name: "apps", Namespace: "flux-system",
-		Path: "./apps",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{
-			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-		},
-	}
-	s.AddObject(ks)
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
-		t.Fatalf("status = %+v, want StatusReady", info)
-	}
-
-	var mu sync.Mutex
-	var sawPending bool
-	s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		if id != ks.Named() {
-			return
-		}
-		if info, ok := payload.(store.StatusInfo); ok && info.Status == store.StatusPending {
-			mu.Lock()
-			sawPending = true
-			mu.Unlock()
-		}
-	}, false)
-
-	// Re-emit with kustomize ownership labels stamped, then drive a second
-	// reconcile: the labels differ so the body re-runs, but the fingerprint
-	// matches → dedup-skip no-op.
-	stamped := ks.Clone()
-	stamped.Labels = map[string]string{
-		"kustomize.toolkit.fluxcd.io/name":      "parent",
-		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
-	}
-	s.AddObject(stamped)
-	c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
-	c.Tasks.BlockTillDone()
-
-	mu.Lock()
-	defer mu.Unlock()
-	if sawPending {
-		t.Error("no-op re-reconcile of an already-Ready KS transiently downgraded it to Pending (the quiescence-race window)")
-	}
-	if info, _ := s.GetStatus(ks.Named()); info.Status != store.StatusReady {
-		t.Errorf("KS not Ready after no-op re-run: %+v", info)
+	for _, immutable := range []bool{false, true} {
+		t.Run(fmt.Sprint(immutable), func(t *testing.T) {
+			t.Parallel()
+			c, s, root := newControllerWithFixture(t)
+			if immutable {
+				freezeSourceForTest(t, s)
+			}
+			ks := &manifest.Kustomization{
+				Name: "apps", Namespace: "flux-system", Path: "./apps",
+				SourceRef: kustomizev1.CrossNamespaceSourceReference{
+					Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
+				},
+			}
+			s.AddObject(ks)
+			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
+				t.Fatalf("status = %+v, want StatusReady", info)
+			}
+			first := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
+			var sawPending atomic.Bool
+			s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
+				if info, ok := payload.(store.StatusInfo); id == ks.Named() && ok && info.Status == store.StatusPending {
+					sawPending.Store(true)
+				}
+			}, false)
+			stamped := ks.Clone()
+			stamped.Labels = map[string]string{
+				"kustomize.toolkit.fluxcd.io/name":      "parent",
+				"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
+			}
+			s.AddObject(stamped)
+			c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+			c.Tasks.BlockTillDone()
+			if sawPending.Load() {
+				t.Error("equal validated content transiently downgraded Ready to Pending")
+			}
+			if info, _ := s.GetStatus(ks.Named()); info.Status != store.StatusReady {
+				t.Errorf("KS not Ready after no-op re-run: %+v", info)
+			}
+			if !immutable {
+				testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: default}\ndata: {greeting: changed}\n")
+				c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
+				c.Tasks.BlockTillDone()
+				next := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
+				if !sawPending.Load() || next.Fingerprint == first.Fingerprint || next.Manifests[0]["data"].(map[string]any)["greeting"] != "changed" {
+					t.Fatalf("mutable source reused stale content: pending=%v output=%+v", sawPending.Load(), next.Manifests)
+				}
+			}
+		})
 	}
 }
 
@@ -750,6 +764,7 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	t.Parallel()
 	c, s, _ := newControllerWithFixture(t)
+	freezeSourceForTest(t, s)
 	ks := &manifest.Kustomization{
 		Name: "apps", Namespace: "flux-system",
 		Path: "./apps",
@@ -761,7 +776,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want StatusReady", info)
 	}
-	firstFP := s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
+	firstFP := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 
 	var mu sync.Mutex
 	var sawPending bool
@@ -783,7 +798,7 @@ func TestReconcile_GenuineReRender_DoesDowngrade(t *testing.T) {
 	c.Tasks.BlockTillDone()
 
 	var secondFP string
-	if art, ok := s.GetArtifact(ks.Named()).(*store.Emission); ok && art.Fingerprint != firstFP {
+	if art, ok := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission); ok && art.Fingerprint != firstFP {
 		secondFP = art.Fingerprint
 	}
 
@@ -870,7 +885,7 @@ func TestReconcile_Suspension(t *testing.T) {
 		if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 			t.Errorf("expected Ready/suspended, got %+v", info)
 		}
-		if s.GetArtifact(ks.Named()) != nil {
+		if s.GetArtifact(ks.Named(), store.ArtifactContent) != nil {
 			t.Error("suspended KS should not write an artifact")
 		}
 	})
@@ -949,7 +964,7 @@ data: {greeting: hi}
 				t.Fatalf("missing independent contributor: %v", owners)
 			}
 			info, _ := st.GetStatus(ks.Named())
-			art, _ := st.GetArtifact(ks.Named()).(*store.Emission)
+			art, _ := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 			output := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "refreshed", Name: "ks-refresh-output"}
 			if suspended {
 				if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
@@ -1008,7 +1023,7 @@ func (s *guardedSourceFS) Open(name string) (fs.File, error) {
 func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 	t.Parallel()
 	c, s, _ := newControllerWithFixture(t)
-	initial := s.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	initial := s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	guard := &guardedSourceFS{FS: initial.FS}
 	counted := *initial
 	counted.FS = guard
@@ -1091,7 +1106,8 @@ func (s *admissionSuspension) Suspended() bool {
 func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
 	t.Parallel()
 	c, st, _ := newControllerWithFixture(t)
-	initial := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	freezeSourceForTest(t, st)
+	initial := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	guard := &guardedSourceFS{FS: initial.FS}
 	counted := *initial
 	counted.FS = guard
@@ -1103,7 +1119,7 @@ func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
 	}
 	declaration := &admissionSuspension{Kustomization: ks}
 	st.AddObject(declaration)
-	sourceContent := struct{ Path, Key, Revision, Digest string }{counted.LocalPath, counted.Key, counted.Revision, counted.Digest}
+	sourceContent := counted.Input(store.ArtifactContent)
 	probe := c.newExecution(ks.Named())
 	fp, handled, want := probe.run.FingerprintDedup(ks.Named(), ks.Content(sourceContent), &store.Emission{})
 	probe.run.Close()
@@ -1123,7 +1139,7 @@ func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
 	if opens := guard.opened.Load() - before; opens != 0 {
 		t.Errorf("rejected render opened source %d times, want 0", opens)
 	}
-	if artifact := st.GetArtifact(ks.Named()); artifact != nil {
+	if artifact := st.GetArtifact(ks.Named(), store.ArtifactContent); artifact != nil {
 		t.Errorf("rejected attempt published %T", artifact)
 	}
 }
@@ -1142,9 +1158,9 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			assert.NoError(t, err)
 			guard := &guardedSourceFS{FS: input.FS}
 			initial := *input
-			initial.Key, initial.FS, initial.Revision = "initial-pin", guard, "initial-pin"
+			initial.Key, initial.Content, initial.FS, initial.Revision = "initial-pin", "initial-content", guard, "initial-pin"
 			next := initial
-			next.Key, next.FS = "different-pin", input.FS
+			next.Key, next.Content, next.FS = "different-pin", "different-content", input.FS
 			s.AddObject(&manifest.GitRepository{Name: sourceID.Name, Namespace: sourceID.Namespace, URL: "file://" + root})
 			s.SetArtifact(sourceID, &initial)
 			s.UpdateStatus(sourceID, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
@@ -1207,7 +1223,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			if s.GetObject(exclusive) == nil {
 				t.Fatal("unaccepted source render retired prediction from another source view")
 			}
-			freshOutput := s.GetArtifact(ks.Named()).(*store.Emission)
+			freshOutput := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 			wantManifests := make([]map[string]any, len(freshOutput.Manifests))
 			for i, doc := range freshOutput.Manifests {
 				wantManifests[i] = manifest.DeepCopyMap(doc)
@@ -1273,7 +1289,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 				t.Fatal("expected immutable-source raw cache hit without input reads")
 			}
 			guard.deny.Store(false)
-			cachedOutput := s.GetArtifact(ks.Named()).(*store.Emission)
+			cachedOutput := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 			assert.Diff(t, cachedOutput.Manifests, wantManifests)
 			assert.Equal(t, len(cachedOutput.Children), len(freshOutput.Children))
 			for _, child := range cachedOutput.Children {
@@ -1389,7 +1405,7 @@ func TestReconcile_DeclarationChangeBeforeCapture(t *testing.T) {
 			if c.Tasks.Failures() != 0 {
 				t.Fatal("capture worker panicked")
 			}
-			if run.Valid() || expansions.Load() != 0 || st.GetArtifact(input.Named()) != nil {
+			if run.Valid() || expansions.Load() != 0 || st.GetArtifact(input.Named(), store.ArtifactContent) != nil {
 				t.Fatalf("stale source capture continued: valid=%t expansions=%d", run.Valid(), expansions.Load())
 			}
 			run.Close()
@@ -1398,16 +1414,16 @@ func TestReconcile_DeclarationChangeBeforeCapture(t *testing.T) {
 
 			switch state {
 			case "withdrawn":
-				if !slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) || expansions.Load() != 0 || st.GetArtifact(input.Named()) != nil {
+				if !slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) || expansions.Load() != 0 || st.GetArtifact(input.Named(), store.ArtifactContent) != nil {
 					t.Fatalf("lost authority: blocked=%v expansions=%d", run.Blocked, expansions.Load())
 				}
 			case "suspended":
 				info, _ := st.GetStatus(input.Named())
-				if run.Outcome() == schedule.Blocked || expansions.Load() != 0 || info.Outcome() != store.OutcomeSuspended || st.GetArtifact(input.Named()) != nil {
+				if run.Outcome() == schedule.Blocked || expansions.Load() != 0 || info.Outcome() != store.OutcomeSuspended || st.GetArtifact(input.Named(), store.ArtifactContent) != nil {
 					t.Fatalf("suspended capture continued: blocked=%v expansions=%d status=%v", run.Blocked, expansions.Load(), info)
 				}
 			default:
-				emission, ok := st.GetArtifact(input.Named()).(*store.Emission)
+				emission, ok := st.GetArtifact(input.Named(), store.ArtifactContent).(*store.Emission)
 				if run.Outcome() == schedule.Blocked || !ok || !emission.Complete || len(emission.Manifests) != 1 || emission.Manifests[0]["metadata"].(map[string]any)["name"] != "from-b" {
 					t.Fatalf("replacement did not prepare B: blocked=%v output=%v", run.Blocked, emission)
 				}

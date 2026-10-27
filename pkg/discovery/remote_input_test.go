@@ -110,7 +110,7 @@ func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
 		if request.URL != server.URL+"/org/repo" || request.Ref != "" || request.Timeout != 27*time.Second || !request.Submodules {
 			return nil, fmt.Errorf("remote request lost upstream defaults: %+v", request)
 		}
-		return &store.SourceArtifact{Key: "remote-ownership", Revision: "fixed", FS: fstest.MapFS{
+		return &store.SourceArtifact{Key: "remote-ownership", Content: "remote-ownership-generation", Revision: "fixed", FS: fstest.MapFS{
 			"base/kustomization.yaml": {Data: []byte("resources: [bundle.yaml]\n")},
 			"base/bundle.yaml":        {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: admitted, namespace: apps}\ndata: {value: remote}\n")},
 		}}, nil
@@ -133,7 +133,7 @@ func TestRun_MarkerlessRemoteOwnership(t *testing.T) {
 	if _, indexed := result.Index.Lookup(repository); !indexed || st.GetObject(repository) != nil {
 		t.Fatalf("owned source lost index-only scope: indexed=%v object=%v", indexed, st.GetObject(repository))
 	}
-	alias := st.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"})
+	alias := st.GetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}, store.ArtifactContent)
 	if alias == nil || alias.(*store.SourceArtifact).LocalPath != root {
 		t.Fatal("remote graph lost bootstrap source classification")
 	}

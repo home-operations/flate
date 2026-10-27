@@ -42,9 +42,15 @@ type nameID struct {
 }
 
 type authority struct {
-	generation              uint64
-	links                   *registrationHead
-	rooted, retired, hidden bool
+	generation uint64
+	links      *registrationHead
+}
+
+func (h authority) current() authority {
+	if h.links != nil {
+		h.generation = max(h.generation, h.links.stamp())
+	}
+	return h
 }
 
 func (h authority) nextGeneration() authority {
@@ -61,7 +67,7 @@ func (h authority) nextGeneration() authority {
 
 func (sh *shard) requireCapacityLocked(heads ...authority) {
 	for _, h := range heads {
-		if h.generation == ^uint64(0) {
+		if h.current().generation == ^uint64(0) {
 			sh.mu.Unlock()
 			panic("store: authority generation exhausted")
 		}
@@ -69,13 +75,14 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 }
 
 type objectCell struct {
-	static      manifest.BaseManifest
-	document    map[string]any
-	binding     *Input
-	support     *Input
-	excluded    bool
-	independent bool
-	preflight   string
+	static   manifest.BaseManifest
+	document map[string]any
+	// Direct writes use this revision; emitted values use the immutable producer record.
+	publication                                    uint64
+	binding                                        *Input
+	support                                        *Input
+	excluded, rooted, retired, hidden, independent bool
+	preflight                                      string
 	authority
 }
 
@@ -281,15 +288,21 @@ func (u *objectUpdate) compare() {
 	}
 	u.staticEqual = u.cell.binding == u.binding && u.cell.support == u.support && equal
 	u.membershipEqual = u.staticEqual || u.cell.static != nil && sameLabels(Child{Obj: u.cell.static}, Child{Obj: u.obj}, nil)
-	u.effectiveEqual = equal && reconcileDocumentEqual(u.obj, u.cell.document, u.document)
+	u.effectiveEqual = equal
+	if u.effectiveEqual {
+		u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.cell.document, u.document)
+	}
 	if u.effective.child.Obj != u.cell.static {
-		u.effectiveEqual = objectEqual(u.effective.child.Obj, u.obj) && reconcileDocumentEqual(u.obj, u.effective.child.Doc, u.document)
+		u.effectiveEqual = objectEqual(u.effective.child.Obj, u.obj)
+		if u.effectiveEqual {
+			u.effectiveEqual, _ = reconcileInputEqual(u.obj, u.effective.child.Doc, u.document)
+		}
 	}
 }
 
 // currentLocked MUST hold the effective producer's shard as well as the target's.
 func (u objectUpdate) currentLocked(sh *shard) bool {
-	return sh.cells[u.obj.Named()].generation == u.cell.generation &&
+	return sh.cells[u.obj.Named()].publication == u.cell.publication && sh.cells[u.obj.Named()].generation == u.cell.generation &&
 		(u.effective.owner == nil || u.effective.owner.current.Load() == u.effective.record)
 }
 
@@ -333,7 +346,7 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 			return
 		}
 		current := sh.cells[id]
-		if current.generation != u.cell.generation {
+		if current.publication != u.cell.publication || current.generation != u.cell.generation {
 			sh.mu.Unlock()
 			continue
 		}
@@ -354,6 +367,11 @@ func (s *Store) addObject(obj manifest.BaseManifest, binding, support *Input, do
 
 func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdate) eventDispatch {
 	cell := u.cell
+	if cell.publication == ^uint64(0) {
+		sh.mu.Unlock()
+		panic("store: publication revision exhausted")
+	}
+	cell.publication++
 	if u.staticEqual && u.effectiveEqual && !cell.retired {
 		cell.document = u.document
 		sh.cells[id] = cell
@@ -385,7 +403,7 @@ func (s *Store) admitLocked(sh *shard, id manifest.NamedResource, u *objectUpdat
 		sh.admitAbsenceLocked(id, objectFacet)
 		cell.links = sh.newHeadLocked(0)
 	}
-	cell.authority = cell.nextGeneration()
+	cell.authority = cell.current().nextGeneration()
 	if cell.links != nil {
 		cell.authority = sh.enqueueLocked(cell.authority)
 	}
@@ -445,7 +463,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 			for j := range bucket {
 				u := &bucket[j]
 				cell := sh.cells[u.obj.Named()]
-				if cell.generation != u.cell.generation {
+				if cell.publication != u.cell.publication || cell.generation != u.cell.generation {
 					current = false
 					break
 				}
@@ -471,7 +489,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 		var storage [4]regionState
 		changed := newObjectRegion(len(anchors), storage[:])
 		for _, u := range anchors {
-			changed = changed.add(u.obj.Named(), true, u.independent)
+			changed = changed.add(u.obj.Named(), !u.effectiveEqual || u.cell.static == nil, u.independent)
 		}
 		s.lockAll()
 		current := true
@@ -509,6 +527,7 @@ func (s *Store) AddObjects(objs []manifest.BaseManifest) {
 			sh := s.shardFor(id)
 			cell := sh.cells[id]
 			cell.static, cell.rooted, cell.retired, cell.document = obj, true, false, u.document
+			cell.publication++
 			sh.cells[id] = cell
 		}
 		for _, p := range s.reachabilityLocked(region) {
@@ -546,8 +565,12 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 		return false
 	}
 	bucket := sh.byName[kindID{id.Group, id.Kind}]
-	sh.requireCapacityLocked(cell.authority, sh.conditions[id].stamp(), sh.artifacts[id].authority, bucket.authority)
-	cell.authority = cell.nextGeneration()
+	if sh.artifacts[id].value != nil && sh.artifacts[id].publication == ^uint64(0) {
+		sh.mu.Unlock()
+		panic("store: publication revision exhausted")
+	}
+	sh.requireCapacityLocked(cell.authority, sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead, bucket.authority)
+	cell.authority = cell.current().nextGeneration()
 	if cell.links != nil {
 		cell.authority = sh.enqueueLocked(cell.authority)
 	}
@@ -718,7 +741,7 @@ func (s *Store) addAnchor(u objectUpdate) bool {
 	sh := s.shardFor(id)
 	var storage [4]regionState
 	changed := newObjectRegion(1, storage[:])
-	changed = changed.add(id, true, u.independent)
+	changed = changed.add(id, !u.effectiveEqual || u.cell.static == nil, u.independent)
 	s.lockAll()
 	if !u.currentLocked(sh) || u.binding != nil && !u.binding.current() || u.support != nil && !u.support.productionCurrent() {
 		s.unlockAll()
@@ -731,6 +754,7 @@ func (s *Store) addAnchor(u objectUpdate) bool {
 	}
 	cell := sh.cells[id]
 	cell.rooted, cell.static, cell.binding, cell.support, cell.document = true, obj, u.binding, u.support, u.document
+	cell.publication++
 	sh.cells[id] = cell
 	dispatches := s.reachabilityLocked(region)
 	s.unlockAll()
@@ -748,18 +772,51 @@ type objectPublication struct {
 func dispatchPublications(publications []objectPublication) {
 	slices.SortStableFunc(publications, func(a, b objectPublication) int { return a.event.id.Compare(b.event.id) })
 	for _, p := range publications {
-		if p.force || p.before == nil || p.after == nil || !objectEqual(p.before, p.after) ||
-			p.document != nil && !reconcileDocumentEqual(p.after, p.document, p.nextDocument) {
+		changed := p.force || p.before == nil || p.after == nil || !objectEqual(p.before, p.after)
+		if !changed && p.document != nil {
+			equal, _ := reconcileInputEqual(p.after, p.document, p.nextDocument)
+			changed = !equal
+		}
+		if changed {
 			p.event.run()
 		}
 	}
 }
 
 type documentInput interface {
-	ReconcileDocument() bool
+	ReconcileInput(map[string]any) (string, bool, bool)
 }
 
-func reconcileDocumentEqual(obj manifest.BaseManifest, a, b map[string]any) bool {
+func reconcileInputEqual(obj manifest.BaseManifest, a, b map[string]any) (bool, bool) {
 	input, ok := obj.(documentInput)
-	return (a == nil || b == nil || manifest.DocAPIVersion(a) == manifest.DocAPIVersion(b)) && (!ok || !input.ReconcileDocument() || specValueEqual(a, b))
+	sameAPI := a == nil || b == nil || manifest.DocAPIVersion(a) == manifest.DocAPIVersion(b)
+	if !ok {
+		return sameAPI, false
+	}
+	auid, adisabled, consumes := input.ReconcileInput(a)
+	if !consumes {
+		return sameAPI, false
+	}
+	buid, bdisabled, _ := input.ReconcileInput(b)
+	return sameAPI && auid == buid && adisabled == bdisabled, true
+}
+
+func reconcileEqual(a, b Child) bool {
+	equal, consumes := reconcileInputEqual(a.Obj, a.Doc, b.Doc)
+	if consumes {
+		return objectEqual(a.Obj, b.Obj) && equal
+	}
+	return semanticEqual(a, b)
+}
+
+func artifactReadEqual(a, b Artifact, read ArtifactRead) bool {
+	if a == b {
+		return true
+	}
+	x, xok := a.(*SourceArtifact)
+	y, yok := b.(*SourceArtifact)
+	if xok || yok {
+		return (x == nil || x.Content != "" || x.FS == nil) && (y == nil || y.Content != "" || y.FS == nil) && x.Input(read) == y.Input(read)
+	}
+	return artifactValueEqual(a, b)
 }

@@ -68,7 +68,7 @@ type sourceScope struct {
 }
 
 func (l *Loader) sourceState(id manifest.NamedResource, repoRoot string) sourceState {
-	art, _ := l.Store.GetArtifact(id).(*store.SourceArtifact)
+	art, _ := l.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	return sourceState{id: id, object: l.Store.GetObject(id), artifact: art, repoRoot: repoRoot}
 }
 
@@ -515,7 +515,7 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 	}
 	for _, id := range slices.SortedFunc(maps.Keys(l.admitted), manifest.NamedResource.Compare) {
 		if _, survives := next[id]; !survives || !allowed[id] {
-			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id) == nil {
+			if l.Store.GetObject(id) == l.admitted[id] && l.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				l.Store.DeleteObject(id)
 				changed = true
 			}

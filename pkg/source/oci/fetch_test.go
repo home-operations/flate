@@ -1279,6 +1279,11 @@ func TestFetcher_Revalidation_SelectedTagMetadata(t *testing.T) {
 				}
 				assert.Equal(t, got.Key, first.Key)
 				assert.Equal(t, sourcecache.AcquisitionIdentity(got.FS), sourcecache.AcquisitionIdentity(first.FS))
+				if first.Content == "" {
+					t.Fatal("acquired content has no generation")
+				}
+				assert.Equal(t, first.Content, sourcecache.AcquisitionIdentity(first.FS))
+				assert.Equal(t, got.Content, first.Content)
 				assert.Equal(t, got.Digest, first.Digest)
 				assert.Equal(t, got.Size, first.Size)
 				assert.Equal(t, got.Revision, "v1.1.0@"+artifact.manifestDigest)

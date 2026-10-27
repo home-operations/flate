@@ -123,7 +123,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				if info, _ := st.GetStatus(excludedSource); info.Outcome() != store.OutcomeUnchanged || side.filter.ShouldReconcile(excludedSource) {
 					t.Fatalf("discovered excluded source was activated: %+v", info)
 				}
-				if st.GetArtifact(excludedSource) != nil {
+				if st.GetArtifact(excludedSource, store.ArtifactContent) != nil {
 					t.Fatal("excluded source was fetched")
 				}
 				if broken {
@@ -136,7 +136,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				if side.Err != nil || len(side.Result.Failed) != 0 || len(side.Result.Blocked) != 0 {
 					t.Fatalf("excluded chain contaminated snapshot: error=%v failures=%v", side.Err, side.Result.Failed)
 				}
-				if st.GetArtifact(testutil.KustomizationID("flux-system", "selected")) == nil {
+				if st.GetArtifact(testutil.KustomizationID("flux-system", "selected"), store.ArtifactContent) == nil {
 					t.Fatal("selected KS was skipped instead of reconciled")
 				}
 				chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "shared-chart"}
@@ -147,7 +147,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 				if info, _ := st.GetStatus(otherSource); info.Outcome() != store.OutcomeUnchanged || side.filter.ShouldReconcile(otherSource) {
 					t.Fatalf("excluded source sibling was activated: %+v", info)
 				}
-				if st.GetArtifact(otherSource) != nil {
+				if st.GetArtifact(otherSource, store.ArtifactContent) != nil {
 					t.Fatal("excluded source sibling was fetched")
 				}
 				for _, id := range []manifest.NamedResource{

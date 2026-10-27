@@ -36,12 +36,12 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 		result, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: stores[side]})
 		assert.NoError(t, err)
 		indexes[side] = result.Index
-		selected[side], _ = stores[side].GetArtifact(supplier).(*store.SourceArtifact)
+		selected[side], _ = stores[side].GetArtifact(supplier, store.ArtifactContent).(*store.SourceArtifact)
 		if input := selected[side]; input == nil || input.FS == nil || input.LocalPath == root || input.InputAlias {
 			t.Fatalf("side %d did not prepare a distinct committed supplier: %+v", side, input)
 		}
 	}
-	bootstrap, err := change.Detect(t.Context(), stores[0].GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact), stores[1].GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact))
+	bootstrap, err := change.Detect(t.Context(), stores[0].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact), stores[1].GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
 	assert.NoError(t, err)
 	assert.Equal(t, bootstrap.Len(), 0)
 	delta, err := change.Detect(t.Context(), selected[0], selected[1])

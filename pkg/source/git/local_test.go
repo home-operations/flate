@@ -110,6 +110,7 @@ func TestResolveLocal_References(t *testing.T) {
 			}
 			view, pin, err := source.OperationView(t.Context(), artifact.FS)
 			assert.NoError(t, err)
+			assert.Equal(t, artifact.Content, pin)
 			if artifact.Key == "" {
 				assert.Equal(t, pin, "")
 			} else {

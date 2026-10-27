@@ -111,7 +111,7 @@ metadata: {name: << inputs.user >>, namespace: flux-system}
 	if info.Status != store.StatusReady {
 		t.Fatalf("status = %+v, want Ready", info)
 	}
-	art, _ := s.GetArtifact(rs.Named()).(*store.Emission)
+	art, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if !hasRenderedDoc(art, "Widget", "alice") {
 		t.Fatalf("expected rendered Widget/alice; artifact = %+v", art)
 	}
@@ -169,7 +169,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	if info.Status != store.StatusReady || dispatches != 3 || !slices.Equal(inventories, []int{0, 1, 0}) {
 		t.Fatalf("status=%+v dispatches=%d inventories=%v, want Ready, 3, [0 1 0]", info, dispatches, inventories)
 	}
-	artifact, _ := s.GetArtifact(rs.Named()).(*store.Emission)
+	artifact, _ := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	if artifact == nil || len(artifact.Manifests) != 0 || s.GetObject(child) != nil {
 		t.Fatalf("removed selector member survived: artifact=%+v child=%v", artifact, s.GetObject(child))
 	}
@@ -191,7 +191,7 @@ func TestReconcile_SelectorInputs_InvalidSelector(t *testing.T) {
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 		t.Fatalf("status=%+v, want Failed", info)
 	}
-	if artifact := s.GetArtifact(rs.Named()); artifact != nil {
+	if artifact := s.GetArtifact(rs.Named(), store.ArtifactContent); artifact != nil {
 		t.Fatalf("invalid selector published artifact=%v", artifact)
 	}
 }
@@ -241,7 +241,7 @@ spec: {}
 	if !ok || child == nil {
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
 	}
-	art := s.GetArtifact(rs.Named()).(*store.Emission)
+	art := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	for _, child := range art.Children {
 		if child.Obj.Named() == rs.Named() {
 			t.Fatal("effective self child published")
@@ -299,7 +299,7 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("initial render: %+v", info)
 			}
-			artifact := s.GetArtifact(rs.Named()).(*store.Emission)
+			artifact := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 			if artifact.Fingerprint == "" {
 				t.Fatal("successful render lacks replay candidate")
 			}
@@ -355,7 +355,7 @@ metadata: {name: output}`}
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("first status = %+v, want Ready", info)
 	}
-	artifact := s.GetArtifact(rs.Named())
+	artifact := s.GetArtifact(rs.Named(), store.ArtifactContent)
 	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if id == rs.Named() && payload.(store.StatusInfo).Status == store.StatusPending {
 			t.Error("already-Ready ResourceSet transiently became Pending")
@@ -366,7 +366,7 @@ metadata: {name: output}`}
 	if info, _ := s.GetStatus(rs.Named()); info.Status != store.StatusReady {
 		t.Errorf("final status = %+v, want Ready", info)
 	}
-	if s.GetArtifact(rs.Named()) != artifact {
+	if s.GetArtifact(rs.Named(), store.ArtifactContent) != artifact {
 		t.Error("no-op reconcile replaced artifact")
 	}
 }
@@ -395,7 +395,7 @@ func TestReconcile_DisabledUsesSuspensionGate(t *testing.T) {
 			if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 				t.Fatalf("status = %+v, want Ready/suspended", info)
 			}
-			if art := s.GetArtifact(obj.Named()); art != nil {
+			if art := s.GetArtifact(obj.Named(), store.ArtifactContent); art != nil {
 				t.Fatalf("disabled ResourceSet rendered: %v", art)
 			}
 		})
@@ -473,7 +473,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 				t.Fatalf("missing independent contributor: %v", owners)
 			}
 			info, _ := st.GetStatus(rs.Named())
-			art, _ := st.GetArtifact(rs.Named()).(*store.Emission)
+			art, _ := st.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 			child := testutil.KustomizationID("flux-system", "rs-refresh-child")
 			if suspended {
 				if info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
@@ -515,7 +515,7 @@ func TestReconcile_InputsFromPreservesAuthoredKind(t *testing.T) {
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 		t.Fatalf("status = %+v, want Failed", info)
 	}
-	if art := s.GetArtifact(rs.Named()); art != nil {
+	if art := s.GetArtifact(rs.Named(), store.ArtifactContent); art != nil {
 		t.Fatalf("unsupported input kind rendered: artifact = %+v", art)
 	}
 	if rs.InputsFrom[0].Kind != "Unsupported" {

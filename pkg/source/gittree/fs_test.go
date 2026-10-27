@@ -741,6 +741,21 @@ func TestNew_EntryPolicy(t *testing.T) {
 			t.Fatal("commit change reused an admission identity")
 		}
 		for _, mode := range []ViewMode{Direct, Source} {
+			pinned, pin, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: current, CurrentContent: "acquired"})
+			assert.NoError(t, err)
+			if pin == "" {
+				t.Fatalf("mode %d lost the wrapped acquisition identity", mode)
+			}
+			_, retained, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: pinned})
+			assert.NoError(t, err)
+			assert.Equal(t, retained, pin)
+			_, next, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: current, CurrentContent: "replacement"})
+			assert.NoError(t, err)
+			if next == pin {
+				t.Fatal("wrapped generation change reused its identity")
+			}
+		}
+		for _, mode := range []ViewMode{Direct, Source} {
 			mutable, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: mode, Current: current})
 			assert.NoError(t, err)
 			if key != "" {

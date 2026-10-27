@@ -114,7 +114,7 @@ func TestClassify_MissingCRDs(t *testing.T) {
 						assert.Equal(t, s.GetObject(ref.NamedResource) == nil, true)
 						_, ok := s.GetStatus(ref.NamedResource)
 						assert.Equal(t, ok, false)
-						assert.Equal(t, s.GetArtifact(ref.NamedResource) == nil, true)
+						assert.Equal(t, s.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil, true)
 					}
 				})
 			}

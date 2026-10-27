@@ -148,7 +148,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 		{"child", func(e *Emission) { e.Children[0] = b }},
 		{"documents", func(e *Emission) { e.Manifests[0] = b.Doc }},
 		{"complete", func(e *Emission) { e.Complete = true }},
-		{"binding", func(e *Emission) { e.binding.key = "new" }},
+		{"binding", func(e *Emission) { e.binding.artifact = &SourceArtifact{Key: "new"} }},
 		{"outer_slices", func(e *Emission) {
 			e.Children[0], e.Manifests[0], e.Unreadable[0] = b, b.Doc, b.Obj.Named()
 		}},
@@ -163,7 +163,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			initial.Unreadable, initial.Fingerprint = []manifest.NamedResource{a.Obj.Named()}, "same"
 			initial.Complete = tc.name != "complete"
 			s.RecordEmitted(p, &initial, nil)
-			predecessor := s.GetArtifact(p).(*Emission)
+			predecessor := s.GetArtifact(p, ArtifactContent).(*Emission)
 			_, _, attempt := s.GetEmission(p)
 			defer attempt.Finish()
 			attempt.Complete, attempt.Fingerprint = initial.Complete, "same"
@@ -183,7 +183,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 				}
 			}, false)()
 			s.RecordEmitted(p, &attempt, nil)
-			accepted := s.GetArtifact(p).(*Emission)
+			accepted := s.GetArtifact(p, ArtifactContent).(*Emission)
 			if events != 1 || accepted == predecessor || accepted.Fingerprint != "same" {
 				t.Fatal("equal fingerprint discarded changed emission")
 			}
@@ -199,7 +199,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			replay.binding = accepted.binding
 			replay.Complete = accepted.Complete
 			s.RecordEmitted(p, &replay, nil)
-			if events != 1 || s.GetArtifact(p) != accepted {
+			if events != 1 || s.GetArtifact(p, ArtifactContent) != accepted {
 				t.Fatal("equal replay republished accepted output")
 			}
 		})
@@ -333,14 +333,14 @@ func TestRecordEmitted_ConcurrentSupport(t *testing.T) {
 					t.Fatalf("withdrawal changed surviving contributor: %v", got)
 				}
 			}
-			if s.GetObject(covered.Obj.Named()) != covered.Obj || s.GetArtifact(covered.Obj.Named()) == nil {
+			if s.GetObject(covered.Obj.Named()) != covered.Obj || s.GetArtifact(covered.Obj.Named(), ArtifactContent) == nil {
 				t.Fatal("surviving Q support lost frozen descendant")
 			}
 			if info, ok := s.GetStatus(covered.Obj.Named()); !ok || info.Status != StatusReady {
 				t.Fatal("surviving Q support lost Ready")
 			}
 			accept(t, s, q, &Emission{Complete: true})
-			if s.GetObject(covered.Obj.Named()) != nil || s.GetArtifact(covered.Obj.Named()) != nil {
+			if s.GetObject(covered.Obj.Named()) != nil || s.GetArtifact(covered.Obj.Named(), ArtifactContent) != nil {
 				t.Fatal("last boundary support left frozen descendant live")
 			}
 			if _, ok := s.GetStatus(covered.Obj.Named()); ok {
@@ -431,7 +431,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					cycle := Child{Obj: &manifest.Kustomization{Name: l.Name, Namespace: l.Namespace}}
 					data := emissionChild("shared", "value")
 					late := emissionChild("late", "value")
-					payload := &SourceArtifact{Key: "late-generated", Digest: "late-digest", FS: fstest.MapFS{"file": {Data: []byte("late bytes")}}}
+					payload := &SourceArtifact{Key: "late-generated", Content: "late-generated", Digest: "late-digest", FS: fstest.MapFS{"file": {Data: []byte("late bytes")}}}
 					accept(t, s, p, &Emission{Children: []Child{child}, Complete: true})
 					accept(t, s, k, &Emission{Children: []Child{cycle, data}, Manifests: []map[string]any{data.Doc}, Complete: true})
 					accept(t, s, l, &Emission{Children: []Child{child}, Complete: true})
@@ -444,7 +444,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 					}
 					s.SetArtifact(data.Obj.Named(), &SourceArtifact{Key: "live-data"})
-					if s.GetArtifact(data.Obj.Named()) == nil {
+					if s.GetArtifact(data.Obj.Named(), ArtifactContent) == nil {
 						t.Fatal("fixture data artifact was not retained before withdrawal")
 					}
 					captured, lateRelease, withdrawRelease := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -499,14 +499,14 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						checkEffectiveObject(t, s, data.Obj.Named(), independent)
 						assert.Equal(t, s.EmissionOwner(data.Obj.Named()), q)
 					}
-					if shared && s.GetArtifact(data.Obj.Named()) == payload {
+					if shared && s.GetArtifact(data.Obj.Named(), ArtifactContent) == payload {
 						t.Fatal("hidden producer supplied bytes to the independently visible declaration")
 					}
 					for _, id := range hidden {
 						s.UpdateFailure(id, fmt.Errorf("%w: hidden successor", manifest.ErrInput))
 						s.SetArtifact(id, &SourceArtifact{Key: "late"})
 						assert.Equal(t, s.EmissionOwner(id), manifest.NamedResource{})
-						if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
+						if s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil {
 							t.Fatal("hidden payload leaked")
 						}
 						if obj, _ := s.Get[*manifest.Kustomization](id); obj != nil {
@@ -555,7 +555,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 					if s.GetObject(k) == nil || s.GetObject(l) == nil || s.GetObject(late.Obj.Named()) == nil {
 						t.Fatal("external anchor did not restore supported descendants")
 					}
-					if s.GetArtifact(late.Obj.Named()) != payload {
+					if s.GetArtifact(late.Obj.Named(), ArtifactContent) != payload {
 						t.Fatal("reanchoring lost privately completed generated payload")
 					}
 					for _, id := range hidden {
@@ -566,7 +566,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						rich, _, attempt := s.GetEmission(id)
 						assert.Equal(t, rich, obj)
 						attempt.Finish()
-						if artifact := s.GetArtifact(id); artifact != nil && ((id != late.Obj.Named() && id != data.Obj.Named()) || artifact != payload) {
+						if artifact := s.GetArtifact(id, ArtifactContent); artifact != nil && ((id != late.Obj.Named() && id != data.Obj.Named()) || artifact != payload) {
 							t.Error("reanchoring restored retained artifact")
 						}
 						if _, ok := s.GetStatus(id); ok {
@@ -577,7 +577,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						t.Fatal("independent cycle anchor was not removed")
 					}
 					for _, id := range hidden {
-						if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
+						if s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil {
 							t.Error("removed anchor retained a detached cycle")
 						}
 					}
@@ -676,7 +676,7 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 			_, _, attempt := s.GetEmission(id)
 			attempt.Complete = true
 			s.RecordEmitted(id, &attempt, nil)
-			accepted := s.GetArtifact(id).(*Emission)
+			accepted := s.GetArtifact(id, ArtifactContent).(*Emission)
 			s.RecordEmitted(q, &Emission{Children: []Child{b}, Complete: true}, nil)
 			checkReplay := func(want bool) {
 				t.Helper()
@@ -701,7 +701,7 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 				readers.Go(func() {
 					<-start
 					for range 8 {
-						if s.GetArtifact(id) != accepted {
+						if s.GetArtifact(id, ArtifactContent) != accepted {
 							t.Error("equivalent input invalidated current artifact")
 						}
 						checkReplay(true)
@@ -720,7 +720,7 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.RecordEmitted(q, &Emission{Children: []Child{{Obj: unequal, Doc: doc}}, Complete: true}, nil)
-			if s.GetArtifact(id) != nil {
+			if s.GetArtifact(id, ArtifactContent) != nil {
 				t.Fatal("unequal representative reused a validated artifact")
 			}
 			checkReplay(false)
@@ -730,12 +730,12 @@ func TestRecordEmitted_ContributionContext(t *testing.T) {
 			replacement := *accepted
 			replacement.input, replacement.inputDoc = unequal, doc
 			s.RecordEmitted(id, &replacement, nil)
-			current := s.GetArtifact(id).(*Emission)
+			current := s.GetArtifact(id, ArtifactContent).(*Emission)
 			if current == accepted || current.validated == nil || current.validated == accepted.validated || current.validated.Load() != nil {
 				t.Fatal("new emission retained its predecessor's memo")
 			}
 			s.RecordEmitted(q, &Emission{Children: []Child{b}, Complete: true}, nil)
-			if s.GetArtifact(id) != nil {
+			if s.GetArtifact(id, ArtifactContent) != nil {
 				t.Fatal("old memo authorized the replacement emission")
 			}
 			checkReplay(false)
@@ -754,7 +754,7 @@ func TestRecordEmitted_ShadowedCoverageAncestorReplacement(t *testing.T) {
 			s := New()
 			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
 			s.AddObject(&manifest.GitRepository{Name: source.Name, Namespace: source.Namespace})
-			s.SetArtifact(source, &SourceArtifact{Key: "stable", LocalPath: "source"})
+			s.SetArtifact(source, &SourceArtifact{Key: "stable", Content: "stable", LocalPath: "source"})
 			producer := func(name string, binding manifest.NamedResource) Child {
 				t.Helper()
 				doc := map[string]any{
@@ -774,7 +774,7 @@ func TestRecordEmitted_ShadowedCoverageAncestorReplacement(t *testing.T) {
 			if mode == "other-source-current" {
 				currentSource.Name = "other-source"
 				s.AddObject(&manifest.GitRepository{Name: currentSource.Name, Namespace: currentSource.Namespace})
-				s.SetArtifact(currentSource, &SourceArtifact{Key: "other-stable", LocalPath: "other-source"})
+				s.SetArtifact(currentSource, &SourceArtifact{Key: "other-stable", Content: "other-stable", LocalPath: "other-source"})
 			}
 			p, k, l := producer("p", source), producer("k", currentSource), producer("l", source)
 			m, extra := emissionChild("m", "value"), emissionChild("extra", "value")
@@ -1201,7 +1201,7 @@ func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 				t.Fatal("direct support removal lost independent support or retained its root")
 			}
 			accept(t, s, q, &Emission{Complete: true})
-			if s.GetObject(grandchild.Obj.Named()) != nil || s.GetArtifact(k) != nil {
+			if s.GetObject(grandchild.Obj.Named()) != nil || s.GetArtifact(k, ArtifactContent) != nil {
 				t.Fatal("deleted root retained outgoing live support")
 			}
 		})
@@ -1267,8 +1267,8 @@ func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 			bare: {Productions: []manifest.Production{first, second}},
 		}}
 		s.SetDiscoveryIndex(index)
-		s.coverage[a].binding.key = "a"
-		s.coverage[b].binding.key = "b"
+		s.coverage[a].binding.artifact = &SourceArtifact{Key: "a"}
+		s.coverage[b].binding.artifact = &SourceArtifact{Key: "b"}
 		assert.Diff(t, s.Productions(target, index), []manifest.Production{first})
 	})
 
@@ -1329,7 +1329,7 @@ func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 			s.SetDiscoveryIndex(index)
 			for _, id := range []manifest.NamedResource{a, b} {
 				if c := s.coverage[id]; c != nil {
-					c.binding.key = id.Name
+					c.binding.artifact = &SourceArtifact{Key: id.Name}
 				}
 			}
 			assert.Diff(t, s.Productions(target, nil), tc.want)
@@ -1395,7 +1395,7 @@ func TestStore_ProductionsScopedFileBridge(t *testing.T) {
 					index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target: {Productions: []manifest.Production{{Owner: renderer, Source: source}}}, bare: {Productions: []manifest.Production{{Owner: fileOwner, Source: other, Authored: authored, Path: "source/input.yaml", File: "input.yaml"}}}}}
 					s.SetDiscoveryIndex(index)
 					if differentBinding {
-						s.coverage[fileOwner].binding.key = "other"
+						s.coverage[fileOwner].binding.artifact = &SourceArtifact{Key: "other"}
 					}
 					result := s.Productions(target, index)
 					facts := s.ReferenceFacts(target, index)
@@ -1506,7 +1506,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 	}})
 	s.SetArtifact(child.Obj.Named(), &SourceArtifact{Key: "static"})
 	s.UpdateStatus(child.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
-	if s.GetArtifact(child.Obj.Named()) == nil {
+	if s.GetArtifact(child.Obj.Named(), ArtifactContent) == nil {
 		t.Fatal("fixture has no retained static artifact")
 	}
 	accept(t, s, p, &Emission{Children: []Child{child}, Manifests: []map[string]any{child.Doc}, Complete: true})
@@ -1515,7 +1515,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 	assert.Equal(t, s.EmissionOwner(ownerID("missing")), manifest.NamedResource{})
 	for _, id := range []manifest.NamedResource{p, child.Obj.Named()} {
 		assert.Equal(t, s.EmissionOwner(id), manifest.NamedResource{})
-		if s.GetObject(id) != nil || s.GetArtifact(id) != nil {
+		if s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil {
 			t.Fatal("absent producer leaked live object or artifact")
 		}
 		if _, ok := s.GetStatus(id); ok {
@@ -1542,7 +1542,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 	if s.GetObject(child.Obj.Named()) == nil {
 		t.Fatal("external anchor failed to activate privately completed output")
 	}
-	if s.GetArtifact(child.Obj.Named()) != nil {
+	if s.GetArtifact(child.Obj.Named(), ArtifactContent) != nil {
 		t.Fatal("external anchor activated a retained static artifact")
 	}
 	if _, ok := s.GetStatus(child.Obj.Named()); ok {
@@ -2098,7 +2098,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		t.Helper()
 		s.SetArtifact(id, &SourceArtifact{Key: "static-l"})
 		s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: ""})
-		if s.GetObject(id) == nil || s.GetArtifact(id) == nil {
+		if s.GetObject(id) == nil || s.GetArtifact(id, ArtifactContent) == nil {
 			t.Fatal("fixture L not initially live with an artifact")
 		}
 		if info, ok := s.GetStatus(id); !ok || info.Status != StatusReady {
@@ -2139,7 +2139,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 		if slices.ContainsFunc(s.ListObjects("", ""), func(obj manifest.BaseManifest) bool { return obj.Named() == id }) {
 			t.Errorf("%v stays listed after withdrawal", id)
 		}
-		if s.GetArtifact(id) != nil {
+		if s.GetArtifact(id, ArtifactContent) != nil {
 			t.Errorf("%v artifact stays live after withdrawal", id)
 		}
 		if _, ok := s.GetStatus(id); ok {
@@ -2188,7 +2188,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 				if s.GetObject(k) != anchor || s.GetObject(l.Obj.Named()) != l.Obj {
 					t.Fatal("external anchor did not restore eligible frozen descendants")
 				}
-				if s.GetArtifact(l.Obj.Named()) != nil {
+				if s.GetArtifact(l.Obj.Named(), ArtifactContent) != nil {
 					t.Error("reanchoring restored a retained artifact")
 				}
 				if _, ok := s.GetStatus(l.Obj.Named()); ok {
@@ -2245,7 +2245,7 @@ func TestRecordEmitted_NeverEmittedCoverageWithdrawal(t *testing.T) {
 							return
 						default:
 							s.GetObject(l.Obj.Named())
-							s.GetArtifact(l.Obj.Named())
+							s.GetArtifact(l.Obj.Named(), ArtifactContent)
 							s.GetStatus(l.Obj.Named())
 						}
 					}
@@ -2380,7 +2380,7 @@ func TestRecordEmitted_ReadsInvalidatedBeforeCommit(t *testing.T) {
 			output := &Emission{Children: []Child{{Obj: child}}, Fingerprint: "accepted", Complete: true}
 			accepted.Bind(output)
 			s.RecordEmitted(owner, output, nil)
-			previous := s.GetArtifact(owner).(*Emission)
+			previous := s.GetArtifact(owner, ArtifactContent).(*Emission)
 			var reads ReadSet
 			reads.Init(s, owner, nil)
 			defer reads.Retire()
@@ -2404,7 +2404,7 @@ func TestRecordEmitted_ReadsInvalidatedBeforeCommit(t *testing.T) {
 			resume := sync.OnceFunc(func() { close(release) })
 			var payloads map[manifest.NamedResource]*SourceArtifact
 			if mode == "payload" {
-				payloads = map[manifest.NamedResource]*SourceArtifact{child.Named(): {Key: "stale", FS: fstest.MapFS{}}}
+				payloads = map[manifest.NamedResource]*SourceArtifact{child.Named(): {Key: "stale", Content: "stale", FS: fstest.MapFS{}}}
 			}
 			done := make(chan struct{})
 			go func() {
@@ -2426,7 +2426,7 @@ func TestRecordEmitted_ReadsInvalidatedBeforeCommit(t *testing.T) {
 			}
 			resume()
 			<-done
-			if s.GetArtifact(owner) != previous || s.GetObject(child.Named()) != child || s.GetArtifact(child.Named()) != nil {
+			if s.GetArtifact(owner, ArtifactContent) != previous || s.GetObject(child.Named()) != child || s.GetArtifact(child.Named(), ArtifactContent) != nil {
 				t.Fatal("stale proposal replaced authoritative output")
 			}
 			if mode == "replacement" && s.GetObject(barrier.ConfigMap.Named()) != nil {
@@ -2440,7 +2440,7 @@ func TestRecordEmitted_ReadsInvalidatedBeforeCommit(t *testing.T) {
 			if !reads.retired.Load() || rejectedHead.first.Load() != nil {
 				t.Error("sweep retained rejected attempt registrations")
 			}
-			if acceptedHead.first.Load() == nil || s.GetArtifact(owner) != previous {
+			if acceptedHead.first.Load() == nil || s.GetArtifact(owner, ArtifactContent) != previous {
 				t.Error("sweep removed accepted output or its input registration")
 			}
 			s.AddObject(emissionChild("accepted-input", "new").Obj)
@@ -2466,9 +2466,9 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 			s := New()
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 			s.AddObject(owner)
-			binding := sourceBinding{source: manifest.BootstrapSourceID, key: "pin", root: "/view"}
+			binding := sourceBinding{source: manifest.BootstrapSourceID, artifact: &SourceArtifact{Key: "pin", LocalPath: "/view"}}
 			g, c := generator("app-{app}"), consumer(target.Name)
-			s.SetArtifact(binding.source, &SourceArtifact{Key: binding.key, LocalPath: binding.root})
+			s.SetArtifact(binding.source, &SourceArtifact{Key: binding.artifact.Key, LocalPath: binding.artifact.LocalPath})
 			if mode != "proposal" {
 				provenance := manifest.Production{Owner: owner.Named(), Source: binding.source, File: "consumer.yaml", Path: "/view/consumer.yaml"}
 				if mode == "other-owner" {
@@ -2496,7 +2496,9 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 				proposal.coverage = contribution.records
 			}
 			if mode == "other-pin" {
-				proposal.binding.key = "other-pin"
+				cloned := *proposal.binding.artifact
+				cloned.Key = "other-pin"
+				proposal.binding.artifact = &cloned
 			}
 			s.RecordEmitted(owner.Named(), proposal, nil)
 			want := mode == "proposal" || mode == "frozen"
@@ -2505,7 +2507,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 				_, _, current := s.GetEmission(owner.Named())
 				defer current.Finish()
 				var predicted bool
-				for _, a := range s.GetArtifact(owner.Named()).(*Emission).entries {
+				for _, a := range s.GetArtifact(owner.Named(), ArtifactContent).(*Emission).entries {
 					for _, p := range a.targets {
 						predicted = predicted || p.NamedResource == target
 					}
@@ -2515,7 +2517,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 				}
 				facts := s.ReferenceFacts(target, nil)
 				assert.Diff(t, facts.Productions, s.Productions(target, nil))
-				if facts.Data != nil || facts.Accepted || s.GetObject(target) != nil || s.GetArtifact(target) != nil {
+				if facts.Data != nil || facts.Accepted || s.GetObject(target) != nil || s.GetArtifact(target, ArtifactContent) != nil {
 					t.Fatal("prediction supplied content")
 				}
 			}
@@ -2600,7 +2602,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
 		s.AddObject(owner)
 		g := generator("app-{app}")
-		binding := sourceBinding{source: manifest.BootstrapSourceID, key: "pin", root: "/view"}
+		binding := sourceBinding{source: manifest.BootstrapSourceID, artifact: &SourceArtifact{Key: "pin", LocalPath: "/view"}}
 		s.RecordEmitted(owner.Named(), &Emission{Children: []Child{g, consumer(target.Name)}, Complete: true, binding: binding}, nil)
 		release := make(chan struct{})
 		barrier := &admissionBarrier{
@@ -2629,7 +2631,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		<-published
 		check := func() {
 			t.Helper()
-			accepted := s.GetArtifact(owner.Named()).(*Emission)
+			accepted := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 			var targets []manifest.ProducerTarget
 			for _, a := range accepted.entries {
 				if a.child.Obj.Named() == g.Obj.Named() {
@@ -2644,7 +2646,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 			for _, id := range []manifest.NamedResource{target, replacement} {
 				facts := s.ReferenceFacts(id, nil)
 				assert.Diff(t, facts.Productions, s.Productions(id, nil))
-				if facts.Data != nil || facts.Accepted || s.GetObject(id) != nil || s.GetArtifact(id) != nil {
+				if facts.Data != nil || facts.Accepted || s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil {
 					t.Error("prediction supplied content")
 				}
 			}
@@ -2673,7 +2675,7 @@ func TestRecordEmitted_ArtifactPredictions(t *testing.T) {
 		}
 		close(start)
 		wg.Wait()
-		accepted := s.GetArtifact(owner.Named()).(*Emission)
+		accepted := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 		var candidates []manifest.NamedResource
 		for _, a := range accepted.entries {
 			for ref := range manifest.References(a.child.Obj, manifest.ReferenceRelations) {
@@ -2697,11 +2699,11 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "app-api"}}
 	next := &Emission{Children: []Child{{Obj: generator}, {Obj: consumer}}, Complete: true, Render: manifest.NewRenderReceipt("receipt", func(a, b any) bool { return a == b })}
 	s.RecordEmitted(owner.Named(), next, nil)
-	accepted := s.GetArtifact(owner.Named())
+	accepted := s.GetArtifact(owner.Named(), ArtifactContent)
 	if got := testing.AllocsPerRun(10, func() { s.RecordEmitted(owner.Named(), next, nil) }); got != 0 {
 		t.Fatalf("identical dynamic emission allocated %v times, want zero", got)
 	}
-	if s.GetArtifact(owner.Named()) != accepted {
+	if s.GetArtifact(owner.Named(), ArtifactContent) != accepted {
 		t.Fatal("identical emission replaced the accepted proposal")
 	}
 	target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
@@ -2731,7 +2733,7 @@ func TestRecordEmitted_PartialSubsetPreservesCompletedOutput(t *testing.T) {
 	writer.Init(s, owner.Named(), nil)
 	defer observer.Retire()
 	defer writer.Retire()
-	before := observer.GetArtifact(owner.Named()).(*Emission)
+	before := observer.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 	var objects, artifacts int
 	stopObjects := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { objects++ }, false)
 	defer stopObjects()
@@ -2741,7 +2743,7 @@ func TestRecordEmitted_PartialSubsetPreservesCompletedOutput(t *testing.T) {
 	partial.Children = partial.Children[len(partial.Children)-1:]
 	s.RecordEmitted(owner.Named(), &partial, nil)
 	partial.Finish()
-	after := s.GetArtifact(owner.Named()).(*Emission)
+	after := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 	if !observer.Valid() || objects != 0 || artifacts != 0 {
 		t.Fatalf("equal partial subset invalidated output: valid=%t objects=%d artifacts=%d", observer.Valid(), objects, artifacts)
 	}
@@ -2805,7 +2807,7 @@ func TestRecordEmitted_RetiresOnlyReplacedOutputBorrower(t *testing.T) {
 				} else {
 					s.RecordEmitted(owner.Named(), &next, nil)
 				}
-				current := s.GetArtifact(owner.Named()).(*Emission)
+				current := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 				if mode == "rebound" {
 					if !first.retired.Load() || current.OutputReads != &second {
 						t.Fatal("accepted rebound retained the predecessor borrower")
@@ -2846,7 +2848,7 @@ func TestRecordEmitted_RejectedPublicationPreservesOutputWatches(t *testing.T) {
 				first.Bind(&output)
 				s.RecordEmitted(owner.Named(), &output, nil)
 				output.Finish()
-				accepted := s.GetArtifact(owner.Named()).(*Emission)
+				accepted := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 
 				tasks := task.NewBounded(2)
 				captured, stale := make(chan struct{}), make(chan struct{})
@@ -2889,7 +2891,7 @@ func TestRecordEmitted_RejectedPublicationPreservesOutputWatches(t *testing.T) {
 				if tasks.Failures() != 0 {
 					t.Fatal("publication task panicked")
 				}
-				current := s.GetArtifact(owner.Named()).(*Emission)
+				current := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 				if current != accepted || current.OutputReads != &first {
 					t.Fatal("rejection replaced the accepted emission or borrower")
 				}
@@ -2971,7 +2973,7 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			} else {
 				publish()
 			}
-			if s.GetArtifact(declaration.Named()) != nil {
+			if s.GetArtifact(declaration.Named(), ArtifactContent) != nil {
 				t.Fatal("changed parent input left the old artifact visible")
 			}
 			second.Init(s, declaration.Named(), nil)
@@ -3234,7 +3236,7 @@ func TestRecordEmitted_SameOutputUsesCurrentInput(t *testing.T) {
 	defer next.Finish()
 	next.Complete, next.Fingerprint = true, first.Fingerprint
 	s.RecordEmitted(b.Named(), &next, nil)
-	current := s.GetArtifact(b.Named()).(*Emission)
+	current := s.GetArtifact(b.Named(), ArtifactContent).(*Emission)
 	if current.input != b || current.Fingerprint != first.Fingerprint || s.GetObject(first.Children[0].Obj.Named()) == nil {
 		t.Fatalf("equal output retained obsolete input: input=%v fingerprint=%q", current.input, current.Fingerprint)
 	}
@@ -3404,7 +3406,7 @@ func TestRecordEmitted_PayloadPrecedence(t *testing.T) {
 			if seen != 1 {
 				t.Fatalf("generated payload replay count = %d", seen)
 			}
-			if s.EmissionOwner(target) != zz || s.GetArtifact(target) != last {
+			if s.EmissionOwner(target) != zz || s.GetArtifact(target, ArtifactContent) != last {
 				t.Fatal("declaration winner suppressed greatest byte contributor")
 			}
 			checkDeclaration := func() {
@@ -3416,6 +3418,12 @@ func TestRecordEmitted_PayloadPrecedence(t *testing.T) {
 				assert.Equal(t, s.EmissionOwner(target), zz)
 			}
 			checkDeclaration()
+			s.AddObject(declaration.Obj, declaration.Doc)
+			assert.Equal(t, s.DeleteObject(target), true)
+			if s.GetArtifact(target, ArtifactContent) != last {
+				t.Fatal("static deletion discarded the surviving emitted payload")
+			}
+			checkDeclaration()
 			if data, err := fs.ReadFile(first.FS, "file"); err != nil || string(data) != "a" {
 				t.Fatalf("losing payload = %q, %v", data, err)
 			}
@@ -3425,22 +3433,22 @@ func TestRecordEmitted_PayloadPrecedence(t *testing.T) {
 			}
 			defer func() { _ = opened.Close() }()
 			s.RecordEmitted(z, &Emission{Complete: true}, nil)
-			if s.GetArtifact(target) != first {
+			if s.GetArtifact(target, ArtifactContent) != first {
 				t.Fatal("withdrawal did not select the whole surviving descriptor")
 			}
 			checkDeclaration()
-			if data, err := fs.ReadFile(s.GetArtifact(target).(*SourceArtifact).FS, "file"); err != nil || string(data) != "a" {
+			if data, err := fs.ReadFile(s.GetArtifact(target, ArtifactContent).(*SourceArtifact).FS, "file"); err != nil || string(data) != "a" {
 				t.Fatalf("surviving payload = %q, %v", data, err)
 			}
 			s.RecordEmitted(a, &Emission{Complete: true}, nil)
-			if s.GetObject(target) == nil || s.GetArtifact(target) != nil {
+			if s.GetObject(target) == nil || s.GetArtifact(target, ArtifactContent) != nil {
 				t.Fatal("declaration-only survivor retained byte authority")
 			}
 			checkDeclaration()
 			if data, err := io.ReadAll(opened); err != nil || string(data) != "z" {
 				t.Fatalf("already-open withdrawn backing = %q, %v", data, err)
 			}
-			if peer.GetArtifact(target) != first {
+			if peer.GetArtifact(target, ArtifactContent) != first {
 				t.Fatal("withdrawal discarded another store's shared cache backing")
 			}
 			peer.RecordEmitted(a, &Emission{Complete: true}, nil)
@@ -3460,30 +3468,30 @@ func TestRecordEmitted_PayloadProvenance(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: p.Name, Namespace: p.Namespace})
 	child := emissionChild("target", "same")
 	target := child.Obj.Named()
-	payload := &SourceArtifact{Kind: target.Kind, Key: "key", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}}
+	payload := &SourceArtifact{Kind: target.Kind, Key: "key", Content: "key", Digest: "digest", FS: fstest.MapFS{"file": {Data: []byte("bytes")}}}
 	_, _, attempt := s.GetEmission(p)
 	defer attempt.Finish()
 	attempt.Children = []Child{child}
 	attempt.Fingerprint = "same"
 	s.RecordEmitted(p, &attempt, map[manifest.NamedResource]*SourceArtifact{target: payload})
-	if attempt.Fingerprint != "" || s.GetArtifact(p).(*Emission).Fingerprint != "" {
+	if attempt.Fingerprint != "" || s.GetArtifact(p, ArtifactContent).(*Emission).Fingerprint != "" {
 		t.Fatal("partial payload publication retained successful fingerprint eligibility")
 	}
 	attempt.Children, attempt.Complete = []Child{child}, true
 	attempt.Fingerprint = "same"
 	s.RecordEmitted(p, &attempt, nil)
-	if s.GetArtifact(target) != payload {
+	if s.GetArtifact(target, ArtifactContent) != payload {
 		t.Fatal("same-attempt nil finalization removed payload")
 	}
 	_, _, replay := s.GetEmission(p)
 	defer replay.Finish()
 	replay.Complete = true
 	s.RecordEmitted(p, &replay, nil)
-	if s.GetArtifact(target) != payload {
+	if s.GetArtifact(target, ArtifactContent) != payload {
 		t.Fatal("borrowed replay removed payload")
 	}
 	s.RecordEmitted(p, &Emission{Children: []Child{child}, Manifests: replay.Manifests, Fingerprint: replay.Fingerprint, Complete: true}, nil)
-	if s.GetArtifact(target) != nil {
+	if s.GetArtifact(target, ArtifactContent) != nil {
 		t.Fatal("fresh declaration-only replacement retained bytes")
 	}
 	s.RecordEmitted(p, &Emission{Children: []Child{child}, Fingerprint: "same", Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: payload})
@@ -3492,7 +3500,7 @@ func TestRecordEmitted_PayloadProvenance(t *testing.T) {
 	defer replacement.Finish()
 	replacement.Children, replacement.Complete = []Child{child, other}, true
 	s.RecordEmitted(p, &replacement, map[manifest.NamedResource]*SourceArtifact{other.Obj.Named(): payload})
-	if s.GetArtifact(target) != nil || s.GetArtifact(other.Obj.Named()) != payload {
+	if s.GetArtifact(target, ArtifactContent) != nil || s.GetArtifact(other.Obj.Named(), ArtifactContent) != payload {
 		t.Fatal("new attempt borrowed an earlier payload for its fresh declaration-only child")
 	}
 }
@@ -3504,8 +3512,8 @@ func TestRecordEmitted_PayloadUpdate(t *testing.T) {
 	s.AddObject(owner)
 	child := emissionChild("generated", "same")
 	target := child.Obj.Named()
-	first := &SourceArtifact{Key: "first", Digest: "first", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
-	second := &SourceArtifact{Key: "second", Digest: "second", FS: fstest.MapFS{"file": {Data: []byte("second")}}}
+	first := &SourceArtifact{Key: "first", Content: "first", Digest: "first", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
+	second := &SourceArtifact{Key: "second", Content: "second", Digest: "second", FS: fstest.MapFS{"file": {Data: []byte("second")}}}
 	_, _, initial := s.GetEmission(owner.Named())
 	initial.Children, initial.Manifests, initial.Fingerprint, initial.Complete = []Child{child}, []map[string]any{child.Doc}, "same", true
 	s.RecordEmitted(owner.Named(), &initial, map[manifest.NamedResource]*SourceArtifact{target: first})
@@ -3526,7 +3534,7 @@ func TestRecordEmitted_PayloadUpdate(t *testing.T) {
 	defer input.Finish()
 	assert.Equal(t, obj, child.Obj)
 	assert.Diff(t, doc, child.Doc)
-	assert.Equal(t, s.GetArtifact(target), Artifact(second))
+	assert.Equal(t, s.GetArtifact(target, ArtifactContent), Artifact(second))
 	equal := *second
 	equal.FS = fstest.MapFS{"file": {Data: []byte("second")}}
 	s.RecordEmitted(owner.Named(), &next, map[manifest.NamedResource]*SourceArtifact{target: &equal})
@@ -3534,7 +3542,7 @@ func TestRecordEmitted_PayloadUpdate(t *testing.T) {
 		t.Fatal("semantically equal payload with distinct backing notified readers")
 	}
 	s.RecordEmitted(owner.Named(), &Emission{Complete: true}, nil)
-	if s.GetArtifact(target) != nil || !slices.Equal(updates, []*SourceArtifact{second, nil}) {
+	if s.GetArtifact(target, ArtifactContent) != nil || !slices.Equal(updates, []*SourceArtifact{second, nil}) {
 		t.Fatal("last payload withdrawal did not remove authority and notify readers")
 	}
 }
@@ -3552,8 +3560,8 @@ func TestRecordEmitted_PayloadWarnings(t *testing.T) {
 			child := emissionChild("generated", "same")
 			target := child.Obj.Named()
 			s.RecordEmitted(zz, &Emission{Children: []Child{child}, Complete: true}, nil)
-			first := &SourceArtifact{Key: "a", Digest: "a", Revision: "a", Metadata: map[string]string{"origin": "a"}, FS: fstest.MapFS{"file": {Data: []byte("a")}}}
-			last := &SourceArtifact{Key: "a", Digest: "a", Revision: "a", Metadata: map[string]string{"origin": "a"}, FS: fstest.MapFS{"file": {Data: []byte("a")}}}
+			first := &SourceArtifact{Key: "a", Content: "a", Digest: "a", Revision: "a", Metadata: map[string]string{"origin": "a"}, FS: fstest.MapFS{"file": {Data: []byte("a")}}}
+			last := &SourceArtifact{Key: "a", Content: "a", Digest: "a", Revision: "a", Metadata: map[string]string{"origin": "a"}, FS: fstest.MapFS{"file": {Data: []byte("a")}}}
 			if !equal {
 				last.Key, last.Digest, last.Revision = "z", "z", "z"
 				last.Metadata, last.FS = map[string]string{"origin": "z"}, fstest.MapFS{"file": {Data: []byte("z")}}
@@ -3566,7 +3574,7 @@ func TestRecordEmitted_PayloadWarnings(t *testing.T) {
 			}
 			assert.Diff(t, s.Warnings(), want)
 			assert.Equal(t, s.EmissionOwner(target), zz)
-			assert.Equal(t, s.GetArtifact(target), Artifact(last))
+			assert.Equal(t, s.GetArtifact(target, ArtifactContent), Artifact(last))
 		})
 	}
 }
@@ -3673,11 +3681,11 @@ func TestGetEmission_AuthoritativeDocument(t *testing.T) {
 			defer completed.Finish()
 			completed.Complete = true
 			s.RecordEmitted(raw.Named(), &completed, nil)
-			if s.GetArtifact(raw.Named()) == nil {
+			if s.GetArtifact(raw.Named(), ArtifactContent) == nil {
 				t.Fatal("completed document input is unavailable")
 			}
 			s.AddObject(changed, doc)
-			if s.GetArtifact(raw.Named()) != nil {
+			if s.GetArtifact(raw.Named(), ArtifactContent) != nil {
 				t.Fatal("changed document retained completed work for the same object pointer")
 			}
 		})
@@ -3691,27 +3699,27 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
 	obj := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
 	child := Child{Obj: obj, Doc: map[string]any{"apiVersion": obj.APIVersion, "kind": obj.Kind}}
-	first := sourceBinding{source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "first"}, key: "first"}
-	second := sourceBinding{source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "second"}, key: "second"}
+	first := sourceBinding{source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "first"}, artifact: &SourceArtifact{Key: "first"}}
+	second := sourceBinding{source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "second"}, artifact: &SourceArtifact{Key: "second"}}
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: first}, nil)
 	_, _, attempt := s.GetEmission(obj.Named())
 	defer attempt.Finish()
 	attempt.Fingerprint, attempt.Complete = "success", true
 	s.RecordEmitted(obj.Named(), &attempt, nil)
-	accepted := s.GetArtifact(obj.Named())
+	accepted := s.GetArtifact(obj.Named(), ArtifactContent)
 	if accepted == nil {
 		t.Fatal("fresh inventory unavailable")
 	}
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: first, Fingerprint: "changed"}, nil)
 	_, doc, equivalent := s.GetEmission(obj.Named())
 	defer equivalent.Finish()
-	if equivalent.inputHead.binding != first || !specValueEqual(doc, child.Doc) || func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() || s.GetArtifact(obj.Named()) != accepted {
+	if equivalent.inputHead.binding != first || !specValueEqual(doc, child.Doc) || func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() || s.GetArtifact(obj.Named(), ArtifactContent) != accepted {
 		t.Fatal("equivalent declaration storage invalidated accepted work")
 	}
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: second}, nil)
 	_, doc, rebound := s.GetEmission(obj.Named())
 	defer rebound.Finish()
-	if rebound.inputHead.binding != second || !specValueEqual(doc, child.Doc) || rebound.Fingerprint != "" || s.GetArtifact(obj.Named()) != nil {
+	if rebound.inputHead.binding != second || !specValueEqual(doc, child.Doc) || rebound.Fingerprint != "" || s.GetArtifact(obj.Named(), ArtifactContent) != nil {
 		t.Fatal("selected document and binding did not invalidate old replay together")
 	}
 }
@@ -3756,7 +3764,7 @@ func TestRecordEmitted_BorrowedPayloadOwners(t *testing.T) {
 			publish(&first, "a")
 			publish(&second, "b")
 			publish(&third, "c")
-			accepted := s.GetArtifact(owner.Named()).(*Emission)
+			accepted := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 			if len(accepted.Children) != 3 || !accepted.Retains(&first) || !accepted.Retains(&second) || !accepted.Retains(&third) {
 				t.Fatal("partial publication lost a borrowed payload owner")
 			}
@@ -3825,7 +3833,7 @@ func TestRecordEmitted_BorrowedPayloadOwners(t *testing.T) {
 				}
 				resume()
 				<-done
-				if s.GetArtifact(owner.Named()) != accepted || s.GetObject(barrier.ConfigMap.Named()) != nil {
+				if s.GetArtifact(owner.Named(), ArtifactContent) != accepted || s.GetObject(barrier.ConfigMap.Named()) != nil {
 					t.Fatal("stale proposal replaced accepted payload inventory")
 				}
 				if accepted.OutputReads != &output || accepted.payloadReads != &first || len(accepted.borrowed) != 2 {
@@ -3846,7 +3854,7 @@ func TestRecordEmitted_BorrowedPayloadOwners(t *testing.T) {
 						t.Error("sweep removed an accepted output or borrowed payload registration")
 					}
 				}
-				if s.GetArtifact(owner.Named()) != accepted {
+				if s.GetArtifact(owner.Named(), ArtifactContent) != accepted {
 					t.Fatal("sweep removed accepted payload inventory")
 				}
 				name := mode[len("rejected/"):]
@@ -3865,7 +3873,7 @@ func TestRecordEmitted_BorrowedPayloadOwners(t *testing.T) {
 			if !first.retired.Load() || !second.retired.Load() || third.retired.Load() {
 				t.Fatal("completion did not release exactly the superseded payload owners")
 			}
-			if s.GetArtifact(last.Obj.Named()) == nil {
+			if s.GetArtifact(last.Obj.Named(), ArtifactContent) == nil {
 				t.Fatal("completion removed the current execution's accepted descriptor")
 			}
 		})
@@ -4114,7 +4122,7 @@ func TestRecordEmitted_AcceptedFootprint(t *testing.T) {
 			_, _, next := st.GetEmission(owner.Named())
 			defer next.Finish()
 			next.Children, next.Render, next.Complete = []Child{{Obj: child}, {Obj: declaration}}, manifest.NewRenderReceipt("receipt", func(a, b any) bool { return a == b }), state != "partial"
-			next.binding = sourceBinding{source: emitterSource, key: "generation"}
+			next.binding = sourceBinding{source: emitterSource, artifact: &SourceArtifact{Key: "generation", Content: "generation"}}
 			if len(next.coverage) == 0 {
 				t.Fatal("fixture has no withdrawal coverage")
 			}
@@ -4169,7 +4177,7 @@ func TestRecordEmitted_AcceptedFootprint(t *testing.T) {
 			secret := manifest.NamedResource{Kind: manifest.KindSecret, Name: declaration.Name, Namespace: declaration.Namespace}
 			assert.Diff(t, records[secret].Productions, []manifest.Production{{Owner: owner.Named(), Declaration: declaration.Named(), Source: emitterSource}})
 			assert.Equal(t, next.Render.Value().(string), "receipt")
-			if st.GetArtifact(owner.Named()).(*Emission).Footprint() != nil {
+			if st.GetArtifact(owner.Named(), ArtifactContent).(*Emission).Footprint() != nil {
 				t.Fatal("stored inventory manufactured caller acceptance")
 			}
 		})
@@ -4213,7 +4221,7 @@ func TestRecordEmitted_RejectedSuccessorRetainsOutputReads(t *testing.T) {
 			prior.Children, prior.Manifests, prior.Render, prior.Complete = []Child{child}, []map[string]any{child.Doc}, manifest.NewRenderReceipt("prior", func(a, b any) bool { return a == b }), true
 			first.Bind(&prior)
 			st.RecordEmitted(owner.Named(), &prior, nil)
-			accepted := st.GetArtifact(owner.Named())
+			accepted := st.GetArtifact(owner.Named(), ArtifactContent)
 			successor.GetObject(b.Named())
 			_, _, next := successor.GetEmission(owner.Named())
 			defer next.Finish()
@@ -4240,7 +4248,7 @@ func TestRecordEmitted_RejectedSuccessorRetainsOutputReads(t *testing.T) {
 			tasks.BlockTillDone()
 			assert.Equal(t, tasks.Failures(), 0)
 			assert.Equal(t, writes.Load(), 0)
-			if !first.Valid() || first.retired.Load() || st.GetArtifact(owner.Named()) != accepted {
+			if !first.Valid() || first.retired.Load() || st.GetArtifact(owner.Named(), ArtifactContent) != accepted {
 				t.Fatal("rejected successor retired or replaced valid predecessor output")
 			}
 			if next.Footprint() != nil || successor.Valid() {
@@ -4261,7 +4269,7 @@ func TestRecordEmitted_ReceiptOnly(t *testing.T) {
 	var observer ReadSet
 	observer.Init(st, ownerID("observer"), nil)
 	defer observer.Retire()
-	before := observer.GetArtifact(owner.Named()).(*Emission)
+	before := observer.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 	observer.GetObject(child.Obj.Named())
 	var objects, artifacts atomic.Int32
 	stopObjects := st.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { objects.Add(1) }, false)
@@ -4270,7 +4278,7 @@ func TestRecordEmitted_ReceiptOnly(t *testing.T) {
 	defer stopArtifacts()
 	next.Render = manifest.NewRenderReceipt("second", func(a, b any) bool { return a == b })
 	st.RecordEmitted(owner.Named(), &next, nil)
-	after := st.GetArtifact(owner.Named()).(*Emission)
+	after := st.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
 	if before == after || before.revision != after.revision || !observer.Valid() || objects.Load() != 0 || artifacts.Load() != 0 {
 		t.Fatal("receipt-only replacement changed semantic publication")
 	}

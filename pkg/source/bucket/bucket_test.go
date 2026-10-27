@@ -178,6 +178,9 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 								t.Error(err)
 								return
 							}
+							if art.Content == "" || art.Content != cache.AcquisitionIdentity(art.FS) {
+								t.Errorf("content generation = %q", art.Content)
+							}
 							if art.Key == "" || family != "" && art.Key != family {
 								t.Errorf("warm acquisition family = %q, first = %q", art.Key, family)
 							}

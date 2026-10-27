@@ -63,8 +63,8 @@ func TestAddEmitted_CrossSourceOptionalInputEvidence(t *testing.T) {
 				return
 			}
 			if mode == "artifact_replaced" {
-				replacement := *st.GetArtifact(source.Named()).(*store.SourceArtifact)
-				replacement.Revision = "replacement"
+				replacement := *st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+				replacement.Content, replacement.Revision = "replacement", "replacement"
 				st.SetArtifact(source.Named(), &replacement)
 			} else {
 				replacement := *source
@@ -141,7 +141,7 @@ func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 				changed = "subtree/apps/config.yaml"
 				if mode == "pinned" || mode == "paired_pinned" {
 					art.InputAlias = false
-					art.Key = "pin"
+					art.Key, art.Content = "pin", "pin"
 					art.LocalRoot = root
 					changed = ".inputs/source/apps/config.yaml"
 				}
@@ -166,7 +166,7 @@ func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 			}
 			changes := NewSet([]string{changed})
 			if mode == "paired_pinned" || mode == "paired_alias" {
-				current := *st.GetArtifact(source).(*store.SourceArtifact)
+				current := *st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 				before := current
 				before.FS = fstest.MapFS{"apps/config.yaml": {Data: []byte("before")}}
 				current.FS = fstest.MapFS{"apps/config.yaml": {Data: []byte("after")}}
@@ -350,12 +350,12 @@ func TestFilter_ProductionReadersSourceCoordinates(t *testing.T) {
 			st.AddObject(source)
 			art := &store.SourceArtifact{FS: os.DirFS(root), LocalPath: filepath.Join(root, ".mount"), LocalRoot: filepath.Join(root, "subtree"), InputAlias: true}
 			if mode == "pinned" || mode == "pinned_reader" || mode == "index_only_pinned" {
-				art.LocalRoot, art.InputAlias, art.Key = root, false, "pin"
+				art.LocalRoot, art.InputAlias, art.Key, art.Content = root, false, "pin", "pin"
 			}
 			if mode == "external" || mode == "index_only_external" {
 				art.LocalRoot, art.InputAlias = filepath.Dir(root), false
 				if mode == "index_only_external" {
-					art.Key = "external"
+					art.Key, art.Content = "external", "external"
 				}
 			}
 			st.SetArtifact(source.Named(), art)
@@ -445,7 +445,7 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 
 func TestQualify_ContentFingerprint(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"immutable", "revision", "digest", "shaping", "mutable", "empty", "unknown", "changed", "error", "canceled", "callback_canceled", "callback_deadline", "bootstrap"} {
+	for _, mode := range []string{"immutable", "revision", "digest", "shaping", "content", "family_only", "mutable", "empty", "unknown", "changed", "error", "canceled", "callback_canceled", "callback_deadline", "bootstrap"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			st := [2]*store.Store{store.New(), store.New()}
@@ -457,7 +457,13 @@ func TestQualify_ContentFingerprint(t *testing.T) {
 			var readers [2]*relationReader
 			for i := range st {
 				readers[i] = &relationReader{FS: fstest.MapFS{"file": {Data: []byte{byte(i)}}}}
-				art := &store.SourceArtifact{FS: readers[i], LocalPath: []string{"/a", "/b"}[i], Key: "family", Revision: "commit", Digest: "digest"}
+				art := &store.SourceArtifact{FS: readers[i], LocalPath: []string{"/a", "/b"}[i], Key: "family", Content: "generation", Revision: "commit", Digest: "digest"}
+				if mode == "content" {
+					art.Content += string(rune('a' + i))
+				}
+				if mode == "family_only" {
+					art.Content = ""
+				}
 				if mode == "revision" {
 					art.Revision += string(rune('a' + i))
 				}
@@ -468,7 +474,7 @@ func TestQualify_ContentFingerprint(t *testing.T) {
 					art.Key += string(rune('a' + i))
 				}
 				if mode == "mutable" || mode == "empty" || mode == "unknown" || mode == "changed" || mode == "error" || mode == "callback_canceled" || mode == "callback_deadline" {
-					art.Key = ""
+					art.Key, art.Content = "", ""
 					if mode != "unknown" {
 						art.ContentFingerprint = func(context.Context, fs.FS) (string, error) {
 							if mode == "callback_canceled" {
@@ -542,7 +548,7 @@ func TestFilter_EqualSelectedSources(t *testing.T) {
 				{LocalPath: "/head", LocalRoot: "/head", InputAlias: true, FS: fstest.MapFS{
 					"apps/cm.yaml": {Data: []byte("same\n")}, "other.txt": {Data: []byte("also same\n")},
 				}},
-				{LocalPath: "/selected", LocalRoot: "/base", Key: "committed", FS: fstest.MapFS{
+				{LocalPath: "/selected", LocalRoot: "/base", Key: "committed", Content: "committed", FS: fstest.MapFS{
 					"apps/cm.yaml": {Data: []byte("same\n")}, "other.txt": {Data: []byte("also same\n")},
 				}},
 			}
@@ -681,6 +687,7 @@ func TestFilter_EqualSelectedSources(t *testing.T) {
 			if mode == "artifact_replaced" {
 				for i, st := range stores {
 					replacement := *selected[i]
+					replacement.Content = "replacement"
 					replacement.FS = fstest.MapFS{"apps/cm.yaml": {Data: []byte("replacement\n")}}
 					st.SetArtifact(source.Named(), &replacement)
 				}
@@ -732,7 +739,7 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 		before.AddObjects([]manifest.BaseManifest{source, owner})
 		input := &store.SourceArtifact{LocalPath: "/base", LocalRoot: "/base", FS: fstest.MapFS{"apps/cm.yaml": {Data: []byte("A\n")}}}
 		before.SetArtifact(manifest.BootstrapSourceID, input)
-		before.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: "/selected", LocalRoot: "/base", Key: "committed", FS: fstest.MapFS{"apps/cm.yaml": {Data: []byte(payload)}}})
+		before.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: "/selected", LocalRoot: "/base", Key: "committed", Content: "committed", FS: fstest.MapFS{"apps/cm.yaml": {Data: []byte(payload)}}})
 		paths, err := Detect(t.Context(), input, current)
 		assert.NoError(t, err)
 		assert.Diff(t, paths.Paths(), []string{"apps/cm.yaml"})

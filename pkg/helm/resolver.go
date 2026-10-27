@@ -7,7 +7,7 @@ import (
 
 type sourceReader interface {
 	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
-	GetArtifact(manifest.NamedResource) store.Artifact
+	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 }
 
 // Sources resolves chart declarations and content from one operation's inputs.
@@ -25,11 +25,11 @@ func (s Sources) HelmRepository(namespace, name string) *manifest.HelmRepository
 }
 
 // LocalSourceArtifact returns the selected source content.
-func (s Sources) LocalSourceArtifact(id manifest.NamedResource) *store.SourceArtifact {
+func (s Sources) LocalSourceArtifact(id manifest.NamedResource, read store.ArtifactRead) *store.SourceArtifact {
 	if s.reader == nil {
 		return nil
 	}
-	art, _ := s.reader.GetArtifact(id).(*store.SourceArtifact)
+	art, _ := s.reader.GetArtifact(id, read).(*store.SourceArtifact)
 	return art
 }
 

@@ -31,7 +31,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 		Name: "pinned", Namespace: "flux-system", TargetNamespace: "apps", Path: "./apps",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: sourceID.Kind, Name: sourceID.Name, Namespace: sourceID.Namespace},
 	})
-	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, LocalPath: artifactDir, Key: "pinned", FS: os.DirFS(artifactDir)})
+	s.SetArtifact(sourceID, &store.SourceArtifact{LocalRoot: root, LocalPath: artifactDir, Key: "pinned", Content: "pinned", FS: os.DirFS(artifactDir)})
 	l := loaderFixture(s, nil)
 	l.SourceRoot = root
 	l.documents = readerForTest(root)
@@ -1063,7 +1063,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		if _, err := fs.Stat(other.documents.views[root], "second/late.yaml"); err != nil {
 			t.Fatalf("second loader inherited a private miss: %v", err)
 		}
-		if s.GetArtifact(manifest.BootstrapSourceID) != artifact {
+		if s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != artifact {
 			t.Fatal("loader replaced the source artifact")
 		}
 		if _, err := fs.Stat(artifact.FS, "second/late.yaml"); err != nil {
@@ -1121,7 +1121,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 			if _, err := loadForTest(t.Context(), t, l, roots[0]); err != nil {
 				t.Fatal(err)
 			}
-			if l.Store.GetArtifact(manifest.BootstrapSourceID) != nil || l.Store.GetObject(manifest.BootstrapSourceID) != nil {
+			if l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil || l.Store.GetObject(manifest.BootstrapSourceID) != nil {
 				t.Fatal("standalone load published bootstrap identity")
 			}
 			view := l.documents.views[roots[0]]
@@ -1147,7 +1147,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 				if retained != observed {
 					t.Fatal("standalone binding discarded operation observations")
 				}
-				if l.Store.GetArtifact(manifest.BootstrapSourceID) != nil || l.Store.GetObject(manifest.BootstrapSourceID) != nil {
+				if l.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != nil || l.Store.GetObject(manifest.BootstrapSourceID) != nil {
 					t.Fatal("independent load published bootstrap identity")
 				}
 				if tc.nested {

@@ -675,7 +675,7 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 	if l.Store.GetObject(id) == nil {
 		return true
 	}
-	artifact, _ := l.Store.GetArtifact(id).(*store.SourceArtifact)
+	artifact, _ := l.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 	if artifact == nil || !artifact.InputAlias {
 		return false
 	}

@@ -17,7 +17,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
@@ -90,7 +89,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	repoRoot := cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact).LocalPath
+	repoRoot := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath
 	if err := d.loadManifests(ctx, repoRoot, true); err != nil {
 		return nil, err
 	}
@@ -149,7 +148,7 @@ type discoverer struct {
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]entryResolution
 	remotes         map[string]struct{}
-	aliasViews      map[string]*gittree.FS
+	aliasViews      map[string]*store.SourceArtifact
 	hasPins         bool
 }
 
@@ -161,20 +160,20 @@ type documentOrigin struct {
 func newDiscoverer(cfg Config) *discoverer {
 	l := loader.New(cfg.Store)
 	l.Options = loader.Options{WipeSecrets: cfg.WipeSecrets, RemoteInputs: cfg.RemoteInputs, RemoteRetry: cfg.RemoteRetry}
-	d := &discoverer{cfg: cfg, loader: l, aliasViews: map[string]*gittree.FS{}}
+	d := &discoverer{cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{}}
 	if cfg.Entry == nil || cfg.Entry.prepared == nil {
 		return d
 	}
 	prepared := cfg.Entry.prepared
 	input := cfg.Input
 	if input == nil {
-		input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+		input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	if input == nil || cfg.WipeSecrets != prepared.wipeSecrets {
 		return d
 	}
 	if !prepared.parsed.Matches(input) || input.LocalPath != prepared.input.LocalPath || input.LocalRoot != prepared.input.LocalRoot ||
-		input.Key != prepared.input.Key || input.Revision != prepared.input.Revision || input.Digest != prepared.input.Digest {
+		input.Key != prepared.input.Key || input.Content != prepared.input.Content || input.Revision != prepared.input.Revision || input.Digest != prepared.input.Digest {
 		return d
 	}
 	l.Options.ParsedInputs = prepared.parsed
@@ -186,7 +185,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 	l := d.loader
 	l.SourceRoot = repoRoot
 
-	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	name, err := filepath.Rel(input.LocalPath, d.cfg.Path)
 	if err != nil {
 		return err
@@ -226,7 +225,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 		kustomizations := d.loader.Kustomizations()
 		for _, child := range kustomizations {
 			ks := child.Obj.(*manifest.Kustomization)
-			art, _ := d.cfg.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+			art, _ := d.cfg.Store.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
 			key := expansion{ks: ks, source: art, object: d.cfg.Store.GetObject(ks.SourceID())}
 			if _, seen := ksExpanded[key]; seen {
 				continue
@@ -289,7 +288,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 }
 
 func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) error {
-	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	docs, _, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: root}, d.cfg.RemoteRetry)
 	if err != nil {
 		return fmt.Errorf("discovery package %q build: %w", root, err)
@@ -379,7 +378,7 @@ func (d *discoverer) pinnedWorkingTreeFile(repoRoot string, prefixes []manifest.
 	file := record.File
 	if !safepath.Contains(repoRoot, filepath.Join(repoRoot, filepath.FromSlash(file))) {
 		for source := range d.resolvedSources {
-			root, ok := d.cfg.Store.GetArtifact(source).(*store.SourceArtifact)
+			root, ok := d.cfg.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 			if ok && root.InputAlias && safepath.Contains(root.LocalPath, record.Path) {
 				rel, _ := filepath.Rel(root.LocalPath, record.Path)
 				file, _ = filepath.Rel(repoRoot, filepath.Join(root.LocalRoot, rel))

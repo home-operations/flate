@@ -59,6 +59,8 @@ type ViewOptions struct {
 	Worktree billy.Filesystem
 	// Current supplies admitted bytes; Git views also expose read-only local objects.
 	Current fs.FS
+	// CurrentContent carries the acquisition owner's identity when Current wraps its admitted view.
+	CurrentContent string
 	// Changes routes complete, unfiltered differences to commit bodies.
 	Changes []string
 }
@@ -387,7 +389,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	}
 	direct, source := opts.Mode == Direct, opts.Mode == Source
 	reuse := direct && commit == plumbing.ZeroHash
-	identity := ""
+	identity := opts.CurrentContent
 	var matcher *sourceignore.Matcher
 	current, _ := opts.Current.(*FS)
 	if current != nil {
@@ -427,7 +429,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 		}
 		opts.Current = current
 	}
-	if reuse && opts.Current != nil {
+	if reuse && opts.Current != nil && (current != nil || identity == "") {
 		if current != nil {
 			return current, identity, nil
 		}

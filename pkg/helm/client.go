@@ -75,7 +75,11 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 	if err != nil {
 		return chartDescription{}, err
 	}
-	art := sources.LocalSourceArtifact(hr.ChartSource())
+	read := store.ArtifactContent
+	if hr.TracksDigest() {
+		read |= store.ArtifactRevision
+	}
+	art := sources.LocalSourceArtifact(hr.ChartSource(), read)
 	if art == nil || art.FS == nil {
 		return chartDescription{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
 			manifest.ErrObjectNotFound, hr.Chart.Source.Kind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())

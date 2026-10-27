@@ -30,7 +30,7 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 				st.AddObject(source)
 				art := &store.SourceArtifact{FS: fstest.MapFS{"apps/red/file": {Data: []byte("changed")}}, LocalPath: root}
 				if mode == "pinned" {
-					art.LocalPath, art.LocalRoot, art.Key = "/selected", root, "commit"
+					art.LocalPath, art.LocalRoot, art.Key, art.Content = "/selected", root, "commit", "generation"
 				}
 				st.SetArtifact(source.Named(), art)
 				filter := change.NewFilter(change.NewSet([]string{"apps/red/file"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, st, root)

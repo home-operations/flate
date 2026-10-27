@@ -54,7 +54,7 @@ func (e *Execution) Valid() bool {
 	if e.Outcome() == schedule.Blocked || !e.Reads.Admitted() {
 		return true
 	}
-	switch output := e.Store.GetArtifact(e.Reads.ID()).(type) {
+	switch output := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(type) {
 	case *store.Emission:
 		return output.OutputReads.Valid()
 	case *store.SourceArtifact:
@@ -65,7 +65,7 @@ func (e *Execution) Valid() bool {
 
 // Retire releases superseded assessment cells while retaining borrowed output.
 func (e *Execution) Retire() {
-	switch output := e.Store.GetArtifact(e.Reads.ID()).(type) {
+	switch output := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(type) {
 	case *store.Emission:
 		if output.Retains(&e.Reads) {
 			return
@@ -80,7 +80,7 @@ func (e *Execution) Retire() {
 
 // Emit publishes the candidate inventory with its consumed provenance.
 func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
-	if err := e.checkpoint(); err != nil {
+	if err := e.Checkpoint(); err != nil {
 		return err
 	}
 	e.publish(id, next, payloads)
@@ -191,7 +191,7 @@ func (e *Execution) finish(err error) {
 		if _, failed := errors.AsType[*manifest.DependencyFailedError](err); failed {
 			e.kind = schedule.DependencyFailed
 		}
-		if artifact, ok := e.Store.GetArtifact(id).(*store.SourceArtifact); ok && !artifact.Reads.Valid() {
+		if artifact, ok := e.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok && !artifact.Reads.Valid() {
 			e.Store.SetArtifact(id, nil)
 		}
 		_, _, next := e.Reads.GetEmission(id)
@@ -248,7 +248,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 	if !e.Reads.Valid() {
 		return
 	}
-	if err := e.checkpoint(); err != nil {
+	if err := e.Checkpoint(); err != nil {
 		e.finish(err)
 		return
 	}
@@ -335,20 +335,20 @@ func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
 func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, attempt *store.Emission) (string, bool, error) {
-	if err := e.checkpoint(); err != nil {
+	if err := e.Checkpoint(); err != nil {
 		return "", true, err
 	}
 	if content == nil {
 		return "", false, e.admitRender()
 	}
 	fp := manifest.Fingerprint(content)
-	if err := e.checkpoint(); err != nil {
+	if err := e.Checkpoint(); err != nil {
 		return "", true, err
 	}
 	if fp == "" {
 		return "", false, e.admitRender()
 	}
-	current, _ := e.Store.GetArtifact(id).(*store.Emission)
+	current, _ := e.Store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
 	output, matched := current.Replay(fp)
 	receipt := attempt.Render
 	_, _, *attempt = e.Reads.GetEmission(id)
@@ -360,7 +360,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, att
 	if !matched {
 		return fp, false, e.admitRender()
 	}
-	if err := e.checkpoint(); err != nil {
+	if err := e.Checkpoint(); err != nil {
 		return fp, true, err
 	}
 	e.Reused = true
@@ -407,7 +407,7 @@ func (e *Execution) withdrawInvalid() {
 }
 
 func (e *Execution) admitRender() error {
-	if err := e.checkpoint(); err != nil {
+	if err := e.Checkpoint(); err != nil {
 		return err
 	}
 	id := e.Reads.ID()

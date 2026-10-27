@@ -40,7 +40,7 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 			if info.Status != store.StatusFailed || !strings.Contains(info.Message, "unknown OCI artifact root") {
 				t.Fatalf("OCI cascade status = %+v", info)
 			}
-			if st.GetArtifact(ks.Named()) != nil || c.Tasks.Failures() != 0 {
+			if st.GetArtifact(ks.Named(), store.ArtifactContent) != nil || c.Tasks.Failures() != 0 {
 				t.Fatal("failed OCI cascade rendered or panicked")
 			}
 		})
@@ -138,5 +138,49 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 	_, _, err := c.newExecution(ks.Named()).resolveSource(ks)
 	if err == nil {
 		t.Fatalf("expected error when bootstrap source is absent")
+	}
+}
+
+func TestKustomization_ContentOnlySource(t *testing.T) {
+	t.Parallel()
+	c, st, _ := newControllerWithFixture(t)
+	freezeSourceForTest(t, st)
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system", Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"}}
+	st.AddObject(ks)
+	var closeFirst func()
+	c.Tasks.Go(t.Context(), "first", func(ctx context.Context) {
+		result := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone)
+		closeFirst = result.Close
+	})
+	c.Tasks.BlockTillDone()
+	if closeFirst != nil {
+		defer closeFirst()
+	}
+	first := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
+	source := st.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
+	next := *source
+	next.Revision = "metadata-only"
+	next.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
+	st.SetArtifact(ks.SourceID(), &next)
+	if !first.Reads.Valid() {
+		t.Fatal("metadata invalidated content-only Kustomization")
+	}
+	c.Tasks.Go(t.Context(), "replay", func(ctx context.Context) {
+		result := c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone)
+		defer result.Close()
+		if result.Progressed() {
+			t.Error("metadata entered the renderer")
+		}
+	})
+	c.Tasks.BlockTillDone()
+	after := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
+	if after.Fingerprint != first.Fingerprint {
+		t.Fatal("metadata changed the content replay key")
+	}
+	replacement := next
+	replacement.Content = "replacement"
+	st.SetArtifact(ks.SourceID(), &replacement)
+	if after.Reads.Valid() {
+		t.Fatal("content replacement did not invalidate Kustomization")
 	}
 }

@@ -128,7 +128,7 @@ func TestAutoResolve_LazyBaseReads(t *testing.T) {
 				}
 			}
 			assert.NoError(t, err)
-			if res.BaseInput.Key == "" || res.Source.Key != "" || res.BaseInput.Revision != pin.String() || res.BaseInput.LocalRoot != root {
+			if res.BaseInput.Content != res.BaseInput.Key || res.Source.Content != "" || res.BaseInput.Key == "" || res.Source.Key != "" || res.BaseInput.Revision != pin.String() || res.BaseInput.LocalRoot != root {
 				t.Fatalf("baseline identity = %+v; current identity = %+v", res.BaseInput, res.Source)
 			}
 			var want []string
@@ -277,6 +277,12 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			assert.Diff(t, res.Changes.Paths(), []string{".sourceignore", "apps/b.yaml"})
 			testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")
 			for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
+				_, directIdentity, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS})
+				assert.NoError(t, err)
+				assert.Equal(t, input.Content, directIdentity)
+				if (input.Content != "") != (side == 0) {
+					t.Fatal("diff sides lost committed versus mutable authority")
+				}
 				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: input.FS, Sparse: []string{"./apps"}})
 				assert.NoError(t, err)
 				_, err = fs.Stat(view, "apps/b.yaml")

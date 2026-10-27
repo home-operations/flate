@@ -87,7 +87,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if retained {
 						doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": retainedID.Name, "namespace": retainedID.Namespace}, "data": map[string]any{"value": "prior"}}
 						publishDocuments(o.ksc.Controller, child, []map[string]any{doc}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: child.Namespace})
-						artifact = o.store.GetArtifact(child).(*store.Emission)
+						artifact = o.store.GetArtifact(child, store.ArtifactContent).(*store.Emission)
 					}
 					var publication, arrivals atomic.Int64
 					unsub := o.store.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -141,10 +141,10 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					}
 					_, _, inventory := o.store.GetEmission(child)
 					if retained {
-						if len(artifact.Manifests) != 1 || o.store.GetArtifact(child) != nil || o.store.GetObject(retainedID) == nil || len(inventory.Children) != 1 {
+						if len(artifact.Manifests) != 1 || o.store.GetArtifact(child, store.ArtifactContent) != nil || o.store.GetObject(retainedID) == nil || len(inventory.Children) != 1 {
 							t.Fatal("suspension pruned retained artifact or emission")
 						}
-					} else if o.store.GetArtifact(child) != nil || len(inventory.Children) != 0 {
+					} else if o.store.GetArtifact(child, store.ArtifactContent) != nil || len(inventory.Children) != 0 {
 						t.Fatal("suspended child produced output")
 					}
 					for _, name := range []string{"dependent", "independent"} {
@@ -227,7 +227,7 @@ data:
 	if !ok || cm.Data["greeting"] != "hello" {
 		t.Fatalf("shared values were not rendered: %+v", cm)
 	}
-	ksArt := o.store.GetArtifact(testutil.KustomizationID("flux-system", "apps")).(*store.Emission)
+	ksArt := o.store.GetArtifact(testutil.KustomizationID("flux-system", "apps"), store.ArtifactContent).(*store.Emission)
 	var childDoc map[string]any
 	for _, doc := range ksArt.Manifests {
 		if manifest.DocKind(doc) == manifest.KindHelmRelease {
@@ -243,7 +243,7 @@ data:
 	}
 	hrID := testutil.HelmReleaseID("flux-system", "app")
 	childBefore := manifest.DeepCopyMap(childDoc)
-	hrArt := o.store.GetArtifact(hrID).(*store.Emission)
+	hrArt := o.store.GetArtifact(hrID, store.ArtifactContent).(*store.Emission)
 	retained := make([]map[string]any, len(hrArt.Manifests))
 	for i, doc := range hrArt.Manifests {
 		retained[i] = manifest.DeepCopyMap(doc)

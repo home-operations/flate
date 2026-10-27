@@ -97,7 +97,7 @@ func TestRefineHistory_SourceQualifiedRoots(t *testing.T) {
 				changed = "subtree/" + changed
 			}
 			if mode == "pinned" || mode == "paired_pinned" {
-				art.LocalPath, art.LocalRoot, art.Key = "/mounted/content", root, "commit"
+				art.LocalPath, art.LocalRoot, art.Key, art.Content = "/mounted/content", root, "commit", "commit"
 				changed = "../mounted/content/apps/red/config.yaml"
 			}
 			if mode == "external" {
@@ -212,7 +212,7 @@ func TestRefineHistory_PeerContentSources(t *testing.T) {
 				if i == 1 || side == 0 {
 					files["apps/red/removed.yaml"] = &fstest.MapFile{Data: []byte("removed only in changed source")}
 				}
-				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprintf("%s-%d", source.Name, side), FS: files})
+				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprintf("%s-%d", source.Name, side), Content: fmt.Sprintf("%s-%d", source.Name, side), FS: files})
 			}
 		}
 		changes, err := Qualify(t.Context(), nil, stores[0], stores[1])

@@ -100,7 +100,7 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	input.Metadata = map[string]string{"baseline-selection": r.Source}
 	return &Result{
 		Source:    input,
-		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: identity, FS: before, Warnings: baseWarnings},
+		BaseInput: &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: label, LocalRoot: root, Revision: r.Hash.String(), Key: identity, Content: identity, FS: before, Warnings: baseWarnings},
 		ScanPath:  location.ScanPath, BaseScanPath: filepath.Join(label, rel),
 		Changes: selected, SelfURLs: urls,
 	}, nil

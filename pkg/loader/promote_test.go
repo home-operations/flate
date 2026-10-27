@@ -459,3 +459,35 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 		})
 	}
 }
+
+func TestPromote_ContentOnlyBinding(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	artifact := &store.SourceArtifact{Key: "source", Content: "generation", LocalPath: "/input", FS: fstest.MapFS{"settings.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: selected}\n")}}}
+	st.SetArtifact(source, artifact)
+	var reads store.ReadSet
+	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
+	defer reads.Close()
+	if !Promote(t.Context(), st, id, PromoteOptions{Record: manifest.Production{Source: source, Path: "/input/settings.yaml"}, Reads: &reads, Admit: func(manifest.BaseManifest) bool { return true }}) {
+		t.Fatal("source document was not promoted")
+	}
+	var consumer store.ReadSet
+	consumer.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
+	defer consumer.Close()
+	consumer.GetObject(id)
+	next := *artifact
+	next.Revision = "next"
+	next.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
+	st.SetArtifact(source, &next)
+	if !reads.Valid() || !consumer.Valid() || st.GetObject(id) == nil {
+		t.Fatal("metadata invalidated the promoted content binding")
+	}
+	replacement := next
+	replacement.Content = "replacement"
+	st.SetArtifact(source, &replacement)
+	if reads.Valid() || consumer.Valid() || st.GetObject(id) != nil {
+		t.Fatal("replacement retained a stale promoted document")
+	}
+}

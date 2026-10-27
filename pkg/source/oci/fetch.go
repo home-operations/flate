@@ -88,7 +88,7 @@ func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, req
 	default:
 		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, repo.LayerOperation())
 	}
-	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input,
+	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input, Content: cache.AcquisitionIdentity(input),
 		Key: id, Revision: descriptor.Annotations["flate.revision"],
 		Digest: descriptor.Digest.String(), Size: descriptor.Size, Metadata: maps.Clone(descriptor.Annotations)}, nil
 }

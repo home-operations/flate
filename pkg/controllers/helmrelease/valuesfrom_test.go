@@ -109,7 +109,7 @@ data:
 			if tc.fail {
 				return
 			}
-			art, ok := st.GetArtifact(hr.Named()).(*store.Emission)
+			art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 			if !ok {
 				t.Fatal("HelmRelease artifact was not written")
 			}
@@ -201,7 +201,7 @@ func TestController_PrepareRequiresDeclaration(t *testing.T) {
 			run := c.ReconcileNode(t.Context(), input.Named(), manifest.DrainNone)
 
 			info, _ := st.GetStatus(input.Named())
-			if state == "suspended" && run.Outcome() == schedule.Blocked || st.GetArtifact(input.Named()) != nil || len(st.Warnings()) != 0 {
+			if state == "suspended" && run.Outcome() == schedule.Blocked || st.GetArtifact(input.Named(), store.ArtifactContent) != nil || len(st.Warnings()) != 0 {
 				t.Fatalf("declaration loss reached preparation: wait=%+v status=%+v", run.Blocked, info)
 			}
 			if state != "suspended" && !slices.Equal(info.BlockedBy(), []manifest.NamedResource{parent.Named()}) && !slices.Equal(run.Blocked, []manifest.NamedResource{parent.Named()}) {
@@ -267,5 +267,5 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	after, _ := st.GetStatus(producer)
 	assert.Equal(t, after, status)
 	assert.Equal(t, len(st.Warnings()), 0)
-	assert.Equal(t, st.GetArtifact(hr.Named()) == nil, true)
+	assert.Equal(t, st.GetArtifact(hr.Named(), store.ArtifactContent) == nil, true)
 }

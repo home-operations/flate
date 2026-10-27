@@ -170,7 +170,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				c.Tasks.BlockTillDone()
 				wantCalls := 1
 				if timing == "changed_in_flight" {
-					if accepted.Valid() || st.GetArtifact(chart.Named()) != nil {
+					if accepted.Valid() || st.GetArtifact(chart.Named(), store.ArtifactContent) != nil {
 						t.Fatal("changed content accepted the invalidated acquisition")
 					}
 					accepted.Retire()
@@ -277,7 +277,7 @@ func TestSource_DeclarationProgress(t *testing.T) {
 					if err := run.Require(ctx, []manifest.DependencyRef{{NamedResource: repo.Named()}}, level); err != nil {
 						return err
 					}
-					if run.Reads.GetArtifact(repo.Named()) == nil {
+					if run.Reads.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
 						t.Error("producer did not receive source content")
 					}
 					run.Emit(id, &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
@@ -342,7 +342,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 					next.Digest = "bbb"
 				}
 				f.artifact = &next
-				previous := *st.GetArtifact(repo.Named()).(*store.SourceArtifact)
+				previous := *st.GetArtifact(repo.Named(), store.ArtifactContent).(*store.SourceArtifact)
 				previous.FS = nil
 				st.SetArtifact(repo.Named(), &previous)
 			}
@@ -357,7 +357,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 			if f.retry != (sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3}}) {
 				t.Fatalf("configured policy=%+v", f.retry)
 			}
-			art, ok := st.GetArtifact(repo.Named()).(*store.SourceArtifact)
+			art, ok := st.GetArtifact(repo.Named(), store.ArtifactContent).(*store.SourceArtifact)
 			if !ok || art.FS == nil || art.Kind != f.artifact.Kind || art.URL != f.artifact.URL || art.Key != "pin" || art.Revision != f.artifact.Revision || art.Digest != f.artifact.Digest {
 				t.Fatalf("artifact = %+v, want readable source with original identity", art)
 			}
@@ -419,7 +419,7 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 					if info.Outcome() != outcome || info.String() != message || f.calls != calls {
 						t.Fatalf("status=%+v fetch calls=%d, want Ready/%q calls=%d", info, f.calls, message, calls)
 					}
-					if st.GetArtifact(tc.obj.Named()) != nil {
+					if st.GetArtifact(tc.obj.Named(), store.ArtifactContent) != nil {
 						t.Fatal("no-content reconciliation fabricated an artifact")
 					}
 				})
@@ -568,7 +568,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 			if info, _ := st.GetStatus(repo.Named()); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 				t.Fatalf("status = %+v, want Ready without a skip", info)
 			}
-			if st.GetArtifact(repo.Named()) == nil {
+			if st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
 				t.Fatal("source artifact missing after retry")
 			}
 		})
@@ -654,7 +654,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != tt.wantSkip || !strings.Contains(info.String(), detail) || !strings.Contains(info.String(), secret.Name) {
 				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q and %q", info, wantStatus, tt.wantSkip, detail, secret.Name)
 			}
-			if st.GetArtifact(repo.Named()) != nil {
+			if st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
 				t.Fatal("unavailable or malformed source must not produce an artifact")
 			}
 		})
@@ -724,7 +724,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 				t.Fatalf("status = %+v, want Ready without a skip", info)
 			}
-			if st.GetArtifact(repo.Named()) == nil {
+			if st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
 				t.Error("fetch must store its artifact")
 			}
 			wantPolicy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3}}
@@ -756,7 +756,7 @@ func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
 	if f.fallbackCalls != 0 {
 		t.Errorf("fallback calls = %d, want 0 for a producer-backed Secret", f.fallbackCalls)
 	}
-	if st.GetArtifact(repo.Named()) != nil {
+	if st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
 		t.Error("skipped source must not store an artifact")
 	}
 }
@@ -775,7 +775,7 @@ func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T)
 	if f.fallbackCalls != 1 {
 		t.Errorf("fallback calls = %d, want 1 before skipping", f.fallbackCalls)
 	}
-	if st.GetArtifact(repo.Named()) != nil {
+	if st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
 		t.Error("failed fallback must not store an artifact")
 	}
 }
@@ -954,7 +954,7 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 	empty.Complete = true
 	st.RecordEmitted(generator.Named(), &empty, nil)
 	st.UpdateStatus(generator.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "complete empty"})
-	if len(st.Productions(obj.Named(), nil)) != 0 || st.GetObject(obj.Named()) != nil || st.GetArtifact(obj.Named()) != nil {
+	if len(st.Productions(obj.Named(), nil)) != 0 || st.GetObject(obj.Named()) != nil || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 		t.Fatal("complete empty inventory retained predicted output authority")
 	}
 	st.AddObject(obj, authoritative)
@@ -968,7 +968,7 @@ func TestController_ArtifactMaterializersCompleteEmpty(t *testing.T) {
 	})
 	c.Tasks.BlockTillDone()
 	status, _ := st.GetStatus(obj.Named())
-	if len(blocked) != 0 || status.Status != store.StatusFailed || status.IsDependencyFailure() || fetcher.calls.Load() != 1 || st.GetArtifact(obj.Named()) != nil {
+	if len(blocked) != 0 || status.Status != store.StatusFailed || status.IsDependencyFailure() || fetcher.calls.Load() != 1 || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 		t.Fatalf("complete empty source = %+v, blocked=%v, fetches=%d", status, blocked, fetcher.calls.Load())
 	}
 }
@@ -1024,7 +1024,7 @@ func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
 	for i, id := range ids {
 		status, _ := st.GetStatus(id)
 		blocked := status.BlockedBy()
-		if status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 || blocked[0] != ids[1-i] || st.GetArtifact(id) != nil {
+		if status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 || blocked[0] != ids[1-i] || st.GetArtifact(id, store.ArtifactContent) != nil {
 			t.Fatalf("contentless cycle %s = %+v, blocked=%v", id, status, blocked)
 		}
 	}

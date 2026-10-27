@@ -215,7 +215,7 @@ spec:
 	}
 }
 
-func TestE2E_ArtifactGenerator_BuiltBootstrapInput(t *testing.T) {
+func TestE2E_ArtifactGenerator_ConsumedInputConvergence(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
 	testutil.WriteFile(t, root, "entry/kustomization.yaml", `resources: [generator.yaml, consumer.yaml]
@@ -231,11 +231,13 @@ patches:
 `)
 	testutil.WriteFile(t, root, "entry/generator.yaml", `apiVersion: source.extensions.fluxcd.io/v1beta1
 kind: ArtifactGenerator
-metadata: {name: generator, namespace: apps, uid: raw-generator}
+metadata: {name: generator, namespace: apps, uid: raw-generator, annotations: {ignored: retained}}
 spec:
   sources: [{alias: repo, kind: GitRepository, name: missing}]
   artifacts:
     - name: generated
+      revision: '@repo'
+      originRevision: '@repo'
       copy:
         - {from: '@repo/app/kustomization.yaml', to: '@artifact/app/kustomization.yaml'}
         - {from: '@repo/raw.yaml', to: '@artifact/app/cm.yaml'}
@@ -249,6 +251,11 @@ spec:
 	stdout, _ := harness.RequireCLIOK(t, args...)
 	if strings.Count(stdout, "name: generated-config") != 1 || strings.Count(stdout, "\nkind: ExternalArtifact\n") != 1 || !strings.Contains(stdout, "value: transformed") || !strings.Contains(stdout, "source.extensions.fluxcd.io/generator: built-generator") || strings.Contains(stdout, "value: raw") || strings.Contains(stdout, "raw-generator") {
 		t.Fatalf("built generator lost transformed input or duplicated output:\n%s", stdout)
+	}
+	for _, want := range []string{"revision: '@repo'", "originRevision: '@repo'", "ignored: retained"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("missing current generator selection %q:\n%s", want, stdout)
+		}
 	}
 	again, _ := harness.RequireCLIOK(t, args...)
 	if again != stdout {

@@ -24,6 +24,7 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			c, s, _ := newControllerWithFixture(t)
+			freezeSourceForTest(t, s)
 			dep := &manifest.Kustomization{Name: "dep", Namespace: "flux-system"}
 			s.AddObject(dep)
 			s.UpdateStatus(dep.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
@@ -41,7 +42,7 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 				if info.Status != store.StatusReady {
 					t.Fatalf("setup: %+v", info)
 				}
-				firstFingerprint = s.GetArtifact(ks.Named()).(*store.Emission).Fingerprint
+				firstFingerprint = s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission).Fingerprint
 				ks = ks.Clone()
 				ks.TargetNamespace = "elsewhere"
 			}
@@ -72,7 +73,7 @@ func TestReconcile_SelfMetadataConverges(t *testing.T) {
 			if info.Status != store.StatusReady || attempts.Load() > 2 {
 				t.Fatalf("self-label render did not converge: status=%+v attempts=%d", info, attempts.Load())
 			}
-			emission, ok := s.GetArtifact(ks.Named()).(*store.Emission)
+			emission, ok := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 			if !ok || len(emission.Children) != 1 || emission.Children[0].Obj.Named().Name != "hello" {
 				t.Fatalf("missing rendered ConfigMap: %+v", emission)
 			}

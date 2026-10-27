@@ -1051,7 +1051,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 		testutil.WriteFile(t, view, "apps/consumer.yaml", testutil.KustomizationYAML("consumer", "", "  path: ./leaf\n  sourceRef: {kind: ExternalArtifact, name: app-"+name+"}\n"))
 		source := &manifest.GitRepository{Name: name, Namespace: "flux-system"}
 		s.AddObject(source)
-		s.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: view, Key: "pin-" + name, FS: os.DirFS(view)})
+		s.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: root, LocalPath: view, Key: "pin-" + name, Content: "pin-" + name, FS: os.DirFS(view)})
 		s.AddObject(&manifest.Kustomization{Name: name, Namespace: "flux-system", Path: "./apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: name}})
 		if _, err := l.Load(t.Context(), view); err != nil {
 			t.Fatal(err)

@@ -228,7 +228,7 @@ func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 	if st.GetObject(aliased) == nil {
 		t.Errorf("expected GitRepository.source.toolkit.fluxcd.io/gitops-system/gitops-system to be aliased; alias scoped only to flux-system would leave this case broken")
 	}
-	if st.GetArtifact(aliased) == nil {
+	if st.GetArtifact(aliased, store.ArtifactContent) == nil {
 		t.Errorf("aliased GitRepository should have a SourceArtifact so depwait resolves")
 	}
 	info, ok := st.GetStatus(aliased)
@@ -291,8 +291,8 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		if err != nil {
 			t.Fatalf("Run with Path %q: %v", scan, err)
 		}
-		if result.RepoRoot != root || st.GetArtifact(manifest.BootstrapSourceID) != input {
-			t.Fatalf("bootstrap root = %q, artifact = %+v", result.RepoRoot, st.GetArtifact(manifest.BootstrapSourceID))
+		if result.RepoRoot != root || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input {
+			t.Fatalf("bootstrap root = %q, artifact = %+v", result.RepoRoot, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent))
 		}
 		var ids []string
 		for kind := range manifest.Kinds() {
@@ -306,7 +306,7 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		if !present || status.Status != store.StatusReady || status.String() != "local entry source" {
 			t.Fatalf("source readiness = %+v, present = %t", status, present)
 		}
-		alias, ok := st.GetArtifact(source).(*store.SourceArtifact)
+		alias, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 		if !ok || alias.LocalRoot != root || alias.LocalPath == "" || !alias.InputAlias {
 			t.Fatalf("source artifact = %+v", alias)
 		}
@@ -354,7 +354,7 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 				child := parent
 				child.Name = "child"
 				if missing {
-					if st.GetObject(source) != nil || st.GetArtifact(source) != nil {
+					if st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil {
 						t.Fatal("unresolved source aliased")
 					}
 					if owners, _ := res.Index.OwnersOfFile("kubernetes/apps/x/cm.yaml"); len(owners) != 0 {
@@ -362,7 +362,7 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 					}
 					return
 				}
-				art, ok := st.GetArtifact(source).(*store.SourceArtifact)
+				art, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 				if !ok || art.LocalRoot != filepath.Join(dir, "kubernetes") {
 					t.Fatalf("source = %+v", art)
 				}
@@ -566,7 +566,7 @@ func TestRun_NoRepositoryUsesScanRoot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			artifact := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			artifact := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			if result.RepoRoot != dir || artifact.LocalPath != dir {
 				t.Errorf("no-repository roots = %q, %q; want %q", result.RepoRoot, artifact.LocalPath, dir)
 			}
@@ -646,14 +646,14 @@ spec:
 				t.Fatal(err)
 			}
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}
-			artifact, ok := st.GetArtifact(id).(*store.SourceArtifact)
+			artifact, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			if !ok || !artifact.InputAlias || !strings.HasPrefix(artifact.URL, "file://") {
 				t.Fatalf("matched source artifact = %+v", artifact)
 			}
 			if info, ok := st.GetStatus(id); !ok || info.Status != store.StatusReady {
 				t.Fatalf("matched source status = %+v, %t", info, ok)
 			}
-			if artifact, ok := st.GetArtifact(pinned.Named()).(*store.SourceArtifact); !ok || artifact.InputAlias || artifact.Key == "" || st.GetObject(pinned.Named()) != pinned {
+			if artifact, ok := st.GetArtifact(pinned.Named(), store.ArtifactContent).(*store.SourceArtifact); !ok || artifact.InputAlias || artifact.Key == "" || st.GetObject(pinned.Named()) != pinned {
 				t.Fatalf("committed source artifact = %+v", artifact)
 			}
 			slices.Sort(want)
@@ -708,7 +708,7 @@ spec:
 	id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 		Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared-infra",
 	}
-	if st.GetArtifact(id) != nil {
+	if st.GetArtifact(id, store.ArtifactContent) != nil {
 		t.Errorf("non-matching upstream GitRepository must NOT receive a working-tree alias artifact")
 	}
 }
@@ -1007,7 +1007,7 @@ spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.Store.GetObject(foreignSource.Named()) != foreignSource || cfg.Store.GetArtifact(foreignSource.Named()) != nil {
+			if cfg.Store.GetObject(foreignSource.Named()) != foreignSource || cfg.Store.GetArtifact(foreignSource.Named(), store.ArtifactContent) != nil {
 				t.Fatal("foreign source acquired the bootstrap alias")
 			}
 			if _, indexed := res.Index.Lookup(foreignOwner.Named()); indexed {
@@ -1045,7 +1045,7 @@ spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
 			if authored != nil && (cfg.Store.GetObject(src) != authored || manifest.Fingerprint(authored) != authoredContent) {
 				t.Fatal("declared source object or spec changed")
 			}
-			if got, want := cfg.Store.GetArtifact(src) != nil, !external; got != want {
+			if got, want := cfg.Store.GetArtifact(src, store.ArtifactContent) != nil, !external; got != want {
 				t.Errorf("source alias = %v, want %v", got, want)
 			}
 		})

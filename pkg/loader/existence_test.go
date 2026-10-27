@@ -373,7 +373,7 @@ func TestPromote_SourceView(t *testing.T) {
 			source := &manifest.GitRepository{Name: "source"}
 			st.AddObject(source)
 			repoRoot := t.TempDir()
-			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: repoRoot, LocalPath: dir, Key: "pinned", FS: input})
+			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalRoot: repoRoot, LocalPath: dir, Key: "pinned", Content: "pinned", FS: input})
 			foreign := &manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindGitRepository, Name: source.Name}
 			st.AddObject(foreign)
 			st.SetArtifact(foreign.Named(), &store.SourceArtifact{LocalPath: dir, FS: fstest.MapFS{"values.yaml": &fstest.MapFile{Data: []byte(fmt.Sprintf(doc, "foreign"))}}})
@@ -388,7 +388,7 @@ func TestPromote_SourceView(t *testing.T) {
 				if root != wantRoot || pinned != admitted || external != (version == "foreign.example/v1") {
 					t.Fatalf("SourceView(%q) = %s, %t, %t", version, root, pinned, external)
 				}
-				if !admitted && st.GetArtifact(ks.SourceID()) != nil && version != "foreign.example/v1" {
+				if !admitted && st.GetArtifact(ks.SourceID(), store.ArtifactContent) != nil && version != "foreign.example/v1" {
 					t.Fatalf("missing source %s borrowed the real artifact", ks.SourceID())
 				}
 			}

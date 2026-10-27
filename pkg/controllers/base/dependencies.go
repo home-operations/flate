@@ -14,7 +14,7 @@ import (
 // Prepared clones MUST remain distinct from the canonical snapshot that produced them.
 func (e *Execution) RequireRefresh[T manifest.BaseManifest](ctx context.Context, effective T, stage manifest.GateStage, level manifest.DrainLevel) (T, error) {
 	canonical, _ := e.Reads.Get[T](e.Reads.ID())
-	if err := e.checkpoint(); err != nil {
+	if err := e.Checkpoint(); err != nil {
 		return canonical, err
 	}
 	if err := e.requireDeclaration(ctx, level); err != nil {
@@ -33,7 +33,7 @@ func (e *Execution) RequireRefresh[T manifest.BaseManifest](ctx context.Context,
 	if err := e.Require(ctx, deps, level); err != nil {
 		return canonical, err
 	}
-	return canonical, e.checkpoint()
+	return canonical, e.Checkpoint()
 }
 
 func (e *Execution) dependencies(obj manifest.BaseManifest, stage manifest.GateStage) []manifest.DependencyRef {
@@ -63,7 +63,8 @@ func (e *Execution) dependencies(obj manifest.BaseManifest, stage manifest.GateS
 var errSuspended = errors.New("reconcile suspended")
 var errInputsChanged = errors.New("execution inputs changed")
 
-func (e *Execution) checkpoint() error {
+// Checkpoint validates captured inputs and admission before execution continues.
+func (e *Execution) Checkpoint() error {
 	if !e.Reads.Valid() {
 		return errInputsChanged
 	}

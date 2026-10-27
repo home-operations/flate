@@ -559,7 +559,7 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 			if request.URL != gitURL || request.Ref != "main" {
 				t.Fatalf("Git request=%+v", request)
 			}
-			return &store.SourceArtifact{FS: remote, Key: "family", Revision: "revision"}, nil
+			return &store.SourceArtifact{FS: remote, Key: "family", Content: "family-generation", Revision: "revision"}, nil
 		})
 		rec := newReadSet("/src")
 		input := newTreeFS(memoryTree(t, map[string]string{"kustomization.yaml": "resources: ['" + gitURL + "?ref=main']\nconfigMapGenerator: [{name: root, files: ['chosen=" + url + "', 'other=" + url + "']}]\n"}), "/src", rec)
@@ -686,7 +686,7 @@ func TestPreflightRemoteResources_RemoteObservations(t *testing.T) {
 					if changed.Load() == 1 && request.URL == b.URL {
 						revision = "2"
 					}
-					return &store.SourceArtifact{FS: memoryTree(t, files), Key: request.URL, Revision: revision}, nil
+					return &store.SourceArtifact{FS: memoryTree(t, files), Key: request.URL, Content: revision, Revision: revision}, nil
 				})
 				return c
 			}

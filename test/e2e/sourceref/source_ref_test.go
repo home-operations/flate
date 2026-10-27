@@ -326,7 +326,7 @@ spec:
 			}
 			artifact, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 				Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "pinned",
-			}).(*store.SourceArtifact)
+			}, store.ArtifactContent).(*store.SourceArtifact)
 			if !ok || artifact.LocalPath == root {
 				t.Fatalf("expected committed source artifact, got %+v", artifact)
 			}
@@ -571,7 +571,7 @@ spec:
 			}
 			art, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 				Kind: manifest.KindGitRepository, Namespace: "alpha", Name: "cluster",
-			}).(*store.SourceArtifact)
+			}, store.ArtifactContent).(*store.SourceArtifact)
 			if !ok || art.LocalRoot != root || art.LocalPath == root || art.Key == "" || art.FS == nil {
 				t.Fatalf("expected alpha's committed source artifact, got %+v", art)
 			}
@@ -582,7 +582,7 @@ spec:
 			if tt.workingTree {
 				betaArtifact, ok := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io",
 					Kind: manifest.KindGitRepository, Namespace: "beta", Name: "cluster",
-				}).(*store.SourceArtifact)
+				}, store.ArtifactContent).(*store.SourceArtifact)
 				if !ok || betaArtifact.LocalRoot != root || betaArtifact.LocalPath == root || betaArtifact.LocalPath == art.LocalPath || betaArtifact.Key != "" || betaArtifact.FS == nil {
 					t.Fatalf("expected beta's working-tree artifact, got %+v", betaArtifact)
 				}
@@ -775,7 +775,7 @@ spec:
 			}
 			assert.Equal(t, sourceRef.Namespace, tt.wantNamespace)
 			if tt.pinned {
-				art, ok := st.GetArtifact(sourceRef).(*store.SourceArtifact)
+				art, ok := st.GetArtifact(sourceRef, store.ArtifactContent).(*store.SourceArtifact)
 				if discoveryError != nil || !ok || art.LocalRoot != root || art.LocalPath == root {
 					t.Fatalf("expected genuine inherited source pin without a held error: error=%v artifact=%+v", discoveryError, art)
 				}

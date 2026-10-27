@@ -15,7 +15,7 @@ import (
 )
 
 type stateReader interface {
-	GetArtifact(manifest.NamedResource) store.Artifact
+	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 	GetObject(manifest.NamedResource) manifest.BaseManifest
 	GetStatus(manifest.NamedResource) (store.StatusInfo, bool)
 	Snapshot(manifest.NamedResource, bool) (manifest.BaseManifest, store.Observation)

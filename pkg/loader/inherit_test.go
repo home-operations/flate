@@ -508,7 +508,7 @@ spec:
 				artifact := t.TempDir()
 				testutil.WriteFile(t, artifact, "apps/kustomization.yaml", "resources: [hr.yaml]\n")
 				testutil.WriteFile(t, artifact, "apps/hr.yaml", hrDoc)
-				l.Store.SetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, Key: "pinned", FS: os.DirFS(artifact), LocalPath: artifact})
+				l.Store.SetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, &store.SourceArtifact{LocalRoot: root, Key: "pinned", Content: "pinned", FS: os.DirFS(artifact), LocalPath: artifact})
 				l.documents = readerForTest(root)
 				l.documents.views[artifact] = os.DirFS(artifact)
 				l.documents.read(filepath.Join(artifact, "apps"))
@@ -530,7 +530,7 @@ spec:
 			l.Admit(root)
 			if tc.pinned || tc.alias {
 				ks := l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)[0]
-				artifact := l.Store.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+				artifact := l.Store.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
 				if _, err := loadForTest(t.Context(), t, l, filepath.Join(artifact.LocalPath, "apps")); err != nil {
 					t.Fatal(err)
 				}
@@ -687,7 +687,7 @@ spec:
 				t.Fatalf("unavailable source changed raw identity %s", id)
 			}
 		}
-		input := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+		input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 		view, err := fs.Sub(input.FS, "kubernetes")
 		assert.NoError(t, err)
 		source, err := owner.SourceID().DecodeIdentity()

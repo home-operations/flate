@@ -267,10 +267,10 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 							if initialRun.Outcome() == schedule.Blocked {
 								t.Fatal(initialRun.Blocked)
 							}
-							before := st.GetArtifact(hr.Named()).(*store.Emission)
+							before := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 							var reader store.ReadSet
 							reader.Init(st, manifest.NamedResource{Kind: "Observer", Name: hr.Name}, nil)
-							reader.GetArtifact(hr.Named())
+							reader.GetArtifact(hr.Named(), store.ArtifactContent)
 							var arrivals, artifacts, statuses int
 							stopObjects := st.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
 							stopArtifacts := st.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
@@ -289,7 +289,7 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 							stopArtifacts()
 							stopStatus()
 							stopRender()
-							after := st.GetArtifact(hr.Named()).(*store.Emission)
+							after := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 							valid := reader.Valid()
 							reader.Retire()
 							defer rerun.Close()
@@ -514,7 +514,7 @@ data:
 	if info.Outcome() == store.OutcomeSkipped {
 		t.Fatalf("generated valuesFrom refs should be omitted, not skip the HelmRelease: %+v", info)
 	}
-	art, ok := st.GetArtifact(hr.Named()).(*store.Emission)
+	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	if !ok {
 		t.Fatal("HelmRelease artifact was not written")
 	}
@@ -533,7 +533,7 @@ data:
 	hr.Labels = map[string]string{"owner": "re-emitted"}
 	st.AddObject(hr)
 	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
-	latest, _ := st.GetArtifact(hr.Named()).(*store.Emission)
+	latest, _ := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	if latest == nil || latest.Fingerprint != art.Fingerprint {
 		t.Fatal("metadata-only update rendered different effective inputs")
 	}
@@ -638,7 +638,7 @@ data:
 	if info.Status != store.StatusReady || info.Outcome() == store.OutcomeSkipped {
 		t.Fatalf("status = %+v, want StatusReady (producer-backed ref omitted, not skipped/failed)", info)
 	}
-	art, ok := st.GetArtifact(hr.Named()).(*store.Emission)
+	art, ok := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
 	if !ok {
 		t.Fatal("HelmRelease artifact was not written")
 	}
@@ -1012,7 +1012,7 @@ func TestMaterializeHelmChartSource_RequiresCapturedInput(t *testing.T) {
 				run.materializeHelmChartSource(hr.Named(), hr.Clone())
 				return nil
 			})
-			if entered || run.run.Valid() || st.GetArtifact(input.Named()) != nil {
+			if entered || run.run.Valid() || st.GetArtifact(input.Named(), store.ArtifactContent) != nil {
 				t.Fatalf("stale synthesis reached body: entered=%t valid=%t", entered, run.run.Valid())
 			}
 

@@ -174,8 +174,8 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 					base, head := renderedTrees2[0], renderedTrees2[1]
 					assert.NoError(t, err)
 					source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
-					left := base.Store().GetArtifact(source).(*store.SourceArtifact)
-					right := head.Store().GetArtifact(source).(*store.SourceArtifact)
+					left := base.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+					right := head.Store().GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 					payload, err := change.Detect(t.Context(), left, right)
 					assert.NoError(t, err)
 					if scenario != "selected_payload_only" {
@@ -315,7 +315,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				delete(o.src.Fetchers, manifest.KindGitRepository)
 				o.Store().SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: headRoot, FS: os.DirFS(headRoot)})
 				assert.NoError(t, o.bootstrap(t.Context()))
-				if o.Store().GetArtifact(manifest.BootstrapSourceID) != cfg.Input {
+				if o.Store().GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != cfg.Input {
 					t.Fatal("preseeded input replaced supplied input")
 				}
 				source := &manifest.GitRepository{Name: "unavailable", Namespace: "flux-system"}
@@ -345,7 +345,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 						t.Fatalf("side %d rendered dirty checkout changes behind equal selected pin: %v", side, rendered.Result.Manifests)
 					}
 					selected := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
-					art, ok := rendered.Store().GetArtifact(selected).(*store.SourceArtifact)
+					art, ok := rendered.Store().GetArtifact(selected, store.ArtifactContent).(*store.SourceArtifact)
 					if !ok {
 						t.Fatalf("side %d has no selected pinned source", side)
 					}

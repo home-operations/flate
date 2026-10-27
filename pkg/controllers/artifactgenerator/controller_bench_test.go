@@ -64,7 +64,7 @@ func reconcileWorkload(tb testing.TB, owner *cache.Cache, child store.Child, inp
 	st := store.New()
 	st.AddObject(child.Obj, child.Doc)
 	repo := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "repo"}
-	st.SetArtifact(repo, &store.SourceArtifact{Kind: repo.Kind, FS: input, Key: "input", Digest: "sha256:input"})
+	st.SetArtifact(repo, &store.SourceArtifact{Kind: repo.Kind, FS: input, Key: "input", Content: "input", Digest: "sha256:input"})
 	c := New(st, task.NewBounded(2), owner)
 	run := &execution{Controller: c}
 	run.run.Init(c.Controller, child.Obj.Named())

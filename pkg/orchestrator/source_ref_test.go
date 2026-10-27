@@ -53,7 +53,7 @@ func TestRun_DefaultGitCache(t *testing.T) {
 			}
 			for _, name := range []string{"first", "second"} {
 				id := testutil.KustomizationID("flux-system", name)
-				artifact, ok := o.Store().GetArtifact(id).(*store.Emission)
+				artifact, ok := o.Store().GetArtifact(id, store.ArtifactContent).(*store.Emission)
 				if !ok || len(artifact.Manifests) != 1 {
 					t.Fatalf("remote render %s = %v", name, artifact)
 				}
@@ -113,7 +113,7 @@ spec:
 				}
 			}
 			id := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
-			artifact := o.Store().GetArtifact(id).(*store.SourceArtifact)
+			artifact := o.Store().GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			if artifact.FS == nil || artifact.Key == "" {
 				t.Fatalf("selected cache %s did not reach discovery: %+v", selectedRoot, artifact)
 			}

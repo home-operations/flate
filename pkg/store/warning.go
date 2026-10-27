@@ -101,7 +101,7 @@ func (s *Store) Warnings() []manifest.Warning {
 				if payload == nil {
 					payload = c.child.payload
 				}
-				return !semanticEqual(contributions[0].child, c.child) || payload != nil && c.child.payload != nil && !payloadEqual(payload, c.child.payload)
+				return !semanticEqual(contributions[0].child, c.child) || payload != nil && c.child.payload != nil && !artifactValueEqual(payload, c.child.payload)
 			}) {
 				continue
 			}

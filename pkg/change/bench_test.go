@@ -229,7 +229,7 @@ func oneSidedSuppliers(b *testing.B, count int) (*Set, *store.Store, *manifest.D
 		supplier.Name = fmt.Sprintf("supplier-%d", i)
 		for _, st := range stores {
 			st.AddObject(&supplier)
-			st.SetArtifact(supplier.Named(), st.GetArtifact(source.Named()))
+			st.SetArtifact(supplier.Named(), st.GetArtifact(source.Named(), store.ArtifactContent))
 		}
 	}
 	changes, err := Qualify(b.Context(), nil, stores[0], stores[1])

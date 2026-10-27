@@ -69,7 +69,7 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 		for side, rendered := range []Rendered{base, head} {
 			assert.Diff(t, rendered.filter.KeepNames(), []string{})
 			assert.Equal(t, len(rendered.Result.Manifests), 0)
-			delta, err := change.Detect(t.Context(), base.store.GetArtifact(source).(*store.SourceArtifact), head.store.GetArtifact(source).(*store.SourceArtifact))
+			delta, err := change.Detect(t.Context(), base.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact), head.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact))
 			assert.NoError(t, err)
 			assert.Diff(t, delta.Paths(), []string(nil))
 			t.Logf("paired run=%d side=%d exact keep=[] rendered bytes=empty", run, side)

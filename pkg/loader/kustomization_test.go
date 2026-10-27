@@ -299,7 +299,7 @@ metadata: {name: pending}
 		if len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(l.Index.Errors) != 0 {
 			t.Fatal("physical decoy supplied an object or indexed evidence")
 		}
-		if st.GetArtifact(manifest.BootstrapSourceID) != input || l.documents.mountedRoot(child) != committed {
+		if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input || l.documents.mountedRoot(child) != committed {
 			t.Fatal("missing child replaced the authoritative mounted view")
 		}
 		if k, _ := l.documents.read(committed); k == nil || k.Namespace != "committed" {
@@ -353,7 +353,7 @@ metadata: {name: pending}
 		}
 		alias := &manifest.GitRepository{Name: "alias"}
 		st.AddObject(alias)
-		st.SetArtifact(alias.Named(), st.GetArtifact(git.Named()))
+		st.SetArtifact(alias.Named(), st.GetArtifact(git.Named(), store.ArtifactContent))
 		absentPath := &manifest.GitRepository{Name: "absent-path"}
 		st.AddObject(absentPath)
 		st.SetArtifact(absentPath.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
@@ -422,7 +422,7 @@ metadata: {name: pending}
 		}
 		l := New(st)
 		l.mountSources()
-		if l.documents.views[root] == artifact.FS || st.GetArtifact(manifest.BootstrapSourceID) != artifact {
+		if l.documents.views[root] == artifact.FS || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != artifact {
 			t.Fatal("loader did not own its private view independently of the artifact")
 		}
 	})

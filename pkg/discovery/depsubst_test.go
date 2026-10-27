@@ -66,7 +66,7 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 		}
 		for _, name := range []string{"inactive-only", "inactive-source"} {
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: name}
-			if st.GetObject(id) != nil || st.GetArtifact(id) != nil {
+			if st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil {
 				t.Fatalf("inactive evidence published a source: %s", id)
 			}
 		}

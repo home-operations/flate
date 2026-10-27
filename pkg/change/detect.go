@@ -56,7 +56,7 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 	ids := map[manifest.NamedResource]struct{}{manifest.BootstrapSourceID: {}}
 	for _, st := range stores {
 		for _, obj := range st.Objects() {
-			if _, ok := st.GetArtifact(obj.Named()).(*store.SourceArtifact); ok {
+			if _, ok := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.SourceArtifact); ok {
 				ids[obj.Named()] = struct{}{}
 			}
 		}
@@ -70,7 +70,7 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 	for _, id := range slices.SortedFunc(maps.Keys(ids), manifest.NamedResource.Compare) {
 		evidence := sourceDelta{}
 		for i, st := range stores {
-			evidence.artifacts[i], _ = st.GetArtifact(id).(*store.SourceArtifact)
+			evidence.artifacts[i], _ = st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			evidence.declarations[i] = st.GetObject(id)
 		}
 		a, b := evidence.artifacts[0], evidence.artifacts[1]
@@ -96,7 +96,7 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 			delta = compared[pair]
 			if delta == nil {
 				selected := id != manifest.BootstrapSourceID
-				equal := selected && a.Key != "" && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest
+				equal := selected && a.Content != "" && a.Content == b.Content && a.Key != "" && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest
 				if selected && !equal && a.ContentFingerprint != nil && b.ContentFingerprint != nil {
 					var fingerprints [2]string
 					for i, input := range evidence.artifacts {

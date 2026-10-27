@@ -87,7 +87,7 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 				assert.Equal(t, arrived, true)
 				assert.Equal(t, filter.ShouldReconcile(child.Named()), true)
 				assert.Equal(t, rendered, "late consumer reconciled\n")
-				output, ok := s.GetArtifact(child.Named()).(*store.Emission)
+				output, ok := s.GetArtifact(child.Named(), store.ArtifactContent).(*store.Emission)
 				if !ok {
 					t.Fatal("missing selected output")
 				}

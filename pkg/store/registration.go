@@ -12,7 +12,9 @@ type facet uint8
 const (
 	objectFacet facet = iota + 1
 	conditionFacet
-	artifactFacet
+	contentFacet
+	revisionFacet
+	originFacet
 	producerFacet
 	bucketFacet
 )
@@ -23,14 +25,29 @@ type headKey struct {
 }
 
 type registrationHead struct {
-	assessment atomic.Pointer[ReadSet]
-	shard      *shard
 	generation atomic.Uint64
 	first      atomic.Pointer[registration]
+	selected   atomic.Pointer[producerSlot]
+	position   atomic.Int64
+	assessment atomic.Pointer[ReadSet]
+	shard      *shard
 	next       *registrationHead
 	pending    atomic.Bool
 	detached   atomic.Bool
 	watch      *registration
+}
+
+func (h *registrationHead) stamp() uint64 {
+	generation := h.generation.Load()
+	if slot := h.selected.Load(); slot != nil {
+		// A selected slot MUST already own a published record.
+		record := slot.current.Load()
+		position := int(h.position.Load())
+		if position < len(record.entries) && record.entries[position].objectHead == h {
+			return max(generation, record.entries[position].objectGeneration)
+		}
+	}
+	return generation
 }
 
 type registration struct {
@@ -51,7 +68,7 @@ func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet) {
 	if first == nil && head.watch == nil {
 		return
 	}
-	generation := head.generation.Load()
+	generation := head.stamp()
 	generation++
 	head.generation.Store(generation)
 	for _, chain := range [2]*registration{first, head.watch} {
@@ -66,7 +83,7 @@ func (sh *shard) admitAbsenceLocked(id manifest.NamedResource, kind facet) {
 
 func (sh *shard) newHeadLocked(generation uint64) *registrationHead {
 	if len(sh.spareHeads) == 0 {
-		sh.headCapacity = max(1, 2*sh.headCapacity)
+		sh.headCapacity = max(2, 2*sh.headCapacity)
 		sh.spareHeads = make([]registrationHead, sh.headCapacity)
 	}
 	head := &sh.spareHeads[0]
@@ -79,11 +96,15 @@ func (sh *shard) newHeadLocked(generation uint64) *registrationHead {
 func (sh *shard) headLocked(key headKey) authority {
 	switch key.facet {
 	case objectFacet:
-		return sh.cells[key.id].authority
+		return sh.cells[key.id].current()
 	case conditionFacet:
 		return sh.conditions[key.id].stamp()
-	case artifactFacet:
+	case contentFacet:
 		return sh.artifacts[key.id].authority
+	case revisionFacet:
+		return sh.artifacts[key.id].revisionHead
+	case originFacet:
+		return sh.artifacts[key.id].originHead
 	case producerFacet:
 		return sh.slots[key.id].authority
 	case bucketFacet:
@@ -180,7 +201,11 @@ func (c *registration) current() bool {
 }
 
 func (input *Input) current() bool {
-	if !input.object.current() {
+	if cell := &input.object; input.view.owner != nil && cell.head != nil && cell.absent == nil {
+		if cell.head.stamp() != cell.generation.Load() {
+			return false
+		}
+	} else if !cell.current() {
 		return false
 	}
 	if details := input.details.Load(); details != nil {
@@ -248,7 +273,7 @@ func (s *Store) Sweep() iter.Seq[manifest.NamedResource] {
 				pending = head.next
 				head.next = nil
 				head.detached.Store(true)
-				first, cutoff := head.first.Swap(nil), head.generation.Load()
+				first, cutoff := head.first.Swap(nil), head.stamp()
 				if head == &sh.absence {
 					head.watch = first
 				}

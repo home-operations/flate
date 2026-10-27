@@ -101,14 +101,14 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if st.GetArtifact(foreignSource.Named()) != foreignArtifact {
+			if st.GetArtifact(foreignSource.Named(), store.ArtifactContent) != foreignArtifact {
 				t.Fatal("pinned source replaced a foreign artifact")
 			}
 			parent := testutil.KustomizationID("flux-system", "parent")
 			childID := testutil.KustomizationID("", "child")
 			phantom := testutil.KustomizationID("", "phantom")
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
-			artifact, available := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}).(*store.SourceArtifact)
+			artifact, available := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, store.ArtifactContent).(*store.SourceArtifact)
 			if !available {
 				t.Fatalf("pinned artifact missing: records=%+v objects=%v", result.Index.Records, st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
 			}
@@ -273,11 +273,11 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				t.Fatal(err)
 			}
 			st.AddObject(repository)
-			bootstrap := st.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+			bootstrap := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 			side := bootstrap.LocalPath
 			d.cfg.Path = side
 			aliased, err := d.resolveEntrySources(t.Context(), false)
-			if st.GetArtifact(manifest.BootstrapSourceID) != bootstrap || st.GetObject(repository.Named()) != repository {
+			if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap || st.GetObject(repository.Named()) != repository {
 				t.Fatal("discovery replaced the bootstrap or authored source")
 			}
 			if tc.base != "" {
@@ -291,8 +291,8 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				}
 			}
 			if tc.fail {
-				if !errors.Is(err, manifest.ErrFlux) || st.GetArtifact(repository.Named()) != nil {
-					t.Fatalf("invalid source = %v, %v", err, st.GetArtifact(repository.Named()))
+				if !errors.Is(err, manifest.ErrFlux) || st.GetArtifact(repository.Named(), store.ArtifactContent) != nil {
+					t.Fatalf("invalid source = %v, %v", err, st.GetArtifact(repository.Named(), store.ArtifactContent))
 				}
 				return
 			}
@@ -300,7 +300,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.fallback {
-				if st.GetArtifact(repository.Named()) != nil {
+				if st.GetArtifact(repository.Named(), store.ArtifactContent) != nil {
 					t.Fatal("fallback installed a HEAD artifact")
 				}
 				if status, ok := st.GetStatus(repository.Named()); ok && status.Status == store.StatusReady {
@@ -312,7 +312,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 				}
 				return
 			}
-			artifact := st.GetArtifact(repository.Named()).(*store.SourceArtifact)
+			artifact := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
 			if tc.base != "" {
 				for range 2 {
 					content, err := fs.ReadFile(artifact.FS, "apps/value.txt")
@@ -424,7 +424,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 					t.Fatal(err)
 				}
-				if st.GetArtifact(id) == nil {
+				if st.GetArtifact(id, store.ArtifactContent) == nil {
 					t.Fatal("missing source did not acquire a bootstrap alias")
 				}
 				ref := ""
@@ -453,11 +453,15 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetObject(id) != authored {
 				t.Fatalf("authored source replaced: %v, %v", aliases, err)
 			}
-			if !tc.local && st.GetArtifact(id) != nil {
+			if !tc.local && st.GetArtifact(id, store.ArtifactContent) != nil {
 				t.Fatal("external source acquired by aliasing")
 			}
 			if tc.local {
-				artifact := st.GetArtifact(id).(*store.SourceArtifact)
+				artifact := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+				_, identity, viewErr := source.OperationView(t.Context(), artifact.FS)
+				if viewErr != nil || identity == "" || artifact.Content != identity {
+					t.Fatalf("pinned view identity = %q, want %q: %v", artifact.Content, identity, viewErr)
+				}
 				if artifact.LocalPath == root {
 					t.Fatal("pinned source must render its committed tree")
 				}
@@ -494,7 +498,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			st := store.New()
 			bootstrap := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, Revision: "one", Digest: "aaa", FS: fstest.MapFS{"file": {Data: []byte("first")}}}
 			if pinned {
-				bootstrap.Key = "family"
+				bootstrap.Key, bootstrap.Content = "family", "generation"
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 			d := discoverer{cfg: Config{Path: root, Store: st, SelfURLs: []string{"https://fixture.invalid/repo"}}}
@@ -510,8 +514,8 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 					t.Fatalf("publish alias = %d, %v", count, err)
 				}
 			}
-			first := st.GetArtifact(ids[0]).(*store.SourceArtifact)
-			second := st.GetArtifact(ids[1]).(*store.SourceArtifact)
+			first := st.GetArtifact(ids[0], store.ArtifactContent).(*store.SourceArtifact)
+			second := st.GetArtifact(ids[1], store.ArtifactContent).(*store.SourceArtifact)
 			if first.Key != "" || second.Key != "" || first.LocalPath == second.LocalPath || first.LocalRoot != root || second.LocalRoot != root || !first.InputAlias || !second.InputAlias {
 				t.Fatalf("alias view/ownership = %+v, %+v", first, second)
 			}
@@ -519,15 +523,18 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			if !pinned {
 				generations = append(generations, generations[1])
 			}
-			for _, generation := range generations {
+			for i, generation := range generations {
 				next := *bootstrap
 				next.Revision, next.Digest = generation.revision, generation.digest
+				if pinned {
+					next.Content = fmt.Sprintf("generation-%d", i)
+				}
 				next.FS = fstest.MapFS{"file": {Data: []byte("other" + first.Revision + first.Digest)}}
 				st.SetArtifact(manifest.BootstrapSourceID, &next)
 				if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 					t.Fatal(err)
 				}
-				got := st.GetArtifact(ids[0]).(*store.SourceArtifact)
+				got := st.GetArtifact(ids[0], store.ArtifactContent).(*store.SourceArtifact)
 				if got.FS == first.FS || got.Key != "" || got.Revision != generation.revision || got.Digest != generation.digest {
 					t.Fatalf("generation reused alias identity: %+v", got)
 				}
@@ -555,12 +562,12 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 				t.Fatalf("initial resolution = %d, %v", count, err)
 			}
 			for i, generation := range []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}, {"two", "bbb"}} {
-				previous := st.GetArtifact(ks.SourceID())
+				previous := st.GetArtifact(ks.SourceID(), store.ArtifactContent)
 				object := st.GetObject(ks.SourceID())
 				later := *ks
 				later.Name, later.Path = fmt.Sprintf("later-%d", i), "./root-only"
 				st.AddObject(&later)
-				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(ks.SourceID()) != previous || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(ks.SourceID(), store.ArtifactContent) != previous || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
 					t.Fatalf("reference-only resolution changed publication: %d, %v", count, err)
 				}
 				next := *bootstrap
@@ -573,9 +580,9 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
 					t.Fatalf("generation resolution = %d, %v", count, err)
 				}
-				artifact := st.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+				artifact := st.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
 				data, err := fs.ReadFile(artifact.FS, "apps/x/file")
-				if err != nil || string(data) != want || artifact == previous || artifact.LocalRoot != filepath.Join(root, "kubernetes") || artifact.Revision != next.Revision || artifact.Digest != next.Digest || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID) != &next {
+				if err != nil || string(data) != want || artifact == previous || artifact.LocalRoot != filepath.Join(root, "kubernetes") || artifact.Revision != next.Revision || artifact.Digest != next.Digest || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != &next {
 					t.Fatalf("frozen generation artifact=%+v bytes=%q error=%v", artifact, data, err)
 				}
 				bootstrap = &next
@@ -596,7 +603,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
-	artifact := st.GetArtifact(repository.Named()).(*store.SourceArtifact)
+	artifact := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
 	if artifact.LocalPath != root || st.GetObject(repository.Named()) != repository {
 		t.Fatalf("canonical bootstrap or authored object changed: %+v", artifact)
 	}
@@ -612,7 +619,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		if err != nil || count != 1 {
 			t.Fatalf("alias: %d, %v", count, err)
 		}
-		art := st.GetArtifact(alias.Named()).(*store.SourceArtifact)
+		art := st.GetArtifact(alias.Named(), store.ArtifactContent).(*store.SourceArtifact)
 		if art.Key != "" || !art.InputAlias || art.LocalRoot != root || art.LocalPath == root {
 			t.Fatalf("alias coordinates: %+v", art)
 		}
@@ -633,7 +640,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			if slices.ContainsFunc(out, func(doc map[string]any) bool { name, _ := manifest.DocMetadata(doc); return name == "arrived" }) != exists {
 				t.Fatalf("alias membership stale: %s", out)
 			}
-			if st.GetArtifact(alias.Named()) != art {
+			if st.GetArtifact(alias.Named(), store.ArtifactContent) != art {
 				t.Fatal("Template republished alias")
 			}
 			view, pin, err := source.OperationView(t.Context(), art.FS)
@@ -675,7 +682,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		count, err := d.resolveEntrySources(t.Context(), true)
 		assert.NoError(t, err)
 		assert.Equal(t, count, 1)
-		artifact := st.GetArtifact(ks.SourceID()).(*store.SourceArtifact)
+		artifact := st.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
 		assert.Equal(t, artifact.InputAlias, true)
 		assert.Equal(t, artifact.Key, "")
 		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Source: ks.SourceID()}}
@@ -688,8 +695,8 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		second, _, err := cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)})
 		assert.NoError(t, err)
 		assert.Diff(t, second, first)
-		assert.Equal(t, st.GetArtifact(ks.SourceID()), store.Artifact(artifact))
-		assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID), store.Artifact(bootstrap))
+		assert.Equal(t, st.GetArtifact(ks.SourceID(), store.ArtifactContent), store.Artifact(artifact))
+		assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent), store.Artifact(bootstrap))
 	})
 
 	t.Run("OCI subtrees", func(t *testing.T) {
@@ -703,7 +710,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			"kubernetes/excluded":      {Data: []byte("excluded")},
 			"other/apps/file":          {Data: []byte("other")},
 		}
-		bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input, Key: "pinned", Revision: "one"}
+		bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input, Key: "pinned", Content: "generation", Revision: "one"}
 		st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 		d := discoverer{cfg: Config{Path: filepath.Join(root, "kubernetes"), Store: st}}
 		for i, subtree := range []string{"kubernetes", "kubernetes", "other"} {
@@ -713,7 +720,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			if count, err := d.resolveEntrySources(t.Context(), true); count != 1 || err != nil {
 				t.Fatalf("alias: %d %v", count, err)
 			}
-			art := st.GetArtifact(id).(*store.SourceArtifact)
+			art := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
 			data, err := fs.ReadFile(art.FS, "apps/file")
 			want := "subtree"
 			if subtree == "other" {
@@ -737,7 +744,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 				t.Fatalf("views = %d", len(d.aliasViews))
 			}
 		}
-		if st.GetArtifact(manifest.BootstrapSourceID) != bootstrap {
+		if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
 			t.Fatal("bootstrap changed")
 		}
 	})
@@ -792,7 +799,7 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 			t.Fatalf("default cache created for %q: %v", tag, err)
 		}
 		if tag == "v1.0.0" {
-			artifact := st.GetArtifact(repository.Named()).(*store.SourceArtifact)
+			artifact := st.GetArtifact(repository.Named(), store.ArtifactContent).(*store.SourceArtifact)
 			if artifact.FS == nil || artifact.Key == "" {
 				t.Fatalf("committed source = %+v", artifact)
 			}

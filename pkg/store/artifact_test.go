@@ -26,7 +26,7 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 		ids = append(ids, eventID)
 	}, false)
 	mk := func(key string) *SourceArtifact {
-		return &SourceArtifact{LocalPath: "label", Key: key, FS: &hookFS{open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }}, ContentFingerprint: func(context.Context, fs.FS) (string, error) { t.Fatal("dedup reads content"); return "", nil }}
+		return &SourceArtifact{LocalPath: "label", Key: key, Content: key, FS: &hookFS{open: func(string) (fs.File, error) { return nil, fs.ErrNotExist }}, ContentFingerprint: func(context.Context, fs.FS) (string, error) { t.Fatal("dedup reads content"); return "", nil }}
 	}
 	s.SetArtifact(id, mk("pin"))
 	s.SetArtifact(id, mk("pin"))
@@ -36,8 +36,8 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 	foreign := id
 	foreign.Group = "example.test"
 	s.SetArtifact(foreign, mk("pin"))
-	assert.Equal(t, s.GetArtifact(id).(*SourceArtifact).Key, "pin")
-	assert.Equal(t, s.GetArtifact(foreign).(*SourceArtifact).Key, "pin")
+	assert.Equal(t, s.GetArtifact(id, ArtifactContent).(*SourceArtifact).Key, "pin")
+	assert.Equal(t, s.GetArtifact(foreign, ArtifactContent).(*SourceArtifact).Key, "pin")
 	assert.Diff(t, ids, []manifest.NamedResource{id, foreign})
 	s.SetArtifact(id, mk("other"))
 	if events != 3 {
@@ -65,12 +65,12 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 
 	for _, text := range []string{"old", "new"} {
 		s.SetArtifact(id, &SourceArtifact{LocalPath: "label", FS: fstest.MapFS{"file": {Data: []byte(text)}}})
-		got, err := fs.ReadFile(s.GetArtifact(id).(*SourceArtifact).FS, "file")
+		got, err := fs.ReadFile(s.GetArtifact(id, ArtifactContent).(*SourceArtifact).FS, "file")
 		if err != nil || string(got) != text {
 			t.Fatalf("mutable source bytes = %q, %v; want %q", got, err, text)
 		}
 	}
-	assert.Equal(t, s.GetArtifact(foreign).(*SourceArtifact).Key, "pin")
+	assert.Equal(t, s.GetArtifact(foreign, ArtifactContent).(*SourceArtifact).Key, "pin")
 	assert.Diff(t, ids, []manifest.NamedResource{id, foreign, id, id, id, id, id, id})
 	for _, tc := range []struct {
 		name string
@@ -84,7 +84,7 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 			st := New()
 			events := 0
 			st.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { events++ }, false)
-			first := &SourceArtifact{Key: "same", FS: tc.fs}
+			first := &SourceArtifact{Key: "same", Content: "same", FS: tc.fs}
 			st.SetArtifact(id, first)
 			next := *first
 			next.Warnings = []manifest.Warning{{Category: manifest.WarnSkippedSubmodule, Detail: []string{"module"}}}
@@ -106,9 +106,9 @@ func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "n", Name: "a"}
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
-	s.SetArtifact(id, &SourceArtifact{LocalPath: "label", Key: "pin", FS: &hookFS{}})
+	s.SetArtifact(id, &SourceArtifact{LocalPath: "label", Key: "pin", Content: "pin", FS: &hookFS{}})
 	s.SetArtifact(id, &SourceArtifact{LocalPath: "label", Key: "pin"})
-	if got := s.GetArtifact(id).(*SourceArtifact); got.FS != nil {
+	if got := s.GetArtifact(id, ArtifactContent).(*SourceArtifact); got.FS != nil {
 		t.Fatal("republish without a payload kept the previous payload")
 	}
 	if events != 2 {
@@ -129,12 +129,12 @@ func TestSetArtifact_EmissionAuthority(t *testing.T) {
 	equal.validated = new(atomic.Pointer[manifest.BaseManifest])
 	s.SetArtifact(id, &equal)
 	assert.Equal(t, events, 1)
-	assert.Equal(t, s.GetArtifact(id), Artifact(first))
+	assert.Equal(t, s.GetArtifact(id, ArtifactContent), Artifact(first))
 	changed := equal
 	changed.inputHead.generation++
 	s.SetArtifact(id, &changed)
 	assert.Equal(t, events, 2)
-	assert.Equal(t, s.GetArtifact(id), Artifact(&changed))
+	assert.Equal(t, s.GetArtifact(id, ArtifactContent), Artifact(&changed))
 	complete := changed
 	complete.Complete = true
 	s.SetArtifact(id, &complete)

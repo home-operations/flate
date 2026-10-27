@@ -197,4 +197,47 @@ func TestIncomingProductions_RegisteredEvidence(t *testing.T) {
 			}
 		})
 	}
+	for _, mode := range []string{"first", "strengthen", "content_only"} {
+		t.Run("completed/"+mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := projectionSource(t, s, "selected")
+			producer := projectionOwner(s, "producer", source)
+			contributor := projectionOwner(s, "contributor", source)
+			child := emissionChild("input", "same")
+			payload := &SourceArtifact{Content: "stable", FS: fstest.MapFS{}}
+			raw := child.Obj.Named()
+			raw.Namespace = ""
+			proof := manifest.Production{Owner: contributor.Named(), Source: source, Authored: raw, File: "input.yaml", Path: "/selected/input.yaml"}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				raw:                 {Productions: []manifest.Production{proof}},
+				contributor.Named(): {Productions: []manifest.Production{{Owner: contributor.Named(), Source: source}}},
+			}}
+			s.SetDiscoveryIndex(index)
+			publish := func(fingerprint string) {
+				s.RecordEmitted(contributor.Named(), &Emission{Children: []Child{child}, Complete: true, Fingerprint: fingerprint}, map[manifest.NamedResource]*SourceArtifact{child.Obj.Named(): payload})
+			}
+			publish("first")
+			var reads ReadSet
+			reads.Init(s, producer.Named(), nil)
+			defer reads.Close()
+			if mode != "first" {
+				assert.Equal(t, reads.GetArtifact(child.Obj.Named(), ArtifactContent), Artifact(payload))
+			}
+			if mode != "content_only" {
+				incoming := Child{Obj: child.Obj, Productions: []manifest.Production{{Owner: producer.Named(), Source: source}}}
+				assert.Diff(t, reads.IncomingProductions(incoming, index), incoming.Productions)
+			}
+			assert.Equal(t, reads.Valid(), true)
+			publish("second")
+			changed := slices.Collect(s.Sweep())
+			if mode == "content_only" {
+				assert.Equal(t, len(changed), 0)
+			} else {
+				assert.Diff(t, changed, []manifest.NamedResource{reads.ID()})
+			}
+			assert.Equal(t, reads.Valid(), mode == "content_only")
+		})
+	}
+
 }

@@ -11,7 +11,6 @@ import (
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -29,14 +28,14 @@ type Entry struct {
 type entryInputs struct {
 	input       store.SourceArtifact
 	parsed      *loader.ParsedInputs
-	aliasViews  map[string]*gittree.FS
+	aliasViews  map[string]*store.SourceArtifact
 	wipeSecrets bool
 }
 
 // Plan establishes entries without publishing seeds into the caller's store.
 func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if cfg.Input == nil && cfg.Store != nil {
-		cfg.Input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+		cfg.Input, _ = cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	}
 	cfg.Store = store.New()
 	d := newDiscoverer(cfg)
@@ -44,7 +43,7 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if _, err := d.resolveEntrySources(ctx, false); err != nil {
 		return nil, err
 	}
-	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	input := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	l.SourceRoot = input.LocalPath
 	l.IgnoreFile = cfg.KRMIgnoreFile
 	if _, err := l.Load(ctx, d.cfg.Path); err != nil {
@@ -255,7 +254,7 @@ func (d *discoverer) admittedRoots(ctx context.Context, roots []entryRoot) ([]en
 			contexts = append(contexts, root)
 		}
 	}
-	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID).(*store.SourceArtifact)
+	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	plan, err := planEntries(contexts, input, d.cfg.Path)
 	if err != nil {
 		return nil, err

@@ -251,7 +251,7 @@ func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner
 	if err != nil || frame.header.Key != prepared.key || frame.header.Binding != manifest.Fingerprint(prepared.binding) || len(frame.header.Reads.Remotes) != 0 {
 		return nil, false
 	}
-	valid, err := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Key != "")
+	valid, err := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
 	if err != nil || !valid {
 		return nil, false
 	}

@@ -168,6 +168,9 @@ func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, prod
 	return e.fs, descriptor, id, nil
 }
 
+// CanPersistRenders reports whether the cache owner can persist accepted renders.
+func (c *Cache) CanPersistRenders() bool { return c.persistBlob }
+
 // Blob returns an immutable filesystem over a complete generation. A nil producer only looks up
 // a fresh generation; zero Policy.MaxAge with a producer replaces the generation.
 // Unchanged production retains the previous payload and replaces its upstream metadata.
@@ -200,7 +203,7 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce fu
 	}
 	producer := blobProducer{content: key.Content, render: key.Render}
 	request := acquireKey{producer: producer, required: key.Required, lookupOnly: produce == nil, memoryOnly: key.Render == RenderPending, render: key.Render != 0}
-	if key.Render == RenderPending && c.persistBlob && policy.MaxAge != 0 {
+	if key.Render == RenderPending && c.CanPersistRenders() && policy.MaxAge != 0 {
 		request.accepted = key.Content.(string)
 	}
 	e, id, err := c.acquire(ctx, request, policy, acquisitionCallbacks{validate: key.Validate, produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
@@ -272,12 +275,12 @@ func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error)
 	if content == "" {
 		return false, &CacheError{fmt.Errorf("%w: render blob content must be a nonempty identity", manifest.ErrInput)}
 	}
-	if !c.persistBlob {
+	if !c.CanPersistRenders() {
 		if err := ctx.Err(); err != nil {
 			return false, &CacheError{err}
 		}
 	}
-	return c.persistBlob, nil
+	return c.CanPersistRenders(), nil
 }
 
 func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acquisitionCallbacks) (*entry, error) {

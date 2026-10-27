@@ -607,8 +607,35 @@ func TestBlob_RenderLifetime(t *testing.T) {
 						root = t.TempDir()
 					}
 					c := cachetest.New(t, root, New)
+					persisted := backing == "disk" && identity != ""
+					assert.Equal(t, c.CanPersistRenders(), persisted)
+					for _, invalid := range []BlobKey{
+						{Content: "render", Render: RenderMode(255)},
+						{Content: 1, Render: RenderAccepted},
+						{Content: "", Render: RenderAccepted},
+					} {
+						_, _, _, err := c.Blob(t.Context(), invalid, Policy{MaxAge: Forever}, nil)
+						if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, manifest.ErrInput) {
+							t.Fatalf("invalid render key %+v: %v", invalid, err)
+						}
+					}
+					_, _, enabled, err := c.RenderMetadata(t.Context(), "", "")
+					if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, manifest.ErrInput) || enabled {
+						t.Fatalf("invalid metadata content: enabled=%t, %v", enabled, err)
+					}
+					canceled, cancel := context.WithCancel(t.Context())
+					cancel()
+					_, _, _, err = c.Blob(canceled, BlobKey{Content: "render", Render: RenderAccepted}, Policy{MaxAge: Forever}, nil)
+					if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, context.Canceled) {
+						t.Fatalf("canceled render lookup: %v", err)
+					}
+					_, _, enabled, err = c.RenderMetadata(canceled, "render", "")
+					if _, ok := errors.AsType[*CacheError](err); !ok || !errors.Is(err, context.Canceled) || enabled != persisted {
+						t.Fatalf("canceled metadata lookup: enabled=%t, %v", enabled, err)
+					}
+					assert.Equal(t, c.CanPersistRenders(), persisted)
 					raw := BlobKey{Content: "raw-source"}
-					_, _, _, err := c.Blob(t.Context(), raw, Policy{MaxAge: Forever}, producer([]byte("source"), ocispec.Descriptor{}))
+					_, _, _, err = c.Blob(t.Context(), raw, Policy{MaxAge: Forever}, producer([]byte("source"), ocispec.Descriptor{}))
 					assert.NoError(t, err)
 
 					diskFiles := func() map[string]string {
@@ -660,7 +687,6 @@ func TestBlob_RenderLifetime(t *testing.T) {
 						assert.Equal(t, string(data), "completed")
 					}
 					assert.Equal(t, calls, 2)
-					persisted := backing == "disk" && identity != ""
 					if !persisted {
 						assert.Diff(t, diskFiles(), before)
 					}

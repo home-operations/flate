@@ -176,7 +176,7 @@ func (f cancelProbeFS) Open(name string) (fs.File, error) {
 func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
-	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
 	t.Cleanup(func() { o.stop() })
 	err = o.discover(t.Context())
@@ -187,12 +187,24 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	input.FS = cancelProbeFS{FS: input.FS, cancel: cancel}
 	o.store.SetArtifact(manifest.BootstrapSourceID, &input)
 	o.completeBootstrap()
+	owner := testutil.KustomizationID("apps", "emitter")
+	// Clean builds exercise lookup cancellation; dirty builds must leave the probe unopened.
+	if !o.cache.CanPersistRenders() {
+		o.configureControllers()
+		reads := &store.ReadSet{}
+		reads.Init(o.store, owner, nil)
+		defer reads.Retire()
+		records, narrow := o.controllers.PreviousRender(ctx, reads)
+		assert.Equal(t, records == nil, true)
+		assert.Equal(t, narrow, false)
+		assert.NoError(t, ctx.Err())
+		return
+	}
 	o.cfg.ExternalChanges = change.NewSet(nil)
 	err = o.buildChangeFilter(ctx)
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
 	assert.Equal(t, o.filter == nil, true)
-	owner := testutil.KustomizationID("apps", "emitter")
 	declaration := o.store.GetObject(owner).(*manifest.Kustomization).Clone()
 	declaration.Path = "./different"
 	o.store.AddObject(declaration)
@@ -373,10 +385,8 @@ func TestRenderTrees_HistoryCancellation(t *testing.T) {
 }
 
 func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
-	t.Parallel()
 	for _, mode := range []string{"hit", "miss", "error", "cancel"} {
 		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
 			if mode == "hit" && sourcecache.RenderPersistenceDisabledReason() != "" {
 				t.Skip("requires a clean VCS-stamped build for positive persistence")
 			}
@@ -415,14 +425,29 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 				runtime.AddCleanup(declaration, func(done chan struct{}) { close(done) }, done)
 				current.cfg.ExternalChanges = change.NewSet(nil)
 				err := current.buildChangeFilter(ctx)
-				if mode == "cancel" {
+				if mode == "cancel" && current.cache.CanPersistRenders() {
 					assert.Equal(t, errors.Is(err, context.Canceled), true)
+					assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
+					assert.Equal(t, current.filter == nil, true)
 				} else {
 					assert.NoError(t, err)
+					assert.NoError(t, ctx.Err())
+				}
+				if !current.cache.CanPersistRenders() {
+					reads := &store.ReadSet{}
+					reads.Init(current.store, owner, nil)
+					defer reads.Retire()
+					records, narrow := current.controllers.PreviousRender(ctx, reads)
+					assert.Equal(t, records == nil, true)
+					assert.Equal(t, narrow, false)
+					assert.NoError(t, ctx.Err())
 				}
 				current.store.DeleteObject(owner)
 				return done
 			}()
+			for id := range current.store.Sweep() {
+				t.Fatalf("preselection retained a live input for %s", id)
+			}
 			runtime.GC()
 			wait, stop := context.WithTimeout(t.Context(), 10*time.Second)
 			defer stop()

@@ -85,6 +85,10 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	root := t.TempDir()
 	processIdentity = identityA
 	c := cachetest.New(t, root, New)
+	assert.Equal(t, c.CanPersistRenders(), true)
+	processIdentity = ""
+	assert.Equal(t, c.CanPersistRenders(), true)
+	processIdentity = identityA
 	key := BlobKey{Content: "render-input", Render: RenderAccepted}
 	_, _, _, err := c.Blob(t.Context(), BlobKey{Content: key.Content}, Policy{MaxAge: 0}, producer([]byte("ordinary"), ocispec.Descriptor{}))
 	if err != nil {
@@ -97,6 +101,7 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		}
 		processIdentity = identity
 		c = cachetest.New(t, root, New)
+		assert.Equal(t, c.CanPersistRenders(), true)
 		if r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil); r != nil || !errors.Is(err, errdef.ErrNotFound) {
 			t.Fatalf("foreign or ordinary identity hit: %v", err)
 		}
@@ -113,6 +118,7 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 		}
 		processIdentity = identity
 		c = cachetest.New(t, root, New)
+		assert.Equal(t, c.CanPersistRenders(), true)
 		r, _, _, err := c.Blob(t.Context(), key, Policy{MaxAge: Forever}, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -128,6 +134,10 @@ func TestBlob_RenderBuildIdentity(t *testing.T) {
 	processIdentity = ""
 	key.Render = RenderPending
 	c = cachetest.New(t, root, New)
+	assert.Equal(t, c.CanPersistRenders(), false)
+	processIdentity = identityA
+	assert.Equal(t, c.CanPersistRenders(), false)
+	processIdentity = ""
 	index := filepath.Join(c.root.Name(), indexPath())
 	before, err := os.ReadFile(index)
 	if err != nil {

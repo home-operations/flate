@@ -235,6 +235,9 @@ func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.N
 
 // PreviousRender returns complete accepted history without rendering or acquiring remote inputs.
 func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner manifest.NamedResource) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	if c == nil || ctx.Err() != nil || !c.owner.CanPersistRenders() {
+		return nil, false
+	}
 	prepared, err := c.prepareRender(ctx, req)
 	if err != nil {
 		return nil, false

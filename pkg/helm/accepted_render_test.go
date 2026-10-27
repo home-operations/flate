@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +27,26 @@ import (
 	"oras.land/oras-go/v2/errdef"
 )
 
+type historyCountingFS struct {
+	fs.FS
+	opens atomic.Int64
+}
+
+func (f *historyCountingFS) Open(name string) (fs.File, error) {
+	f.opens.Add(1)
+	return f.FS.Open(name)
+}
+
+type historyCountingSources struct {
+	sourceReader
+	calls atomic.Int64
+}
+
+func (s *historyCountingSources) GetArtifact(id manifest.NamedResource, read store.ArtifactRead) store.Artifact {
+	s.calls.Add(1)
+	return s.sourceReader.GetArtifact(id, read)
+}
+
 func TestTemplate_AcceptedHistory(t *testing.T) {
 	t.Parallel()
 	chartDir := t.TempDir()
@@ -37,6 +58,44 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	hr := newHR()
 	hr.TargetNamespace = "runtime"
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
+	t.Run("disabled preparation", func(t *testing.T) {
+		t.Parallel()
+		artifact := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
+		counted := &historyCountingFS{FS: artifact.FS}
+		artifact.FS = counted
+		objects := store.New()
+		objects.SetArtifact(hr.ChartSource(), &artifact)
+		sources := &historyCountingSources{sourceReader: objects}
+		observed := input
+		observed.Sources = NewSources(sources)
+		fresh := NewClient(cachetest.New(t, "", cache.New))
+		if previous, complete := fresh.PreviousRender(t.Context(), hr, nil, observed); previous != nil || complete {
+			t.Fatal("disabled renderer supplied history")
+		}
+		if sources.calls.Load() != 0 || counted.opens.Load() != 0 {
+			t.Fatalf("disabled history prepared chart: resolutions=%d, opens=%d", sources.calls.Load(), counted.opens.Load())
+		}
+		_, err := fresh.describeChart(t.Context(), hr, observed.Sources)
+		assert.NoError(t, err)
+		if sources.calls.Load() == 0 || counted.opens.Load() == 0 || len(fresh.chartCache) == 0 {
+			t.Fatal("chart description was not primed")
+		}
+		sources.calls.Store(0)
+		counted.opens.Store(0)
+		if previous, complete := fresh.PreviousRender(t.Context(), hr, nil, observed); previous != nil || complete {
+			t.Fatal("disabled resident renderer supplied history")
+		}
+		if sources.calls.Load() != 0 || counted.opens.Load() != 0 {
+			t.Fatalf("disabled resident history prepared chart: resolutions=%d, opens=%d", sources.calls.Load(), counted.opens.Load())
+		}
+		canceled, cancel := context.WithCancel(t.Context())
+		cancel()
+		if previous, complete := fresh.PreviousRender(canceled, hr, nil, observed); previous != nil || complete {
+			t.Fatal("canceled disabled renderer supplied history")
+		}
+		assert.Equal(t, sources.calls.Load(), 0)
+		assert.Equal(t, counted.opens.Load(), 0)
+	})
 	docs, receipt, err := client.Template(t.Context(), hr, nil, input)
 	assert.NoError(t, err)
 	if receipt == nil {
@@ -77,6 +136,43 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		assert.Equal(t, complete, true)
 		got := maps.Collect(previous)
 		assert.Diff(t, got, records)
+		t.Run("preparation", func(t *testing.T) {
+			t.Parallel()
+			artifact := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
+			counted := &historyCountingFS{FS: artifact.FS}
+			artifact.FS = counted
+			objects := store.New()
+			objects.SetArtifact(hr.ChartSource(), &artifact)
+			sources := &historyCountingSources{sourceReader: objects}
+			observed := input
+			observed.Sources, observed.Admit = NewSources(sources), nil
+			directory := t.TempDir()
+			publisher := NewClient(cachetest.New(t, directory, cache.New))
+			_, pending, err := publisher.Template(t.Context(), hr, nil, observed)
+			assert.NoError(t, err)
+			assert.NoError(t, publisher.RecordRender(t.Context(), hr.Named(), pending, maps.All(records)))
+			reader := NewClient(cachetest.New(t, directory, cache.New))
+			sources.calls.Store(0)
+			counted.opens.Store(0)
+			previous, complete := reader.PreviousRender(t.Context(), hr, nil, observed)
+			assert.Equal(t, complete && previous != nil, true)
+			assert.Diff(t, maps.Collect(previous), records)
+			if sources.calls.Load() == 0 || counted.opens.Load() == 0 {
+				t.Fatal("enabled history did not prepare chart")
+			}
+			canceled, cancel := context.WithCancel(t.Context())
+			cancel()
+			sources.calls.Store(0)
+			counted.opens.Store(0)
+			if previous, complete := reader.PreviousRender(canceled, hr, nil, observed); previous != nil || complete {
+				t.Fatal("canceled enabled renderer supplied history")
+			}
+			assert.Equal(t, sources.calls.Load(), 0)
+			assert.Equal(t, counted.opens.Load(), 0)
+			if previous, complete := reader.PreviousRender(t.Context(), nil, nil, observed); previous != nil || complete {
+				t.Fatal("nil HelmRelease supplied history")
+			}
+		})
 
 		for _, tc := range []struct {
 			name   string

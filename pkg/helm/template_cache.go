@@ -444,6 +444,9 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 
 // PreviousRender returns complete accepted history without running an action or acquiring a chart.
 func (c *Client) PreviousRender(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	if ctx.Err() != nil || !c.cache.CanPersistRenders() {
+		return nil, false
+	}
 	prepared, err := c.prepareTemplate(ctx, hr, hrValues, input)
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false

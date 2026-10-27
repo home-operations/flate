@@ -648,12 +648,95 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 					}
 					continue
 				}
-				if err == nil || !strings.Contains(err.Error(), "name") {
-					t.Fatalf("invalid schema accepted after warmed skipped render: %v", err)
+				if err == nil {
+					t.Fatal("invalid schema accepted after warmed skipped render")
 				}
+				assert.Equal(t, err.Error(), "helm template default/demo: values don't meet the specifications of the schema(s) in the following chart(s):\nmychart:\n- at '/name': 'invalid' does not match pattern '^valid$'\n")
 			}
 		})
 	}
+}
+
+func TestTemplate_SchemaErrorOrder(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
+	testutil.WriteFile(t, dir, "mychart/values.schema.json", `{
+  "type":"object",
+  "properties":{
+    "alpha":{"type":"string"},
+    "middle":{"type":"string"},
+    "zeta":{"type":"string"},
+    "controllers":{"type":"object","properties":{
+      "3ds":{"allOf":[{"properties":{"timeZone":{"type":"string"},"enabled":{"type":"boolean"}}}]},
+      "ds":{"allOf":[{"properties":{"timeZone":{"type":"string"},"enabled":{"type":"boolean"}}}]},
+      "omega":{"allOf":[{"properties":{"timeZone":{"type":"string"},"enabled":{"type":"boolean"}}}]}
+    }}
+  }
+}`)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	hr := newHR()
+	values := map[string]any{
+		"alpha": nil, "middle": nil, "zeta": nil,
+		"controllers": map[string]any{
+			"3ds":   map[string]any{"timeZone": nil, "enabled": nil},
+			"ds":    map[string]any{"timeZone": nil, "enabled": nil},
+			"omega": map[string]any{"timeZone": nil, "enabled": nil},
+		},
+	}
+	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}
+	_, _, first := cli.Template(t.Context(), hr, values, input)
+	_, _, second := cli.Template(t.Context(), hr, values, input)
+	if first == nil || second == nil {
+		t.Fatalf("schema failures: %v; %v", first, second)
+	}
+	const want = `helm template default/demo: values don't meet the specifications of the schema(s) in the following chart(s):
+mychart:
+- at '/alpha': got null, want string
+- at '/controllers': validation failed
+  - at '/controllers/3ds': 'allOf' failed
+    - at '/controllers/3ds': validation failed
+      - at '/controllers/3ds/enabled': got null, want boolean
+      - at '/controllers/3ds/timeZone': got null, want string
+  - at '/controllers/ds': 'allOf' failed
+    - at '/controllers/ds': validation failed
+      - at '/controllers/ds/enabled': got null, want boolean
+      - at '/controllers/ds/timeZone': got null, want string
+  - at '/controllers/omega': 'allOf' failed
+    - at '/controllers/omega': validation failed
+      - at '/controllers/omega/enabled': got null, want boolean
+      - at '/controllers/omega/timeZone': got null, want string
+- at '/middle': got null, want string
+- at '/zeta': got null, want string
+`
+	assert.Equal(t, first.Error(), want)
+	assert.Equal(t, second.Error(), want)
+	assert.Equal(t, first.Error(), second.Error())
+}
+
+func TestTemplate_SchemaPropertyOrder(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
+	testutil.WriteFile(t, dir, "mychart/values.schema.json", `{"type":"object","additionalProperties":false}`)
+	cli := NewClient(cachetest.New(t, "", sourcecache.New))
+	hr := newHR()
+	values := map[string]any{"zulu": true, "alpha": true, "mu": true, "beta": true, "theta": true, "omega": true}
+	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}
+	_, _, first := cli.Template(t.Context(), hr, values, input)
+	_, _, second := cli.Template(t.Context(), hr, values, input)
+	if first == nil || second == nil {
+		t.Fatalf("schema failures: %v; %v", first, second)
+	}
+	const want = `helm template default/demo: values don't meet the specifications of the schema(s) in the following chart(s):
+mychart:
+- at '': additional properties 'alpha', 'beta', 'mu', 'omega', 'theta', 'zulu' not allowed
+`
+	assert.Equal(t, first.Error(), want)
+	assert.Equal(t, second.Error(), want)
+	assert.Equal(t, first.Error(), second.Error())
 }
 
 func TestTemplate_ShowOnlyFraming(t *testing.T) {

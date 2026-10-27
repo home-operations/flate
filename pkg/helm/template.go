@@ -101,7 +101,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 		rel, err := inst.RunWithContext(ctx, ch, finalValues)
 		if err != nil {
-			return nil, nil, fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, err)
+			return nil, nil, fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, schemaError(err))
 		}
 		relV1, ok := rel.(*release.Release)
 		if !ok {

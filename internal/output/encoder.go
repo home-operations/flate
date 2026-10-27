@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"maps"
 	"slices"
 	"unicode/utf8"
 
@@ -54,19 +53,6 @@ type ImageGroup struct {
 	Names   []string `json:"-"`
 }
 
-// SummaryGroup holds one cluster's prepared summary.
-type SummaryGroup struct {
-	Cluster string         `json:"cluster"`
-	Summary map[string]any `json:"summary"`
-}
-
-// ResourceGroup holds one cluster's prepared resource rows and documents.
-type ResourceGroup struct {
-	Cluster   string
-	Rows      []map[string]string
-	Documents []map[string]any
-}
-
 // DocumentGroups writes cluster framing around multiple document groups.
 func (e Encoder) DocumentGroups(groups []DocumentGroup) error {
 	if len(groups) == 1 {
@@ -99,7 +85,7 @@ func (e Encoder) ImageGroups(groups []ImageGroup) error {
 	case FormatYAML:
 		return e.YAML(groups)
 	}
-	return e.lines(func(yield func(string) bool) {
+	return e.Names(func(yield func(string) bool) {
 		for _, g := range groups {
 			for _, image := range g.Names {
 				if !yield(image) {
@@ -108,43 +94,6 @@ func (e Encoder) ImageGroups(groups []ImageGroup) error {
 			}
 		}
 	})
-}
-
-// ClusterGroups writes cluster framing around multiple summaries.
-func (e Encoder) ClusterGroups(groups []SummaryGroup) error {
-	if len(groups) == 1 {
-		return e.Cluster(groups[0].Summary)
-	}
-	if e.Format == FormatJSON {
-		return e.JSON(groups)
-	}
-	return e.YAML(groups)
-}
-
-// ResourceGroups writes cluster framing around multiple resource groups.
-func (e Encoder) ResourceGroups(cols []Column, groups []ResourceGroup) error {
-	if e.Format == FormatJSON || e.Format == FormatYAML {
-		docs := make([]DocumentGroup, len(groups))
-		for i, g := range groups {
-			docs[i] = DocumentGroup{Cluster: g.Cluster, Documents: g.Documents}
-		}
-		return e.DocumentGroups(docs)
-	}
-	var rows []map[string]string
-	for _, g := range groups {
-		for _, row := range g.Rows {
-			r := maps.Clone(row)
-			r["name"] = row["displayName"]
-			if e.Format == FormatName {
-				r["name"] = row["name"]
-				if len(groups) > 1 {
-					r["name"] = g.Cluster + ":" + row["name"]
-				}
-			}
-			rows = append(rows, r)
-		}
-	}
-	return e.Resources(cols, rows, nil)
 }
 
 // Documents writes a JSON array or a multi-document YAML stream.
@@ -163,34 +112,28 @@ func (e Encoder) Images(images []string) error {
 	case FormatYAML:
 		return e.YAML(images)
 	}
-	return e.lines(slices.Values(images))
+	return e.Names(slices.Values(images))
 }
 
-// Cluster writes a single cluster summary.
-func (e Encoder) Cluster(summary map[string]any) error {
-	if e.Format == FormatJSON {
-		return e.JSON(summary)
-	}
-	return e.YAML(summary)
+// Table holds final columns and rows for one prepared table section.
+type Table struct {
+	Columns []Column
+	Rows    []map[string]string
 }
 
-// Resources writes the prepared rows or documents for the selected format.
-func (e Encoder) Resources(cols []Column, rows []map[string]string, docs []map[string]any) error {
-	switch e.Format {
-	case FormatYAML:
-		return e.yamlMulti(docs)
-	case FormatJSON:
-		return e.JSON(docs)
-	case FormatName:
-		return e.lines(func(yield func(string) bool) {
-			for _, row := range rows {
-				if !yield(row["name"]) {
-					return
-				}
+// Tables writes ordered table sections with one blank line between them.
+func (e Encoder) Tables(sections []Table) error {
+	for i, section := range sections {
+		if i > 0 {
+			if _, err := io.WriteString(e.Writer, "\n"); err != nil {
+				return err
 			}
-		})
+		}
+		if err := table(e.Writer, section.Columns, section.Rows); err != nil {
+			return err
+		}
 	}
-	return table(e.Writer, cols, rows)
+	return nil
 }
 
 // Column describes a single table column.
@@ -294,7 +237,8 @@ func (e Encoder) JSON(value any) error {
 	return err
 }
 
-func (e Encoder) lines(values iter.Seq[string]) error {
+// Names writes prepared names in their supplied order.
+func (e Encoder) Names(values iter.Seq[string]) error {
 	for value := range values {
 		if _, err := fmt.Fprintln(e.Writer, value); err != nil {
 			return err

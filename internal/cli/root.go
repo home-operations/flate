@@ -2,7 +2,7 @@
 //
 // Every multi-kind command takes the same ks/hr/all positional layout:
 //
-//   - get   ks|hr|images|all — list Flux objects, images, or cluster summary.
+//   - get   ks|hr|images|all — list Flux objects or images.
 //   - build ks|hr|all        — render Flux objects to YAML.
 //   - diff  ks|hr|images|all — compare current vs. another path.
 //   - test  ks|hr|all        — report reconcile status.

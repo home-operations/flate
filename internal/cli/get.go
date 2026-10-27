@@ -13,14 +13,18 @@ import (
 )
 
 func newGetCmd() *cobra.Command {
-	cmd := getAllCmd("get", "List Kustomizations, HelmReleases, container images, or a cluster summary (defaults to all)")
+	cmd := getAllCmd("get", "List Kustomizations, HelmReleases, or container images (defaults to all)")
 	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetImagesCmd(),
-		getAllCmd("all", "Summarize every Kustomization and HelmRelease"))
+		getAllCmd("all", "List every Kustomization and HelmRelease"))
 	return cmd
 }
 
 func newGetKSCmd() *cobra.Command {
-	return resourceListCmd(listView[*manifest.Kustomization]{
+	return resourceListCmd(ksView())
+}
+
+func ksView() listView[*manifest.Kustomization] {
+	return listView[*manifest.Kustomization]{
 		use: "ks", aliases: []string{"kustomization", "kustomizations"},
 		short: "List Kustomizations", kind: manifest.KindKustomization, cols: ksColumns,
 		mapper: func(_ *selection.Selection, o *manifest.Kustomization) (row map[string]string, doc map[string]any) {
@@ -46,11 +50,15 @@ func newGetKSCmd() *cobra.Command {
 				"namespace": o.Namespace, "name": o.Name, "path": o.Path,
 			}, doc
 		},
-	})
+	}
 }
 
 func newGetHRCmd() *cobra.Command {
-	return resourceListCmd(listView[*manifest.HelmRelease]{
+	return resourceListCmd(hrView())
+}
+
+func hrView() listView[*manifest.HelmRelease] {
+	return listView[*manifest.HelmRelease]{
 		use: "hr", aliases: []string{"helmrelease", "helmreleases"},
 		short: "List HelmReleases", kind: manifest.KindHelmRelease, cols: hrColumns,
 		mapper: func(res *selection.Selection, o *manifest.HelmRelease) (row map[string]string, doc map[string]any) {
@@ -87,7 +95,7 @@ func newGetHRCmd() *cobra.Command {
 				"source": source.Name,
 			}, doc
 		},
-	})
+	}
 }
 
 func getAllCmd(use, short string) *cobra.Command {
@@ -101,22 +109,15 @@ func getAllCmd(use, short string) *cobra.Command {
 				flags: *c, roots: c.roots("", renderKinds...),
 				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
 			}, func(inv *selectedInvocation) selectedPayload {
-				groups := make([]output.SummaryGroup, len(inv.groups))
-				for i, group := range inv.groups {
-					res := group.sides[0]
-					groups[i] = output.SummaryGroup{Cluster: group.cluster, Summary: map[string]any{
-						"kustomizations": res.Counts[manifest.KindKustomization],
-						"helmReleases":   res.Counts[manifest.KindHelmRelease],
-					}}
-				}
-				return selectedPayload{write: func() error {
-					return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ClusterGroups(groups)
-				}}
+				return resourcePayload(inv, []listSection{
+					collectSelected(inv, ksView()),
+					collectSelected(inv, hrView()),
+				}, output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}, true)
 			})
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindOutput(cmd.Flags(), &c.output, output.FormatYAML, output.FormatJSON)
+	bindOutput(cmd.Flags(), &c.output, output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName)
 	return cmd
 }
 
@@ -134,6 +135,13 @@ func newGetImagesCmd() *cobra.Command {
 				for i, group := range inv.groups {
 					groups[i] = output.ImageGroup{Cluster: group.cluster, Images: slices.Sorted(maps.Keys(imageutil.Collect(group.sides[0].Manifests)))}
 				}
+				table := output.Table{Columns: []output.Column{{Header: "IMAGE", Key: "image"}}}
+				for _, group := range groups {
+					for _, image := range group.Images {
+						table.Rows = append(table.Rows, map[string]string{"cluster": group.Cluster, "image": image})
+					}
+				}
+				tables, _ := prepareGetTables(inv, []output.Table{table})
 				return selectedPayload{prepare: func(names []output.Names) {
 					for i := range groups {
 						for _, image := range groups[i].Images {
@@ -141,13 +149,17 @@ func newGetImagesCmd() *cobra.Command {
 						}
 					}
 				}, write: func() error {
-					return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ImageGroups(groups)
+					encoder := output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}
+					if encoder.Format == output.FormatTable {
+						return encoder.Tables(tables)
+					}
+					return encoder.ImageGroups(groups)
 				}}
 			})
 		},
 	}
 	bindCommon(cmd.Flags(), c)
-	bindOutput(cmd.Flags(), &c.output, output.FormatName, output.FormatYAML, output.FormatJSON)
+	bindOutput(cmd.Flags(), &c.output, output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName)
 	return cmd
 }
 
@@ -169,27 +181,8 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 				flags: *c, roots: c.roots(firstArg(args), view.kind), labels: l.labels,
 				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
 			}, func(inv *selectedInvocation) selectedPayload {
-				groups := make([]output.ResourceGroup, len(inv.groups))
-				for i, group := range inv.groups {
-					res := group.sides[0]
-					groups[i] = output.ResourceGroup{Cluster: group.cluster, Rows: []map[string]string{}, Documents: []map[string]any{}}
-					for _, obj := range res.Objects {
-						if obj, ok := obj.(T); ok {
-							row, doc := view.mapper(res, obj)
-							groups[i].Rows = append(groups[i].Rows, row)
-							groups[i].Documents = append(groups[i].Documents, doc)
-						}
-					}
-				}
-				return selectedPayload{prepare: func(names []output.Names) {
-					for i, group := range groups {
-						for _, row := range group.Rows {
-							row["displayName"] = names[i].Prefix + row["name"]
-						}
-					}
-				}, write: func() error {
-					return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ResourceGroups(view.cols, groups)
-				}}
+				return resourcePayload(inv, []listSection{collectSelected(inv, view)},
+					output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}, false)
 			})
 		},
 	}
@@ -197,6 +190,86 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 	bindOutput(cmd.Flags(), &c.output, output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName)
 	bindSelector(cmd.Flags(), l)
 	return cmd
+}
+
+type listSection struct {
+	kind      string
+	table     output.Table
+	documents []output.DocumentGroup
+}
+
+func collectSelected[T manifest.BaseManifest](inv *selectedInvocation, view listView[T]) listSection {
+	section := listSection{kind: view.kind, table: output.Table{Columns: view.cols},
+		documents: make([]output.DocumentGroup, len(inv.groups))}
+	for i, group := range inv.groups {
+		res := group.sides[0]
+		section.documents[i] = output.DocumentGroup{Cluster: group.cluster, Documents: []map[string]any{}}
+		for _, obj := range res.Objects {
+			if obj, ok := obj.(T); ok {
+				row, doc := view.mapper(res, obj)
+				row["cluster"] = group.cluster
+				section.table.Rows = append(section.table.Rows, row)
+				section.documents[i].Documents = append(section.documents[i].Documents, doc)
+			}
+		}
+	}
+	return section
+}
+
+func resourcePayload(inv *selectedInvocation, sections []listSection, encoder output.Encoder, combined bool) selectedPayload {
+	var tables []output.Table
+	documents := make([]output.DocumentGroup, len(inv.groups))
+	for i, group := range inv.groups {
+		documents[i] = output.DocumentGroup{Cluster: group.cluster, Documents: []map[string]any{}}
+	}
+	for _, section := range sections {
+		for i, group := range section.documents {
+			documents[i].Documents = append(documents[i].Documents, group.Documents...)
+		}
+		if combined {
+			if len(section.table.Rows) == 0 {
+				continue
+			}
+			for _, row := range section.table.Rows {
+				row["name"] = section.kind + "/" + row["name"]
+			}
+		}
+		tables = append(tables, section.table)
+	}
+	tables, multi := prepareGetTables(inv, tables)
+	return selectedPayload{write: func() error {
+		switch encoder.Format {
+		case output.FormatJSON, output.FormatYAML:
+			return encoder.DocumentGroups(documents)
+		case output.FormatName:
+			return encoder.Names(func(yield func(string) bool) {
+				for _, table := range tables {
+					for _, row := range table.Rows {
+						name := row["name"]
+						if multi {
+							name = row["cluster"] + ":" + name
+						}
+						if !yield(name) {
+							return
+						}
+					}
+				}
+			})
+		default:
+			return encoder.Tables(tables)
+		}
+	}}
+}
+
+func prepareGetTables(inv *selectedInvocation, tables []output.Table) ([]output.Table, bool) {
+	multi := len(inv.groups) > 1
+	prepared := slices.Clone(tables)
+	for i := range prepared {
+		if multi {
+			prepared[i].Columns = slices.Concat([]output.Column{{Header: "CLUSTER", Key: "cluster"}}, prepared[i].Columns)
+		}
+	}
+	return prepared, multi
 }
 
 var (

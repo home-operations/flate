@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -81,77 +82,85 @@ func TestEncoder_Images_Bytes(t *testing.T) {
 	}
 }
 
-func TestEncoder_Cluster_Bytes(t *testing.T) {
+func TestEncoder_Tables_Bytes(t *testing.T) {
 	t.Parallel()
-	summary := map[string]any{"kustomizations": 2, "helmReleases": 1}
+	cols := []Column{{Header: "NAME", Key: "name"}, {Header: "PATH", Key: "path"}}
+	rows := []map[string]string{{"name": "éclair", "path": "./é"}, {"name": "雪", "path": "./雪"}, {"path": "./missing"}}
+	var b bytes.Buffer
+	if err := (Encoder{Writer: &b}).Tables([]Table{{Columns: cols, Rows: rows}}); err != nil {
+		t.Fatal(err)
+	}
+	assert.Diff(t, b.String(), "NAME      PATH\néclair    ./é\n雪         ./雪\n          ./missing\n")
+	assert.Diff(t, cols, []Column{{Header: "NAME", Key: "name"}, {Header: "PATH", Key: "path"}})
+	assert.Diff(t, rows, []map[string]string{{"name": "éclair", "path": "./é"}, {"name": "雪", "path": "./雪"}, {"path": "./missing"}})
+	b.Reset()
+	if err := (Encoder{Writer: &b}).Tables([]Table{{Columns: cols}}); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, b.String(), "NAME    PATH\n")
+	b.Reset()
+	if err := (Encoder{Writer: &b}).Tables(nil); err != nil || b.Len() != 0 {
+		t.Fatalf("empty sections: %q %v", &b, err)
+	}
+}
+
+func TestEncoder_Tables_WriteFailures(t *testing.T) {
+	t.Parallel()
+	sections := []Table{
+		{Columns: []Column{{Header: "NAME", Key: "name"}}, Rows: []map[string]string{{"name": "first"}}},
+		{Columns: []Column{{Header: "IMAGE", Key: "image"}}, Rows: []map[string]string{{"image": "second:v1"}}},
+		{Columns: []Column{{Header: "LATER", Key: "name"}}},
+	}
+	var full bytes.Buffer
+	assert.NoError(t, (Encoder{Writer: &full}).Tables(sections))
+	assert.Equal(t, full.String(), "NAME\nfirst\n\nIMAGE\nsecond:v1\n\nLATER\n")
 	for _, tc := range []struct {
-		format Format
-		want   string
+		name   string
+		failAt int
+		prefix string
 	}{
-		{want: "helmReleases: 1\nkustomizations: 2\n"},
-		{format: FormatJSON, want: "{\n  \"helmReleases\": 1,\n  \"kustomizations\": 2\n}\n"},
+		{"first_section", 1, ""},
+		{"separator", 2, "NAME\nfirst\n"},
+		{"second_section", 3, "NAME\nfirst\n\n"},
 	} {
-		t.Run(string(tc.format), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var b bytes.Buffer
-			if err := (Encoder{Writer: &b, Format: tc.format}).Cluster(summary); err != nil {
-				t.Fatal(err)
+			want := errors.New("table write failed")
+			w := &sectionWriter{failAt: tc.failAt, err: want}
+			if err := (Encoder{Writer: w}).Tables(sections); !errors.Is(err, want) {
+				t.Fatalf("writer error = %v, want %v", err, want)
 			}
-			assert.Diff(t, b.String(), tc.want)
-			b.Reset()
-			if err := (Encoder{Writer: &b, Format: tc.format}).ClusterGroups([]SummaryGroup{{Cluster: "entry", Summary: summary}}); err != nil {
-				t.Fatal(err)
-			}
-			assert.Diff(t, b.String(), tc.want)
+			assert.Equal(t, w.calls, tc.failAt)
+			assert.Equal(t, w.buf.String(), tc.prefix)
 		})
 	}
 }
 
-func TestEncoder_Resources_Bytes(t *testing.T) {
+type sectionWriter struct {
+	buf           bytes.Buffer
+	calls, failAt int
+	err           error
+}
+
+func (w *sectionWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == w.failAt {
+		return 0, w.err
+	}
+	return w.buf.Write(p)
+}
+
+func TestEncoder_Names_Bytes(t *testing.T) {
 	t.Parallel()
-	wantErr := errors.New("name write failed")
-	if err := (Encoder{Writer: errorWriter{wantErr}, Format: FormatName}).Resources(nil, []map[string]string{{"name": "demo"}}, nil); !errors.Is(err, wantErr) {
-		t.Fatalf("resource writer error: %v", err)
+	want := errors.New("name write failed")
+	if err := (Encoder{Writer: errorWriter{want}}).Names(slices.Values([]string{"demo"})); !errors.Is(err, want) {
+		t.Fatalf("name writer error: %v", err)
 	}
-	var empty bytes.Buffer
-	if err := (Encoder{Writer: &empty, Format: FormatName}).Resources(nil, nil, nil); err != nil || empty.Len() != 0 {
-		t.Fatalf("empty resources: %q %v", &empty, err)
-	}
-	var single bytes.Buffer
-	if err := (Encoder{Writer: &single, Format: FormatName}).Resources(nil, []map[string]string{{"name": "demo"}}, nil); err != nil {
-		t.Fatal(err)
-	}
-	assert.Equal(t, single.String(), "demo\n")
-	cols := []Column{{Header: "NAME", Key: "name"}, {Header: "PATH", Key: "path"}}
-	rows := []map[string]string{
-		{"name": "éclair", "displayName": "éclair", "path": "./é"},
-		{"name": "雪", "displayName": "雪", "path": "./雪"},
-		{"path": "./missing"},
-	}
-	docs := []map[string]any{{"kind": "A"}}
-	for _, tc := range []struct {
-		format Format
-		want   string
-	}{
-		{want: "NAME      PATH\néclair    ./é\n雪         ./雪\n          ./missing\n"},
-		{format: FormatName, want: "éclair\n雪\n\n"},
-		{format: FormatYAML, want: "---\nkind: A\n"},
-		{format: FormatJSON, want: "[\n  {\n    \"kind\": \"A\"\n  }\n]\n"},
-	} {
-		t.Run(string(tc.format), func(t *testing.T) {
-			t.Parallel()
-			var b bytes.Buffer
-			if err := (Encoder{Writer: &b, Format: tc.format}).Resources(cols, rows, docs); err != nil {
-				t.Fatal(err)
-			}
-			assert.Diff(t, b.String(), tc.want)
-			b.Reset()
-			if err := (Encoder{Writer: &b, Format: tc.format}).ResourceGroups(cols, []ResourceGroup{{Cluster: "entry", Rows: rows, Documents: docs}}); err != nil {
-				t.Fatal(err)
-			}
-			assert.Diff(t, b.String(), tc.want)
-		})
-	}
+	var b bytes.Buffer
+	assert.NoError(t, (Encoder{Writer: &b}).Names(slices.Values([]string{})))
+	assert.Equal(t, b.String(), "")
+	assert.NoError(t, (Encoder{Writer: &b}).Names(slices.Values([]string{"demo", "雪", ""})))
+	assert.Equal(t, b.String(), "demo\n雪\n\n")
 }
 
 func TestEncoder_Documents_GroupBytes(t *testing.T) {
@@ -224,60 +233,6 @@ func TestEncoder_Images_GroupPresenceBytes(t *testing.T) {
 	want := errors.New("write failed")
 	if err := (Encoder{Writer: errorWriter{want}}).ImageGroups([]ImageGroup{{Cluster: "a", Added: true, Images: []string{"x"}, Names: []string{"x"}}}); !errors.Is(err, want) {
 		t.Fatalf("image name write error = %v, want %v", err, want)
-	}
-}
-
-func TestEncoder_Cluster_GroupBytes(t *testing.T) {
-	t.Parallel()
-	groups := []SummaryGroup{{Cluster: "a", Summary: map[string]any{"name": "same"}}, {Cluster: "b", Summary: map[string]any{"name": "same"}}}
-	for _, tc := range []struct {
-		name   string
-		format Format
-		want   string
-	}{
-		{name: "yaml", format: FormatYAML, want: "- cluster: a\n  summary:\n    name: same\n- cluster: b\n  summary:\n    name: same\n"},
-		{name: "json", format: FormatJSON, want: "[\n  {\n    \"cluster\": \"a\",\n    \"summary\": {\n      \"name\": \"same\"\n    }\n  },\n  {\n    \"cluster\": \"b\",\n    \"summary\": {\n      \"name\": \"same\"\n    }\n  }\n]\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var b bytes.Buffer
-			if err := (Encoder{Writer: &b, Format: tc.format}).ClusterGroups(groups); err != nil {
-				t.Fatal(err)
-			}
-			assert.Diff(t, b.String(), tc.want)
-		})
-	}
-}
-
-func TestEncoder_Resources_GroupBytes(t *testing.T) {
-	t.Parallel()
-	cols := []Column{{Header: "NAME", Key: "name"}}
-	row := map[string]string{"name": "same", "displayName": "a: same"}
-	other := map[string]string{"name": "same", "displayName": "b: same"}
-	doc := map[string]any{"kind": "A"}
-	groups := []ResourceGroup{{Cluster: "a", Rows: []map[string]string{row}, Documents: []map[string]any{doc}}, {Cluster: "b", Rows: []map[string]string{other}, Documents: []map[string]any{doc}}}
-	for _, tc := range []struct {
-		name   string
-		format Format
-		want   string
-	}{
-		{name: "table", format: FormatTable, want: "NAME\na: same\nb: same\n"},
-		{name: "name", format: FormatName, want: "a:same\nb:same\n"},
-		{name: "yaml", format: FormatYAML, want: "# Cluster: a\n---\nkind: A\n# Cluster: b\n---\nkind: A\n"},
-		{name: "json", format: FormatJSON, want: "[\n  {\n    \"cluster\": \"a\",\n    \"documents\": [\n      {\n        \"kind\": \"A\"\n      }\n    ]\n  },\n  {\n    \"cluster\": \"b\",\n    \"documents\": [\n      {\n        \"kind\": \"A\"\n      }\n    ]\n  }\n]\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var b bytes.Buffer
-			if err := (Encoder{Writer: &b, Format: tc.format}).ResourceGroups(cols, groups); err != nil {
-				t.Fatal(err)
-			}
-			assert.Diff(t, b.String(), tc.want)
-			assert.Diff(t, row, map[string]string{"name": "same", "displayName": "a: same"})
-			assert.Diff(t, other, map[string]string{"name": "same", "displayName": "b: same"})
-			assert.Diff(t, doc, map[string]any{"kind": "A"})
-			assert.Diff(t, cols, []Column{{Header: "NAME", Key: "name"}})
-		})
 	}
 }
 

@@ -99,7 +99,7 @@ func getAllCmd(use, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSelected(cmd.Context(), selectedRequest{
 				flags: *c, roots: c.roots("", renderKinds...),
-				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
+				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
 			}, func(inv *selectedInvocation) selectedPayload {
 				groups := make([]output.SummaryGroup, len(inv.groups))
 				for i, group := range inv.groups {
@@ -109,7 +109,9 @@ func getAllCmd(use, short string) *cobra.Command {
 						"helmReleases":   res.Counts[manifest.KindHelmRelease],
 					}}
 				}
-				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ClusterGroups(groups)}
+				return selectedPayload{write: func() error {
+					return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ClusterGroups(groups)
+				}}
 			})
 		},
 	}
@@ -126,13 +128,21 @@ func newGetImagesCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSelected(cmd.Context(), selectedRequest{
 				flags: *c, roots: c.roots("", renderKinds...),
-				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
+				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
 			}, func(inv *selectedInvocation) selectedPayload {
 				groups := make([]output.ImageGroup, len(inv.groups))
 				for i, group := range inv.groups {
 					groups[i] = output.ImageGroup{Cluster: group.cluster, Images: slices.Sorted(maps.Keys(imageutil.Collect(group.sides[0].Manifests)))}
 				}
-				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ImageGroups(groups)}
+				return selectedPayload{prepare: func(names []output.Names) {
+					for i := range groups {
+						for _, image := range groups[i].Images {
+							groups[i].Names = append(groups[i].Names, names[i].Prefix+image)
+						}
+					}
+				}, write: func() error {
+					return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ImageGroups(groups)
+				}}
 			})
 		},
 	}
@@ -157,7 +167,7 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSelected(cmd.Context(), selectedRequest{
 				flags: *c, roots: c.roots(firstArg(args), view.kind), labels: l.labels,
-				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentData,
+				stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(),
 			}, func(inv *selectedInvocation) selectedPayload {
 				groups := make([]output.ResourceGroup, len(inv.groups))
 				for i, group := range inv.groups {
@@ -171,7 +181,15 @@ func resourceListCmd[T manifest.BaseManifest](view listView[T]) *cobra.Command {
 						}
 					}
 				}
-				return selectedPayload{err: (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ResourceGroups(view.cols, groups)}
+				return selectedPayload{prepare: func(names []output.Names) {
+					for i, group := range groups {
+						for _, row := range group.Rows {
+							row["displayName"] = names[i].Prefix + row["name"]
+						}
+					}
+				}, write: func() error {
+					return (output.Encoder{Writer: cmd.OutOrStdout(), Format: output.Format(c.output)}).ResourceGroups(view.cols, groups)
+				}}
 			})
 		},
 	}

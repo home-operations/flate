@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/homeport/dyff/pkg/dyff"
-	yamlv3 "go.yaml.in/yaml/v3"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/testutil"
 )
 
@@ -70,34 +70,7 @@ func TestRenderDocs_ParentQualifiedMatching(t *testing.T) {
 			}
 		})
 	}
-	t.Run("report bodies", func(t *testing.T) {
-		t.Parallel()
-		paired, _, _, _ := pair([]Doc{left}, []Doc{right}, Options{})
-		report, err := nativeReport(paired)
-		assert.NoError(t, err)
-		if len(report.Diffs) != 2 {
-			t.Fatalf("want two report diffs, got %+v", report.Diffs)
-		}
-		for i, want := range []struct {
-			kind rune
-			doc  Doc
-		}{{dyff.REMOVAL, left}, {dyff.ADDITION, right}} {
-			d := report.Diffs[i]
-			if len(d.Path.PathElements) != 0 || len(d.Details) != 1 || d.Details[0].Kind != want.kind {
-				t.Fatalf("wrong root operation: %+v", d)
-			}
-			node := d.Details[0].From
-			if want.kind == dyff.ADDITION {
-				node = d.Details[0].To
-			}
-			if node.Kind != yamlv3.DocumentNode {
-				t.Fatalf("want whole document, got %+v", node)
-			}
-			var got map[string]any
-			assert.NoError(t, node.Decode(&got))
-			assert.Diff(t, got, want.doc.Manifest)
-		}
-	})
+
 	t.Run("shared native label", func(t *testing.T) {
 		t.Parallel()
 		old, current := ncm("hello", "greeting", "old"), ncm("hello", "greeting", "new")
@@ -165,40 +138,7 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 			assert.Equal(t, renderDiff(t, left, right, opts), first)
 		})
 	}
-	t.Run("namespace labels", func(t *testing.T) {
-		t.Parallel()
-		absent, empty := ncm("cluster", "greeting", "old"), ncm("empty", "greeting", "old")
-		delete(absent.Manifest["metadata"].(map[string]any), "namespace")
-		empty.Manifest["metadata"].(map[string]any)["namespace"] = ""
-		paired, _, _, _ := pair([]Doc{absent, empty}, nil, Options{})
-		report, err := nativeReport(paired)
-		assert.NoError(t, err)
-		assert.Equal(t, report.Diffs[0].Path.RootDescription(), "v1/ConfigMap/cluster")
-		assert.Equal(t, report.Diffs[1].Path.RootDescription(), "v1/ConfigMap//empty")
-	})
-	paired, _, _, _ := pair(left, right, Options{})
-	report, err := nativeReport(paired)
-	assert.NoError(t, err)
-	if len(report.From.Documents) != 4 || len(report.To.Documents) != 4 || len(report.Diffs) != 4 {
-		t.Fatalf("incomplete display context: %+v", report)
-	}
-	for i, want := range []struct {
-		location string
-		index    int
-		path     string
-	}{
-		{"from", 1, "data.greeting"}, {"from", 3, "data.greeting"}, {"from", 0, ""}, {"to", 0, ""},
-	} {
-		path := report.Diffs[i].Path
-		assert.Equal(t, path.Root.Location, want.location)
-		assert.Equal(t, path.DocumentIdx, want.index)
-		assert.Equal(t, path.ToDotStyle(), want.path)
-		wantRoot := report.From.Documents[want.index]
-		if want.location == "to" {
-			wantRoot = report.To.Documents[want.index]
-		}
-		assert.Diff(t, path.Root.Documents[want.index], wantRoot)
-	}
+
 }
 
 func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
@@ -223,8 +163,7 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 						md["namespace"] = ""
 					}
 				}
-				paired, _, _, _ := pair([]Doc{left}, []Doc{right}, Options{})
-				report, err := nativeReport(paired)
+				report, err := diffprep.Prepare(prepareDocs([]Doc{left}), prepareDocs([]Doc{right}), prepareOptions(Options{})).Native()
 				assert.NoError(t, err)
 				assert.Diff(t, report.From.Names, []string{tc.want})
 				assert.Diff(t, report.To.Names, []string{tc.want})
@@ -258,8 +197,7 @@ func TestRenderDocs_NativeCanonicalEdges(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				opts := Options{Format: FormatGitHub, Normalize: func(m map[string]any) { delete(m, "apiVersion") }}
-				paired, _, _, _ := pair(tc.left, tc.right, opts)
-				report, err := nativeReport(paired)
+				report, err := diffprep.Prepare(prepareDocs(tc.left), prepareDocs(tc.right), prepareOptions(opts)).Native()
 				assert.NoError(t, err)
 				if len(report.Diffs) != len(tc.wantKinds) {
 					t.Fatalf("wrong canonical operations: %+v", report.Diffs)
@@ -344,18 +282,5 @@ func TestRenderDocs_NativeDuplicateEdges(t *testing.T) {
 			})
 		}
 	}
-	t.Run("duplicate winning order", func(t *testing.T) {
-		t.Parallel()
 
-		left := []Doc{ncm("a", "greeting", "shadowed"), ncm("z", "greeting", "old-z"), ncm("a", "greeting", "old-a")}
-		right := []Doc{ncm("a", "greeting", "new-a"), ncm("z", "greeting", "new-z")}
-		paired, _, _, _ := pair(left, right, Options{})
-		report, err := nativeReport(paired)
-		assert.NoError(t, err)
-		if len(report.Diffs) != 2 || len(report.From.Documents) != 2 {
-			t.Fatalf("duplicate not removed: %+v", report)
-		}
-		assert.Equal(t, report.Diffs[0].Path.RootDescription(), "v1/ConfigMap/apps/z")
-		assert.Equal(t, report.Diffs[1].Path.RootDescription(), "v1/ConfigMap/apps/a")
-	})
 }

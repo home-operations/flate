@@ -98,19 +98,22 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 	if code != 1 {
 		t.Errorf("exit=%d, want 1\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	for _, want := range []string{"Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps", "orig snapshot:", "current snapshot:", "missing.yaml"} {
+	for _, want := range []string{"Kustomization  flux-system/apps", "orig snapshot:", "current snapshot:", "missing.yaml"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
 	}
-	_, failures, ok := strings.Cut(stderr, "flate error: ")
-	if !ok {
-		t.Fatalf("fatal report missing:\n%s", stderr)
-	}
-	for side := range strings.SplitSeq(failures, "current snapshot:") {
-		if !strings.Contains(side, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/apps") || !strings.Contains(side, "missing.yaml") {
-			t.Errorf("snapshot failure missing resource detail:\n%s", stderr)
+	failures := 0
+	for line := range strings.SplitSeq(stderr, "\n") {
+		if strings.HasPrefix(line, "  ✗  Kustomization  flux-system/apps  ") {
+			failures++
+			if !strings.Contains(line, "missing.yaml") {
+				t.Errorf("snapshot failure missing resource detail:\n%s", stderr)
+			}
 		}
+	}
+	if failures != 2 || strings.Contains(stderr, "flate error:") {
+		t.Fatalf("expected both snapshot failures without a duplicate fatal dump:\n%s", stderr)
 	}
 	if stdout != "" {
 		t.Errorf("suppressed diff must have no product: %s", stdout)

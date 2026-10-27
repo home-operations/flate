@@ -123,7 +123,7 @@ spec:
 func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteSubstitutionCycleCluster(t, root)
-	const want = "\n  ✗  Kustomization.kustomize.toolkit.fluxcd.io  flux-system/a  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b\n  ✗  Kustomization.kustomize.toolkit.fluxcd.io  flux-system/b  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a\n\n  ✗ 2 failed\n"
+	const want = "\n  ✗  Kustomization  flux-system/a  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/b\n  ✗  Kustomization  flux-system/b  dependency cycle: blocked by Kustomization.kustomize.toolkit.fluxcd.io/flux-system/a\n\n  ✗ 2 failed\n"
 	for _, workers := range []string{"1", "2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 2 {

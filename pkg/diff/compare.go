@@ -4,6 +4,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/imageutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -20,9 +21,11 @@ type Snapshot struct {
 // remain errors even when the snapshots produce a usable partial diff; discovered
 // warnings and structured suppressions remain available alongside those errors.
 func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, []manifest.Warning, []Suppression, error) {
-	left, right, suppressed := suppress(orig, current)
-	opts.Suppressed = append(slices.Clone(opts.Suppressed), suppressed...)
-	out, warnings, err := RenderDocs(selectedDocs(left), selectedDocs(right), opts)
+	left, right, suppressed := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
+	opts.Suppressed = append(slices.Clone(opts.Suppressed), publicSuppressions(suppressed)...)
+	prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), prepareOptions(opts))
+	out, err := renderPrepared(prepared, opts)
+	warnings := prepared.Warnings
 	return out, warnings, opts.Suppressed, errors.Join(err, selectedErr)
 }
 
@@ -30,7 +33,7 @@ func Compare(orig, current Snapshot, selectedErr error, opts Options) ([]byte, [
 // snapshots, plus removals when requested. Unavailable producer batches are
 // withheld before extraction and disclosed as structured suppressions with document counts.
 func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved bool) ([]string, []Suppression, error) {
-	left, right, suppressed := suppress(orig, current)
+	left, right, suppressed := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
 	origImages := imageutil.Collect(left)
 	currentImages := imageutil.Collect(right)
 	out := make([]string, 0, len(currentImages))
@@ -47,5 +50,13 @@ func CompareImages(orig, current Snapshot, selectedErr error, includeRemoved boo
 		}
 	}
 	slices.Sort(out)
-	return out, suppressed, selectedErr
+	return out, publicSuppressions(suppressed), selectedErr
+}
+
+func publicSuppressions(notes []diffprep.Suppression) []Suppression {
+	out := slices.Grow([]Suppression(nil), len(notes))
+	for _, n := range notes {
+		out = append(out, Suppression{Parent: Parent(n.Parent), Side: Side(n.Side), Count: n.Count, Reason: n.Reason})
+	}
+	return out
 }

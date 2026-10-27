@@ -113,6 +113,26 @@ linters:
               desc: below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
+        diffprep:
+          list-mode: strict
+          files: ["**/internal/diffprep/**"]
+          allow:
+            - $gostd
+            - github.com/home-operations/flate/pkg/manifest
+            - github.com/home-operations/flate/pkg/store
+            - github.com/home-operations/flate/internal/assert
+            - github.com/home-operations/flate/internal/testutil
+            - github.com/gonvenience/ytbx
+            - github.com/homeport/dyff/pkg/dyff
+            - go.yaml.in/yaml/v3
+            - sigs.k8s.io/yaml
+        output:
+          files: ["**/internal/output/**"]
+          deny:
+            - pkg: github.com/home-operations/flate/pkg/diff
+              desc: output consumes diffprep, never the SDK boundary
+            - pkg: github.com/home-operations/flate/internal/cli
+              desc: output sits below CLI presentation
         render:
           files:
             - "**/pkg/kustomize/**"

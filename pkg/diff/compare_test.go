@@ -320,7 +320,7 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 		t.Fatalf("images = %v, notes = %v, err = %v", images, notes, err)
 	}
 	out, _, _, err = Compare(left, right, nil, Options{Format: FormatDiff})
-	if err != nil || bytes.Contains(out, []byte("Kustomization")) || !bytes.Contains(out, []byte("Deployment.apps apps/changed")) {
+	if err != nil || bytes.Contains(out, []byte("Kustomization")) || !bytes.Contains(out, []byte("Deployment apps/changed")) {
 		t.Fatalf("ownerless heading = %q, err = %v", out, err)
 	}
 }

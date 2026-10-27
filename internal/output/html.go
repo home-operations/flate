@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"fmt"
 	"html/template"
-	"iter"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -97,17 +96,14 @@ type sRow struct {
 	Left, Right cell
 }
 
-func (e Encoder) html(changes iter.Seq2[LineChange, error]) error {
+func (e Encoder) html(changes []LineChange) error {
 	hl, css, err := newHighlighter()
 	if err != nil {
 		return err
 	}
 
 	data := htmlData{ChromaCSS: template.CSS(css)} //nolint:gosec // chroma-generated stylesheet, not user input
-	for p, err := range changes {
-		if err != nil {
-			return err
-		}
+	for _, p := range changes {
 		r := buildHTMLResource(p, hl)
 		r.ID = fmt.Sprintf("r%d", len(data.Resources))
 		data.Resources = append(data.Resources, r)
@@ -159,14 +155,14 @@ func buildHTMLResource(p LineChange, hl *highlighter) htmlResource {
 	a, b := difflib.SplitLines(p.From), difflib.SplitLines(p.To)
 	groups := difflib.NewMatcher(a, b).GetGroupedOpCodes(diffContextLines)
 	ah, bh := highlightPair(a, b, groups, hl)
-	parent := p.Parent.KindLabel() + " " + p.Parent.NamespacedName()
+	parent := p.Parent.Kind + " " + p.Parent.Name
 	if p.ParentPath != "" {
 		parent += " (" + p.ParentPath + ")"
 	}
 	res := htmlResource{
-		Title:  p.Resource.KindLabel() + " " + p.Resource.NamespacedName(),
-		Kind:   p.Resource.KindLabel(),
-		Name:   p.Resource.NamespacedName(),
+		Title:  p.Resource.Kind + " " + p.Resource.Name,
+		Kind:   p.Resource.Kind,
+		Name:   p.Resource.Name,
 		Parent: parent,
 		Status: p.Status,
 		URows:  unifiedRows(ah, bh, groups),

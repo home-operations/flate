@@ -28,7 +28,7 @@ func TestRun_AllPass(t *testing.T) {
 		t.Errorf("expected 2 passed, got %+v", rep)
 	}
 	var b bytes.Buffer
-	if err := (output.Encoder{Writer: &b}).Test(rep, 0); err != nil {
+	if err := writeTestReport(output.Encoder{Writer: &b}, rep); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if !strings.Contains(b.String(), "2 passed") {
@@ -199,7 +199,7 @@ func TestRun_BlockedByPrimaryFailure(t *testing.T) {
 	}
 
 	var b bytes.Buffer
-	_ = (output.Encoder{Writer: &b}).Test(rep, 0)
+	_ = writeTestReport(output.Encoder{Writer: &b}, rep)
 	out := b.String()
 	if !strings.Contains(out, "1 failed") || !strings.Contains(out, "1 blocked") {
 		t.Errorf("verdict should separate failed and blocked:\n%s", out)
@@ -259,7 +259,7 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 		t.Errorf("ResourceSet case = %+v, want failed with the parse error", found)
 	}
 	var b bytes.Buffer
-	_ = (output.Encoder{Writer: &b}).Test(rep, 0)
+	_ = writeTestReport(output.Encoder{Writer: &b}, rep)
 	if out := b.String(); !strings.Contains(out, "broken-rs") || !strings.Contains(out, "nope") {
 		t.Errorf("roster must show the non-roster failure inline:\n%s", out)
 	}
@@ -325,7 +325,7 @@ func TestRun_BlockedRootReason(t *testing.T) {
 				t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 			}
 			var b bytes.Buffer
-			if err := (output.Encoder{Writer: &b}).Test(rep, 0); err != nil {
+			if err := writeTestReport(output.Encoder{Writer: &b}, rep); err != nil {
 				t.Fatal(err)
 			}
 			if out := b.String(); !strings.Contains(out, "apps/demo") || strings.Count(out, "fetch artifact: 404 Not Found") != 1 || strings.Contains(out, "flux error:") {
@@ -358,7 +358,7 @@ func TestRun_BlockedByMissingDep(t *testing.T) {
 		t.Fatalf("Blocked = %+v, want %+v", rep.Blocked, want)
 	}
 	var b bytes.Buffer
-	_ = (output.Encoder{Writer: &b}).Test(rep, 0)
+	_ = writeTestReport(output.Encoder{Writer: &b}, rep)
 	if !strings.Contains(b.String(), "not found") {
 		t.Errorf("missing root should render (not found):\n%s", b.String())
 	}
@@ -429,4 +429,10 @@ func runSelected(t *testing.T, o *orchestrator.Orchestrator, roots ...manifest.N
 		t.Fatalf("Select returned %d results, want 1", len(selected))
 	}
 	return Run(selected[0])
+}
+
+func writeTestReport(e output.Encoder, rep output.TestReport) error {
+	r := output.Report{Groups: []output.ReportGroup{{Test: &rep}}, Test: true}
+	r.Prepare(nil)
+	return e.Report(r, e)
 }

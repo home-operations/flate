@@ -606,17 +606,22 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 	var first string
 	for run := range 2 {
 		var stderr bytes.Buffer
-		err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, pair: true, stderr: &stderr, presentation: presentData},
+		err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindHelmRelease}}, pair: true, stderr: &stderr},
 			&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: []*selection.Selection{side, {Warnings: []manifest.Warning{base}}}}}}, selectedPayload{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var expected bytes.Buffer
-		expected.WriteString("orig snapshot:")
-		assert.NoError(t, (output.Encoder{Writer: &expected}).Report(output.Model{Warnings: want}))
-		expected.WriteString("current snapshot:")
-		assert.NoError(t, (output.Encoder{Writer: &expected}).Report(output.Model{Warnings: []manifest.Warning{base}}))
-		assert.Equal(t, stderr.String(), expected.String())
+		expected := output.Report{Groups: []output.ReportGroup{{Cluster: "."}}}
+		for _, warning := range want {
+			expected.Warnings = append(expected.Warnings, output.Warning{Warning: warning, Context: "orig snapshot"})
+		}
+		expected.Warnings = append(expected.Warnings, output.Warning{Warning: base, Context: "current snapshot"})
+		expected.Prepare(nil)
+		var rendered bytes.Buffer
+		encoder := output.Encoder{Writer: &rendered}
+		assert.NoError(t, encoder.Report(expected, encoder))
+		assert.Equal(t, stderr.String(), rendered.String())
+		assert.Equal(t, strings.Count(stderr.String(), "warnings (7)"), 1)
 		if run == 0 {
 			first = stderr.String()
 		} else {
@@ -632,9 +637,9 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 }
 
 func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
-	for _, mode := range []presentation{presentBuild, presentData, presentTest, presentDiff} {
-		t.Run(fmt.Sprint(mode), func(t *testing.T) {
-			if mode != presentTest {
+	for _, test := range []bool{false, true} {
+		t.Run(fmt.Sprint(test), func(t *testing.T) {
+			if !test {
 				t.Parallel()
 			}
 			o, err := completedOrchestrator(t)
@@ -655,10 +660,10 @@ func TestRunSelected_RemainderAndPayloadErrors(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			_, payloadErr := failingWriter{err: writeErr}.Write([]byte("partial"))
 			payload := selectedPayload{err: payloadErr}
-			if mode == presentTest {
-				payload.rosters = []output.TestGroup{{Cluster: ".", Report: output.TestReport{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1}}}
+			if test {
+				payload.rosters = []output.TestReport{{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1, Matched: 1}}
 			}
-			got := finishSelected(selectedRequest{roots: roots, stdout: &stdout, stderr: &stderr, presentation: mode},
+			got := finishSelected(selectedRequest{roots: roots, stdout: &stdout, stderr: &stderr, test: test},
 				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}}}, payload)
 			if !errors.Is(got, closeErr) || !errors.Is(got, writeErr) || !errors.Is(got, context.Canceled) || !errors.Is(got, selectedErr) {
 				t.Fatalf("lost selected, cleanup or payload error: %v", got)
@@ -712,18 +717,21 @@ func TestRun_DiagnosticOnlyComparison(t *testing.T) {
 			}
 		})
 	}
-	for _, mode := range []presentation{presentBuild, presentData, presentTest, presentDiff} {
-		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		test, pair bool
+	}{{name: "data"}, {name: "test", test: true}, {name: "diff", pair: true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			called := false
 			rootID := testutil.KustomizationID("", "")
-			if mode == presentTest {
+			if tc.test {
 				rootID.Name = "named"
 			}
 			err := runSelected(t.Context(), selectedRequest{
 				flags: commonFlags{path: root, base: pin.String(), concurrency: 2},
 				roots: []manifest.NamedResource{rootID},
-				pair:  mode == presentDiff, stdout: &stdout, stderr: &stderr, presentation: mode,
+				pair:  tc.pair, stdout: &stdout, stderr: &stderr, test: tc.test,
 			}, func(*selectedInvocation) selectedPayload { called = true; return selectedPayload{} })
 			if err == nil || called || !strings.Contains(stderr.String(), "Git status unavailable") {
 				t.Fatalf("incomplete input invoked product=%v: %v, %s", called, err, stderr.String())
@@ -782,7 +790,7 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 				t.Fatalf("preparation projection = %+v %v %v", sides, selectedErr, remainder)
 			}
 			var stderr bytes.Buffer
-			finished := finishSelected(selectedRequest{roots: roots, stderr: &stderr, presentation: presentData},
+			finished := finishSelected(selectedRequest{roots: roots, stderr: &stderr},
 				&selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: sides, err: selectedErr, remainder: remainder}}}, selectedPayload{})
 			if _, reported := errors.AsType[reportedError](finished); !reported {
 				assert.NoError(t, (output.Encoder{Writer: &stderr}).Errors(finished))
@@ -802,25 +810,25 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 
 func TestFinishSelected_JoinsWriterErrors(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []presentation{presentBuild, presentData, presentTest, presentDiff} {
-		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+	for _, test := range []bool{false, true} {
+		t.Run(fmt.Sprint(test), func(t *testing.T) {
 			t.Parallel()
 			productErr, reportErr, renderErr := errors.New("product closed"), errors.New("report closed"), errors.New("render failed")
 			side := &selection.Selection{Warnings: []manifest.Warning{{Category: manifest.WarnEmptyScan, Message: "advisory"}}}
 			inv := &selectedInvocation{groups: []selectedGroup{{cluster: ".", sides: []*selection.Selection{side, side}, err: renderErr, remainder: renderErr}}}
 			payload := selectedPayload{err: productErr, warnings: [][]manifest.Warning{{{Category: manifest.WarnDiffSuppressed, Message: "payload warning"}}}}
-			if mode == presentTest {
+			if test {
 				payload.err = nil
-				payload.rosters = []output.TestGroup{{Cluster: "."}}
+				payload.rosters = []output.TestReport{{}}
 			}
 			writer := &countFailWriter{err: reportErr}
-			err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindKustomization}}, stdout: failingWriter{err: productErr}, stderr: writer, presentation: mode, pair: true}, inv, payload)
+			err := finishSelected(selectedRequest{roots: []manifest.NamedResource{{Kind: manifest.KindKustomization}}, stdout: failingWriter{err: productErr}, stderr: writer, test: test, pair: true}, inv, payload)
 			for _, want := range []error{productErr, reportErr, renderErr} {
 				if !errors.Is(err, want) {
 					t.Fatalf("lost %v: %v", want, err)
 				}
 			}
-			if writer.writes < 5 {
+			if writer.writes < 2 {
 				t.Fatalf("report stopped after %d writes", writer.writes)
 			}
 		})
@@ -855,3 +863,165 @@ func completedOrchestrator(tb testing.TB) (*orchestrator.Orchestrator, error) {
 	}
 	return runs[0].Orchestrator, nil
 }
+
+func TestRun_ClusterReport_KindCollisionInventory(t *testing.T) {
+	t.Parallel()
+	widget := manifest.NamedResource{Group: "one.example", Kind: "Widget", Namespace: "ns", Name: "same"}
+	other := widget
+	other.Group = "two.example"
+	gadget := manifest.NamedResource{Group: "one.example", Kind: "Gadget", Namespace: "ns", Name: "root"}
+	victims := make([]manifest.NamedResource, 7)
+	for i := range victims {
+		victims[i] = manifest.NamedResource{Kind: "Leaf", Namespace: "ns", Name: fmt.Sprintf("leaf%d", i)}
+	}
+	victims[6] = manifest.NamedResource{Group: "hidden.example", Kind: "Gadget", Name: "hidden"}
+	warning := manifest.Warning{Resource: other, Category: "Inventory", Count: 3,
+		Message: "Widget.one.example/ns/opaque stays unchanged", Detail: []string{"Gadget.hidden.example/ns/reference"}}
+	alpha := &selection.Selection{Failed: map[manifest.NamedResource]store.StatusInfo{
+		widget: {Status: store.StatusFailed, Message: "widget failed"}, gadget: {Status: store.StatusFailed, Message: "gadget failed"}},
+		Causes: map[manifest.NamedResource][]manifest.NamedResource{widget: nil, gadget: victims}}
+	omega := &selection.Selection{Warnings: []manifest.Warning{warning}}
+	var first string
+	for run := range 2 {
+		var stderr bytes.Buffer
+		assert.NoError(t, finishSelected(selectedRequest{stderr: &stderr, stdout: io.Discard},
+			&selectedInvocation{groups: []selectedGroup{{cluster: "alpha", sides: []*selection.Selection{alpha}}, {cluster: "omega", sides: []*selection.Selection{omega}}}}, selectedPayload{}))
+		out := stderr.String()
+		for _, want := range []string{"Widget.one.example  alpha: ns/same", "Widget.two.example omega: ns/same: " + warning.Message,
+			"Gadget  alpha: ns/root", "alpha: ns/leaf5 +1 more", warning.Detail[0], "(×3)"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("missing %q: %s", want, out)
+			}
+		}
+		if strings.Contains(out, "Gadget.one.example") || strings.Contains(out, "hidden.example  ") || strings.Contains(out, "Cluster:") {
+			t.Fatalf("hidden subjects changed the inventory: %s", out)
+		}
+		if run == 0 {
+			first = out
+		} else {
+			assert.Equal(t, out, first)
+		}
+	}
+	assert.Diff(t, omega.Warnings, []manifest.Warning{warning})
+}
+
+func TestFinishSelected_ReportOrder(t *testing.T) {
+	t.Parallel()
+	id := testutil.KustomizationID("ns", "same")
+	var combined bytes.Buffer
+	stdout, stderr := &recordingStream{all: &combined}, &recordingStream{all: &combined}
+	failure := store.StatusInfo{Status: store.StatusFailed, Message: "primary cause"}
+	side := &selection.Selection{Failed: map[manifest.NamedResource]store.StatusInfo{id: failure},
+		Causes:   map[manifest.NamedResource][]manifest.NamedResource{id: nil},
+		Warnings: []manifest.Warning{{Resource: id, Message: "selected warning"}}}
+	payload := selectedPayload{rosters: []output.TestReport{{Cases: []output.Case{{ID: id, Outcome: output.OutcomeFailed, Reason: failure.Message}}, Failed: 1},
+		{Cases: []output.Case{{ID: id, Outcome: output.OutcomePassed}}, Passed: 1}}, write: func() error {
+		_, err := io.WriteString(stdout, "payload\n")
+		return err
+	}}
+	err := finishSelected(selectedRequest{roots: []manifest.NamedResource{id}, stdout: stdout, stderr: stderr, test: true},
+		&selectedInvocation{groups: []selectedGroup{{cluster: "alpha", sides: []*selection.Selection{side}, err: errors.New("selected failed")}, {cluster: "omega", sides: []*selection.Selection{{}}}}}, payload)
+	if err == nil {
+		t.Fatal("test failure became successful")
+	}
+	out := combined.String()
+	last := -1
+	for _, token := range []string{"payload", "primary cause", "omega: ns/same", "selected warning", "alpha: ✗ 0 passed", "omega: ✓ 1 passed", "Invocation totals", "✗ 1 passed · 1 failed"} {
+		at := strings.Index(out, token)
+		if at <= last {
+			t.Fatalf("%q out of order: %s", token, out)
+		}
+		last = at
+	}
+	assert.Equal(t, strings.Count(out, "primary cause"), 1)
+	assert.Equal(t, strings.Contains(stdout.String(), "warning"), false)
+	assert.Equal(t, strings.Contains(stderr.String(), "Invocation totals"), false)
+}
+
+type recordingStream struct {
+	bytes.Buffer
+	all *bytes.Buffer
+}
+
+func (w *recordingStream) Write(p []byte) (int, error) {
+	_, _ = w.all.Write(p)
+	return w.Buffer.Write(p)
+}
+
+func (w *recordingStream) WriteString(s string) (int, error) { return w.Write([]byte(s)) }
+
+func TestFinishSelected_UnpresentedCause(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("unpresented cause")
+	var stderr bytes.Buffer
+	err := finishSelected(selectedRequest{stdout: io.Discard, stderr: &stderr},
+		&selectedInvocation{groups: []selectedGroup{{cluster: "alpha", err: cause}}}, selectedPayload{})
+	if !errors.Is(err, cause) {
+		t.Fatalf("lost cause: %v", err)
+	}
+	if _, reported := errors.AsType[reportedError](err); reported || stderr.Len() != 0 {
+		t.Fatalf("unwritten diagnostics marked reported: %v, %s", err, stderr.String())
+	}
+}
+
+func TestFinishSelected_PhaseWriterErrors(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []struct {
+		name, token string
+		test        bool
+	}{
+		{name: "payload", token: "phase payload"},
+		{name: "warning", token: "phase advisory"},
+		{name: "summary", token: "alpha: ✗ 1 failed"},
+		{name: "test verdict", token: "Invocation totals", test: true},
+	} {
+		t.Run(phase.name, func(t *testing.T) {
+			t.Parallel()
+			writeErr, renderErr := errors.New("phase write failed"), errors.New("render failed")
+			writer := &phaseFailWriter{token: phase.token, err: writeErr}
+			id := testutil.KustomizationID("ns", "root")
+			side := &selection.Selection{
+				Failed:   map[manifest.NamedResource]store.StatusInfo{id: {Status: store.StatusFailed, Message: "phase primary cause"}},
+				Causes:   map[manifest.NamedResource][]manifest.NamedResource{id: nil},
+				Warnings: []manifest.Warning{{Resource: id, Message: "phase advisory"}},
+			}
+			inv := &selectedInvocation{groups: []selectedGroup{
+				{cluster: "alpha", sides: []*selection.Selection{side}, err: renderErr},
+				{cluster: "omega", sides: []*selection.Selection{{}}},
+			}}
+			payload := selectedPayload{write: func() error {
+				_, err := io.WriteString(writer, "phase payload\n")
+				return err
+			}}
+			if phase.test {
+				payload.rosters = []output.TestReport{{Failed: 1}, {Passed: 1}}
+			}
+			err := finishSelected(selectedRequest{stdout: writer, stderr: writer}, inv, payload)
+			if !writer.failed || !errors.Is(err, writeErr) || !errors.Is(err, renderErr) {
+				t.Fatalf("%s lost a write or render failure: failed=%v err=%v", phase.name, writer.failed, err)
+			}
+			assert.Equal(t, strings.Count(writer.String(), "phase primary cause"), 1)
+			if phase.name == "summary" || phase.test {
+				assert.Equal(t, strings.Count(writer.String(), "phase payload"), 1)
+				assert.Equal(t, strings.Count(writer.String(), "phase advisory"), 1)
+			}
+		})
+	}
+}
+
+type phaseFailWriter struct {
+	bytes.Buffer
+	token  string
+	err    error
+	failed bool
+}
+
+func (w *phaseFailWriter) Write(p []byte) (int, error) {
+	if !w.failed && bytes.Contains(p, []byte(w.token)) {
+		w.failed = true
+		return 0, w.err
+	}
+	return w.Buffer.Write(p)
+}
+
+func (w *phaseFailWriter) WriteString(s string) (int, error) { return w.Write([]byte(s)) }

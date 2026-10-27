@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"fmt"
 
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -68,7 +69,12 @@ type Options struct {
 // unified, HTML and JSON formats present the same canonical pairs.
 // Discovered warnings are returned even when formatting fails.
 func RenderDocs(left, right []Doc, opts Options) ([]byte, []manifest.Warning, error) {
-	paired, warnings, leftCopied, rightCopied := pair(left, right, opts)
+	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(opts))
+	out, err := renderPrepared(prepared, opts)
+	return out, prepared.Warnings, err
+}
+
+func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 	opts.Format = cmp.Or(opts.Format, FormatHuman)
 	var out []byte
 	var err error
@@ -76,16 +82,42 @@ func RenderDocs(left, right []Doc, opts Options) ([]byte, []manifest.Warning, er
 	case FormatDiff, FormatHTML:
 		var buf bytes.Buffer
 		encoder := output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}
-		err = encoder.Lines(changedPairs(paired))
+		lines, lineErr := output.PrepareLines(prepared)
+		err = lineErr
+		if err == nil {
+			names := output.PrepareNames([]string{""}, [][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)})
+			output.NameLines(lines, names[0])
+			err = encoder.Lines(lines)
+		}
 		if err == nil {
 			out = buf.Bytes()
 		}
 	case FormatJSON:
-		out, err = renderJSON(changes(paired, leftCopied, rightCopied), opts.Suppressed)
+		out, err = renderJSON(publicChanges(prepared), opts.Suppressed)
 	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
-		out, err = renderNative(paired, opts.Format)
+		report, nativeErr := prepared.Native()
+		err = nativeErr
+		if err == nil {
+			var buf bytes.Buffer
+			err = (output.Encoder{Writer: &buf, Format: output.Format(opts.Format)}).Native(report)
+			if err == nil {
+				out = buf.Bytes()
+			}
+		}
 	default:
 		err = fmt.Errorf("unsupported diff format %q", opts.Format)
 	}
-	return out, warnings, err
+	return out, err
+}
+
+func prepareDocs(docs []Doc) []diffprep.Doc {
+	out := make([]diffprep.Doc, len(docs))
+	for i, d := range docs {
+		out[i] = diffprep.Doc{Manifest: d.Manifest, Parent: diffprep.Parent(d.Parent)}
+	}
+	return out
+}
+
+func prepareOptions(opts Options) diffprep.Options {
+	return diffprep.Options{StripAttrs: opts.StripAttrs, StripFields: opts.StripFields, Normalize: opts.Normalize}
 }

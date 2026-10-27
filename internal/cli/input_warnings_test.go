@@ -41,7 +41,7 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 				t.Fatalf("expected one coverage warning: %s", advisories)
 			}
 			for _, diagnostic := range []string{
-				"Kustomization.kustomize.toolkit.fluxcd.io apps/affected: " + message,
+				"Kustomization apps/affected: " + message,
 				message,
 				"configuration transformations may rewrite plugin file operands",
 				"flate build all without --base or --path-orig",
@@ -70,7 +70,7 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 				return
 			}
 			roster, _, _ := strings.Cut(strings.TrimSpace(stdout), "\n\n")
-			assert.Equal(t, roster, "✓  Kustomization.kustomize.toolkit.fluxcd.io  infra/selected")
+			assert.Equal(t, roster, "✓  Kustomization  infra/selected")
 			verdict := strings.TrimSpace(stdout[strings.LastIndex(stdout, "\n\n")+2:])
 			counts, _, _ := strings.Cut(verdict, "   ")
 			assert.Equal(t, counts, "✓ 1 passed")
@@ -131,7 +131,7 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 			for _, side := range []struct {
 				name, block string
 			}{{"orig", stderr[origStart:currentStart]}, {"current", stderr[currentStart:]}} {
-				want := "Kustomization.kustomize.toolkit.fluxcd.io apps/affected: " + message
+				want := "Kustomization apps/affected: " + message
 				if strings.Count(side.block, message) != 1 || !strings.Contains(side.block, want) {
 					t.Fatalf("expected one attributed %s warning: %s", side.name, side.block)
 				}

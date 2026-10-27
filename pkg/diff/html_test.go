@@ -49,23 +49,23 @@ func TestRenderHTML_Changed(t *testing.T) {
 
 	for _, want := range []string{
 		"<!doctype html>",
-		`<table class="view side">`,                   // side-by-side view present
-		`<table class="view unified">`,                // unified view present
-		`id="view-btn"`,                               // side ⇄ unified toggle
-		`id="theme-btn"`,                              // light/dark toggle
-		`class="tree-leaf"`,                           // sidebar navigation tree
-		`id="filter"`,                                 // sidebar resource filter box
-		`class="wd"`,                                  // word-level intra-line highlight (the "2"→"3" change)
-		"body.chroma.dark",                            // dark-theme variables present
-		".chroma.dark .nt",                            // dark chroma token rule (dual-theme highlighting)
-		`<span class="nt">`,                           // chroma YAML key token → highlighting present
-		".chroma.light .nt",                           // light token rule is scoped so colors actually apply
-		"status status-changed",                       // changed chip
-		`class="diff-code diff-del"`,                  // removed line cell (side view)
-		`class="diff-code diff-add"`,                  // added line cell
-		"1 changed",                                   // summary count
-		"ConfigMap apps/web",                          // per-resource title
-		"HelmRelease.helm.toolkit.fluxcd.io apps/web", // parent attribution
+		`<table class="view side">`,    // side-by-side view present
+		`<table class="view unified">`, // unified view present
+		`id="view-btn"`,                // side ⇄ unified toggle
+		`id="theme-btn"`,               // light/dark toggle
+		`class="tree-leaf"`,            // sidebar navigation tree
+		`id="filter"`,                  // sidebar resource filter box
+		`class="wd"`,                   // word-level intra-line highlight (the "2"→"3" change)
+		"body.chroma.dark",             // dark-theme variables present
+		".chroma.dark .nt",             // dark chroma token rule (dual-theme highlighting)
+		`<span class="nt">`,            // chroma YAML key token → highlighting present
+		".chroma.light .nt",            // light token rule is scoped so colors actually apply
+		"status status-changed",        // changed chip
+		`class="diff-code diff-del"`,   // removed line cell (side view)
+		`class="diff-code diff-add"`,   // added line cell
+		"1 changed",                    // summary count
+		"ConfigMap apps/web",           // per-resource title
+		"HelmRelease apps/web",         // parent attribution
 		"&lt;resource&gt;", "&lt;parent&gt;", "apps/&lt;path&gt;", "&lt;yaml&gt;",
 		// Column widths must live on <col>: the tables are table-layout:fixed,
 		// whose column sizing comes from the first row — usually a colspan

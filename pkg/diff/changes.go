@@ -2,8 +2,8 @@ package diff
 
 import (
 	"bytes"
-	"reflect"
 
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -58,73 +58,8 @@ type Change struct {
 // Warnings identify shadowed documents.
 // opts.Format is ignored.
 func Changes(left, right []Doc, opts Options) ([]Change, []manifest.Warning) {
-	paired, warnings, leftCopied, rightCopied := pair(left, right, opts)
-	return changes(paired, leftCopied, rightCopied), warnings
-}
-
-func changes(paired []pairedResource, leftCopied, rightCopied bool) []Change {
-	out := make([]Change, 0, len(paired))
-	for _, p := range paired {
-		status, differs := classify(p.a, p.b)
-		if !differs {
-			continue
-		}
-		if !leftCopied {
-			p.a = manifest.DeepCopyMap(p.a)
-		}
-		if !rightCopied {
-			p.b = manifest.DeepCopyMap(p.b)
-		}
-		out = append(out, Change{
-			Parent:     p.parent,
-			APIVersion: p.apiVersion,
-			Kind:       p.resource.Kind,
-			Namespace:  p.resource.Namespace,
-			Name:       p.resource.Name,
-			Status:     status,
-			Old:        p.a,
-			New:        p.b,
-			OldChart:   p.aChart,
-			NewChart:   p.bChart,
-		})
-	}
-	return out
-}
-
-// classify reports the change status of a paired resource and whether it
-// differs at all. old/new are the normalized sides (nil when the
-// resource is absent on that side). A both-present pair that is
-// DeepEqual after normalization is unchanged (differs=false) and dropped.
-func classify(old, nw map[string]any) (status ChangeStatus, differs bool) {
-	switch {
-	case old == nil:
-		return StatusAdded, true
-	case nw == nil:
-		return StatusRemoved, true
-	case reflect.DeepEqual(old, nw):
-		return "", false
-	default:
-		return StatusChanged, true
-	}
-}
-
-// chartLabel returns a manifest's "helm.sh/chart" label
-// ("<name>-<version>"), or "" when the manifest is nil or carries no such
-// label. Read before normalization strips it.
-func chartLabel(m map[string]any) string {
-	if m == nil {
-		return ""
-	}
-	meta, ok := m["metadata"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	labels, ok := meta["labels"].(map[string]any)
-	if !ok {
-		return ""
-	}
-	s, _ := labels[helmChartLabel].(string)
-	return s
+	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(opts))
+	return publicChanges(prepared), prepared.Warnings
 }
 
 func renderJSON(changes []Change, suppressed []Suppression) ([]byte, error) {
@@ -134,4 +69,17 @@ func renderJSON(changes []Change, suppressed []Suppression) ([]byte, error) {
 		Suppressed []Suppression `json:"suppressed"`
 	}{changes, append([]Suppression{}, suppressed...)})
 	return buf.Bytes(), err
+}
+
+func publicChanges(prepared diffprep.Prepared) []Change {
+	out := make([]Change, 0, len(prepared.Pairs))
+	for c, status := range prepared.Changes() {
+		out = append(out, Change{
+			Parent: Parent(c.Parent), APIVersion: c.APIVersion,
+			Kind: c.Resource.Kind, Namespace: c.Resource.Namespace, Name: c.Resource.Name,
+			Status: ChangeStatus(status), Old: c.Old, New: c.New,
+			OldChart: c.OldChart, NewChart: c.NewChart,
+		})
+	}
+	return out
 }

@@ -328,7 +328,7 @@ func TestRun_DiffJSON(t *testing.T) {
 	stdout, stderr, code := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
 		"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
 	assert.Equal(t, code, 1)
-	assert.Equal(t, strings.Count(stderr, "flate error:"), 1)
+	assert.Equal(t, strings.Count(stderr, "✗ 1 failed"), 1)
 	var got struct{ Changes, Suppressed []map[string]any }
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 		t.Fatal(err)
@@ -360,7 +360,7 @@ func TestRun_DiffJSON_Empty(t *testing.T) {
 			stdout, stderr, code := runCLI(t, "diff", verb, "--path", path, "--path-orig", path,
 				"--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
 			assert.Equal(t, code, 0)
-			assert.Equal(t, strings.HasPrefix(stderr, persistenceNotice), true)
+			assert.Equal(t, strings.Contains(stderr, persistenceMessage), true)
 			assert.Equal(t, strings.Count(stderr, "--path and --path-orig resolve to the same root"), 2)
 			assert.Equal(t, strings.Count(stderr, "snapshot:"), 2)
 			var compact bytes.Buffer
@@ -464,10 +464,9 @@ spec:
 					name string
 					want bool
 				}{{"orig", tc.wantOrig}, {"current", tc.wantCurrent}} {
-					_, block, found := strings.Cut(stderr, side.name+" snapshot:")
-					block, _, _ = strings.Cut(block, "snapshot:")
-					note := "HelmRelease.helm.toolkit.fluxcd.io apps/demo: required valuesFrom " + tc.kind + "/apps/extra-values omitted from offline render"
-					assert.Equal(t, found && strings.Contains(block, note), side.want)
+
+					note := "HelmRelease apps/demo: required valuesFrom " + tc.kind + "/apps/extra-values omitted from offline render"
+					assert.Equal(t, strings.Contains(stderr, side.name+" snapshot: "+note), side.want)
 				}
 				if tc.resource == "other" {
 					assert.Equal(t, stdout, "")
@@ -553,7 +552,7 @@ data: {greeting: hola}
 			if tc.changed {
 				assert.Equal(t, stderr, persistenceNotice)
 			} else {
-				assert.Equal(t, strings.HasPrefix(stderr, persistenceNotice), true)
+				assert.Equal(t, strings.Contains(stderr, persistenceMessage), true)
 				assert.Equal(t, strings.Count(stderr, "no changes detected"), 2)
 				assert.Equal(t, strings.Count(stderr, "snapshot:"), 2)
 			}
@@ -599,7 +598,7 @@ data: {greeting: hola}
 				t.Errorf("external source must not render local manifests:\n%s", stdout)
 			}
 			if tc.warn {
-				for _, want := range []string{"orig snapshot", "current snapshot", "Kustomization.kustomize.toolkit.fluxcd.io gitops-system/apps", "external source", "GitRepository.source.toolkit.fluxcd.io/gitops-system/home-kubernetes", "not rendered"} {
+				for _, want := range []string{"orig snapshot", "current snapshot", "Kustomization gitops-system/apps", "external source", "GitRepository.source.toolkit.fluxcd.io/gitops-system/home-kubernetes", "not rendered"} {
 					if !strings.Contains(stderr, want) {
 						t.Errorf("missing disclosure %q: %s", want, stderr)
 					}
@@ -741,7 +740,7 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 			if strings.Contains(stdout, "hola") {
 				t.Errorf("external baseline rendered local manifests:\n%s", stdout)
 			}
-			if !strings.Contains(stderr, "Kustomization.kustomize.toolkit.fluxcd.io gitops-system/apps: external source") || strings.Contains(stderr, "current snapshot") {
+			if !strings.Contains(stderr, "Kustomization gitops-system/apps: external source") || strings.Contains(stderr, "current snapshot") {
 				t.Errorf("want only baseline external-source disclosure: %s", stderr)
 			}
 		})
@@ -802,11 +801,11 @@ spec: {url: "https://example.invalid/external.git", interval: 1h}
 			currentWarning := strings.Index(stderr, "current snapshot:")
 			errorAt := strings.Index(stderr, "no Kustomization named")
 			if tc.warn {
-				if origWarning < 0 || currentWarning <= origWarning || strings.Count(stderr, "Kustomization.kustomize.toolkit.fluxcd.io beta/external-apps: external source GitRepository.source.toolkit.fluxcd.io/beta/external") != 2 || strings.Count(stderr, "not rendered") != 2 {
+				if origWarning < 0 || currentWarning <= origWarning || strings.Count(stderr, "Kustomization beta/external-apps: external source GitRepository.source.toolkit.fluxcd.io/beta/external") != 2 || strings.Count(stderr, "not rendered") != 2 {
 					t.Errorf("want orig then current external-source disclosure: %s", stderr)
 				}
-				if tc.code != 0 && (errorAt < 0 || errorAt <= currentWarning) {
-					t.Errorf("missing-name error must follow both warnings: %s", stderr)
+				if tc.code != 0 && (errorAt < 0 || errorAt >= origWarning) {
+					t.Errorf("missing-name error must precede warnings: %s", stderr)
 				}
 			} else if strings.Contains(stderr, "external source") {
 				t.Errorf("unrelated external source was disclosed: %s", stderr)

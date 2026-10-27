@@ -32,7 +32,6 @@ type Provider interface {
 }
 
 type dataReader interface {
-	GetObject(manifest.NamedResource) manifest.BaseManifest
 	ReferenceFacts(manifest.NamedResource, *manifest.DiscoveryIndex) store.ReferenceFacts
 }
 
@@ -82,7 +81,6 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 	facts := p.s.ReferenceFacts(id, nil)
 	input := Input{}
 	self, independent := false, false
-	var declarations []manifest.NamedResource
 	for _, production := range facts.Productions {
 		self = self || production.Owner == p.owner && p.owner != (manifest.NamedResource{})
 		if production.Owner != (manifest.NamedResource{}) && production.Owner != p.owner && !slices.Contains(input.Materializers, production.Owner) {
@@ -93,12 +91,20 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 			independent = independent || production.Owner == (manifest.NamedResource{}) && production.Path != ""
 		} else {
 			input.Generated = true
-			declarations = append(declarations, production.Declaration)
 		}
 	}
 	input.Private = self
-	if p.owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0 {
+	allowData := p.owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0
+	if allowData {
 		input.Data = facts.Data
+		if input.Data == nil {
+			for _, candidate := range facts.ReferenceData {
+				if candidate.OfflineData != nil {
+					input.Data, input.Offline = candidate.OfflineData, true
+					break
+				}
+			}
+		}
 	}
 	pending := false
 	if reads, ok := p.s.(interface {
@@ -107,25 +113,16 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 		pending = len(reads.UnsettledProducers(id)) != 0
 	}
 	if input.Data == nil && p.wipeSecrets && !input.Offline && !pending {
-		for _, declarationID := range declarations {
-			declaration := p.s.GetObject(declarationID)
-			if declaration == nil {
+		for _, candidate := range facts.ReferenceData {
+			if len(candidate.DeclaredKeys) == 0 {
 				continue
 			}
-			for _, target := range manifest.ProducerTargets(declaration, id) {
-				if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
-					continue
-				}
-				data := make(map[string]any, len(target.DeclaredKeys))
-				for _, key := range target.DeclaredKeys {
-					data[key] = manifest.ValuePlaceholder(key)
-				}
-				input.Data = &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: data}
-				break
+			data := make(map[string]any, len(candidate.DeclaredKeys))
+			for _, key := range candidate.DeclaredKeys {
+				data[key] = manifest.ValuePlaceholder(key)
 			}
-			if input.Data != nil {
-				break
-			}
+			input.Data = manifest.NewSecret(id, nil, data)
+			break
 		}
 	}
 	if facts.Supplied != nil {

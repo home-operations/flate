@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -70,7 +71,7 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 	effective := &manifest.OCIRepository{
 		Name: "app-template", Namespace: "apps", URL: "oci://" + strings.TrimPrefix(server.URL, "https://") + "/app-template",
 		Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "4.4.0"},
-		Interval:      metav1.Duration{Duration: time.Hour},
+		Interval:      &metav1.Duration{Duration: time.Hour},
 		LayerSelector: &sourcev1.OCILayerSelector{MediaType: mediaType, Operation: sourcev1.OCILayerCopy},
 	}
 	warm, err := sourcecache.New(t.Context(), root)
@@ -104,10 +105,9 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 		s := o.store
 		parent := &manifest.Kustomization{Name: "materializer", Namespace: effective.Namespace}
 		raw := *effective
-		raw.Interval, raw.LayerSelector = metav1.Duration{}, nil
-		hr := &manifest.HelmRelease{Name: "consumer", Namespace: effective.Namespace, Chart: manifest.HelmChart{
-			Name: "app-template", Source: effective.Named(),
-		}}
+		raw.Interval, raw.LayerSelector = &metav1.Duration{}, nil
+		hr := &manifest.HelmRelease{Name: "consumer", Namespace: effective.Namespace, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: effective.Name}}
+
 		s.AddObjects([]manifest.BaseManifest{parent, &raw, hr})
 		s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "materializing peers"})
 		o.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
@@ -175,7 +175,7 @@ func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
 	}
 	t.Logf("source=%s interval=%s layerSelector=%+v attempts=%d requests=%d stdout=%q", effective.Named(), effective.Interval.Duration, effective.LayerSelector, attempts.Load(), requests.Load(), outputs[0])
 	control := *effective
-	control.Interval = metav1.Duration{}
+	control.Interval = &metav1.Duration{}
 	owner := cachetest.New(t, root, sourcecache.New)
 	_, err = (&oci.Fetcher{Cache: owner, Network: network}).Fetch(ctx, &control, &reads, sourcecache.Policy{})
 	if err == nil || attempts.Load() == 0 || requests.Load() == 0 {

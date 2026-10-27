@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"io"
 	"io/fs"
 	"maps"
@@ -164,7 +166,9 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				if tc.marker != "" && !hasRenderField(second, "marker", tc.marker) {
 					t.Fatal(second)
 				}
-				assert.Diff(t, hr, original)
+				if diff := cmp.Diff(original, hr, cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
+					t.Fatal(diff)
+				}
 				for _, revision := range []string{"6.14.0@" + next, "invalid"} {
 					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: held, LocalPath: dir, Digest: next, Revision: revision})
 					_, receipt3, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
@@ -1571,7 +1575,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 			t.Skipf("requires clean VCS-stamped test binary: %s", cache.RenderPersistenceDisabledReason())
 		}
 		root, st, hr := sourceValuesCacheFixture(t)
-		artifact := st.GetArtifact(hr.ChartSource(), store.ArtifactContent)
+		artifact := st.GetArtifact(hr.ChartSource(), store.ArtifactContent).(*store.SourceArtifact)
 		testutil.WriteFile(t, root, "charts/demo/prod.yaml", "marker: packaged\n")
 		hr.Chart.Source.Kind = manifest.KindExternalArtifact
 		hr.ChartValuesFiles = []string{"prod.yaml"}

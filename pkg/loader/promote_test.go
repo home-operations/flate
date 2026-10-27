@@ -243,6 +243,7 @@ spec:
 	assert.Equal(t, spec["chart"].(map[string]any)["spec"].(map[string]any)["version"], any("2.0.0"))
 	record, _ := l.Index.Lookup(hrID)
 	assert.Diff(t, record.Refs, []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "apps-podinfo-dev"},
 		{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"},
 		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"},
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"},
@@ -282,7 +283,7 @@ spec:
 		assert.Diff(t, hr.Inputs, []string{"kustomization.yaml", "value.txt"})
 		assert.Equal(t, generated.File, "kustomization.yaml")
 		assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
-		assert.Diff(t, hr.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
+		assert.Diff(t, hr.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "apps-retained"}, {Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
 	})
 	for _, tc := range []struct {
 		name   string

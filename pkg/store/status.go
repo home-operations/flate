@@ -347,6 +347,20 @@ func (s *Store) GetStatus(id manifest.NamedResource) (StatusInfo, bool) {
 	return sh.conditions[id].statusInfo()
 }
 
+// ReportStatus returns status and whether the representative is hidden from reports.
+// A missing Ready condition has an empty status.
+func (s *Store) ReportStatus(id manifest.NamedResource) (StatusInfo, bool) {
+	sh := s.shardFor(id)
+	sh.mu.RLock()
+	defer sh.mu.RUnlock()
+	hidden := sh.reportHiddenLocked(id)
+	if sh.derived && sh.cells[id].hidden {
+		return StatusInfo{}, hidden
+	}
+	info, _ := sh.conditions[id].statusInfo()
+	return info, hidden
+}
+
 // conditionEqual reports whether two conditions carry the same
 // observable state. LastTransitionTime is intentionally ignored — it
 // is reset on every transition by the controller-runtime libraries

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"io/fs"
 	"runtime"
 	"testing"
@@ -461,7 +462,7 @@ func TestEmit_MetadataRefreshFingerprintReuse(t *testing.T) {
 	defer stopObjects()
 	stopStatus := s.AddListener(store.EventStatusUpdated, func(manifest.NamedResource, any) { statuses++ }, false)
 	defer stopStatus()
-	if _, handled, err := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input", &store.Emission{}); !handled || err != nil || s.GetArtifact(childID, store.ArtifactContent) != before || arrivals != 0 || statuses != 0 {
+	if _, handled, err := newExecution(c, childID).FingerprintDedup(childID, "effective-owner-input", &store.Emission{}); !handled || err != nil || s.GetArtifact(childID, store.ArtifactContent).(*store.Emission).Fingerprint != before.(*store.Emission).Fingerprint || arrivals != 0 || statuses != 0 {
 		t.Fatalf("metadata refresh discarded current artifact or replayed work: handled=%t error=%v arrivals=%d statuses=%d", handled, err, arrivals, statuses)
 	}
 	publish("third", "different")
@@ -655,7 +656,7 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps",
 		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}}
-	release := &manifest.HelmRelease{Name: "release", Namespace: "apps",
+	release := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}, Name: "release", Namespace: "apps",
 		Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "chart"}}}
 	for _, obj := range []manifest.BaseManifest{producer, chart, consumer, release} {
 		s.AddObject(obj)
@@ -714,7 +715,7 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		&manifest.ExternalArtifact{Name: "child"},
 		&manifest.Kustomization{Name: "child"},
 		&manifest.HelmChartSource{Name: "child"},
-		&manifest.HelmRelease{Name: "child"},
+		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "child"},
 		&manifest.ResourceSet{Name: "child"},
 		&manifest.ResourceSetInputProvider{Name: "child"},
 		&manifest.ConfigMap{Name: "child"},
@@ -977,7 +978,9 @@ func TestFingerprintDedup_AcceptedReceipt(t *testing.T) {
 				if branch == "borrowed" {
 					progress := newExecution(controller, owner.Named())
 					defer progress.Retire()
-					partial := store.Emission{}
+					partialDoc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "progress", "namespace": "apps"}}
+					partialChildren, partialDocs, partialFailures := controller.ParseChildren(owner, testutil.DocumentOccurrences([]map[string]any{partialDoc}), manifest.ParseDocOptions{})
+					partial := store.Emission{Children: partialChildren, Manifests: partialDocs, Failures: partialFailures}
 					progress.Emit(owner.Named(), &partial, nil)
 					if st.GetArtifact(owner.Named(), store.ArtifactContent).(*store.Emission).Complete {
 						t.Fatal("fixture did not preserve a borrowed complete predecessor")

@@ -620,7 +620,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if tt.present {
 				detail = "missing username/password"
 			}
-			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
+			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: &metav1.Duration{Duration: time.Hour}}
 			fetchErr := src.MissingSecretErr(repo.Named(), secret.Name, detail)
 			if tt.plain {
 				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrMissingSecret, secret.Name, detail)
@@ -727,7 +727,7 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			t.Parallel()
 			f := &fallbackFetcher{}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindOCIRepository: f})
-			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
+			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: &metav1.Duration{Duration: time.Hour}}
 			st.AddObject(repo)
 
 			if controllertest.Reconcile(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}, 0) {

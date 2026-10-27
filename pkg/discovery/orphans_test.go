@@ -8,6 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -51,8 +52,10 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				view[path.Join(tc.chartPath, "Chart.yaml")] = &fstest.MapFile{Data: []byte("apiVersion: v2\nname: demo\nversion: 1.0.0\n")}
 				source := &manifest.GitRepository{Name: "source", Namespace: "default"}
 				release := &manifest.HelmRelease{Name: "demo", Namespace: "default", Chart: manifest.HelmChart{Name: tc.chartPath, Source: source.Named()}}
+				release.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: tc.chartPath,
+					SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: source.Name}}}
 				st.AddObjects([]manifest.BaseManifest{source, release})
-				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent))
+				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
 				l.Index.Records[release.Named()] = manifest.DiscoveryRecord{File: "release.yaml", Refs: []manifest.NamedResource{source.Named()}}
 				if err := l.FinalizeIndex(t.Context(), root); err != nil {
 					t.Fatal(err)
@@ -220,7 +223,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.AddObject(ks)
 	source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
 	st.AddObject(source)
-	st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent))
+	st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
 	l := loader.New(st)
 	l.Options.WipeSecrets = false
 	if err := l.FinalizeIndex(t.Context(), dir); err != nil {
@@ -293,7 +296,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 				st.AddObject(ks)
 				source := &manifest.GitRepository{Name: "source", Namespace: ks.Named().Namespace}
 				st.AddObject(source)
-				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent))
+				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
 				l.SourceRoot = dir
 				if _, err := l.Load(t.Context(), dir); err != nil {
 					t.Fatal(err)

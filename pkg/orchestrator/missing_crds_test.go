@@ -160,7 +160,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if diff := cmp.Diff(o.store.GetObject(obj.Named()), obj, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+		if diff := cmp.Diff(o.store.GetObject(obj.Named()), obj, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"), cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
 			t.Fatalf("stored objects changed (-want +got): %s", diff)
 		}
 	}
@@ -264,7 +264,7 @@ func TestWarnMissingCRDs_NoAcceptedInputs(t *testing.T) {
 			}
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady})
-			st.SetArtifact(rs.Named(), &store.Emission{})
+			st.RecordEmitted(rs.Named(), &store.Emission{Complete: true}, nil)
 			o := &Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}}}
 			allocations[shape] = testing.AllocsPerRun(10, o.warnMissingCRDs)
 			assert.Equal(t, len(st.Warnings()), 0)
@@ -303,9 +303,10 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			s.UpdateStatus(rs.Named(), store.StatusInfo{Status: tc.status, Reason: "", Message: ""})
 		}
 		if tc.artifact {
-			s.SetArtifact(rs.Named(), &store.Emission{})
 			if tc.name == "source artifact" {
 				s.SetArtifact(rs.Named(), &store.SourceArtifact{})
+			} else {
+				s.RecordEmitted(rs.Named(), &store.Emission{Complete: true}, nil)
 			}
 		}
 		if tc.name == "no accepted inputs" {
@@ -375,7 +376,8 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			}
 			st.AddObject(owner)
 			st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady})
-			st.SetArtifact(owner.Named(), &store.Emission{})
+			st.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
+			st.SetArtifact(owner.Named(), &store.SourceArtifact{Key: "coexisting-content"})
 			if len(tc.gated)+len(tc.semantic) != 0 {
 				reads := new(store.ReadSet)
 				reads.Init(st, owner.Named(), nil)
@@ -415,7 +417,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			}
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			st.SetArtifact(rs.Named(), &store.Emission{})
+			st.RecordEmitted(rs.Named(), &store.Emission{Complete: true}, nil)
 			cfg := treeConfig{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}, Tree: Tree{}}
 			switch state {
 			case "foreign object":

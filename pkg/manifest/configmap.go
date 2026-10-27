@@ -15,6 +15,11 @@ type ConfigMap struct {
 	Data      map[string]any `json:"-" yaml:"-"`
 }
 
+// NewConfigMap constructs lookup data at the given identity without converting its payload.
+func NewConfigMap(id NamedResource, data map[string]any) *ConfigMap {
+	return &ConfigMap{Name: id.Name, Namespace: id.Namespace, Data: data}
+}
+
 // Named identifies the ConfigMap.
 func (c *ConfigMap) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindConfigMap].Group, Kind: KindConfigMap, Namespace: c.Namespace, Name: c.Name}
@@ -84,7 +89,7 @@ func parseConfigMap(doc map[string]any) (*ConfigMap, error) {
 		return nil, inputf("%s missing %s", KindConfigMap, missing)
 	}
 	data, _ := doc["data"].(map[string]any)
-	return &ConfigMap{Name: name, Namespace: ns, Data: data}, nil
+	return NewConfigMap(NamedResource{Name: name, Namespace: ns}, data), nil
 }
 
 // Secret is the core/v1 Secret.
@@ -93,6 +98,11 @@ type Secret struct {
 	Namespace  string         `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	Data       map[string]any `json:"-" yaml:"-"`
 	StringData map[string]any `json:"-" yaml:"-"`
+}
+
+// NewSecret constructs lookup data at the given identity without converting its payload.
+func NewSecret(id NamedResource, data, stringData map[string]any) *Secret {
+	return &Secret{Name: id.Name, Namespace: id.Namespace, Data: data, StringData: stringData}
 }
 
 // Named identifies the Secret.
@@ -218,7 +228,7 @@ func parseSecret(doc map[string]any) (*Secret, error) {
 	}
 	data, _ := doc["data"].(map[string]any)
 	stringData, _ := doc["stringData"].(map[string]any)
-	return &Secret{Name: name, Namespace: ns, Data: data, StringData: stringData}, nil
+	return NewSecret(NamedResource{Name: name, Namespace: ns}, data, stringData), nil
 }
 
 func (c *ConfigMap) kind() KindInfo { return kindTable[kindConfigMap].KindInfo }

@@ -2,6 +2,7 @@ package base
 
 import (
 	"context"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"slices"
 	"sync"
 	"testing"
@@ -106,7 +107,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	source := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
 	s.AddObject(source)
 	s.SetIncluded(source.Named(), false)
-	child := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: source.Named()}}
+	child := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name}, Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: source.Named()}}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}}}
 	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "/repo")
 	c.Configure(Options{Filter: filter, Index: index})
@@ -150,7 +151,7 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 			attempt := captureEmission(s, parent.Named(), &store.Emission{Fingerprint: manifest.Fingerprint("same"), Children: []store.Child{child}, Complete: true})
 			filter := change.NewFilter(change.NewSet([]string{"incoming.yaml"}), index, s, "/repo")
 			if mode == "cached" {
-				s.SetArtifact(parent.Named(), attempt)
+				s.RecordEmitted(parent.Named(), attempt, nil)
 			}
 			if mode == "accepted" {
 				s.RecordEmitted(parent.Named(), attempt, nil)

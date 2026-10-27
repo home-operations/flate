@@ -210,6 +210,11 @@ func (s *selectionSide) chartVersion(obj manifest.BaseManifest) string {
 	if !ok {
 		return ""
 	}
+	if owner, ok := obj.(interface{ ChartVersion() string }); ok {
+		if version := owner.ChartVersion(); version != "" {
+			return version
+		}
+	}
 	if chart, ok := s.run.store.GetObject(src).(interface{ ChartVersion() string }); ok {
 		return chart.ChartVersion()
 	}

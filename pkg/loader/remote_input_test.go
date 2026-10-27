@@ -96,7 +96,7 @@ func TestFinalizeIndex_RemoteInputs(t *testing.T) {
 				}
 				return
 			}
-			obj, ok := st.Get[*manifest.ConfigMap](id)
+			obj, ok := lookupDataForTest[*manifest.ConfigMap](t, st, id)
 			if mode == "remote-failure" {
 				assert.Equal(t, requests.Load(), int32(1))
 				assert.Equal(t, ok, false)
@@ -113,7 +113,7 @@ func TestFinalizeIndex_RemoteInputs(t *testing.T) {
 				assert.Diff(t, obj.Data, map[string]any{"VALUE": want})
 			}
 			id.Name = "sibling"
-			sibling, ok := st.Get[*manifest.ConfigMap](id)
+			sibling, ok := lookupDataForTest[*manifest.ConfigMap](t, st, id)
 			if !ok {
 				t.Fatal("ordinary input error stopped sibling materialization")
 			}

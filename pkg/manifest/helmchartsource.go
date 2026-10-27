@@ -13,11 +13,25 @@ import (
 // spec.chartRef. Distinct from the inline HelmChart projection that
 // lives next to HelmRelease.
 type HelmChartSource struct {
-	Name      string `json:"name"      yaml:"name"`
-	Namespace string `json:"namespace" yaml:"namespace"`
+	Name        string            `json:"name"      yaml:"name"`
+	Namespace   string            `json:"namespace" yaml:"namespace"`
+	Labels      map[string]string `json:"-" yaml:"-"`
+	Annotations map[string]string `json:"-" yaml:"-"`
 
 	sourcev1.HelmChartSpec `json:",inline" yaml:",inline"`
 }
+
+// NewHelmChartSource normalizes an owned typed HelmChart declaration.
+func NewHelmChartSource(cr sourcev1.HelmChart) *HelmChartSource {
+	cr.Spec.SourceRef.Kind = cmp.Or(cr.Spec.SourceRef.Kind, KindHelmRepository)
+	return &HelmChartSource{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, HelmChartSpec: cr.Spec}
+}
+
+// GetLabels returns the HelmChartSource's metadata.labels.
+func (h *HelmChartSource) GetLabels() map[string]string { return h.Labels }
+
+// GetAnnotations returns the HelmChartSource's metadata.annotations.
+func (h *HelmChartSource) GetAnnotations() map[string]string { return h.Annotations }
 
 // Named identifies the chart resource.
 func (h *HelmChartSource) Named() NamedResource {
@@ -56,8 +70,6 @@ func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (h *HelmChartSource) ProjectionCompatible(BaseManifest) bool { return true }
 
-// parseHelmChartSource decodes a standalone HelmChart CRD via the
-// source-controller typed schema.
 func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	var cr sourcev1.HelmChart
 	if err := decodeCR(doc, &cr, "HelmChart", SourceDomain); err != nil {
@@ -69,21 +81,20 @@ func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	if cr.Spec.SourceRef.Name == "" {
 		return nil, inputf("HelmChart missing spec.sourceRef.name")
 	}
-	cr.Spec.SourceRef.Kind = cmp.Or(cr.Spec.SourceRef.Kind, KindHelmRepository)
-	return &HelmChartSource{
-		Name:          cr.Name,
-		Namespace:     cr.Namespace,
-		HelmChartSpec: cr.Spec,
-	}, nil
+	return NewHelmChartSource(cr), nil
 }
 
 func (h *HelmChartSource) references(yield func(Reference) bool) {
 	kind := cmp.Or(h.SourceRef.Kind, KindHelmRepository)
 	chart := helmChartFromSource(h)
 	chartPath, files := chart.sourceInputs(h.ValuesFiles)
+	var gate GateStage
+	if h.SourceRef.Name != "" {
+		gate = GateInputs
+	}
 	yield(Reference{
 		NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, h.SourceRef.APIVersion), Kind: kind, Name: h.SourceRef.Name}, "", h.Namespace),
-		Use:           "source", Content: h.SourceRef.Name != "", Files: files, ChartPath: chartPath,
+		Use:           "source", Content: h.SourceRef.Name != "", Files: files, ChartPath: chartPath, Gate: gate,
 	})
 }
 

@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"fmt"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -58,7 +60,9 @@ spec:
 		if len(explicit) != 1 {
 			t.Fatalf("entry lost completed result: %+v", explicit)
 		}
-		assert.Diff(t, run.Result, explicit[0].Result)
+		if diff := cmp.Diff(explicit[0].Result, run.Result, cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
+			t.Fatal(diff)
+		}
 		for _, obj := range explicit[0].Store().ListObjects("", "") {
 			got, gotOK := run.Store().GetStatus(obj.Named())
 			want, wantOK := explicit[0].Store().GetStatus(obj.Named())

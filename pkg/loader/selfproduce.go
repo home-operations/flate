@@ -23,8 +23,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	if repoRoot == "" {
 		return nil
 	}
-	b := &selfProduceBuilder{idx: l.Index, store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
-		secrets: map[manifest.NamedResource]*manifest.Secret{}, emittedFiles: emittedFiles}
+	b := &selfProduceBuilder{idx: l.Index, store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents, emittedFiles: emittedFiles}
 	var generators []generatorRecord
 	incomplete := map[manifest.NamedResource][]string{}
 	var declarations []producerDeclaration
@@ -52,10 +51,10 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		}
 		if v.document != nil {
 			for _, g := range v.document.ConfigMapGenerator {
-				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), isConfigMap: true, args: g.GeneratorArgs, owner: v.owner, reader: l.documents})
+				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), isConfigMap: true, args: g.GeneratorArgs, owner: v.owner, source: v.source, reader: l.documents})
 			}
 			for _, g := range v.document.SecretGenerator {
-				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), args: g.GeneratorArgs, owner: v.owner, reader: l.documents})
+				generators = append(generators, generatorRecord{root: v.root, file: v.file, namespace: cmp.Or(v.namespace, g.Namespace, v.fallback), args: g.GeneratorArgs, owner: v.owner, source: v.source, reader: l.documents})
 			}
 			return nil
 		}
@@ -163,9 +162,6 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	if err := l.addGenerated(ctx, generators); err != nil {
 		return err
 	}
-	for _, id := range slices.SortedFunc(maps.Keys(b.secrets), manifest.NamedResource.Compare) {
-		l.Store.AddObject(b.secrets[id])
-	}
 	return nil
 }
 
@@ -203,17 +199,15 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 		if record.File == "" {
 			record.File = l.fileCoordinate(r.file)
 		}
-		if r.owner != (manifest.NamedResource{}) {
-			p := manifest.Production{Owner: r.owner, File: record.File}
-			if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
-				p.Source = ks.SourceID()
-				if p.Source.Name == "" || p.Source.Kind == "" {
-					p.Source = manifest.BootstrapSourceID
-				}
-			}
-			if !slices.Contains(record.Productions, p) {
-				record.Productions = append(record.Productions, p)
-			}
+		p := manifest.Production{Owner: r.owner, Source: r.source, File: l.fileCoordinate(r.file)}
+		if ks, ok := l.Store.Get[*manifest.Kustomization](r.owner); ok {
+			p.Source = ks.SourceID()
+		}
+		if p.Source.Name == "" || p.Source.Kind == "" {
+			p.Source = manifest.BootstrapSourceID
+		}
+		if !slices.Contains(record.Productions, p) {
+			record.Productions = append(record.Productions, p)
 		}
 		l.Index.Records[id] = record
 		obj, err := r.materialize(ctx, l.Options)
@@ -224,9 +218,8 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			slog.Debug("loader: skipping generator input", "file", r.file, "generator", r.args.Name, "error", err)
 			continue
 		}
-		if l.Store.GetObject(id) == nil {
-			l.Store.AddObject(obj)
-		}
+		record.ReferenceData = append(record.ReferenceData, manifest.ReferenceData{Production: p, OfflineData: obj.(manifest.Data)})
+		l.Index.Records[id] = record
 	}
 	return nil
 }
@@ -398,7 +391,6 @@ type selfProduceBuilder struct {
 	idx          *manifest.DiscoveryIndex
 	emittedFiles map[string][]manifest.NamedResource
 	store        *store.Store
-	secrets      map[manifest.NamedResource]*manifest.Secret
 	wipeSecrets  bool
 	err          error
 }
@@ -463,7 +455,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 		switch {
 		case info.Data:
 			if s, ok := obj.(*manifest.Secret); ok && !v.deferMaterialization {
-				b.materializeSecret(s, v.namespace, v.fallback)
+				b.recordSecret(s, id, p)
 			}
 		case info.Structural:
 			b.emittedFiles[coordinate] = appendUniqueProducer(b.emittedFiles[coordinate], v.owner)
@@ -484,22 +476,15 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 	return declarations, projectionErr
 }
 
-// materializeSecret retains SOPS stand-ins under the rendered namespace so
-// self-produced substituteFrom inputs are available before reconciliation.
-// Real Store objects win; the last SOPS Secret replaces earlier stand-ins.
-func (b *selfProduceBuilder) materializeSecret(s *manifest.Secret, baseNS, rootNS string) {
-	ns := manifest.Resolve(s.Named(), baseNS, rootNS).Namespace
-	if !b.wipeSecrets || b.store == nil || ns == "" {
+func (b *selfProduceBuilder) recordSecret(secret *manifest.Secret, id manifest.NamedResource, production manifest.Production) {
+	if !b.wipeSecrets || id.Namespace == "" || !secret.HasPlaceholder() {
 		return
 	}
-	if !s.HasPlaceholder() {
-		return
-	}
-	c := *s
-	c.Namespace = ns
-	if b.store.GetObject(c.Named()) == nil {
-		b.secrets[c.Named()] = &c
-	}
+	record := b.idx.Records[id]
+	data := manifest.NewSecret(id, secret.Data, secret.StringData)
+	// The last traversed SOPS declaration wins before unhashed generator candidates.
+	record.ReferenceData = append([]manifest.ReferenceData{{Production: production, OfflineData: data}}, record.ReferenceData...)
+	b.idx.Records[id] = record
 }
 
 func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration, scope []graphVisit) {
@@ -562,6 +547,9 @@ func (b *selfProduceBuilder) recordProducer(declaration producerDeclaration, can
 		r := b.idx.Records[target.NamedResource]
 		if !slices.Contains(r.Productions, p) {
 			r.Productions = append(r.Productions, p)
+		}
+		if len(target.DeclaredKeys) != 0 && !slices.ContainsFunc(r.ReferenceData, func(candidate manifest.ReferenceData) bool { return candidate.Production == p }) {
+			r.ReferenceData = append(r.ReferenceData, manifest.ReferenceData{Production: p, DeclaredKeys: target.DeclaredKeys})
 		}
 		b.idx.Records[target.NamedResource] = r
 		if v.owner != (manifest.NamedResource{}) {

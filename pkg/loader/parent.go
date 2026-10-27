@@ -210,11 +210,7 @@ func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (roo
 	if s.GetObject(ref) != nil {
 		return repoRoot, false, true
 	}
-	obj, _ := ref.DecodeIdentity()
-	_, entry := obj.(interface {
-		BootstrapAlias(string) (manifest.BaseManifest, *manifest.GitRepository)
-	})
-	return repoRoot, false, entry
+	return repoRoot, false, ref.CanBindLocal()
 }
 
 // Input aliases map source-relative readers and claims to their physical origin.

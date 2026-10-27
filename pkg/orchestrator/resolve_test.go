@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,6 +30,11 @@ import (
 type r4Fixture struct {
 	o                        *Orchestrator
 	reader, supplier, target manifest.NamedResource
+}
+
+func (f r4Fixture) rendered() bool {
+	output, _ := f.o.store.GetArtifact(f.reader, store.ArtifactContent).(*store.Emission)
+	return output != nil && output.Complete
 }
 
 func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixture {
@@ -71,7 +77,7 @@ func newR4Fixture(t *testing.T, readerKind, result string, required bool) r4Fixt
 		}
 		reader = ks
 	} else {
-		hr := &manifest.HelmRelease{Name: "reader", Namespace: "flux-system", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: manifest.BootstrapSourceID.Namespace, Name: manifest.BootstrapSourceID.Name}}, ValuesFrom: []manifest.ValuesReference{{Kind: target.Kind, Name: target.Name, Optional: true}}}
+		hr := &manifest.HelmRelease{Name: "reader", Namespace: "flux-system", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: manifest.BootstrapSourceID.Namespace, Name: manifest.BootstrapSourceID.Name}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace, APIVersion: manifest.SourceDomain + "/v1"}}}, ValuesFrom: []manifest.ValuesReference{{Kind: target.Kind, Name: target.Name, Optional: true}}}}
 		if required {
 			hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: target.Kind, Name: "cluster-vars"})
 		}
@@ -150,7 +156,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 		assessment := (dagDispatcher{f.o}).Dispatch(ctx, id, level)
 		if id == f.reader && !before {
 			first.Do(func() {
-				if assessment.Assessment.Outcome() != schedule.Blocked || f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
+				if assessment.Assessment.Outcome() != schedule.Blocked || f.rendered() {
 					t.Error("running Ready supplier admitted frozen absence")
 				}
 				parked <- struct{}{}
@@ -158,8 +164,9 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 		}
 		return assessment
 	}}
-	unsubArtifact := f.o.store.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
-		if id == f.reader {
+	unsubArtifact := f.o.store.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, value any) {
+		output, _ := value.(*store.Emission)
+		if id == f.reader && output != nil && output.Complete {
 			publications.Add(1)
 		}
 	}, false)
@@ -181,7 +188,7 @@ func testR4Running(t *testing.T, kind, result string, required bool) {
 		case err := <-done:
 			t.Fatalf("scheduler ended while supplier was running: %v", err)
 		}
-		if f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
+		if f.rendered() {
 			t.Error("reader published before supplier settled")
 		}
 		close(release)
@@ -563,13 +570,21 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 					t.Fatal("successor mutated the predecessor's frozen absence")
 				}
 				prior.Settle(t.Context(), manifest.DrainForce)
-				if f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
+				if f.rendered() {
 					t.Fatal("stale force assessment published output")
 				}
 				sched := schedule.New(f.o.tasks, dagDispatcher{f.o})
 				unsub := f.o.watchDAG(sched)
 				defer unsub()
-				sched.Seed([]schedule.NodeID{f.reader, f.supplier})
+				seeds := []schedule.NodeID{f.reader, f.supplier}
+				_, _, inventory := f.o.store.GetEmission(f.reader)
+				for _, child := range inventory.Children {
+					if child.Generated && manifest.KindOf(child.Obj).Runnable {
+						seeds = append(seeds, child.Obj.Named())
+					}
+				}
+				inventory.Finish()
+				sched.Seed(seeds)
 				assert.NoError(t, sched.Run(t.Context()))
 				output, _ := f.o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: f.reader.Namespace, Name: "output"})
 				if output == nil || output.Data["greeting"] != "exact" {
@@ -651,7 +666,7 @@ func TestResolve_OptionalQueuedSuccessor(t *testing.T) {
 						t.Error("queued supplier did not retain optional absence")
 					}
 					sched.OnArrival(f.supplier, true)
-					if started.Load() || f.o.store.GetArtifact(f.reader, store.ArtifactContent) != nil {
+					if started.Load() || f.rendered() {
 						t.Error("queued supplier started or admitted reader before a worker slot opened")
 					}
 					close(releaseKeeper)

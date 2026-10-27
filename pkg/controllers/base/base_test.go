@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -26,7 +27,7 @@ import (
 func TestExecution_Success(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
@@ -163,7 +164,7 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 func TestExecution_Failure(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
@@ -184,7 +185,7 @@ func TestExecution_Failure(t *testing.T) {
 func TestExecution_Panic(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
@@ -259,7 +260,7 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 			s.AddObject(hr)
 			id := hr.Named()
 			s.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
@@ -287,7 +288,7 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 			s.AddObject(hr)
 			c := base.New(s, nil)
 			src := &manifest.OCIRepository{Name: "source", Namespace: "ns"}
@@ -313,7 +314,7 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 		t.Run(fmt.Sprintf("direct/%q", message), func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			hr := &manifest.HelmRelease{Name: "app"}
+			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app"}
 			s.AddObject(hr)
 			controllertest.NewExecution(base.New(s, nil), hr.Named()).Dispatch(t.Context(), manifest.DrainNone, t,
 				func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
@@ -330,7 +331,7 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 func TestExecution_PreservesExternalFailure(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	id := hr.Named()
 
@@ -369,21 +370,21 @@ func TestExecution_Dispatch(t *testing.T) {
 		controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, &ran, reconcile)
 	}
 
-	susHR := &manifest.HelmRelease{Name: "suspended", Namespace: "ns", Suspend: true}
+	susHR := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Namespace: "ns", Suspend: true}
 	s.AddObject(susHR)
 	dispatch(susHR.Named())
 	if info, _ := s.GetStatus(susHR.Named()); info.Outcome() != store.OutcomeSuspended || info.Message != "suspended" {
 		t.Errorf("suspended HR status = %+v; want Ready/suspended via preGate", info)
 	}
 
-	pfHR := &manifest.HelmRelease{Name: "preflightfail", Namespace: "ns"}
+	pfHR := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "preflightfail", Namespace: "ns"}
 	s.AddObject(pfHR)
 	dispatch(pfHR.Named())
 	if info, _ := s.GetStatus(pfHR.Named()); info.Status != store.StatusFailed {
 		t.Errorf("preflight-failed HR status = %+v; want Failed", info)
 	}
 
-	hr := &manifest.HelmRelease{Name: "app", Namespace: "ns"}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 	s.AddObject(hr)
 	dispatch(hr.Named())
 	if info, _ := s.GetStatus(hr.Named()); info.Status != store.StatusReady {
@@ -404,9 +405,9 @@ func TestExecution_Dispatch(t *testing.T) {
 		outcome   store.Outcome
 		run       bool
 	}{
-		{"filtered", &manifest.HelmRelease{Name: "active"}, true, false, "unchanged", store.OutcomeUnchanged, false},
-		{"suspended before filter", &manifest.HelmRelease{Name: "suspended", Suspend: true}, true, false, "suspended", store.OutcomeSuspended, false},
-		{"suspended before preflight", &manifest.HelmRelease{Name: "suspended", Suspend: true}, false, true, "suspended", store.OutcomeSuspended, false},
+		{"filtered", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "active"}, true, false, "unchanged", store.OutcomeUnchanged, false},
+		{"suspended before filter", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Suspend: true}, true, false, "suspended", store.OutcomeSuspended, false},
+		{"suspended before preflight", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Suspend: true}, false, true, "suspended", store.OutcomeSuspended, false},
 		{"suspended chart before filter", chart, true, false, "suspended", store.OutcomeSuspended, false},
 		{"suspended chart before preflight", chart, false, true, "suspended", store.OutcomeSuspended, false},
 		{"active chart", &manifest.HelmChartSource{Name: "active-chart"}, false, false, "", store.OutcomePassed, true},
@@ -450,7 +451,7 @@ func TestExecution_Dispatch(t *testing.T) {
 			t.Run(fmt.Sprintf("lifetime/data=%t/failure=%t", pendingData, failure), func(t *testing.T) {
 				t.Parallel()
 				st := store.New()
-				obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+				obj := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps"}
 				gate := testutil.KustomizationID("apps", "gate")
 				st.AddObject(obj)
 				st.UpdateStatus(gate, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
@@ -533,7 +534,7 @@ func TestExecution_Dispatch(t *testing.T) {
 			st := store.New()
 			tasks := task.NewBounded(2)
 			parent := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
-			predicted := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			predicted := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps"}
 			predicted.Chart.Name = "predicted"
 			accepted := predicted.Clone()
 			accepted.Chart.Name = "accepted"
@@ -613,7 +614,7 @@ func TestFingerprintDedup(t *testing.T) {
 	if fp == "" || handled || err != nil {
 		t.Fatalf("first key = %q, handled=%v, err=%v", fp, handled, err)
 	}
-	s.SetArtifact(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs), Fingerprint: fp, Complete: true})
+	s.RecordEmitted(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs), Fingerprint: fp, Complete: true}, nil)
 	if _, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, "other", &store.Emission{}); handled || err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
@@ -644,7 +645,7 @@ func TestFingerprintDedup(t *testing.T) {
 	}
 	emptyStore := store.New()
 	emptyStore.AddObject(ks)
-	emptyStore.SetArtifact(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs)})
+	emptyStore.RecordEmitted(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs)}, nil)
 	if _, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).FingerprintDedup(id, []string{"one"}, &store.Emission{}); handled {
 		t.Error("empty stored fingerprint replayed")
 	}
@@ -661,7 +662,7 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 	s.AddObject(ks)
 	id := ks.Named()
 	fp, _, _ := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
-	s.SetArtifact(id, &store.Emission{Fingerprint: fp, Complete: true})
+	s.RecordEmitted(id, &store.Emission{Fingerprint: fp, Complete: true}, nil)
 	c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }})
 	_, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
 	if !handled || err == nil {
@@ -725,7 +726,7 @@ func TestExecution_PendingProgressKeepsConditionStamp(t *testing.T) {
 func TestExecution_GateReplacement(t *testing.T) {
 	t.Parallel()
 	st := store.New()
-	hr := &manifest.HelmRelease{Name: "reader", Namespace: "apps"}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "reader", Namespace: "apps"}
 	hr.Chart.Name = "before"
 	st.AddObject(hr)
 	c := base.New(st, task.NewBounded(2))
@@ -800,7 +801,7 @@ func TestExecution_RetainsReadinessOutcome(t *testing.T) {
 
 func TestFingerprintDedup_InputReplacement(t *testing.T) {
 	t.Parallel()
-	for _, path := range []string{"artifact", "borrowed", "nil", "unmarshalable", "absent", "suspended", "borrowed_capture"} {
+	for _, path := range []string{"borrowed", "nil", "unmarshalable", "absent", "suspended", "borrowed_capture"} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
@@ -821,8 +822,6 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			}
 			var content any = "A"
 			switch path {
-			case "artifact":
-				st.SetArtifact(input.Named(), &store.Emission{Fingerprint: prior.Fingerprint, Manifests: prior.Manifests})
 			case "borrowed", "borrowed_capture":
 				st.SetArtifact(input.Named(), nil)
 			case "nil":
@@ -832,7 +831,8 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			case "absent":
 				st.DeleteObject(input.Named())
 			}
-			before := st.GetArtifact(input.Named(), store.ArtifactContent)
+			_, _, before := st.GetEmission(input.Named())
+			defer before.Finish()
 			var fp string
 			var handled bool
 			var err error
@@ -855,7 +855,9 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			} else {
 				fp, handled, err = run.FingerprintDedup(input.Named(), content, &store.Emission{})
 			}
-			if fp != "" || !handled || err == nil || st.GetArtifact(input.Named(), store.ArtifactContent) != before {
+			_, _, after := st.GetEmission(input.Named())
+			defer after.Finish()
+			if fp != "" || !handled || err == nil || len(after.Manifests) != len(before.Manifests) {
 				t.Fatalf("stale A accepted: key=%q handled=%t err=%v", fp, handled, err)
 			}
 			if path != "absent" && path != "suspended" {
@@ -874,7 +876,7 @@ func TestDispatchNode_EffectiveSuspension(t *testing.T) {
 	tasks := task.NewBounded(2)
 	c := base.New(st, tasks)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-	input := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+	input := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "child", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{parent, input})
 	publish := func(obj *manifest.HelmRelease) {
 		t.Helper()
@@ -946,7 +948,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				defer next.Finish()
 				next.Children, next.Fingerprint, next.Complete = []store.Child{{Obj: child}}, fingerprint, complete
 				if path == "current" {
-					s.SetArtifact(parent.Named(), &next)
+					s.RecordEmitted(parent.Named(), &next, nil)
 				} else {
 					s.RecordEmitted(parent.Named(), &next, nil)
 					if !complete && s.GetArtifact(parent.Named(), store.ArtifactContent).(*store.Emission).Fingerprint != "" {

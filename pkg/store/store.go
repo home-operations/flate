@@ -80,8 +80,14 @@ type objectCell struct {
 	binding                                        *Input
 	support                                        *Input
 	excluded, rooted, retired, hidden, independent bool
-	preflight                                      string
+	// Auxiliary follows the emitted contender; current static authority still wins.
+	auxiliary bool
+	preflight string
 	authority
+}
+
+func (c *objectCell) bound() bool {
+	return (c.binding == nil || c.binding.current()) && (c.support == nil || c.support.productionCurrent())
 }
 
 type objectBucket struct {

@@ -1,0 +1,17 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: demo, namespace: apps}
+spec:
+  interval: 5m
+  releaseName: visible-release
+  targetNamespace: rendered
+  chart:
+    kind: OCIRepository
+    metadata:
+      labels: {custom: retained}
+      annotations: {custom: retained}
+    spec:
+      interval: 1m
+      url: oci://registry.invalid/demo
+      ref: {tag: 0.1.0}
+      insecure: true

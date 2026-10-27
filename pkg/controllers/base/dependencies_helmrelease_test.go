@@ -43,7 +43,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			target := &manifest.HelmRelease{Name: "target", Namespace: "apps"}
+			target := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "target", Namespace: "apps"}
 			var changes *change.Set
 			if tc.active {
 				files := []string{"consumer.yaml"}
@@ -52,7 +52,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				}
 				changes = change.NewSet(files)
 			}
-			hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}}}
+			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}}}
 			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, store.New(), "")
 			st := store.New()
 			c := gateExecution(New(st, task.NewBounded(2)), manifest.NamedResource{})
@@ -66,7 +66,7 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 			if tc.retain {
 				want = []manifest.DependencyRef{{NamedResource: target.Named(), ReadyExpr: new("dep.spec.suspend == false")}}
 			}
-			assert.Diff(t, sortedDependencies(c.dependenciesForTest(hr)), sortedDependencies(want))
+			assert.Diff(t, sortedDependencies(c.dependencies(hr, manifest.GateInputs)), sortedDependencies(want))
 			if len(filter.KeepNames()) != size || len(hr.DependsOn) != 1 {
 				t.Error("ordering collection must preserve keep and input edges")
 			}
@@ -76,9 +76,9 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c := gateExecution(New(store.New(), task.NewBounded(2)), manifest.NamedResource{})
-	hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", DependsOn: []helmv2.DependencyReference{{Namespace: "default", Name: "other"}, {Name: "second"}, {Name: "third"}}}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "demo", Namespace: "default", DependsOn: []helmv2.DependencyReference{{Namespace: "default", Name: "other"}, {Name: "second"}, {Name: "third"}}}
 	assert.Equal(t, testing.AllocsPerRun(100, func() { c.dependencies(hr, manifest.GateInputs) }), float64(1))
-	got := c.dependenciesForTest(hr)
+	got := c.dependencies(hr, manifest.GateInputs)
 	assert.Diff(t, got, []manifest.DependencyRef{{NamedResource: testutil.HelmReleaseID("default", "other")}, {NamedResource: testutil.HelmReleaseID("default", "second")}, {NamedResource: testutil.HelmReleaseID("default", "third")}})
 	got[0].Name = "mutated"
 	assert.Equal(t, hr.DependsOn[0].Name, "other")
@@ -117,7 +117,7 @@ func TestDependencies_HelmRelease_DeclarationAvailabilityUsesCommonGate(t *testi
 	st := store.New()
 	c := New(st, nil)
 	parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
-	child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+	child := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "child", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{parent, child})
 	st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		child.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},

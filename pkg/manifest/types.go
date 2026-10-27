@@ -40,11 +40,6 @@ func (n NamedResource) IsCRD() bool {
 	return n.Group == apix.GroupName && n.Kind == KindCustomResourceDefinition
 }
 
-// ReportHidden reports whether the identity is internal to reconciliation reports.
-func (n NamedResource) ReportHidden() bool {
-	return n == BootstrapSourceID || n.Group == SourceDomain && n.Kind == KindHelmChart
-}
-
 // Resolve applies forced, authored and fallback namespace precedence without changing other fields.
 func Resolve(id NamedResource, forced, fallback string) NamedResource {
 	id.Namespace = cmp.Or(forced, id.Namespace, fallback)
@@ -210,14 +205,15 @@ func MapDependsOn(obj BaseManifest, name, namespace func(string) string) BaseMan
 	return obj
 }
 
-func credentialReferences(yield func(Reference) bool, namespace string, refs ...*LocalObjectReference) {
+func credentialReferences(yield func(Reference) bool, namespace string, refs ...*LocalObjectReference) bool {
 	uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
 	for i, ref := range refs {
 		if ref != nil && !yield(Reference{NamedResource: Resolve(NamedResource{Kind: KindSecret, Name: ref.Name}, "", namespace),
 			Use: uses[i], Position: i, Content: true}) {
-			return
+			return false
 		}
 	}
+	return true
 }
 
 // DrainLevel controls dependency failure classification at the DAG fixpoint.
@@ -336,7 +332,7 @@ func ContentInputs(obj BaseManifest, reverse bool) iter.Seq[NamedResource] {
 		for ref := range References(obj, ReferenceRelations) {
 			include := ref.Content || ref.Use == "substituteFrom" && ref.Name != ""
 			if reverse {
-				include = ref.Use == "source" || ref.Use == "artifact" || ref.Use == "chart" || ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Name != ""
+				include = ref.Content || ref.Use == "source" || ref.Use == "artifact" || ref.Use == "chart" || ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Name != ""
 			}
 			if include && !yield(ref.NamedResource) {
 				return

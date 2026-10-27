@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
@@ -178,7 +179,7 @@ func TestFilter_AncestorKSDoesNotPullInUnrelatedSiblings(t *testing.T) {
 	plex := &manifest.Kustomization{Name: "plex", Namespace: "media", Path: "apps/media/plex/app"}
 	atuin := &manifest.Kustomization{Name: "atuin", Namespace: "default", Path: "apps/default/atuin/app"}
 	source := &manifest.GitRepository{Name: "source", Namespace: "flux-system"}
-	release := &manifest.HelmRelease{Name: "plex", Namespace: "media", Chart: manifest.HelmChart{Name: "charts/plex", Source: source.Named()}}
+	release := &manifest.HelmRelease{Name: "plex", Namespace: "media", Chart: manifest.HelmChart{Name: "charts/plex", Source: source.Named()}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "charts/plex", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}}}}}
 	independent := &manifest.Kustomization{Name: "chart-independent", Namespace: "default", Path: "independent"}
 	hrAtuin := testutil.HelmReleaseID("default", "atuin")
 	objects := store.New()
@@ -489,7 +490,7 @@ func TestFilter_ContentDependencies(t *testing.T) {
 		obj  manifest.BaseManifest
 		deps []manifest.NamedResource
 	}{
-		{&manifest.HelmRelease{Name: "plex", Namespace: "media", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "plex-values"}}}, []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}, {Kind: manifest.KindConfigMap, Namespace: "media", Name: "plex-values"}}},
+		{&manifest.HelmRelease{Name: "plex", Namespace: "media", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "app-template", Namespace: "flux-system"}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "plex-values"}}}, []manifest.NamedResource{{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}, {Kind: manifest.KindConfigMap, Namespace: "media", Name: "plex-values"}}},
 		{&manifest.GitRepository{Name: "source", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "auth"}}, []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "auth"}}},
 		{&manifest.OCIRepository{Name: "source", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "auth"}, CertSecretRef: &manifest.LocalObjectReference{Name: "cert"}}, []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "auth"}, {Kind: manifest.KindSecret, Namespace: "apps", Name: "cert"}}},
 		{&manifest.ResourceSet{Name: "set", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Name: "inputs"}}}, []manifest.NamedResource{{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "inputs"}}},
@@ -856,10 +857,7 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			parent := testutil.KustomizationID("flux-system", "cluster-apps")
-			hr := &manifest.HelmRelease{
-				Name: "sonarr", Namespace: "media",
-				Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}},
-			}
+			hr := &manifest.HelmRelease{Name: "sonarr", Namespace: "media", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "app-template", Namespace: "flux-system"}}
 			chartSrc := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app-template"}
 			oldSource := chartSrc
 			oldSource.Name = "old-chart"
@@ -896,7 +894,7 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			parent := testutil.KustomizationID("apps", "parent")
-			child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}}
+			child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "new-chart", Namespace: "apps"}}
 			f := NewFilter(NewSet([]string{"parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}.index(), filtertest.MapLister{}, "")
 			if name == "primary" {
 				f.addUngated(child.Named())
@@ -922,9 +920,10 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
 	t.Parallel()
 	parent := testutil.KustomizationID("apps", "parent")
-	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}}
-	old := *child
-	old.Chart.Source.Name = "old-chart"
+	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "new-chart", Namespace: "apps"}}
+	old := *child.Clone()
+	old.ChartRef.Name = "old-chart"
+	old.Chart = manifest.HelmChart{}
 	oldSource := old.ChartSource()
 	objects := filtertest.MapLister{old.Named(): &old}
 	f := NewFilter(NewSet([]string{"parent.yaml", "old-chart.yaml"}), filterFixture{files: map[manifest.NamedResource]string{
@@ -948,9 +947,10 @@ func TestAddEmitted_AlreadySelectedSourceRetained(t *testing.T) {
 func TestAddEmitted_ConcurrentReplacementReturnsEachIDOnce(t *testing.T) {
 	t.Parallel()
 	parent := testutil.KustomizationID("apps", "parent")
-	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}}
-	old := *child
-	old.Chart.Source.Name = "old-chart"
+	child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "new-chart", Namespace: "apps"}}
+	old := *child.Clone()
+	old.ChartRef.Name = "old-chart"
+	old.Chart = manifest.HelmChart{}
 	objects := filtertest.MapLister{old.Named(): &old}
 	f := NewFilter(NewSet([]string{"parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}, objects: objects}.index(), objects, "")
 	for _, id := range []manifest.NamedResource{child.Named(), child.ChartSource(), old.ChartSource()} {
@@ -1041,10 +1041,7 @@ func TestFilter_KeepByNameDoesNotLeakAcrossNamespaces(t *testing.T) {
 
 func TestFilter_TransitiveDepsHelmReleaseViaHelmChartCRD(t *testing.T) {
 	t.Parallel()
-	hr := &manifest.HelmRelease{
-		Name: "demo", Namespace: "apps",
-		Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "demo-chart"}},
-	}
+	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "demo-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "demo-chart", Namespace: "apps"}}
 	hc := &manifest.HelmChartSource{
 		Name: "demo-chart", Namespace: "apps",
 		SourceRef: sourcev1.LocalHelmChartSourceReference{
@@ -1740,7 +1737,7 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 	}
 }
 
-func TestFilter_ReverseAdmissionScope(t *testing.T) {
+func TestFilter_ReverseContentInputs(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
@@ -1756,7 +1753,7 @@ func TestFilter_ReverseAdmissionScope(t *testing.T) {
 			index := filterFixture{files: map[manifest.NamedResource]string{tc.obj.Named(): "consumer.yaml", tc.dep: "input.yaml"}, objects: objects}.index()
 			f := NewFilter(NewSet([]string{"input.yaml"}), index, objects, "")
 			assert.Equal(t, f.ShouldReconcile(tc.dep), true)
-			assert.Equal(t, f.ShouldReconcile(tc.obj.Named()), false)
+			assert.Equal(t, f.ShouldReconcile(tc.obj.Named()), true)
 		})
 	}
 }

@@ -187,6 +187,9 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	o := &Orchestrator{cfg: treeConfig{Config: cfg, Tree: tree}, inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts), store: st, cache: cfg.Cache, tasks: ts}
 	if cfg.StatusListener != nil {
 		o.unsubStatus = st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, value any) {
+			if st.ReportHidden(id) {
+				return
+			}
 			cfg.StatusListener(tree.ID, id, value.(store.StatusInfo))
 		}, false)
 	}

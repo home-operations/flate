@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"runtime"
 	"slices"
 	"strings"
@@ -35,7 +36,7 @@ func TestRequire_Classifications(t *testing.T) {
 			st.UpdateStatus(failed.NamedResource, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "render failed"})
 			st.UpdateStatus(pending.NamedResource, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "working"})
 			st.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "informative"})
-			st.AddObject(&manifest.HelmRelease{Name: id.Name, Namespace: id.Namespace, Suspend: mode != "ready"})
+			st.AddObject(&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: id.Name, Namespace: id.Namespace, Suspend: mode != "ready"})
 			deps := []manifest.DependencyRef{ready}
 			level := manifest.DrainNone
 			switch mode {
@@ -188,7 +189,7 @@ func TestExecution_CanonicalManifest(t *testing.T) {
 			t.Parallel()
 			found := mode != "missing"
 			st := store.New()
-			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Values: map[string]any{"value": "old"}}
+			obj := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps", Values: map[string]any{"value": "old"}}
 			fresh := obj.Clone()
 			fresh.Values["value"] = "fresh"
 			fresh.Suspend = mode == "suspended"
@@ -266,7 +267,7 @@ func TestRequire_MultiplePredicates(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			obj := &manifest.Kustomization{Name: "dependency", Namespace: "apps"}
-			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			consumer := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{obj, consumer})
 			st.UpdateStatus(obj.Named(), store.StatusInfo{Status: tc.status, Reason: "", Message: ""})
 			var deps []manifest.DependencyRef
@@ -409,7 +410,7 @@ func TestRequire_RetainsArtifactFactsThroughSettlement(t *testing.T) {
 		t.Run(fmt.Sprintf("reverse=%t/data=%t", tc.reverse, tc.dataWait), func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			consumer := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps"}
 			source := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{consumer, source})
 			st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
@@ -501,7 +502,7 @@ func TestDispatch_ArrivalDuringClassification(t *testing.T) {
 			st := store.New()
 			tasks := task.NewBounded(2)
 			parent := &manifest.Kustomization{Name: "publisher", Namespace: "apps"}
-			child := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+			child := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps"}
 			st.AddObject(child)
 			st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}}}})
 			entered, published := make(chan struct{}), make(chan struct{})

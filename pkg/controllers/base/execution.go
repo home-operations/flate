@@ -27,6 +27,8 @@ type Execution struct {
 	initial    store.StatusInfo
 	unresolved []manifest.NamedResource
 	recovering bool
+	generated  []store.Child
+	prepared   bool
 }
 
 // Init starts capture in caller-owned storage before declaration or dependency assessment.
@@ -54,28 +56,17 @@ func (e *Execution) Valid() bool {
 	if e.Outcome() == schedule.Blocked || !e.Reads.Admitted() {
 		return true
 	}
-	switch output := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(type) {
-	case *store.Emission:
-		return output.OutputReads.Valid()
-	case *store.SourceArtifact:
-		return output.Reads.Valid()
+	if output, ok := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(*store.SourceArtifact); ok && !output.Reads.Valid() {
+		return false
 	}
-	return true
+	_, _, inventory := e.Store.GetEmission(e.Reads.ID())
+	defer inventory.Finish()
+	return inventory.OutputReads.Valid()
 }
 
 // Retire releases superseded assessment cells while retaining borrowed output.
 func (e *Execution) Retire() {
-	switch output := e.Store.GetArtifact(e.Reads.ID(), store.ArtifactContent).(type) {
-	case *store.Emission:
-		if output.Retains(&e.Reads) {
-			return
-		}
-	case *store.SourceArtifact:
-		if output.Reads == &e.Reads {
-			return
-		}
-	}
-	e.Reads.Retire()
+	e.Store.Retire(&e.Reads)
 }
 
 // Emit publishes the candidate inventory with its consumed provenance.
@@ -83,18 +74,23 @@ func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission, payloa
 	if err := e.Checkpoint(); err != nil {
 		return err
 	}
-	e.publish(id, next, payloads)
+	e.bindEmission(next)
+	e.Controller.Emit(id, next, payloads)
+	e.acceptEmission(next)
 	return manifest.DocumentFailure(next.Failures)
 }
 
-func (e *Execution) publish(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
+func (e *Execution) bindEmission(next *store.Emission) {
 	borrowed := next.Reads
+	next.Children = e.generatedChildren(next.Children)
 	e.Reads.Bind(next)
 	if e.Reused && borrowed.Valid() && next.Complete && len(next.Failures) == 0 {
 		next.Reads = borrowed
 	}
 	next.Unreadable = e.Unreadable
-	e.Controller.Emit(id, next, payloads)
+}
+
+func (e *Execution) acceptEmission(next *store.Emission) {
 	next.Reads = &e.Reads
 	if next.Complete && e.Reads.Valid() {
 		e.recovering = true
@@ -202,7 +198,9 @@ func (e *Execution) finish(err error) {
 		_, _, next := e.Reads.GetEmission(id)
 		if e.Store.HasInventory(id) && len(next.Failures) == 0 {
 			next.Complete = !next.OutputReads.Valid()
-			e.publish(id, &next, nil)
+			e.bindEmission(&next)
+			e.Controller.Emit(id, &next, nil)
+			e.acceptEmission(&next)
 		}
 		next.Finish()
 		if errors.Is(err, manifest.ErrSourceSkipped) {
@@ -290,7 +288,46 @@ func (e *Execution) reconcile[T manifest.BaseManifest](ctx context.Context, obj 
 	if err := e.requireDeclaration(ctx, level); err != nil {
 		return err
 	}
+	if !e.prepared {
+		if err := e.prepare(obj); err != nil {
+			return err
+		}
+	}
 	return reconcile(ctx, obj, level)
+}
+
+func (e *Execution) prepare(obj manifest.BaseManifest) error {
+	e.prepared = true
+	objects, err := manifest.GeneratedObjects(obj)
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		e.generated = append(e.generated, store.Child{Obj: object, Generated: true})
+	}
+	if len(e.generated) == 0 && !e.Store.HasGeneratedObjects(e.Reads.ID()) {
+		return nil
+	}
+	_, _, inventory := e.Reads.GetEmission(e.Reads.ID())
+	defer inventory.Finish()
+	inventory.Children, inventory.Manifests, inventory.Complete = e.generated, nil, false
+	return e.Emit(e.Reads.ID(), &inventory, nil)
+}
+
+func (e *Execution) generatedChildren(children []store.Child) []store.Child {
+	if len(children) == 0 {
+		return e.generated
+	}
+	if len(e.generated) == 0 && !slices.ContainsFunc(children, func(child store.Child) bool { return child.Generated }) {
+		return children
+	}
+	current := make([]store.Child, 0, len(children)+len(e.generated))
+	for _, child := range children {
+		if !child.Generated {
+			current = append(current, child)
+		}
+	}
+	return append(current, e.generated...)
 }
 
 func (e *Execution) requireDeclaration(ctx context.Context, level manifest.DrainLevel) error {
@@ -353,15 +390,11 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, att
 	if fp == "" {
 		return "", false, e.admitRender()
 	}
-	current, _ := e.Store.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-	output, matched := current.Replay(fp)
 	receipt := attempt.Render
 	_, _, *attempt = e.Reads.GetEmission(id)
 	attempt.Render = receipt
 	defer attempt.Finish()
-	if !matched {
-		output, matched = attempt.Replay(fp)
-	}
+	output, matched := attempt.Replay(fp)
 	if !matched {
 		return fp, false, e.admitRender()
 	}
@@ -372,7 +405,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, att
 	if slices.Equal(output.Unreadable, e.Unreadable) {
 		e.Reads.CarryWarnings(output)
 	}
-	if attempt.Render == nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) {
+	if attempt.Render == nil && output.Render != nil && attempt.OutputReads != nil && attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) {
 		attempt.Render = output.Render
 	}
 	attempt.Children = output.Children
@@ -380,8 +413,8 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, att
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
 	attempt.Complete = true
-	if current != nil && current.Complete && current.Fingerprint == fp && current.OutputReads.Valid() && slices.Equal(output.Unreadable, e.Unreadable) {
-		attempt.Reads = current.OutputReads
+	if attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) && slices.Equal(output.Unreadable, e.Unreadable) {
+		attempt.Reads = attempt.OutputReads
 	}
 	return fp, true, e.Emit(id, attempt, nil)
 }
@@ -397,9 +430,13 @@ func (e *Execution) Close() { e.Reads.Close() }
 
 func (e *Execution) withdrawInvalid() {
 	_, _, next := e.Reads.GetEmission(e.Reads.ID())
-	if e.Store.HasInventory(e.Reads.ID()) && !next.OutputReads.Valid() {
-		next.Complete = true
-		e.publish(e.Reads.ID(), &next, nil)
+	invalid := !next.OutputReads.Valid()
+	generated := slices.ContainsFunc(next.Children, func(child store.Child) bool { return child.Generated })
+	if e.Store.HasInventory(e.Reads.ID()) && (invalid || generated) {
+		next.Complete = invalid
+		e.bindEmission(&next)
+		e.Controller.Emit(e.Reads.ID(), &next, nil)
+		e.acceptEmission(&next)
 	}
 	next.Finish()
 }

@@ -18,12 +18,6 @@ type Sources struct {
 // NewSources binds chart resolution to the supplied captured or completed inputs.
 func NewSources(reader sourceReader) Sources { return Sources{reader: reader} }
 
-// HelmRepository returns the selected repository declaration.
-func (s Sources) HelmRepository(namespace, name string) *manifest.HelmRepository {
-	obj, _ := s.reader.GetDeclaration(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: namespace, Name: name}).(*manifest.HelmRepository)
-	return obj
-}
-
 // LocalSourceArtifact returns the selected source content.
 func (s Sources) LocalSourceArtifact(id manifest.NamedResource, read store.ArtifactRead) *store.SourceArtifact {
 	if s.reader == nil {
@@ -33,8 +27,7 @@ func (s Sources) LocalSourceArtifact(id manifest.NamedResource, read store.Artif
 	return art
 }
 
-// HelmChart returns the selected chart declaration.
-func (s Sources) HelmChart(id manifest.NamedResource) *manifest.HelmChartSource {
-	obj, _ := s.reader.GetDeclaration(id).(*manifest.HelmChartSource)
-	return obj
+// Declaration returns the captured chart-source declaration.
+func (s Sources) Declaration(id manifest.NamedResource) manifest.BaseManifest {
+	return s.reader.GetDeclaration(id)
 }

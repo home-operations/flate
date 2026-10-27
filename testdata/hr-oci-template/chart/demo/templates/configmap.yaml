@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: chart-output}
+data:
+  version: {{ .Chart.Version | quote }}
+  release: {{ .Release.Name | quote }}
+  payload: first

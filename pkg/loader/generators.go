@@ -22,6 +22,7 @@ type generatorRecord struct {
 	root        string
 	file        string
 	owner       manifest.NamedResource
+	source      manifest.NamedResource
 	namespace   string
 	isConfigMap bool
 	args        types.GeneratorArgs
@@ -78,9 +79,9 @@ func (r generatorRecord) materialize(ctx context.Context, opts Options) (manifes
 		data[pair.Key] = value
 	}
 	if r.isConfigMap {
-		return &manifest.ConfigMap{Name: r.args.Name, Namespace: r.namespace, Data: data}, nil
+		return manifest.NewConfigMap(manifest.NamedResource{Name: r.args.Name, Namespace: r.namespace}, data), nil
 	}
-	return &manifest.Secret{Name: r.args.Name, Namespace: r.namespace, Data: data}, nil
+	return manifest.NewSecret(manifest.NamedResource{Name: r.args.Name, Namespace: r.namespace}, data, nil), nil
 }
 
 // KV loading is synchronous; the adapter binds only the current materialization.

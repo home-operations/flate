@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"log/slog"
 	"slices"
 	"strings"
@@ -27,7 +28,6 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -122,7 +122,7 @@ data: {key: fixed}
 					s.DeleteObject(rs.Named())
 					s.AddObject(rs)
 				case "empty fingerprint":
-					s.SetArtifact(rs.Named(), &store.Emission{Manifests: before.Manifests})
+					s.RecordEmitted(rs.Named(), &store.Emission{Manifests: before.Manifests}, nil)
 				case "blocked gate", "failed gate":
 					fresh.DependsOn = []fluxopv1.Dependency{{APIVersion: manifest.FluxOperatorDomain + "/v1", Kind: manifest.KindResourceSet, Name: "gate", Namespace: "ns"}}
 					for _, dep := range fresh.DependsOn {
@@ -142,7 +142,7 @@ data: {key: fixed}
 					opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s, "")
 				case "vanished":
 					s.DeleteObject(rs.Named())
-					s.SetArtifact(rs.Named(), before)
+					s.RecordEmitted(rs.Named(), before, nil)
 				case "suspended":
 					fresh.Suspend = true
 					s.AddObject(&fresh)
@@ -604,7 +604,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						permits := []chan struct{}{make(chan struct{}), make(chan struct{}), make(chan struct{})}
 						var releaseConsumers []func()
 						for i := range 3 {
-							hr := &manifest.HelmRelease{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Chart: manifest.HelmChart{Name: "demo", Version: "1.0.0", Source: repo}}
+							hr := &manifest.HelmRelease{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Chart: manifest.HelmChart{Name: "demo", Version: "1.0.0", Source: repo}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "demo", Version: "1.0.0", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (repo).Kind, Name: (repo).Name, Namespace: (repo).Namespace, APIVersion: ""}}}}}
 							s.AddObject(hr)
 							releases = append(releases, hr.Named())
 							releaseConsumers = append(releaseConsumers, sync.OnceFunc(func() { close(permits[i]) }))
@@ -650,7 +650,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							id    manifest.NamedResource
 						}
 						entered := make(chan acquisition, 1)
-						var firstFetch sync.Once
+						var firstFetch atomic.Bool
 						f.observe = func(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) {
 							chart := obj.(*manifest.HelmChartSource)
 							r, ok := reads.Get[*manifest.HelmRepository](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: chart.Namespace, Name: chart.SourceRef.Name})
@@ -658,13 +658,13 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 								t.Error("fetch did not capture its backing repository")
 								return
 							}
-							firstFetch.Do(func() {
+							if firstFetch.CompareAndSwap(false, true) {
 								entered <- acquisition{reads: reads, url: r.URL, id: chart.Named()}
 								select {
 								case <-fetchPermit:
 								case <-ctx.Done():
 								}
-							})
+							}
 						}
 						captured := make(chan *base.Execution, 1)
 						var firstRepository sync.Once
@@ -804,8 +804,8 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							synctest.Wait()
 							releaseConsumers[2]()
 							synctest.Wait()
-							if first.reads.Valid() {
-								t.Error("equal child arrivals did not exercise captured-authority invalidation")
+							if !first.reads.Valid() {
+								t.Error("another release invalidated an independent generated chart acquisition")
 							}
 						}
 						if scenario != "effective_input_change" {
@@ -834,11 +834,9 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 						if !ok {
 							t.Fatal("final repository is absent")
 						}
-						oldChart := helmchart.Synthesize(original, "demo", "1.0.0").Named()
-						finalChart := helmchart.Synthesize(final, "demo", "1.0.0").Named()
-						t.Logf("run=%d arrivals=%s old chart=%s final chart=%s first acquired=%s URL=%s", run, arrival, oldChart, finalChart, first.id, first.url)
-						if scenario == "effective_input_change" && (oldChart == finalChart || first.id != finalChart || first.url != "https://changed.example" || f.calls[oldChart] != 0) {
-							t.Error("changed repository did not replace the captured chart identity")
+						finalChart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: final.Namespace, Name: "apps-consumer-0"}
+						if first.id != finalChart || first.url != final.URL {
+							t.Errorf("captured chart acquisition=%s URL=%s, want %s URL=%s", first.id, first.url, finalChart, final.URL)
 						}
 						completions := map[manifest.NamedResource]int{}
 						for line := range bytes.SplitSeq(logs.Bytes(), []byte("\n")) {

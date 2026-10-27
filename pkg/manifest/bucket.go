@@ -16,14 +16,28 @@ import (
 // via minio-go). The aws/gcp/azure providers parse correctly but the
 // Fetcher returns a clear "provider X not implemented" error.
 type Bucket struct {
-	Name      string `json:"name"                yaml:"name"`
-	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Name        string            `json:"name"                yaml:"name"`
+	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Labels      map[string]string `json:"-" yaml:"-"`
+	Annotations map[string]string `json:"-" yaml:"-"`
 	// BucketSpec is the embedded upstream sourcev1.BucketSpec — all
 	// fields (Provider, BucketName, Endpoint, Region, Prefix, Insecure,
 	// SecretRef, CertSecretRef, ProxySecretRef, Suspend, ...) are
 	// promoted to the top level for ergonomic access (b.Endpoint, etc.).
 	sourcev1.BucketSpec `json:",inline" yaml:",inline"`
 }
+
+// NewBucket normalizes an owned typed Bucket declaration.
+func NewBucket(cr sourcev1.Bucket) *Bucket {
+	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
+	return &Bucket{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, BucketSpec: cr.Spec}
+}
+
+// GetLabels returns the Bucket's metadata.labels.
+func (b *Bucket) GetLabels() map[string]string { return b.Labels }
+
+// GetAnnotations returns the Bucket's metadata.annotations.
+func (b *Bucket) GetAnnotations() map[string]string { return b.Annotations }
 
 // Named identifies the Bucket.
 func (b *Bucket) Named() NamedResource {
@@ -32,9 +46,9 @@ func (b *Bucket) Named() NamedResource {
 
 // BootstrapAlias returns a local copy; a nil Git descriptor selects a derived frozen root.
 func (b *Bucket) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
-	out := *b
-	out.Endpoint, out.BucketName = "file://"+root, b.Name
-	return &out, nil
+	spec := b.BucketSpec
+	spec.Endpoint, spec.BucketName = "file://"+root, b.Name
+	return NewBucket(sourcev1.Bucket{Name: b.Name, Namespace: b.Namespace, Labels: b.Labels, Annotations: b.Annotations, Spec: spec}), nil
 }
 
 // Content returns the source inputs for the effective bucket endpoint.
@@ -80,8 +94,6 @@ func (b *Bucket) OperationTimeout() time.Duration {
 	return operationTimeout(b.Timeout)
 }
 
-// parseBucket decodes a Bucket CR via the source-controller typed
-// schema.
 func parseBucket(doc map[string]any) (*Bucket, error) {
 	var cr sourcev1.Bucket
 	if err := decodeCR(doc, &cr, "Bucket", SourceDomain); err != nil {
@@ -93,12 +105,7 @@ func parseBucket(doc map[string]any) (*Bucket, error) {
 	if cr.Spec.Endpoint == "" {
 		return nil, inputf("Bucket %s/%s missing spec.endpoint", cr.Namespace, cr.Name)
 	}
-	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
-	out := &Bucket{
-		Name:       cr.Name,
-		Namespace:  cr.Namespace,
-		BucketSpec: cr.Spec,
-	}
+	out := NewBucket(cr)
 	var err error
 	out.references(validateSecretReference(out.Named(), &err))
 	if err != nil {

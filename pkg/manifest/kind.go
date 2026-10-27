@@ -53,7 +53,8 @@ func (k KindInfo) APIVersion() string {
 
 type kindEntry struct {
 	KindInfo
-	decode func(map[string]any) (BaseManifest, error)
+	decode    func(map[string]any) (BaseManifest, error)
+	bindLocal func(NamedResource, string) BaseManifest
 }
 
 const (
@@ -98,6 +99,15 @@ func init() {
 		kindArtifactGenerator: {KindInfo: KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Runnable: true, Status: true, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseRawObject(d) }},
 		kindSecret:            {KindInfo: KindInfo{Group: "", Kind: KindSecret, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
 	}
+	kindTable[kindGitRepository].bindLocal = func(id NamedResource, root string) BaseManifest {
+		return NewGitRepository(sourcev1.GitRepository{Name: id.Name, Namespace: id.Namespace, Spec: sourcev1.GitRepositorySpec{URL: "file://" + root}})
+	}
+	kindTable[kindOCIRepository].bindLocal = func(id NamedResource, root string) BaseManifest {
+		return NewOCIRepository(sourcev1.OCIRepository{Name: id.Name, Namespace: id.Namespace, Spec: sourcev1.OCIRepositorySpec{URL: "file://" + root}})
+	}
+	kindTable[kindBucket].bindLocal = func(id NamedResource, root string) BaseManifest {
+		return NewBucket(sourcev1.Bucket{Name: id.Name, Namespace: id.Namespace, Spec: sourcev1.BucketSpec{Endpoint: "file://" + root, BucketName: id.Name}})
+	}
 
 	kindIndex = make(map[string]int, len(kindTable))
 	for i := range kindTable {
@@ -134,23 +144,18 @@ func (n NamedResource) KindInfo() KindInfo {
 	return KindInfo{Group: n.Group, Kind: n.Kind}
 }
 
-// DecodeIdentity uses the registered decoder and canonical API version to create a typed identity.
-// Synthetic source fields satisfy strict decoders without relaxing authored validation.
-func (n NamedResource) DecodeIdentity() (BaseManifest, error) {
+// CanBindLocal reports whether the registered source kind can bind this identity locally.
+func (n NamedResource) CanBindLocal() bool {
 	i, ok := kindIndex[n.Kind]
-	if !ok || kindTable[i].Group != n.Group || n.Name == "" || n.Namespace == "" {
-		return nil, inputf("invalid source identity %s", n)
+	return ok && kindTable[i].Group == n.Group && kindTable[i].bindLocal != nil && n.Name != "" && n.Namespace != ""
+}
+
+// BindLocal constructs this source's actual local artifact binding.
+func (n NamedResource) BindLocal(root string) (BaseManifest, error) {
+	if !n.CanBindLocal() {
+		return nil, inputf("invalid local source identity %s", n)
 	}
-	entry := kindTable[i]
-	version := entry.APIVersion()
-	if version == "" {
-		return nil, inputf("no canonical API version for %s", n)
-	}
-	return entry.decode(map[string]any{
-		"apiVersion": version, "kind": n.Kind,
-		"metadata": map[string]any{"name": n.Name, "namespace": n.Namespace},
-		"spec":     map[string]any{"url": "file://.", "endpoint": "file://.", "bucketName": n.Name},
-	})
+	return kindTable[kindIndex[n.Kind]].bindLocal(n, root), nil
 }
 
 // Projection stays allocation-free; document admission validates API versions.

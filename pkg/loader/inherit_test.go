@@ -531,7 +531,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 				if len(l.Kustomizations()) != 3 {
 					t.Fatal("independent edge did not enable nested cycle")
 				}
-				if l.Store.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "inactive-generated"}) == nil {
+				if _, ok := lookupDataForTest[*manifest.ConfigMap](t, l.Store, manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "inactive-generated"}); !ok {
 					t.Fatal("independent edge did not enable generator")
 				}
 			}
@@ -869,7 +869,7 @@ spec:
 		input := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 		view, err := fs.Sub(input.FS, "kubernetes")
 		assert.NoError(t, err)
-		source, err := owner.SourceID().DecodeIdentity()
+		source, err := owner.SourceID().BindLocal(root)
 		assert.NoError(t, err)
 		st.AddObject(source)
 		mount := filepath.Join(filepath.Dir(root), ".flate-sources", "subtree", "flux-system", "source")

@@ -948,7 +948,8 @@ func TestRun_GetHRChartVersions(t *testing.T) {
 		{name: "digest", reference: "digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, semver: '>=1.2.0', tag: '1.2.3'", want: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", wantChart: "apps-chart/"},
 		{name: "semver", reference: "semver: '>=1.2.0', tag: '1.2.3'", want: ">=1.2.0", wantChart: "apps-chart/"},
 		{name: "tag", reference: "tag: '1.2.3'", want: "1.2.3", wantChart: "apps-chart/"},
-		{name: "own version", reference: "tag: '1.2.3'", chart: "chart: {spec: {chart: app, version: '9.9.9', sourceRef: {kind: OCIRepository, name: chart}}}", want: "9.9.9", wantChart: "apps-chart/app"},
+		{name: "inline OCI", reference: "tag: '1.2.3'", chart: "chart: {kind: OCIRepository, spec: {url: 'oci://example.test/app', ref: {tag: '1.2.3'}}}", want: "1.2.3", wantChart: "apps-apps-app/"},
+		{name: "own version", reference: "tag: '1.2.3'", chart: "chart: {spec: {chart: app, version: '9.9.9', sourceRef: {kind: HelmRepository, name: chart}}}", want: "9.9.9", wantChart: "apps-apps-app/app"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

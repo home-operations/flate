@@ -96,7 +96,7 @@ func (l *Loader) Sources() iter.Seq[store.Child] {
 			if l.documents.cache[r.Path].eligible == fileInactive {
 				continue
 			}
-			obj := l.indexedObject(id, r)
+			obj := l.IndexedObject(id, r)
 			if obj.Obj != nil && !yield(obj) {
 				return
 			}
@@ -258,7 +258,7 @@ func (l *Loader) kustomizations() []store.Child {
 		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization || l.Store.GetObject(id) != nil {
 			continue
 		}
-		child := l.indexedObject(id, r)
+		child := l.IndexedObject(id, r)
 		if _, ok := child.Obj.(*manifest.Kustomization); ok {
 			out = append(out, child)
 		}
@@ -267,7 +267,8 @@ func (l *Loader) kustomizations() []store.Child {
 	return out
 }
 
-func (l *Loader) indexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) store.Child {
+// IndexedObject returns the immutable declaration under its indexed contextual identity.
+func (l *Loader) IndexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) store.Child {
 	if child := l.candidates[id]; child.Obj != nil {
 		return child
 	}

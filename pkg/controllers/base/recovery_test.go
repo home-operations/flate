@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"slices"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestExecution_ReplacesDerivedFailureProvenance(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
-			obj := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Suspend: mode == "suspended"}
+			obj := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps", Suspend: mode == "suspended"}
 			id := obj.Named()
 			old := testutil.HelmReleaseID("apps", "old")
 			fresh := testutil.HelmReleaseID("apps", "fresh")
@@ -110,7 +111,7 @@ func TestDispatchNode_CanonicalRead(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/replaced-type=%t", stage, replacedType), func(t *testing.T) {
 				t.Parallel()
 				s := store.New()
-				hr := &manifest.HelmRelease{Name: "release", Namespace: "apps"}
+				hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "release", Namespace: "apps"}
 				fresh := hr.Clone()
 				fresh.Values = map[string]any{"current": true}
 				s.AddObject(hr)

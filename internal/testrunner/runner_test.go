@@ -225,7 +225,7 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 	s.UpdateStatus(rs, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: `parse template: function "nope" not defined`})
 
 	chart := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "same"}
-	s.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
+	s.RecordEmitted(ks, &store.Emission{Complete: true, Children: []store.Child{{Obj: &manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace}, Generated: true}}}, nil)
 	s.UpdateStatus(chart, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "synthetic chart failure"})
 	foreignChart := chart
 	foreignChart.Group = "example.test"
@@ -264,6 +264,8 @@ func TestRun_SurfacesNonRosterFailure(t *testing.T) {
 		t.Errorf("roster must show the non-roster failure inline:\n%s", out)
 	}
 
+	s.AddObject(&manifest.HelmChartSource{Name: chart.Name, Namespace: chart.Namespace})
+	s.UpdateStatus(chart, store.StatusInfo{Status: store.StatusFailed, Message: "synthetic chart failure"})
 	explicit := runSelected(t, o, manifest.NamedResource{Group: chart.Group, Kind: chart.Kind, Name: chart.Name})
 	if explicit.Matched != 1 || len(explicit.Cases) != 2 || explicit.Cases[0].ID != chart || explicit.Cases[0].Reason != "synthetic chart failure" {
 		t.Fatalf("explicit chart must retain its selected row before the foreign diagnostic: %+v", explicit)
@@ -287,12 +289,20 @@ func TestRun_BlockedRootReason(t *testing.T) {
 		root       manifest.BaseManifest
 		namespace  string
 		wantFailed int
+		chain      bool
 		wantReason string
 	}{
 		{
 			name:       "synthetic HelmChart",
-			root:       &manifest.HelmChartSource{Name: "chart-16d855d", Namespace: "apps"},
-			wantReason: "blocked by apps/chart-16d855d: fetch artifact: 404 Not Found",
+			root:       &manifest.HelmChartSource{Name: "apps-demo", Namespace: "apps"},
+			wantReason: "blocked by apps/apps-demo: fetch artifact: 404 Not Found",
+		},
+		{
+			name:       "generated chart dependency chain",
+			root:       &manifest.HelmChartSource{Name: "apps-demo", Namespace: "apps"},
+			chain:      true,
+			wantFailed: 1,
+			wantReason: "blocked by flux-system/repository",
 		},
 		{
 			name:       "filtered-out OCIRepository",
@@ -312,9 +322,19 @@ func TestRun_BlockedRootReason(t *testing.T) {
 			hr := testutil.HelmReleaseID("apps", "demo")
 			root := tc.root.Named()
 			s.AddObject(&manifest.HelmRelease{Name: hr.Name, Namespace: hr.Namespace})
-			s.AddObject(tc.root)
+			if tc.root.Named().Kind == manifest.KindHelmChart {
+				s.RecordEmitted(hr, &store.Emission{Complete: true, Children: []store.Child{{Obj: tc.root, Generated: true}}}, nil)
+			} else {
+				s.AddObject(tc.root)
+			}
 			s.UpdateFailure(hr, &manifest.DependencyFailedError{Parent: hr, Failed: []manifest.NamedResource{root}})
 			s.UpdateStatus(root, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "flux error: input error: fetch artifact: 404 Not Found"})
+			if tc.chain {
+				repository := &manifest.HelmRepository{Name: "repository", Namespace: "flux-system"}
+				s.AddObject(repository)
+				s.UpdateStatus(repository.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "fetch artifact: 404 Not Found"})
+				s.UpdateFailure(root, &manifest.DependencyFailedError{Parent: root, Failed: []manifest.NamedResource{repository.Named()}})
+			}
 
 			rep := runSelected(t, o, testutil.HelmReleaseID(tc.namespace, ""))
 			if rep.Matched != 1 || rep.Failed != tc.wantFailed || len(rep.Blocked) != 1 || !rep.AnyFailed() {

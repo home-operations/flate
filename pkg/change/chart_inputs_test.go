@@ -119,7 +119,7 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 			st.AddObject(source)
 			st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: observed})
-			release := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: location, Source: source.Named()}, ChartValuesFiles: []string{"config/explicit.yaml"}}
+			release := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Chart: manifest.HelmChart{Name: location, Source: source.Named()}, ChartValuesFiles: []string{"config/explicit.yaml"}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: location, Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}, ValuesFiles: []string{"config/explicit.yaml"}}}}}
 			second := release.Clone()
 			second.Name = "second"
 			sibling := &manifest.ConfigMap{Name: "independent", Namespace: "apps"}
@@ -167,8 +167,8 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 	root := t.TempDir()
 	source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps", Chart: ".", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindGitRepository, Name: "source"}}
-	first := &manifest.HelmRelease{Name: "first", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmRelease, Name: "second"}}
-	second := &manifest.HelmRelease{Name: "second", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmRelease, Name: "first"}}
+	first := &manifest.HelmRelease{Name: "first", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}}
+	second := &manifest.HelmRelease{Name: "second", Namespace: "apps", Chart: manifest.HelmChart{Name: ".", Source: source.Named()}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "chart"}}
 	build := func() *loader.Loader {
 		t.Helper()
 		st := store.New()
@@ -184,7 +184,7 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 		return l
 	}
 	l := build()
-	want := []string{".helmignore", "Chart.yaml", "first.input", "second.input", "templates/cm.yaml"}
+	want := []string{".helmignore", "Chart.yaml", "chart.input", "templates/cm.yaml"}
 	for _, id := range []manifest.NamedResource{first.Named(), second.Named()} {
 		assert.Diff(t, readFilesForFilter(l.Index, id), want)
 	}

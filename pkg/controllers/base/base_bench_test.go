@@ -2,6 +2,7 @@ package base_test
 
 import (
 	"context"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -13,7 +14,7 @@ import (
 
 func BenchmarkDispatchNodeReady(b *testing.B) {
 	st := store.New()
-	obj := &manifest.HelmRelease{Name: "app", Namespace: "apps"}
+	obj := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "apps"}
 	st.AddObject(obj)
 	st.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 	c := base.New(st, nil)

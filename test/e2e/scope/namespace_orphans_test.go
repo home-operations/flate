@@ -194,7 +194,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			}
 			var got []string
 			for _, release := range releases {
-				if release.Name != "demo" || release.SourceRef.Name != "demo" || release.SourceRef.Namespace != namespaceOrphanSourceNamespace(scenario, release.Namespace) {
+				if release.Name != "demo" || release.SourceRef.Name != release.Namespace+"-demo" || release.SourceRef.Namespace != namespaceOrphanSourceNamespace(scenario, release.Namespace) {
 					t.Errorf("unexpected release/source: %+v", release)
 				}
 				got = append(got, release.Namespace)

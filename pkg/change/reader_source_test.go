@@ -2,6 +2,7 @@ package change
 
 import (
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -158,7 +159,7 @@ spec:
 					t.Fatalf("SETUP side %d: release must be indexed with its contributing parent and absent from Store: %+v", side, r)
 				}
 				if state == "present" {
-					st.AddObject(&manifest.HelmRelease{Name: release.Name, Namespace: release.Namespace, Chart: manifest.HelmChart{Source: source.Named()}, ChartValuesFiles: []string{"config/prod.yaml"}})
+					st.AddObject(&manifest.HelmRelease{Name: release.Name, Namespace: release.Namespace, Chart: manifest.HelmChart{Source: source.Named()}, ChartValuesFiles: []string{"config/prod.yaml"}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}, ValuesFiles: []string{"config/prod.yaml"}}}}})
 				}
 			}
 			bootstrap := NewSet(nil)

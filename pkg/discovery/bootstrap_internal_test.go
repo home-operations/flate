@@ -12,6 +12,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/pkg/store"
 
@@ -83,17 +84,16 @@ func TestResolveEntrySources_IndexedRoots(t *testing.T) {
 		want             bool
 	}{
 		{name: "git", kind: manifest.KindGitRepository, want: true},
-		{name: "oci", kind: manifest.KindOCIRepository, want: true},
 		{name: "bucket", kind: manifest.KindBucket, want: true},
 		{name: "helm repository", kind: manifest.KindHelmRepository},
-		{name: "external artifact", kind: manifest.KindExternalArtifact},
 		{name: "covered", kind: manifest.KindGitRepository, role: "covered"},
 		{name: "terminal", kind: manifest.KindGitRepository, role: "terminal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "entry/release.yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
+			id := testutil.HelmReleaseID("apps", "orphan")
+			declaration := fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: orphan, namespace: apps}
 spec:
@@ -101,7 +101,9 @@ spec:
     spec:
       chart: charts/demo
       sourceRef: {kind: %s, name: source}
-`, tc.kind))
+`, tc.kind)
+
+			testutil.WriteFile(t, root, "entry/release.yaml", declaration)
 			testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
 			testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
 			st := store.New()
@@ -120,7 +122,6 @@ spec:
 			if _, err := l.Load(t.Context(), d.cfg.Path); err != nil {
 				t.Fatal(err)
 			}
-			id := testutil.HelmReleaseID("apps", "orphan")
 			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "apps", Name: "source"}
 			l.Admit(root)
 			if tc.role == "terminal" {
@@ -262,10 +263,9 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "source reference without path fact",
-			obj: &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{
-				Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "source"},
-			}}, want: true,
+			name: "chart reference without path fact",
+			obj: &manifest.HelmRelease{Name: "release", Namespace: "apps",
+				ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}},
 		},
 		{
 			name: "artifact reference without path fact",

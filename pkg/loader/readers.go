@@ -48,7 +48,7 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			return obj
 		}
 		r, _ := l.Index.Lookup(id)
-		obj := l.indexedObject(id, r).Obj
+		obj := l.IndexedObject(id, r).Obj
 		objects[id] = obj
 		return obj
 	}

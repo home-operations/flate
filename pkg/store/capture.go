@@ -434,7 +434,17 @@ func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.Disc
 	input := r.input(id)
 	data, _ := r.Capture(input).(manifest.Data)
 	supplied, path := r.store.suppliedObject(id)
-	return ReferenceFacts{Data: data, Accepted: input.view.accepted || input.view.owner != nil, Productions: r.Productions(id, index), Supplied: supplied, SupplyPath: path}
+	productions := r.Productions(id, index)
+	var candidates []manifest.ReferenceData
+	if len(productions) != 0 {
+		candidates = r.store.referenceData(id, index, productions, r)
+	}
+	for _, production := range productions {
+		if production.Source.Name != "" {
+			r.GetArtifact(production.Source, ArtifactContent)
+		}
+	}
+	return ReferenceFacts{Data: data, Accepted: input.view.accepted || input.view.owner != nil, Productions: productions, ReferenceData: candidates, Supplied: supplied, SupplyPath: path}
 }
 
 // Materializer selects and captures the runnable declaration supplying a production.
@@ -765,25 +775,23 @@ func (r *ReadSet) Close() {
 	r.Retire()
 	sh := r.store.shardFor(r.id)
 	sh.mu.RLock()
-	artifact := sh.artifacts[r.id].value
+	source := sh.artifacts[r.id].value
+	var inventory *Emission
 	if slot := sh.slots[r.id]; slot != nil {
-		if current := slot.current.Load(); current != nil {
-			artifact = current
-		}
-	}
-	var reads *ReadSet
-	switch output := artifact.(type) {
-	case *Emission:
-		reads = output.OutputReads
-		output.payloadReads.Retire()
-		for borrowed := range output.borrowed {
-			borrowed.Retire()
-		}
-	case *SourceArtifact:
-		reads = output.Reads
+		inventory = slot.current.Load()
 	}
 	sh.mu.RUnlock()
-	reads.Retire()
+	if source != nil {
+		source.Reads.Retire()
+	}
+	if inventory != nil {
+		inventory.Reads.Retire()
+		inventory.OutputReads.Retire()
+		inventory.payloadReads.Retire()
+		for borrowed := range inventory.borrowed {
+			borrowed.Retire()
+		}
+	}
 }
 
 func sameReadinessGate(a, b manifest.DependencyRef) bool {

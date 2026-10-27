@@ -11,6 +11,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestFinalizeIndex_GeneratorData(t *testing.T) {
@@ -117,7 +118,10 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 				}
 				return
 			}
-			obj := st.GetObject(id)
+			obj := values.NewStoreProvider(st, true).Data(id)
+			if !tc.existing && st.GetObject(id) != nil {
+				t.Fatal("generator lookup entered canonical inventory")
+			}
 			if tc.want == "" {
 				if obj != nil {
 					t.Fatalf("failed generator materialized: %+v", obj)
@@ -155,7 +159,7 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 				t.Fatalf("Production owners = %v, want %v", got, owners)
 			}
 			id.Name = "sibling"
-			if st.GetObject(id) == nil {
+			if values.NewStoreProvider(st, true).Data(id) == nil {
 				t.Fatal("failed generator stopped its sibling")
 			}
 		})

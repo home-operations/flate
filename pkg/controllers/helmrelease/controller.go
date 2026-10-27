@@ -11,7 +11,6 @@ import (
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
-	"github.com/home-operations/flate/pkg/source/helmchart"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -84,7 +83,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	id := hr.Named()
 
 	c.SetPendingUnlessReady(id, "resolving chart")
-	hr, unavailable, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).HelmChart, c.data, c.Helm.ValuesCache())
+	hr, unavailable, err := helm.Prepare(hr, helm.NewSources(&c.run.Reads).Declaration, c.data, c.Helm.ValuesCache())
 	omitted = append(omitted, unavailable...)
 	slices.SortFunc(omitted, manifest.NamedResource.Compare)
 	omitted = slices.Compact(omitted)
@@ -99,23 +98,6 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	// via --allow-missing-kinds Secret).
 	if _, err := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level); err != nil {
 		return err
-	}
-	// A HelmRepository is just a registry/index base — its chart has no
-	// standalone source CR. Now that the declared source is Ready (so the
-	// HelmRepository is in the Store and resolvable), repoint the chart to a
-	// synthesized HelmChart the source controller fetches (retry + Store),
-	// and wait for that fetch too. After this, render always resolves the
-	// chart from the HelmChart artifact, never fetching inline. Waiting
-	// first makes the repoint deterministic — no loop, no "absent → retry"
-	// dance.
-	hr, repointed, err := c.materializeHelmChartSource(id, hr)
-	if err != nil {
-		return err
-	}
-	if repointed {
-		if _, err := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level); err != nil {
-			return err
-		}
 	}
 
 	var fp string
@@ -161,39 +143,12 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	}
 	base.Stamp(hr.EmissionPolicy(), docs)
 
-	var synthetic []store.Child
-	for _, child := range attempt.Children {
-		if child.Doc == nil {
-			synthetic = append(synthetic, child)
-		}
-	}
 	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
-	attempt.Children = append(attempt.Children, synthetic...)
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(id, &attempt, nil); err != nil {
 		return err
 	}
 	return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
-}
-
-func (c *execution) materializeHelmChartSource(id manifest.NamedResource, hr *manifest.HelmRelease) (*manifest.HelmRelease, bool, error) {
-	if !hr.Chart.Materializes() {
-		return hr, false, nil
-	}
-	r := helm.NewSources(&c.run.Reads).HelmRepository(hr.Chart.Source.Namespace, hr.Chart.Source.Name)
-	if r == nil {
-		return hr, false, nil
-	}
-	syn := helmchart.Synthesize(r, hr.Chart.Name, hr.Chart.Version)
-	// The incomplete generic publication makes C available before H waits for acquisition.
-	_, _, attempt := c.run.Reads.GetEmission(id)
-	attempt.Children = []store.Child{{Obj: syn}}
-	defer attempt.Finish()
-	if err := c.run.Emit(id, &attempt, nil); err != nil {
-		return hr, false, err
-	}
-	hr.Chart.Source = syn.Named()
-	return hr, true, nil
 }
 
 // PreviousRender prepares captured values and admitted charts without runtime effects, and reports whether they can narrow selection.
@@ -218,7 +173,7 @@ func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (
 		}
 	}
 	hr = omitValues(hr, omittedRefs)
-	hr, omitted, err := helm.Prepare(hr, helm.NewSources(reads).HelmChart, data, c.Helm.ValuesCache())
+	hr, omitted, err := helm.Prepare(hr, helm.NewSources(reads).Declaration, data, c.Helm.ValuesCache())
 	if err != nil || len(omitted) != 0 {
 		return nil, false
 	}

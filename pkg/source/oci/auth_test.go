@@ -491,10 +491,11 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 		Interval:  metav1.Duration{Duration: time.Hour},
 	}
+	chartInput := manifest.NewHelmChartSource(sourcev1.HelmChart{Name: "app", Namespace: repo.Namespace, Spec: sourcev1.HelmChartSpec{Chart: "app", Version: "1.0.0", Interval: repo.Interval, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repo.Name}}})
 	chartsInputs := testInputs{secrets: ociFetcherInputs.secrets, repos: func(_, _ string) *manifest.HelmRepository { return repo }}
 	charts := helmchart.New(ociFetcher, helmchart.Config{Cache: cache, Network: &network})
 
-	got, err := charts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), chartsInputs.readSet(helmchart.Synthesize(repo, "app", "1.0.0")), sourcecache.Policy{})
+	got, err := charts.Fetch(t.Context(), chartInput, chartsInputs.readSet(chartInput), sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -513,7 +514,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	fallbackCharts := helmchart.New(fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
 
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-	_, err = fallbackCharts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), fallbackChartsInputs.readSet(helmchart.Synthesize(repo, "app", "1.0.0")), sourcecache.Policy{Retry: retry})
+	_, err = fallbackCharts.Fetch(t.Context(), chartInput, fallbackChartsInputs.readSet(chartInput), sourcecache.Policy{Retry: retry})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil {
 		t.Fatalf("missing fallback: %v", err)
@@ -538,9 +539,11 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	}
 	refreshRepo := *repo
 	refreshRepo.Interval = metav1.Duration{}
+	refreshInput := *chartInput
+	refreshInput.Interval = refreshRepo.Interval
 	refreshChartsInputs := testInputs{secrets: fallbackFetcherInputs.secrets, repos: func(_, _ string) *manifest.HelmRepository { return &refreshRepo }}
 	refreshCharts := helmchart.New(fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
-	_, err = refreshCharts.Fetch(t.Context(), helmchart.Synthesize(&refreshRepo, "app", "1.0.0"), refreshChartsInputs.readSet(helmchart.Synthesize(&refreshRepo, "app", "1.0.0")), sourcecache.Policy{Retry: retry})
+	_, err = refreshCharts.Fetch(t.Context(), &refreshInput, refreshChartsInputs.readSet(&refreshInput), sourcecache.Policy{Retry: retry})
 	missing, ok = errors.AsType[*source.MissingSecretError](err)
 	if !ok || missing.RetryAmbient == nil {
 		t.Fatalf("refresh fallback: %v", err)
@@ -667,7 +670,7 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 		s.Insecure = true
 		s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "creds"}
-		s.Interval.Duration = time.Hour
+		s.Interval = &metav1.Duration{Duration: time.Hour}
 	})
 	root := t.TempDir()
 	ca := testutil.SelfSignedCA(t)
@@ -711,7 +714,7 @@ func TestFetcher_ResolveTLS_SnapshotRotation(t *testing.T) {
 			}
 			fail.Store(true)
 			failed := *repo
-			failed.Interval.Duration = 0
+			failed.Interval = &metav1.Duration{}
 			_, err = f.Fetch(t.Context(), &failed, fInputs.readSet(&failed), sourcecache.Policy{MaxAge: failed.SourceInterval()})
 			terminal, ok := errors.AsType[*sourcecache.TerminalError](err)
 			if !ok || !terminal.Attempted {

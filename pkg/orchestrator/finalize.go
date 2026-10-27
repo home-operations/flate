@@ -116,7 +116,10 @@ func (o *Orchestrator) warnMissingCRDs() {
 		if !ok || info.Status != store.StatusReady {
 			continue
 		}
-		if _, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.Emission); !ok {
+		_, _, inventory := o.store.GetEmission(id)
+		valid := inventory.OutputReads.Valid()
+		inventory.Finish()
+		if !valid || !o.store.HasInventory(id) {
 			continue
 		}
 		inputs = inputs[:0]

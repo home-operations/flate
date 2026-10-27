@@ -806,17 +806,13 @@ func TestStore_SetArtifact(t *testing.T) {
 	}
 }
 
-// TestStore_SetArtifact_DistinctPointerDedup pins Item 7's primary
-// dedup contract: a re-set with a DISTINCT POINTER but
-// content-equal artifact is a no-op. The KS / HR re-emit case —
-// rendered docs decode into fresh maps every reconcile — drives
-// this in production.
-func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
+func TestStore_RecordEmitted_DistinctPointerDedup(t *testing.T) {
 	t.Parallel()
 	s := New()
 	id := testutil.KustomizationID("flux-system", "apps")
+	s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	makeArt := func() *Emission {
-		return &Emission{
+		return &Emission{Complete: true,
 
 			Manifests: testutil.DocumentOccurrences([]map[string]any{
 				{
@@ -832,11 +828,11 @@ func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
 
-	s.SetArtifact(id, makeArt())
-	s.SetArtifact(id, makeArt()) // fresh pointer, identical content
-	s.SetArtifact(id, makeArt()) // fresh pointer, identical content
+	s.RecordEmitted(id, makeArt(), nil)
+	s.RecordEmitted(id, makeArt(), nil)
+	s.RecordEmitted(id, makeArt(), nil)
 
-	assert.Equal(t, events, 1) // content-equal re-sets dedup
+	assert.Equal(t, events, 1)
 }
 
 // TestStore_SetArtifact_PointerIdentityShortCircuit pins Item 7's
@@ -861,24 +857,23 @@ func TestStore_SetArtifact_PointerIdentityShortCircuit(t *testing.T) {
 	assert.Equal(t, events, 1) // same-pointer re-set short-circuits
 }
 
-// TestStore_SetArtifact_DifferentContent pins the inverse: a
-// re-set with DIFFERENT content fires an event.
-func TestStore_SetArtifact_DifferentContent(t *testing.T) {
+func TestStore_RecordEmitted_DifferentContent(t *testing.T) {
 	t.Parallel()
 	s := New()
 	id := testutil.KustomizationID("flux-system", "apps")
+	s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
 
-	s.SetArtifact(id, &Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{
+	s.RecordEmitted(id, &Emission{Complete: true, Manifests: testutil.DocumentOccurrences([]map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-1"}},
-	})})
-	s.SetArtifact(id, &Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{
+	})}, nil)
+	s.RecordEmitted(id, &Emission{Complete: true, Manifests: testutil.DocumentOccurrences([]map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-2"}},
-	})})
+	})}, nil)
 
-	assert.Equal(t, events, 2) // distinct content fires each time
+	assert.Equal(t, events, 2)
 }
 
 func TestStore_ListenerPanicIsolated(t *testing.T) {
@@ -1351,7 +1346,7 @@ func TestStore_CrossKindOperationDoesntDeadlock(t *testing.T) {
 				case 4:
 					hr := &manifest.HelmRelease{Name: fmt.Sprintf("hr-w%d-i%d", w, i), Namespace: "ns"}
 					s.AddObject(hr)
-					s.SetArtifact(hr.Named(), &Emission{Manifests: nil, Fingerprint: "x"})
+					s.RecordEmitted(hr.Named(), &Emission{Manifests: nil, Fingerprint: "x"}, nil)
 				}
 			}
 		})

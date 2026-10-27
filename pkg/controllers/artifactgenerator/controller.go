@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"maps"
 	"strings"
 	"time"
 
@@ -180,28 +182,23 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 			}
 			payload.Metadata = map[string]string{"org.opencontainers.image.revision": origin}
 		}
-		outputMetadata := map[string]any{"name": req.Output.Name, "namespace": id.Namespace}
-		generated := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": outputMetadata, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": raw.APIVersion, "kind": raw.Kind, "name": id.Name, "namespace": id.Namespace}}}
-		batch := []manifest.DocOccurrence{{Document: generated, Ordinal: len(documents)}}
-		base.Stamp(manifest.EmissionPolicy{Labels: spec.CommonMetadata.Labels, Annotations: spec.CommonMetadata.Annotations}, batch)
-		labels, _ := outputMetadata["labels"].(map[string]any)
+		labels := maps.Clone(spec.CommonMetadata.Labels)
 		if labels == nil {
-			labels = make(map[string]any, len(req.Captures)+2)
-			outputMetadata["labels"] = labels
+			labels = make(map[string]string, len(req.Captures)+2)
 		}
-		for key, value := range req.Captures {
-			labels[key] = value
-		}
+		maps.Copy(labels, req.Captures)
 		labels["app.kubernetes.io/managed-by"], labels["source.extensions.fluxcd.io/generator"] = "source-watcher", uid
-		children, docs, failures := c.ParseChildren(raw, batch, manifest.ParseDocOptions{})
-		targetID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: req.Output.Name, Namespace: id.Namespace}
-		if len(failures) != 0 {
-			attempt.Children, attempt.Manifests, attempt.Failures = children, docs, failures
-			return c.run.Emit(id, &attempt, nil)
+		declaration := raw.ExternalArtifact(metav1.ObjectMeta{Name: req.Output.Name, Namespace: id.Namespace, Labels: labels, Annotations: spec.CommonMetadata.Annotations})
+		generated, err := declaration.RenderDocument()
+		if err != nil {
+			return err
 		}
-		if len(children) != 1 || children[0].Obj.Named() != targetID || children[0].Doc == nil {
-			return fmt.Errorf("%w: expected exactly one generated ExternalArtifact %s", manifest.ErrInput, targetID)
+		children := []store.Child{{Obj: declaration, Doc: generated}}
+		docs := []manifest.DocOccurrence{{Document: generated, Ordinal: len(documents)}}
+		if visible, _ := (manifest.EmissionPolicy{}).SelectDocument(generated, c.SkipKinds); !visible {
+			docs = nil
 		}
+		targetID := declaration.Named()
 		attempt.Children, attempt.Manifests, attempt.Complete = children, docs, false
 		if err := c.run.Emit(id, &attempt, map[manifest.NamedResource]*store.SourceArtifact{targetID: payload}); err != nil {
 			return err

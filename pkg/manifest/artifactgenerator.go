@@ -4,9 +4,19 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/fluxcd/pkg/apis/meta"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"k8s.io/apimachinery/pkg/api/validate/content"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// ExternalArtifact constructs a declaration after evaluation resolves its output metadata.
+func (r *RawObject) ExternalArtifact(metadata metav1.ObjectMeta) *ExternalArtifact {
+	return NewExternalArtifact(sourcev1.ExternalArtifact{ObjectMeta: metadata, Spec: sourcev1.ExternalArtifactSpec{
+		SourceRef: &meta.NamespacedObjectKindReference{APIVersion: r.APIVersion, Kind: r.Kind, Name: r.Name, Namespace: r.Namespace},
+	}})
+}
 
 type artifactToken struct {
 	literal string

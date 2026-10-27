@@ -408,7 +408,7 @@ spec:
 			})
 			_, _, after := st.GetEmission(rs.Named())
 			after.Finish()
-			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreUnexported(store.Child{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); diff != "" {
+			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreUnexported(store.Child{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"), cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
 				t.Fatalf("retained children changed (-want +got): %s", diff)
 			}
 			assert.Diff(t, after.Manifests, before.Manifests)

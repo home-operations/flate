@@ -86,7 +86,8 @@ func TestSource_Declaration(t *testing.T) {
 		interval      time.Duration
 	}{
 		{"git", &GitRepository{Interval: metav1.Duration{Duration: time.Minute}}, false, time.Minute},
-		{"oci", &OCIRepository{Interval: metav1.Duration{Duration: time.Minute}}, false, time.Minute},
+		{"oci", &OCIRepository{Interval: &metav1.Duration{Duration: time.Minute}}, false, time.Minute},
+		{"oci omitted interval", &OCIRepository{}, false, 0},
 		{"bucket", &Bucket{Interval: metav1.Duration{Duration: time.Minute}}, false, time.Minute},
 		{"external", &ExternalArtifact{}, false, 0},
 		{"repository", &HelmRepository{Interval: metav1.Duration{Duration: time.Minute}}, true, time.Minute},

@@ -266,7 +266,7 @@ spec:
 			assert.Equal(t, narrow, false)
 			if mode == "helm_values_from" {
 				hr := reads.GetDeclaration(owner).(*manifest.HelmRelease)
-				prepared, omitted, err := helm.Prepare(hr, helm.NewSources(reads).HelmChart, values.NewStoreProvider(reads, cfg.WipeSecrets), warm.hrc.Helm.ValuesCache())
+				prepared, omitted, err := helm.Prepare(hr, helm.NewSources(reads).Declaration, values.NewStoreProvider(reads, cfg.WipeSecrets), warm.hrc.Helm.ValuesCache())
 				assert.NoError(t, err)
 				assert.Equal(t, len(omitted), 0)
 				_, receipt, err := testutil.RenderMaps(warm.hrc.Helm.Template(t.Context(), prepared, prepared.Values, helm.RenderOptions{Options: warm.hrc.Options, DependencySubstitutions: warm.dependencySubstitutions, Sources: helm.NewSources(reads), WipeSecrets: cfg.WipeSecrets}))

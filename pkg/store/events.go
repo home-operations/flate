@@ -133,10 +133,7 @@ func (s *Store) snapshotForReplay(event EventKind) []idPayload {
 				if sh.cells[id].hidden {
 					continue
 				}
-				artifact := sh.artifacts[id].value
-				if view.payload != nil {
-					artifact = view.payload
-				}
+				artifact := sh.projectArtifactLocked(id, &view, sh.artifacts[id])
 				if artifact != nil {
 					out = append(out, idPayload{id: id, payload: artifact, input: view})
 				}

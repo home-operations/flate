@@ -783,8 +783,8 @@ spec:
 		{"ReleaseNamespace", hr.ReleaseNamespace(), "apps"},
 		{"Chart.Name", hr.Chart.Name, "podinfo"},
 		{"Chart.Version", hr.Chart.Version, "6.3.2"},
-		{"Chart.Source.Kind", hr.Chart.Source.Kind, "HelmRepository"},
-		{"Chart.Source.Name", hr.Chart.Source.Name, "podinfo"},
+		{"Chart.Source.Kind", hr.Chart.Source.Kind, "HelmChart"},
+		{"Chart.Source.Name", hr.Chart.Source.Name, "podinfo-podinfo"},
 		{"replicaCount", hr.Values["replicaCount"], float64(3)},
 		{"ValuesFrom[0].Optional", hr.ValuesFrom[0].Optional, true},
 	}
@@ -865,22 +865,22 @@ spec:
 			Name: "podinfo", Kind: KindHelmRepository,
 		},
 	}
-	lookup := func(id NamedResource) *HelmChartSource {
+	lookup := func(id NamedResource) BaseManifest {
 		if id == src.Named() {
 			return src
 		}
 		return nil
 	}
-	if err := hr.ResolveChartRef(lookup); err != nil {
-		t.Fatalf("ResolveChartRef: %v", err)
+	if err := hr.ResolveChartSource(lookup); err != nil {
+		t.Fatalf("ResolveChartSource: %v", err)
 	}
 	if hr.Chart.Version != "6.3.2" || hr.Chart.Name != "podinfo" {
 		t.Errorf("after resolve: %+v", hr.Chart)
 	}
 
-	missing := &HelmRelease{Chart: HelmChart{Source: NamedResource{Group: SourceDomain, Kind: KindHelmChart, Name: "absent", Namespace: "ns"}}}
-	none := func(NamedResource) *HelmChartSource { return nil }
-	if err := missing.ResolveChartRef(none); !errors.Is(err, ErrObjectNotFound) {
+	missing := &HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindHelmChart, Name: "absent", Namespace: "ns"}}
+	none := func(NamedResource) BaseManifest { return nil }
+	if err := missing.ResolveChartSource(none); !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("expected ErrObjectNotFound, got %v", err)
 	}
 }
@@ -1397,7 +1397,7 @@ spec: {path: ./a, sourceRef: {kind: GitRepository, name: r}}`, KindKustomization
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: r, namespace: ns}
-spec: {chart: {spec: {chart: c, sourceRef: {name: rr}}}}`, KindHelmRelease, false},
+spec: {chart: {spec: {chart: c, sourceRef: {kind: HelmRepository, name: rr}}}}`, KindHelmRelease, false},
 		{"helmrepository", `
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
@@ -2175,27 +2175,28 @@ func TestResolve_NamespacePrecedence(t *testing.T) {
 	}
 }
 
-func TestNamedResource_DecodeIdentity(t *testing.T) {
+func TestNamedResource_BindLocal(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{KindGitRepository, KindOCIRepository, KindBucket} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			id := NamedResource{Group: SourceDomain, Kind: kind, Namespace: "other", Name: "entry"}
-			obj, err := id.DecodeIdentity()
+			assert.Equal(t, id.CanBindLocal(), true)
+			obj, err := id.BindLocal("/chosen/root")
 			assert.NoError(t, err)
 			assert.Equal(t, obj.Named(), id)
 			assert.Equal(t, KindOf(obj).APIVersion(), sourcev1.GroupVersion.String())
 			switch kind {
 			case KindGitRepository:
-				if g, ok := obj.(*GitRepository); !ok || g.URL != "file://." || g.Provider != sourcev1.GitProviderGeneric {
+				if g, ok := obj.(*GitRepository); !ok || g.URL != "file:///chosen/root" || g.Provider != sourcev1.GitProviderGeneric {
 					t.Fatalf("decoded Git identity: %#v", obj)
 				}
 			case KindOCIRepository:
-				if o, ok := obj.(*OCIRepository); !ok || o.URL != "file://." || o.Provider != sourcev1.GenericOCIProvider {
+				if o, ok := obj.(*OCIRepository); !ok || o.URL != "file:///chosen/root" || o.Provider != sourcev1.GenericOCIProvider {
 					t.Fatalf("decoded OCI identity: %#v", obj)
 				}
 			case KindBucket:
-				if b, ok := obj.(*Bucket); !ok || b.Endpoint != "file://." || b.BucketName != id.Name || b.Provider != sourcev1.BucketProviderGeneric {
+				if b, ok := obj.(*Bucket); !ok || b.Endpoint != "file:///chosen/root" || b.BucketName != id.Name || b.Provider != sourcev1.BucketProviderGeneric {
 					t.Fatalf("decoded bucket identity: %#v", obj)
 				}
 			}
@@ -2213,7 +2214,8 @@ func TestNamedResource_DecodeIdentity(t *testing.T) {
 		{Group: SourceDomain, Kind: KindOCIRepository, Namespace: "other"},
 		{Kind: KindConfigMap, Namespace: "other", Name: "entry"},
 	} {
-		if obj, err := id.DecodeIdentity(); obj != nil || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
+		assert.Equal(t, id.CanBindLocal(), false)
+		if obj, err := id.BindLocal("/chosen/root"); obj != nil || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
 			t.Fatalf("invalid identity %s: %v, %v", id, obj, err)
 		}
 	}
@@ -2224,7 +2226,8 @@ func TestBootstrapAlias_SourceKinds(t *testing.T) {
 	ignore := "excluded/"
 	ref := &sourcev1.GitRepositoryRef{Tag: "v1"}
 	git := &GitRepository{Name: "entry", Namespace: "other", URL: "https://fixture.invalid/repo", Reference: ref, Ignore: &ignore, SparseCheckout: []string{"apps"}, RecurseSubmodules: true}
-	oci := &OCIRepository{Name: "entry", Namespace: "other", URL: "oci://fixture.invalid/repo", Ignore: &ignore}
+	oci := &OCIRepository{Name: "entry", Namespace: "other", URL: "oci://fixture.invalid/repo", Ignore: &ignore,
+		Verify: &sourcev1.OCIRepositoryVerification{}, Labels: map[string]string{"team": "apps"}, Annotations: map[string]string{"input": "authored"}}
 	bucket := &Bucket{Name: "entry", Namespace: "other", Endpoint: "fixture.invalid", BucketName: "authored"}
 	for _, obj := range []interface {
 		BaseManifest
@@ -2247,6 +2250,9 @@ func TestBootstrapAlias_SourceKinds(t *testing.T) {
 				if descriptor != nil || a.URL != "file:///repo/subtree" || a.Ignore != &ignore {
 					t.Fatalf("OCI policy/view: %+v", a)
 				}
+				assert.Equal(t, a.Verify.Provider, "cosign")
+				assert.Equal(t, a.Labels["team"], "apps")
+				assert.Equal(t, a.Annotations["input"], "authored")
 			case *Bucket:
 				if descriptor != nil || a.Endpoint != "file:///repo/subtree" || a.BucketName != a.Name {
 					t.Fatalf("bucket policy/view: %+v", a)

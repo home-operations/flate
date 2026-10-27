@@ -126,9 +126,6 @@ func (m *barModel) drainEvents() {
 }
 
 func (m *barModel) track(id manifest.NamedResource, status store.Status, observedAt time.Time) {
-	if id.ReportHidden() {
-		return
-	}
 	if first, seen := m.first[id]; !seen {
 		m.first[id] = observedAt
 		m.total++

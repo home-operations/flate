@@ -35,9 +35,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 	if f.Cache == nil {
 		return nil, fmt.Errorf("%w: remote git base requires cache", manifest.ErrInput)
 	}
-	repo := &manifest.GitRepository{}
-	repo.URL = request.URL
-	repo.RecurseSubmodules = request.Submodules
+	repo := manifest.NewGitRepository(sourcev1.GitRepository{Spec: sourcev1.GitRepositorySpec{URL: request.URL, RecurseSubmodules: request.Submodules}})
 	if _, err := f.validateRepo(repo); err != nil {
 		return nil, err
 	}

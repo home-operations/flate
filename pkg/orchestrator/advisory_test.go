@@ -1,13 +1,18 @@
 package orchestrator
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -126,6 +131,92 @@ func TestRenderTrees_ClusterAdvisories(t *testing.T) {
 			assert.Equal(t, carriers, len(clusters))
 		})
 	}
+}
+
+func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
+	root := t.TempDir()
+	writeSubstitutionCluster(t, root, "settings", "${VALUE}")
+	testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  sourceRef: {kind: GitRepository, name: remote, namespace: apps}\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: settings}]\n"))
+	testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: remote, namespace: apps}\nspec: {url: 'https://fixture.invalid/source', interval: 1h}\n")
+	testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: repository}\n")
+	var runs []Rendered
+	var stores []*store.Store
+	var fetchers []*advisorySourceFetcher
+	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "remote"}
+	consumer := testutil.KustomizationID("apps", "consumer")
+	for _, cluster := range []manifest.ClusterID{"alpha", "omega"} {
+		for _, side := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+			tree := Tree{ID: manifest.TreeID{Cluster: cluster, Side: side}, RepoRoot: root}
+			o, err := newTestOrchestrator(t, tree, Config{Concurrency: 2, CacheDir: t.TempDir(), Supply: []store.SuppliedObject{suppliedSubstitution("settings")}})
+			assert.NoError(t, err)
+			fetcher := &advisorySourceFetcher{root: root}
+			o.src.Fetchers[manifest.KindGitRepository] = fetcher
+			assert.NoError(t, o.bootstrap(t.Context()))
+			result, err := o.collectResult(o.run(t.Context()))
+			assert.NoError(t, err)
+			assert.Equal(t, len(result.Failed), 0)
+			assert.Equal(t, fetcher.calls.Load(), int64(1))
+			docs := outputByParent(result.Manifests)[consumer]
+			if len(docs) != 1 || docs[0]["data"].(map[string]any)["value"] != "repository" {
+				t.Fatalf("cold render did not use repository values: %v", docs)
+			}
+			runs = append(runs, Rendered{ID: tree.ID, Orchestrator: o, Result: result})
+			stores = append(stores, o.store)
+			fetchers = append(fetchers, fetcher)
+		}
+	}
+	for _, phase := range []string{"cold", "warm"} {
+		if phase == "warm" {
+			for i := range runs {
+				o := runs[i].Orchestrator
+				before := outputByParent(runs[i].Result.Manifests)
+				for _, id := range []manifest.NamedResource{source, consumer} {
+					var execution *base.Execution
+					o.tasks.Go(t.Context(), "warm/"+id.String(), func(ctx context.Context) {
+						execution = o.controllers.ReconcileNode(ctx, id, manifest.DrainNone)
+					})
+					o.tasks.BlockTillDone()
+					if execution == nil || !execution.Reused || !execution.Valid() {
+						t.Fatalf("warm %s did not reuse accepted execution: %+v", id, execution)
+					}
+					execution.Close()
+					info, ok := o.store.GetStatus(id)
+					if !ok || info.Status != store.StatusReady {
+						t.Fatalf("warm %s is not Ready: %+v", id, info)
+					}
+				}
+				result, err := o.collectResult(nil)
+				assert.NoError(t, err)
+				assert.Diff(t, outputByParent(result.Manifests), before)
+				runs[i].Result = result
+				assert.Equal(t, fetchers[i].calls.Load(), int64(1))
+				artifact := o.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+				assert.Equal(t, artifact.UsedLocalSSHAgent, true)
+			}
+		}
+		clusterAdvisories(runs, stores)
+		for _, run := range runs {
+			assert.Equal(t, len(run.Result.Warnings), 0)
+			if run.ID.Side == manifest.TreeBase {
+				assert.Equal(t, len(run.Result.ClusterWarnings), 0)
+				continue
+			}
+			assert.Diff(t, run.Result.ClusterWarnings, []manifest.Warning{
+				{Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Detail: []string{source.String()}, Count: 1},
+				{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"}, Count: 1},
+			})
+		}
+	}
+}
+
+type advisorySourceFetcher struct {
+	root  string
+	calls atomic.Int64
+}
+
+func (f *advisorySourceFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
+	f.calls.Add(1)
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, Key: "advisory-source", FS: os.DirFS(f.root), LocalPath: f.root, UsedLocalSSHAgent: true}, nil
 }
 
 func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {

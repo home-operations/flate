@@ -79,9 +79,6 @@ func (w *barWriter) progress(ctx context.Context) (func(manifest.TreeID, manifes
 }
 
 func (e *progressEvents) observe(tree manifest.TreeID, id manifest.NamedResource, info store.StatusInfo) {
-	if id.ReportHidden() {
-		return
-	}
 	if tree.Cluster != "." || tree.Side != manifest.TreeHead {
 		side := "current"
 		if tree.Side == manifest.TreeBase {

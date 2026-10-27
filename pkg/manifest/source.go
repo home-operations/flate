@@ -13,11 +13,25 @@ import (
 // Provider, SecretRef, ProxySecretRef, RecurseSubmodules,
 // SparseCheckout, Suspend etc. to the top level.
 type GitRepository struct {
-	Name      string `json:"name"      yaml:"name"`
-	Namespace string `json:"namespace" yaml:"namespace"`
+	Name        string            `json:"name"      yaml:"name"`
+	Namespace   string            `json:"namespace" yaml:"namespace"`
+	Labels      map[string]string `json:"-" yaml:"-"`
+	Annotations map[string]string `json:"-" yaml:"-"`
 
 	sourcev1.GitRepositorySpec `json:",inline" yaml:",inline"`
 }
+
+// NewGitRepository normalizes an owned typed GitRepository declaration.
+func NewGitRepository(cr sourcev1.GitRepository) *GitRepository {
+	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GitProviderGeneric)
+	return &GitRepository{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, GitRepositorySpec: cr.Spec}
+}
+
+// GetLabels returns the GitRepository's metadata.labels.
+func (g *GitRepository) GetLabels() map[string]string { return g.Labels }
+
+// GetAnnotations returns the GitRepository's metadata.annotations.
+func (g *GitRepository) GetAnnotations() map[string]string { return g.Annotations }
 
 // Named identifies the GitRepository.
 func (g *GitRepository) Named() NamedResource {
@@ -27,9 +41,9 @@ func (g *GitRepository) Named() NamedResource {
 // BootstrapAlias returns a local copy and the borrowed immutable Git descriptor.
 // A non-nil descriptor selects repository-root policy and supplies ref/view inputs.
 func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
-	out := *g
-	out.URL = "file://" + root
-	return &out, g
+	spec := g.GitRepositorySpec
+	spec.URL = "file://" + root
+	return NewGitRepository(sourcev1.GitRepository{Name: g.Name, Namespace: g.Namespace, Labels: g.Labels, Annotations: g.Annotations, Spec: spec}), g
 }
 
 // Content returns the source inputs that define the selected Git content.
@@ -88,9 +102,6 @@ func validateSecretReference(id NamedResource, err *error) func(Reference) bool 
 	}
 }
 
-// parseGitRepository decodes a GitRepository CR via the Flux typed
-// schema (source-controller/api/v1), then projects the fields flate
-// uses into the local struct.
 func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 	var cr sourcev1.GitRepository
 	if err := decodeCR(doc, &cr, "GitRepository", SourceDomain); err != nil {
@@ -99,12 +110,7 @@ func parseGitRepository(doc map[string]any) (*GitRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("GitRepository missing spec.url")
 	}
-	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GitProviderGeneric)
-	out := &GitRepository{
-		Name:              cr.Name,
-		Namespace:         cr.Namespace,
-		GitRepositorySpec: cr.Spec,
-	}
+	out := NewGitRepository(cr)
 	var err error
 	out.references(validateSecretReference(out.Named(), &err))
 	if err != nil {
@@ -124,10 +130,23 @@ func (r *OCIRepositoryRef) Pinned() bool { return r != nil && r.Digest != "" }
 // Provider, SecretRef, CertSecretRef, ProxySecretRef, Verify, Insecure,
 // Suspend etc. to the top level.
 type OCIRepository struct {
-	Name      string `json:"name"      yaml:"name"`
-	Namespace string `json:"namespace" yaml:"namespace"`
+	Name        string            `json:"name"      yaml:"name"`
+	Namespace   string            `json:"namespace" yaml:"namespace"`
+	Labels      map[string]string `json:"-" yaml:"-"`
+	Annotations map[string]string `json:"-" yaml:"-"`
 
 	sourcev1.OCIRepositorySpec `json:",inline" yaml:",inline"`
+}
+
+// NewOCIRepository normalizes an owned typed OCIRepository declaration.
+func NewOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
+	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)
+	if cr.Spec.Verify != nil && cr.Spec.Verify.Provider == "" {
+		verify := *cr.Spec.Verify
+		verify.Provider = "cosign"
+		cr.Spec.Verify = &verify
+	}
+	return &OCIRepository{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, OCIRepositorySpec: cr.Spec}
 }
 
 // LayerOperation returns the Flux layer operation, defaulting to extraction.
@@ -146,6 +165,12 @@ func (o *OCIRepository) LayerMediaType() string {
 // filename "layer.tar.gz".
 type OCILayerSelector = sourcev1.OCILayerSelector
 
+// GetLabels returns the OCIRepository's metadata.labels.
+func (o *OCIRepository) GetLabels() map[string]string { return o.Labels }
+
+// GetAnnotations returns the OCIRepository's metadata.annotations.
+func (o *OCIRepository) GetAnnotations() map[string]string { return o.Annotations }
+
 // Named identifies the OCIRepository.
 func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindOCIRepository].Group, Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
@@ -153,9 +178,9 @@ func (o *OCIRepository) Named() NamedResource {
 
 // BootstrapAlias returns a local copy; a nil Git descriptor selects a derived frozen root.
 func (o *OCIRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
-	out := *o
-	out.URL = "file://" + root
-	return &out, nil
+	spec := o.OCIRepositorySpec
+	spec.URL = "file://" + root
+	return NewOCIRepository(sourcev1.OCIRepository{Name: o.Name, Namespace: o.Namespace, Labels: o.Labels, Annotations: o.Annotations, Spec: spec}), nil
 }
 
 // Content returns the source inputs that define the selected OCI content.
@@ -198,20 +223,25 @@ func (o *OCIRepository) Suspended() bool { return o.Suspend }
 func (o *OCIRepository) ExistenceOnly() bool { return false }
 
 // SourceInterval returns the authored source refresh interval.
-func (o *OCIRepository) SourceInterval() time.Duration { return o.Interval.Duration }
+func (o *OCIRepository) SourceInterval() time.Duration {
+	return (&sourcev1.OCIRepository{Spec: o.OCIRepositorySpec}).GetRequeueAfter()
+}
 
 // OperationTimeout returns the authored operation timeout or the Flux default.
 func (o *OCIRepository) OperationTimeout() time.Duration { return operationTimeout(o.Timeout) }
 
 // ChartVersion returns the digest, semver constraint or tag declared by the source.
 func (o *OCIRepository) ChartVersion() string {
-	if o.Reference == nil {
-		return ""
-	}
-	return cmp.Or(o.Reference.Digest, o.Reference.SemVer, o.Reference.Tag)
+	return ociReferenceVersion(o.Reference)
 }
 
-// parseOCIRepository decodes an OCIRepository CR.
+func ociReferenceVersion(ref *sourcev1.OCIRepositoryRef) string {
+	if ref == nil {
+		return ""
+	}
+	return cmp.Or(ref.Digest, ref.SemVer, ref.Tag)
+}
+
 func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	var cr sourcev1.OCIRepository
 	if err := decodeCR(doc, &cr, "OCIRepository", SourceDomain); err != nil {
@@ -220,12 +250,7 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 	if cr.Spec.URL == "" {
 		return nil, inputf("OCIRepository missing spec.url")
 	}
-	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)
-	out := &OCIRepository{
-		Name:              cr.Name,
-		Namespace:         cr.Namespace,
-		OCIRepositorySpec: cr.Spec,
-	}
+	out := NewOCIRepository(cr)
 	var err error
 	out.references(validateSecretReference(out.Named(), &err))
 	if err != nil {
@@ -236,13 +261,26 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 
 // ExternalArtifact is a source whose content is published by its materializer.
 type ExternalArtifact struct {
-	Name      string `json:"name"                yaml:"name"`
-	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Name        string            `json:"name"                yaml:"name"`
+	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Labels      map[string]string `json:"-" yaml:"-"`
+	Annotations map[string]string `json:"-" yaml:"-"`
 
 	// ExternalArtifactSpec embeds the upstream spec, exposing
 	// SourceRef at the top level.
 	sourcev1.ExternalArtifactSpec `json:",inline" yaml:",inline"`
 }
+
+// NewExternalArtifact constructs an owned typed ExternalArtifact declaration.
+func NewExternalArtifact(cr sourcev1.ExternalArtifact) *ExternalArtifact {
+	return &ExternalArtifact{Name: cr.Name, Namespace: cr.Namespace, Labels: cr.Labels, Annotations: cr.Annotations, ExternalArtifactSpec: cr.Spec}
+}
+
+// GetLabels returns the ExternalArtifact's metadata.labels.
+func (e *ExternalArtifact) GetLabels() map[string]string { return e.Labels }
+
+// GetAnnotations returns the ExternalArtifact's metadata.annotations.
+func (e *ExternalArtifact) GetAnnotations() map[string]string { return e.Annotations }
 
 // Named identifies the ExternalArtifact.
 func (e *ExternalArtifact) Named() NamedResource {
@@ -273,11 +311,7 @@ func parseExternalArtifact(doc map[string]any) (*ExternalArtifact, error) {
 	if err := decodeCR(doc, &cr, "ExternalArtifact", SourceDomain); err != nil {
 		return nil, err
 	}
-	return &ExternalArtifact{
-		Name:                 cr.Name,
-		Namespace:            cr.Namespace,
-		ExternalArtifactSpec: cr.Spec,
-	}, nil
+	return NewExternalArtifact(cr), nil
 }
 
 func (g *GitRepository) references(yield func(Reference) bool) {

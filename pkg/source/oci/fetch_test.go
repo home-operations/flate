@@ -232,7 +232,7 @@ func TestFetcher_Freshness(t *testing.T) {
 			repo := &manifest.OCIRepository{
 				Name: "freshness", Namespace: "test",
 				URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true,
-				Interval:  metav1.Duration{Duration: time.Hour},
+				Interval:  &metav1.Duration{Duration: time.Hour},
 				Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
 			}
 			if tt.pinned {
@@ -779,7 +779,7 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 				f := &Fetcher{Network: newTestNetwork(t), Cache: c}
 				repo := &manifest.OCIRepository{Name: "tampered", Namespace: "test",
 					URL: "oci://" + mustURL(t, srv.URL).Host + "/chart", Insecure: true,
-					Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, Interval: metav1.Duration{Duration: time.Hour}}
+					Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, Interval: &metav1.Duration{Duration: time.Hour}}
 				for attempt := range 3 {
 					if attempt == 2 && backing == "disk" {
 						if err := c.Close(); err != nil {
@@ -1383,7 +1383,7 @@ func TestFetcher_ChartMediaAfterProvenance(t *testing.T) {
 				t.Errorf("default OCI copy=%q error=%v; want exact provenance bytes", data, err)
 			}
 			r := &manifest.HelmRepository{Name: "charts", Namespace: "ns", URL: url + "/charts", Type: sourcev1.HelmRepositoryTypeOCI, Insecure: true}
-			hc := helmchart.Synthesize(r, "app", "1.0.0")
+			hc := manifest.NewHelmChartSource(sourcev1.HelmChart{Name: "app", Namespace: r.Namespace, Spec: sourcev1.HelmChartSpec{Chart: "app", Version: "1.0.0", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: r.Name}}})
 			reads := (testInputs{repos: func(string, string) *manifest.HelmRepository { return r }}).readSet(hc)
 			charts := helmchart.New(f, helmchart.Config{Cache: cache, Network: network})
 			chart, err := charts.Fetch(t.Context(), hc, reads, sourcecache.Policy{})

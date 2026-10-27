@@ -1722,7 +1722,7 @@ func TestStore_ReferenceFacts_ReplacementConsistency(t *testing.T) {
 			wg.Wait()
 
 			want := []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Declaration: external.Named()}}
-			assert.Diff(t, s.ReferenceFacts(target, nil), ReferenceFacts{Productions: want})
+			assert.Diff(t, s.ReferenceFacts(target, nil), ReferenceFacts{Productions: want, ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}}})
 			assert.Diff(t, s.Productions(target, nil), want)
 			if s.GetObject(target) != nil || s.GetObject(external.Named()) != external {
 				t.Fatal("replacement did not leave only the declaration")
@@ -2772,49 +2772,88 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 
 func TestRecordEmitted_PartialSubsetPreservesCompletedOutput(t *testing.T) {
 	t.Parallel()
-	s := New()
-	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
-	s.AddObject(owner)
-	first, last := emissionChild("first", "a"), emissionChild("last", "b")
-	_, _, complete := s.GetEmission(owner.Named())
-	complete.Children = []Child{first, last}
-	complete.Manifests = testutil.DocumentOccurrences([]map[string]any{first.Doc, last.Doc})
-	complete.Fingerprint = manifest.Fingerprint(complete.Manifests)
-	complete.Complete = true
-	s.RecordEmitted(owner.Named(), &complete, nil)
-	complete.Finish()
-	var observer, writer ReadSet
-	observer.Init(s, ownerID("observer"), nil)
-	writer.Init(s, owner.Named(), nil)
-	defer observer.Retire()
-	defer writer.Retire()
-	before := observer.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
-	var objects, artifacts int
-	stopObjects := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { objects++ }, false)
-	defer stopObjects()
-	stopArtifacts := s.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { artifacts++ }, false)
-	defer stopArtifacts()
-	_, _, partial := writer.GetEmission(owner.Named())
-	partial.Children = partial.Children[len(partial.Children)-1:]
-	s.RecordEmitted(owner.Named(), &partial, nil)
-	partial.Finish()
-	after := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
-	if !observer.Valid() || objects != 0 || artifacts != 0 {
-		t.Fatalf("equal partial subset invalidated output: valid=%t objects=%d artifacts=%d", observer.Valid(), objects, artifacts)
+	for _, mode := range []string{"ordinary_subset", "generated_subset", "empty_generated_set"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps"}
+			s.AddObject(owner)
+			var output, observer, writer ReadSet
+			output.Init(s, owner.Named(), nil)
+			observer.Init(s, ownerID("observer"), nil)
+			writer.Init(s, owner.Named(), nil)
+			defer output.Retire()
+			defer observer.Retire()
+			defer writer.Retire()
+			first, last := emissionChild("first", "a"), emissionChild("last", "b")
+			removed, retained := emissionChild("removed", "c"), emissionChild("retained", "d")
+			removed.Generated, retained.Generated = true, true
+			_, _, complete := output.GetEmission(owner.Named())
+			complete.Children = []Child{first, last}
+			if mode != "ordinary_subset" {
+				complete.Children = append(complete.Children, removed, retained)
+			}
+			complete.Manifests = testutil.DocumentOccurrences([]map[string]any{first.Doc, last.Doc})
+			complete.Fingerprint = manifest.Fingerprint(complete.Manifests)
+			complete.Complete = true
+			output.Bind(&complete)
+			s.RecordEmitted(owner.Named(), &complete, nil)
+			complete.Finish()
+			before := observer.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
+			borrowed := slices.Clone(before.Children)
+			var objects, artifacts int
+			stopObjects := s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { objects++ }, false)
+			defer stopObjects()
+			stopArtifacts := s.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { artifacts++ }, false)
+			defer stopArtifacts()
+			_, _, partial := writer.GetEmission(owner.Named())
+			partial.Children = []Child{last}
+			if mode == "generated_subset" {
+				partial.Children = append(partial.Children, retained)
+			}
+			incoming := slices.Clone(partial.Children)
+			if !before.Complete || !before.OutputReads.Valid() {
+				t.Fatal("subset did not start from valid completed output")
+			}
+			s.RecordEmitted(owner.Named(), &partial, nil)
+			if !slices.EqualFunc(partial.Children, incoming, childEqual) || !slices.EqualFunc(before.Children, borrowed, childEqual) {
+				t.Fatal("partial publication mutated borrowed children")
+			}
+			partial.Finish()
+			after := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
+			if !output.Valid() || !after.OutputReads.Valid() {
+				t.Fatal("partial publication invalidated captured output reads")
+			}
+			if mode == "ordinary_subset" {
+				if !observer.Valid() || objects != 0 || artifacts != 0 {
+					t.Fatalf("equal partial subset invalidated output: valid=%t objects=%d artifacts=%d", observer.Valid(), objects, artifacts)
+				}
+				if !after.Complete || after.Fingerprint != before.Fingerprint {
+					t.Fatal("equal partial subset lost completed render identity")
+				}
+				if !slices.EqualFunc(after.Children, before.Children, childEqual) {
+					t.Fatal("equal partial subset changed its children")
+				}
+			} else {
+				if s.GetObject(removed.Obj.Named()) != nil || s.GetObject(first.Obj.Named()) == nil || s.GetObject(last.Obj.Named()) == nil {
+					t.Fatal("partial subset failed to withdraw generated output while retaining ordinary children")
+				}
+				if got := s.GetObject(retained.Obj.Named()); (got != nil) != (mode == "generated_subset") {
+					t.Fatal("partial subset retained the wrong generated membership")
+				}
+				if after.Complete || len(after.Failures) != 0 {
+					t.Fatal("generated withdrawal forced completion or failure")
+				}
+			}
+			assert.Diff(t, after.Manifests, before.Manifests)
+		})
 	}
-	if !after.Complete || after.Fingerprint != before.Fingerprint {
-		t.Fatal("equal partial subset lost completed render identity")
-	}
-	if !slices.EqualFunc(after.Children, before.Children, childEqual) {
-		t.Fatal("equal partial subset changed its children")
-	}
-	assert.Diff(t, after.Manifests, before.Manifests)
 }
 
 func TestRecordEmitted_RetiresOnlyReplacedOutputBorrower(t *testing.T) {
 	t.Parallel()
 	for _, payload := range []bool{false, true} {
-		for _, mode := range []string{"partial", "rebound", "rejected"} {
+		for _, mode := range []string{"partial", "rebound", "keyed_replay", "rejected"} {
 			t.Run(fmt.Sprintf("payload=%t/%s", payload, mode), func(t *testing.T) {
 				t.Parallel()
 				s := New()
@@ -2840,6 +2879,9 @@ func TestRecordEmitted_RetiresOnlyReplacedOutputBorrower(t *testing.T) {
 				_, _, next := second.GetEmission(owner.Named())
 				defer next.Finish()
 				next.Complete = mode != "partial"
+				if mode == "keyed_replay" {
+					next.Fingerprint = output.Fingerprint
+				}
 				if mode == "rejected" {
 					child = emissionChild("output", "new")
 					next.Children, next.Manifests = []Child{child}, testutil.DocumentOccurrences([]map[string]any{child.Doc})
@@ -2863,7 +2905,7 @@ func TestRecordEmitted_RetiresOnlyReplacedOutputBorrower(t *testing.T) {
 					s.RecordEmitted(owner.Named(), &next, nil)
 				}
 				current := s.GetArtifact(owner.Named(), ArtifactContent).(*Emission)
-				if mode == "rebound" {
+				if mode == "rebound" || mode == "keyed_replay" && payload {
 					if !first.retired.Load() || current.OutputReads != &second {
 						t.Fatal("accepted rebound retained the predecessor borrower")
 					}
@@ -3063,7 +3105,7 @@ func TestReadSet_CloseRetiresHiddenBorrowedOutput(t *testing.T) {
 			sh.mu.RLock()
 			var retained *ReadSet
 			if scenario == "source_hidden" {
-				retained = sh.artifacts[declaration.Named()].value.(*SourceArtifact).Reads
+				retained = sh.artifacts[declaration.Named()].value.Reads
 			} else {
 				retained = sh.slots[declaration.Named()].current.Load().OutputReads
 			}

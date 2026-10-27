@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"github.com/fluxcd/pkg/apis/meta"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -103,6 +105,34 @@ func TestObjectDocument_Ownership(t *testing.T) {
 			if diff := cmp.Diff(before["spec"], copyDoc["spec"]); diff != "" {
 				t.Fatalf("namespace copy changed desired spec (-want +got):\n%s", diff)
 			}
+		})
+	}
+}
+
+func TestExternalArtifact_RenderDocument(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		ref  *meta.NamespacedObjectKindReference
+	}{
+		{name: "absent"},
+		{name: "local", ref: &meta.NamespacedObjectKindReference{Kind: "ArtifactGenerator", Name: "generator"}},
+		{name: "qualified", ref: &meta.NamespacedObjectKindReference{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "sources"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cr := sourcev1.ExternalArtifact{Name: "output", Namespace: "apps", Labels: map[string]string{"capture": "value"}, Annotations: map[string]string{"annotation": "value"}, Spec: sourcev1.ExternalArtifactSpec{SourceRef: tc.ref}}
+			want, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&cr)
+			assert.NoError(t, err)
+			delete(want, "status")
+			delete(want["metadata"].(map[string]any), "creationTimestamp")
+			want["kind"], want["apiVersion"] = KindExternalArtifact, sourceAPIVersion
+			object := NewExternalArtifact(cr)
+			got, err := object.RenderDocument()
+			assert.NoError(t, err)
+			assert.Diff(t, got, want)
+			got["metadata"].(map[string]any)["labels"].(map[string]any)["capture"] = "changed"
+			assert.Equal(t, object.Labels["capture"], "value")
 		})
 	}
 }

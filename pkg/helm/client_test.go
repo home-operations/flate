@@ -153,7 +153,7 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 		raw.Named(): {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
 	}})
 	resolver := NewSources(st)
-	if resolver.HelmRepository(raw.Namespace, raw.Name) != nil {
+	if resolver.Declaration(raw.Named()) != nil {
 		t.Fatal("provisional source reached shared resolver")
 	}
 	accepted := *raw
@@ -163,7 +163,7 @@ func TestSourceResolver_SharedClientDeclarations(t *testing.T) {
 	next.Children = []store.Child{{Obj: &accepted}}
 	st.RecordEmitted(parent.Named(), &next, nil)
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "other children pending"})
-	if resolver.HelmRepository(raw.Namespace, raw.Name) != &accepted {
+	if resolver.Declaration(raw.Named()) != &accepted {
 		t.Fatal("shared resolver lost effective accepted source")
 	}
 }

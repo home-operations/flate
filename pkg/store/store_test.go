@@ -1106,6 +1106,49 @@ func TestStore_ListenerSnapshots(t *testing.T) {
 		s.AddObject(newCM("empty", "ns"))
 		assert.Equal(t, len(seen), 0)
 	})
+	t.Run("registration during callback", func(t *testing.T) {
+		t.Parallel()
+		s := New()
+		var seen []int
+		entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		var first, second Unsubscribe
+		first = s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) {
+			seen = append(seen, 1)
+			close(entered)
+			<-release
+			first()
+			second()
+			s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 4) }, false)
+		}, false)
+		second = s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 2) }, false)
+		s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { seen = append(seen, 3) }, false)
+		obj := newCM("active", "ns")
+		shard := s.shardFor(obj.Named())
+		shard.mu.Lock()
+		captured := fireUnderLock(s, EventObjectAdded, obj.Named())
+		shard.mu.Unlock()
+		before := make([]int64, len(captured.listeners.entries))
+		for i, entry := range captured.listeners.entries {
+			before[i] = entry.id
+		}
+		go func() {
+			s.AddObject(obj)
+			close(done)
+		}()
+		<-entered
+		close(release)
+		<-done
+		assert.Diff(t, seen, []int{1, 2, 3})
+		assert.Equal(t, len(captured.listeners.entries), 3)
+		after := make([]int64, len(captured.listeners.entries))
+		for i, entry := range captured.listeners.entries {
+			after[i] = entry.id
+		}
+		assert.Diff(t, after, before)
+		seen = nil
+		s.AddObject(newCM("future", "ns"))
+		assert.Diff(t, seen, []int{3, 4})
+	})
 }
 
 func TestStore_SetConditionLocked_StableSliceLength(t *testing.T) {

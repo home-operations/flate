@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
 	"github.com/homeport/dyff/pkg/dyff"
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 )
 
@@ -71,12 +74,10 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	assert.Equal(t, stderr, "\n  alpha: ✓ 0 failed\n\n  omega: ✓ 0 failed\n")
 	stdout, _, code = runCLI(t, "get", "ks", "--path", root, "--concurrency", "2")
 	assert.Equal(t, code, 0)
-	if strings.Contains(stdout, "CLUSTER") || !strings.Contains(stdout, "alpha: shared") || !strings.Contains(stdout, "omega: shared") {
-		t.Fatalf("table names must carry the shared qualifier: %s", stdout)
-	}
+	assert.Equal(t, stdout, "CLUSTER    NAMESPACE      NAME      PATH\nalpha      flux-system    shared    ./alpha/app\nomega      flux-system    shared    ./omega/app\n")
 	stdout, stderr, code = runCLI(t, "get", "images", "--path", root, "--concurrency", "2")
 	assert.Equal(t, code, 0)
-	assert.Equal(t, stdout, "alpha: example.test/app:first\nomega: example.test/app:second\n")
+	assert.Equal(t, stdout, "CLUSTER    IMAGE\nalpha      example.test/app:first\nomega      example.test/app:second\n")
 	assert.Equal(t, stderr, "\n  alpha: ✓ 0 failed\n\n  omega: ✓ 0 failed\n")
 	stdout, stderr, code = runCLI(t, "test", "ks", "shared", "--path", root, "--concurrency", "2")
 	if code != 0 || !strings.Contains(stdout, "alpha: flux-system/shared") || !strings.Contains(stdout, "omega: flux-system/shared") || strings.Contains(stdout, "Cluster:") || !strings.Contains(stdout, "Invocation totals") || strings.Contains(stdout, "failed") {
@@ -91,6 +92,9 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	if strings.Contains(stderr, "not found") {
 		t.Fatalf("another cluster's absence rejected a named match: %s", stderr)
 	}
+	stdout, _, code = runCLI(t, "get", "ks", "only-alpha", "--path", root, "--concurrency", "2")
+	assert.Equal(t, code, 0)
+	assert.Equal(t, stdout, "NAMESPACE      NAME          PATH\nflux-system    only-alpha    ./alpha/app\n")
 	stdout, stderr, code = runCLI(t, "test", "ks", "only-alpha", "--path", root, "--concurrency", "2")
 	assert.Equal(t, code, 0)
 	if strings.Contains(stdout, "alpha:") || !strings.Contains(stdout, "Kustomization  flux-system/only-alpha") {
@@ -100,6 +104,37 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "absent") {
 		t.Fatalf("global named absence: code=%d stderr=%s", code, stderr)
 	}
+	writeGetRelease(t, root, "alpha")
+	stdout, stderr, code = runCLI(t, "get", "all", "--path", root, "--concurrency", "2")
+	if code != 0 || strings.Count(stdout, "CLUSTER") != 2 || !strings.Contains(stdout, "HelmRelease/shared") || !strings.Contains(stdout, "omega") {
+		t.Fatalf("a kind present in one cluster lost the invocation roster: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	for section := range strings.SplitSeq(strings.TrimSuffix(stdout, "\n"), "\n\n") {
+		if !strings.HasPrefix(section, "CLUSTER    ") {
+			t.Fatalf("mixed section lost CLUSTER: %s", section)
+		}
+	}
+
+	for _, format := range []string{"table", "name", "json", "yaml"} {
+		for _, command := range []string{"get all", "get"} {
+			out, diagnostics, status := runCLI(t, append(strings.Fields(command), "--path", root, "--concurrency", "2", "-n", "absent", "-o", format)...)
+			if status != 0 {
+				t.Fatalf("empty roster: exit=%d stdout=%s stderr=%s", status, out, diagnostics)
+			}
+			if format == "json" || format == "yaml" {
+				groups := decodeGetDocuments(t, out, format, []string{"alpha", "omega"})
+				for _, group := range groups {
+					assert.Equal(t, len(group.Documents), 0)
+					if format == "json" && group.Documents == nil {
+						t.Fatal("empty documents must be []")
+					}
+				}
+			} else {
+				assert.Equal(t, out, "")
+			}
+		}
+	}
+
 }
 
 func TestRun_ClusterGroups_PartialFailure(t *testing.T) {
@@ -115,6 +150,53 @@ func TestRun_ClusterGroups_PartialFailure(t *testing.T) {
 	if len(groups) != 2 || groups[0].Cluster != "alpha" || slices.ContainsFunc(groups[0].Documents, hasPod) || groups[1].Cluster != "omega" || !slices.ContainsFunc(groups[1].Documents, hasPod) {
 		t.Fatalf("failed cluster erased healthy output: %s", stdout)
 	}
+	writeGetRelease(t, root, "omega")
+	for _, command := range []string{"get all", "get", "get images"} {
+		for _, format := range []string{"table", "name", "json", "yaml"} {
+			t.Run(command+"/"+format, func(t *testing.T) {
+				args := append(strings.Fields(command), "--path", root, "-o", format, "--concurrency", "2", "--cache-dir", t.TempDir())
+				out, diagnostics, status := runCLI(t, args...)
+				if status != 1 || !strings.Contains(diagnostics, "alpha: flux-system/missing") || strings.Contains(diagnostics, "Cluster:") {
+					t.Fatalf("lost qualified failure: exit=%d stdout=%s stderr=%s", status, out, diagnostics)
+				}
+				if command == "get images" {
+					if format == "table" {
+						assert.Equal(t, out, "CLUSTER    IMAGE\nomega      example.test/app:second\n")
+					}
+					if format == "name" {
+						assert.Equal(t, out, "omega: example.test/app:second\n")
+					}
+					if format == "json" || format == "yaml" {
+						var images []output.ImageGroup
+						assert.NoError(t, yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 4096).Decode(&images))
+						assert.Equal(t, len(images), 2)
+						assert.Equal(t, images[0].Cluster, "alpha")
+						assert.Equal(t, len(images[0].Images), 0)
+						assert.Equal(t, images[1].Cluster, "omega")
+						assert.Diff(t, images[1].Images, []string{"example.test/app:second"})
+					}
+					return
+				}
+				switch format {
+				case "table":
+					if strings.Count(out, "CLUSTER") != 2 || !strings.Contains(out, "omega") || !strings.Contains(out, "Kustomization/shared") || !strings.Contains(out, "HelmRelease/shared") {
+						t.Fatalf("partial table lost healthy resources: %s", out)
+					}
+				case "name":
+					assert.Equal(t, out, "alpha:Kustomization/shared\nomega:Kustomization/shared\nomega:HelmRelease/shared\n")
+				default:
+					groups := decodeGetDocuments(t, out, format, []string{"alpha", "omega"})
+					assert.Equal(t, len(groups[0].Documents), 1)
+					assert.Equal(t, groups[0].Documents[0]["kind"], any("Kustomization"))
+					assert.Equal(t, len(groups[1].Documents), 2)
+					assert.Equal(t, groups[1].Documents[0]["kind"], any("Kustomization"))
+					assert.Equal(t, groups[1].Documents[1]["kind"], any("HelmRelease"))
+					assert.Equal(t, groups[1].Documents[1]["name"], any("shared"))
+				}
+			})
+		}
+	}
+
 }
 
 func TestRun_ClusterGroups_DiffAbsenceAndFailure(t *testing.T) {
@@ -408,5 +490,410 @@ func TestClusterReport_NativeAggregateIndexes(t *testing.T) {
 	assert.Equal(t, groups[1].Diffs[0].Path.DocumentIdx, 0)
 	if groups[1].Diffs[0].Path.Root == &aggregate.From {
 		t.Fatal("aggregation mutated its input paths")
+	}
+}
+
+func writeGetRelease(t *testing.T, root, dir string) {
+	t.Helper()
+	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
+	testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: installed, namespace: workloads}\ndata: {value: rendered}\n")
+	testutil.WriteFile(t, root, dir+"/app/kustomization.yaml", "resources: [pod.yaml, release.yaml]\n")
+	testutil.WriteFile(t, root, dir+"/app/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: shared, namespace: apps}
+spec:
+  targetNamespace: workloads
+  releaseName: installed
+  chart:
+    spec:
+      chart: ./charts/app
+      version: 0.1.0
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+}
+
+func TestRun_Get_Formats(t *testing.T) {
+	root := writeClusterGroupsFixture(t, map[string]string{"alpha": "first", "omega": "second"})
+	for _, dir := range []string{"alpha", "omega"} {
+		appendScopeSpec(t, root, dir+"/flux.yaml", "  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")
+		writeGetRelease(t, root, dir)
+		testutil.WriteFile(t, root, dir+"/app/images.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: images, namespace: apps}\ndata: {shared: 'example.test/shared:v1', unusual: 'count:up0'}\n")
+		testutil.WriteFile(t, root, dir+"/app/kustomization.yaml", "resources: [pod.yaml, release.yaml, images.yaml]\n")
+	}
+	for _, scope := range []struct {
+		name, path string
+		clusters   []string
+	}{
+		{"single", filepath.Join(root, "alpha"), []string{"alpha"}},
+		{"multiple", root, []string{"alpha", "omega"}},
+	} {
+		t.Run(scope.name, func(t *testing.T) {
+			for _, format := range []string{"", "table", "yaml", "json", "name"} {
+				t.Run("format="+format, func(t *testing.T) {
+					var combined string
+					for _, command := range []string{"get all", "get", "get ks", "get hr", "get images"} {
+						t.Run(command, func(t *testing.T) {
+							args := append(strings.Fields(command), "--path", scope.path, "--cache-dir", t.TempDir(), "--concurrency", "2")
+							if format != "" {
+								args = append(args, "-o", format)
+							}
+							out, diagnostics, status := runCLI(t, args...)
+							if status != 0 {
+								t.Fatalf("exit=%d stdout=%s stderr=%s", status, out, diagnostics)
+							}
+							again, stderr, code := runCLI(t, args...)
+							assert.Equal(t, code, status)
+							assert.Equal(t, again, out)
+							assert.Equal(t, stderr, diagnostics)
+							if command == "get all" {
+								combined = out
+							}
+							if command == "get" {
+								assert.Equal(t, out, combined)
+							}
+							if command == "get images" {
+								want := []string{"count:up0", "example.test/app:first", "example.test/shared:v1"}
+								if format == "json" || format == "yaml" {
+									var images []string
+									if len(scope.clusters) == 1 {
+										assert.NoError(t, yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 4096).Decode(&images))
+										assert.Diff(t, images, want)
+									} else {
+										var groups []output.ImageGroup
+										assert.NoError(t, yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 4096).Decode(&groups))
+										assert.Equal(t, len(groups), 2)
+										for i, cluster := range scope.clusters {
+											assert.Equal(t, groups[i].Cluster, cluster)
+											if i == 1 {
+												want[1] = "example.test/app:second"
+											}
+											assert.Diff(t, groups[i].Images, want)
+										}
+									}
+								} else {
+									expected := ""
+									if format != "name" {
+										if len(scope.clusters) == 2 {
+											expected = "CLUSTER    "
+										}
+										expected += "IMAGE\n"
+									}
+									for i, cluster := range scope.clusters {
+										if i == 1 {
+											want[1] = "example.test/app:second"
+										}
+										for _, image := range want {
+											prefix := ""
+											if len(scope.clusters) == 2 {
+												prefix = fmt.Sprintf("%-11s", cluster)
+												if format == "name" {
+													prefix = cluster + ": "
+												}
+											}
+											expected += prefix + image + "\n"
+										}
+									}
+									assert.Equal(t, out, expected)
+								}
+								return
+							}
+							kinds := []string{"Kustomization", "HelmRelease"}
+							if command == "get ks" {
+								kinds = kinds[:1]
+							}
+							if command == "get hr" {
+								kinds = kinds[1:]
+							}
+							all := command == "get" || command == "get all"
+							if format == "yaml" || format == "json" {
+								groups := decodeGetDocuments(t, out, format, scope.clusters)
+								for i, group := range groups {
+									assert.Equal(t, len(group.Documents), len(kinds))
+									for j, kind := range kinds {
+										doc := group.Documents[j]
+										assert.Equal(t, doc["kind"], any(kind))
+										assert.Equal(t, doc["name"], any("shared"))
+										assert.Diff(t, doc["sourceRef"], map[string]any{"kind": "GitRepository", "name": "flux-system", "namespace": "flux-system"})
+										if kind == "Kustomization" {
+											assert.Equal(t, doc["path"], any("./"+scope.clusters[i]+"/app"))
+											assert.Equal(t, doc["prune"], any(false))
+											assert.Equal(t, doc["wait"], any(false))
+										} else {
+											assert.Equal(t, doc["chart"], any("flux-system-flux-system/./charts/app"))
+											assert.Equal(t, doc["version"], any("0.1.0"))
+											assert.Equal(t, doc["releaseName"], any("installed"))
+											assert.Equal(t, doc["targetNamespace"], any("workloads"))
+										}
+									}
+								}
+							} else {
+								var expected string
+								for j, kind := range kinds {
+									if format != "name" {
+										if j > 0 {
+											expected += "\n"
+										}
+										if len(scope.clusters) == 2 {
+											expected += "CLUSTER    "
+										}
+										if kind == "Kustomization" {
+											if all {
+												expected += "NAMESPACE      NAME                    PATH\n"
+											} else {
+												expected += "NAMESPACE      NAME      PATH\n"
+											}
+										} else {
+											if all {
+												expected += "NAMESPACE    NAME                  "
+											} else {
+												expected += "NAMESPACE    NAME      "
+											}
+											expected += "CHART                                   VERSION    SOURCE\n"
+										}
+									}
+									for _, cluster := range scope.clusters {
+										name := "shared"
+										if all {
+											name = kind + "/" + name
+										}
+										if format == "name" {
+											if len(scope.clusters) == 2 {
+												name = cluster + ":" + name
+											}
+											expected += name + "\n"
+											continue
+										}
+										if len(scope.clusters) == 2 {
+											expected += fmt.Sprintf("%-11s", cluster)
+										}
+										if kind == "Kustomization" {
+											expected += fmt.Sprintf("flux-system    %-*s./%s/app\n", map[bool]int{false: 10, true: 24}[all], name, cluster)
+										} else {
+											expected += fmt.Sprintf("apps         %-*sflux-system-flux-system/./charts/app    0.1.0      flux-system\n", map[bool]int{false: 10, true: 22}[all], name)
+										}
+									}
+								}
+								assert.Equal(t, out, expected)
+							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func decodeGetDocuments(t *testing.T, out, format string, clusters []string) []output.DocumentGroup {
+	t.Helper()
+	if len(clusters) > 1 && format == "json" {
+		var groups []output.DocumentGroup
+		assert.NoError(t, json.Unmarshal([]byte(out), &groups))
+		assert.Equal(t, len(groups), len(clusters))
+		for i, cluster := range clusters {
+			assert.Equal(t, groups[i].Cluster, cluster)
+		}
+		return groups
+	}
+	groups := make([]output.DocumentGroup, len(clusters))
+	for i, cluster := range clusters {
+		groups[i] = output.DocumentGroup{Cluster: cluster, Documents: []map[string]any{}}
+	}
+	if format == "json" {
+		assert.NoError(t, json.Unmarshal([]byte(out), &groups[0].Documents))
+		return groups
+	}
+	streams := []string{out}
+	if len(clusters) > 1 {
+		streams = nil
+		for i, cluster := range clusters {
+			marker := "# Cluster: " + cluster + "\n"
+			if !strings.HasPrefix(out, marker) {
+				t.Fatalf("missing cluster marker %q: %s", marker, out)
+			}
+			out = strings.TrimPrefix(out, marker)
+			stream, rest, found := strings.Cut(out, "# Cluster: ")
+			streams = append(streams, stream)
+			if found {
+				out = "# Cluster: " + rest
+			} else {
+				out = ""
+			}
+			if i == len(clusters)-1 && out != "" {
+				t.Fatalf("extra groups: %s", out)
+			}
+		}
+	}
+	for i, stream := range streams {
+		decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(stream), 4096)
+		for {
+			var doc map[string]any
+			err := decoder.Decode(&doc)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			assert.NoError(t, err)
+			if doc != nil {
+				groups[i].Documents = append(groups[i].Documents, doc)
+			}
+		}
+	}
+	return groups
+}
+
+func TestPrepareGetTables_SharedColumns(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		groups int
+	}{
+		{name: "single", groups: 1},
+		{name: "multiple", groups: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			columns := []output.Column{{Header: "NAME", Key: "name"}}
+			rows := []map[string]string{{"cluster": "alpha", "name": "shared"}}
+			original := []output.Table{{Columns: columns, Rows: rows}}
+			prepared, multi := prepareGetTables(&selectedInvocation{groups: make([]selectedGroup, tc.groups)}, original)
+			assert.Equal(t, multi, tc.groups == 2)
+			want := columns
+			if multi {
+				want = []output.Column{{Header: "CLUSTER", Key: "cluster"}, {Header: "NAME", Key: "name"}}
+			}
+			assert.Diff(t, prepared[0].Columns, want)
+			assert.Diff(t, original, []output.Table{{
+				Columns: []output.Column{{Header: "NAME", Key: "name"}},
+				Rows:    []map[string]string{{"cluster": "alpha", "name": "shared"}},
+			}})
+		})
+	}
+}
+
+func TestRun_GetAll_EmptyKinds(t *testing.T) {
+	for _, kinds := range []string{"ks", "hr", "empty"} {
+		t.Run(kinds, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [objects.yaml]\n")
+			body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: empty}\n"
+			want := ""
+			switch kinds {
+			case "ks":
+				body = testutil.KustomizationYAML("only", "flux-system", "  suspend: true\n  path: ./absent\n")
+				want = "Kustomization/only\n"
+			case "hr":
+				body = "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: only, namespace: apps}\nspec: {suspend: true, chart: {spec: {chart: demo, version: 1.0.0, sourceRef: {kind: HelmRepository, name: charts}}}}\n"
+				want = "HelmRelease/only\n"
+			}
+			testutil.WriteFile(t, root, "objects.yaml", body)
+			for _, format := range []string{"", "table", "name", "json", "yaml"} {
+				t.Run("format="+format, func(t *testing.T) {
+					var all string
+					for _, command := range []string{"get all", "get"} {
+						args := append(strings.Fields(command), "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
+						if format != "" {
+							args = append(args, "-o", format)
+						}
+						out, stderr, code := runCLI(t, args...)
+						if code != 0 {
+							t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, stderr)
+						}
+						if command == "get all" {
+							all = out
+						} else {
+							assert.Equal(t, out, all)
+						}
+						switch format {
+						case "name":
+							assert.Equal(t, out, want)
+						case "json", "yaml":
+							groups := decodeGetDocuments(t, out, format, []string{"."})
+							if kinds == "empty" {
+								assert.Equal(t, len(groups[0].Documents), 0)
+								if format == "json" {
+									assert.Equal(t, out, "[]\n")
+								} else {
+									assert.Equal(t, out, "")
+								}
+							} else {
+								assert.Equal(t, len(groups[0].Documents), 1)
+								assert.Equal(t, groups[0].Documents[0]["kind"].(string)+"/"+groups[0].Documents[0]["name"].(string)+"\n", want)
+							}
+						default:
+							if kinds == "empty" {
+								assert.Equal(t, out, "")
+							} else if strings.Contains(out, "\n\n") || !strings.Contains(out, strings.TrimSpace(want)) {
+								t.Fatalf("empty kind left a section: %q", out)
+							}
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestRun_GetAll_ChangedOnly(t *testing.T) {
+	base := writeClusterGroupsFixture(t, map[string]string{"alpha": "same", "omega": "same"})
+	head := writeClusterGroupsFixture(t, map[string]string{"alpha": "same", "omega": "same"})
+	for _, root := range []string{base, head} {
+		writeGetRelease(t, root, "alpha")
+		writeGetRelease(t, root, "omega")
+		testutil.WriteFile(t, root, "alpha/app/private.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: private, namespace: apps}\ndata: {value: original}\n")
+		testutil.WriteFile(t, root, "alpha/app/kustomization.yaml", "resources: [pod.yaml, release.yaml, private.yaml]\n")
+	}
+	testutil.WriteFile(t, head, "alpha/app/private.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: private, namespace: apps}\ndata: {value: changed}\n")
+	testutil.WriteFile(t, base, "alpha/removed.yaml", testutil.KustomizationYAML("removed", "flux-system", "  path: ./alpha/removed\n"))
+	testutil.WriteFile(t, base, "alpha/kustomization.yaml", "resources: [flux.yaml, removed.yaml]\n")
+	testutil.WriteFile(t, base, "alpha/removed/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, base, "alpha/removed/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")
+	flags := []string{"--path", head, "--path-orig", base, "--cache-dir", t.TempDir(), "--concurrency", "2"}
+	var selected [][]output.DocumentGroup
+	for _, kind := range []string{"ks", "hr"} {
+		out, stderr, code := runCLI(t, append([]string{"get", kind, "-o", "json"}, flags...)...)
+		if code != 0 {
+			t.Fatalf("get %s: exit=%d stdout=%s stderr=%s", kind, code, out, stderr)
+		}
+		selected = append(selected, decodeGetDocuments(t, out, "json", []string{"alpha", "omega"}))
+	}
+	for _, command := range []string{"get all", "get"} {
+		t.Run(command, func(t *testing.T) {
+			out, stderr, code := runCLI(t, append(append(strings.Fields(command), "-o", "json"), flags...)...)
+			if code != 0 {
+				t.Fatalf("exit=%d stdout=%s stderr=%s", code, out, stderr)
+			}
+			groups := decodeGetDocuments(t, out, "json", []string{"alpha", "omega"})
+			for i, group := range groups {
+				want := append(slices.Clone(selected[0][i].Documents), selected[1][i].Documents...)
+				assert.Diff(t, group.Documents, want)
+				var identities []string
+				for _, doc := range group.Documents {
+					identities = append(identities, doc["kind"].(string)+"/"+doc["name"].(string))
+				}
+				if i == 0 {
+					assert.Diff(t, identities, []string{"Kustomization/shared", "HelmRelease/shared"})
+					assert.Equal(t, group.Documents[1]["version"], any("0.1.0"))
+				} else {
+					assert.Diff(t, identities, []string{"Kustomization/shared"})
+				}
+			}
+			out, stderr, code = runCLI(t, append(strings.Fields(command), flags...)...)
+			if code != 0 || strings.Count(out, "CLUSTER") != 2 || !strings.Contains(out, "omega") || strings.Contains(out, "removed") || !strings.Contains(out, "alpha") || !strings.Contains(out, "HelmRelease/shared") {
+				t.Fatalf("changed table: exit=%d stdout=%s stderr=%s", code, out, stderr)
+			}
+			for _, format := range []string{"json", "yaml"} {
+				args := append(append(strings.Fields(command), "-o", format, "-n", "apps"), flags...)
+				out, stderr, code := runCLI(t, args...)
+				if code != 0 {
+					t.Fatalf("namespace selection: exit=%d stdout=%s stderr=%s", code, out, stderr)
+				}
+				groups := decodeGetDocuments(t, out, format, []string{"alpha", "omega"})
+				assert.Equal(t, len(groups[0].Documents), 1)
+				assert.Equal(t, groups[0].Documents[0]["kind"], any("HelmRelease"))
+				assert.Equal(t, len(groups[1].Documents), 0)
+				if format == "json" && groups[1].Documents == nil {
+					t.Fatal("empty retained cluster documents must be []")
+				}
+			}
+		})
 	}
 }

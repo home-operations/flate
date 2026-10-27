@@ -366,11 +366,9 @@ func TestRun_GetKS_YAML(t *testing.T) {
 	}
 }
 
-// TestRun_GetAll_RejectsBadOutput pins that get all rejects -o name —
-// printCluster only shapes yaml/json.
 func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 	path := writeFixture(t)
-	_, stderr, code := runCLI(t, "get", "all", "--path", path, "-o", "name")
+	_, stderr, code := runCLI(t, "get", "all", "--path", path, "-o", "diff")
 	if code == 0 {
 		t.Fatal("expected non-zero exit")
 	}
@@ -379,15 +377,14 @@ func TestRun_GetAll_RejectsBadOutput(t *testing.T) {
 	}
 }
 
-// TestRun_GetAll_Yaml emits a key:value cluster summary.
 func TestRun_GetAll_Yaml(t *testing.T) {
 	path := writeFixture(t)
 	stdout, _, code := runCLI(t, "get", "all", "--path", path, "-o", "yaml")
 	if code != 0 {
 		t.Fatalf("get all exited %d", code)
 	}
-	if !strings.Contains(stdout, "kustomizations:") {
-		t.Errorf("summary missing kustomizations key:\n%s", stdout)
+	if !strings.Contains(stdout, "kind: Kustomization\n") || !strings.Contains(stdout, "name: apps\n") || strings.Contains(stdout, "kustomizations:") {
+		t.Errorf("object listing missing Kustomization:\n%s", stdout)
 	}
 }
 
@@ -397,12 +394,12 @@ func TestRun_GetAll_RespectsNamespace(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("get all -n alpha exited %d: %s", code, stderr)
 	}
-	var summary map[string]int
-	if err := json.Unmarshal([]byte(stdout), &summary); err != nil {
+	var documents []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &documents); err != nil {
 		t.Fatalf("get all emitted invalid JSON: %v\n%s", err, stdout)
 	}
-	if summary["kustomizations"] != 1 || summary["helmReleases"] != 0 {
-		t.Errorf("namespace-scoped summary = %#v, want 1 KS and 0 HR", summary)
+	if len(documents) != 1 || documents[0]["kind"] != "Kustomization" || documents[0]["namespace"] != "alpha" || documents[0]["name"] != "apps-a" {
+		t.Errorf("namespace-scoped objects = %#v, want alpha/apps-a", documents)
 	}
 }
 
@@ -967,16 +964,21 @@ func TestRun_GetHRChartVersions(t *testing.T) {
 				chart = "chartRef: {kind: OCIRepository, name: chart}"
 			}
 			testutil.WriteFile(t, root, "flux.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: app, namespace: apps}\nspec: {suspend: true, "+chart+"}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {suspend: true, url: 'oci://example.test/app', ref: {"+tc.reference+"}}\n")
-			stdout, stderr, code := runCLI(t, "get", "hr", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
-			var rows []struct {
-				Version   string `json:"version"`
-				Chart     string `json:"chart"`
-				SourceRef struct {
-					Namespace string `json:"namespace"`
-				} `json:"sourceRef"`
-			}
-			if code != 0 || json.Unmarshal([]byte(stdout), &rows) != nil || len(rows) != 1 || rows[0].Version != tc.want || rows[0].Chart != tc.wantChart || rows[0].SourceRef.Namespace != "apps" {
-				t.Fatalf("chart version: exit=%d stdout=%s stderr=%s want=%s chart=%s", code, stdout, stderr, tc.want, tc.wantChart)
+			for _, command := range []string{"get hr", "get all", "get"} {
+				t.Run(command, func(t *testing.T) {
+					args := append(strings.Fields(command), "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json")
+					stdout, stderr, code := runCLI(t, args...)
+					var rows []struct {
+						Version   string `json:"version"`
+						Chart     string `json:"chart"`
+						SourceRef struct {
+							Namespace string `json:"namespace"`
+						} `json:"sourceRef"`
+					}
+					if code != 0 || json.Unmarshal([]byte(stdout), &rows) != nil || len(rows) != 1 || rows[0].Version != tc.want || rows[0].Chart != tc.wantChart || rows[0].SourceRef.Namespace != "apps" {
+						t.Fatalf("chart version: exit=%d stdout=%s stderr=%s want=%s chart=%s", code, stdout, stderr, tc.want, tc.wantChart)
+					}
+				})
 			}
 		})
 	}
@@ -997,9 +999,7 @@ data:
 	for _, format := range []string{"name", "yaml", "json"} {
 		t.Run(format, func(t *testing.T) {
 			flags := []string{"--path", current, "--cache-dir", cache, "--concurrency", "2"}
-			if format != "name" {
-				flags = append(flags, "-o", format)
-			}
+			flags = append(flags, "-o", format)
 			get, stderr, code := runCLI(t, append([]string{"get", "images"}, flags...)...)
 			if code != 0 {
 				t.Fatalf("get images exited %d: %s", code, stderr)
@@ -1037,8 +1037,25 @@ data:
 					args = append(args, "--path-orig", writeFixture(t))
 				}
 				stdout, stderr, code := runCLI(t, args...)
-				if code != 0 || stdout != "" {
+				want := ""
+				if verb == "get" {
+					want = "IMAGE\n"
+				}
+				if code != 0 || stdout != want {
 					t.Fatalf("empty %s images: exit=%d stdout=%q stderr=%s", verb, code, stdout, stderr)
+				}
+				for _, format := range []string{"name", "yaml", "json"} {
+					out, diagnostics, status := runCLI(t, append(args, "-o", format)...)
+					expected := ""
+					if format != "name" {
+						expected = "[]\n"
+						if verb == "get" {
+							expected = "null\n"
+						}
+					}
+					if status != 0 || out != expected {
+						t.Fatalf("empty %s/%s: exit=%d stdout=%q stderr=%s", verb, format, status, out, diagnostics)
+					}
 				}
 			})
 		}

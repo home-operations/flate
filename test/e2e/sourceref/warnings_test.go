@@ -97,7 +97,7 @@ func TestE2E_SourceWarnings(t *testing.T) {
 						if strings.Count(stderr, "["+category+"]") != count || !strings.Contains(stderr, message) || strings.Contains(stdout, message) || strings.Contains(stdout, "warnings (") || strings.Contains(stdout, "notes (") {
 							t.Fatalf("%s: stdout=%s stderr=%s", condition, stdout, stderr)
 						}
-						if condition == "aliases" && verb == "build" && (!strings.Contains(stdout, "name: one") || !strings.Contains(stdout, "name: two")) || verb == "test" && !strings.Contains(stdout, "passed") || verb == "get" && !strings.Contains(stdout, "kustomizations: 2") {
+						if condition == "aliases" && verb == "build" && (!strings.Contains(stdout, "name: one") || !strings.Contains(stdout, "name: two")) || verb == "test" && !strings.Contains(stdout, "passed") || verb == "get" && (!strings.Contains(stdout, "Kustomization/one") || !strings.Contains(stdout, "Kustomization/two")) {
 							t.Fatalf("product lost: %s", stdout)
 						}
 						if run == 0 {

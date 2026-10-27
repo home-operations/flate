@@ -30,10 +30,9 @@ type ProducerTarget struct {
 // encryptedData keys. ObjectBucketClaim produces a same-named Secret and ConfigMap
 // for credentials and connection settings, without declaring their keys.
 //
-// Targets use the producer's effective namespace. Inference reads raw declared
-// names: kustomize namePrefix, nameSuffix and replacements are not followed because
-// those generated identities have no nameReference fieldSpec. Transformed targets
-// can therefore be missed, but cannot create a false match.
+// Targets use the supplied producer's namespace and spec target names.
+// Declaration identity projection belongs to the caller; explicit spec names
+// require their own nameReference transformation.
 func ProducerTargets(obj BaseManifest, candidates ...NamedResource) []ProducerTarget {
 	return obj.producerTargets(candidates)
 }

@@ -476,7 +476,8 @@ func TestFilter_TransitiveDepsKustomization(t *testing.T) {
 	gitID := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"}
 	depID := testutil.KustomizationID("flux-system", "repositories")
 
-	f := NewFilter(NewSet([]string{"ks.yaml"}), filterFixture{files: map[manifest.NamedResource]string{ksID: "ks.yaml"}, root: "", objects: filtertest.MapLister{ksID: ks}}.index(), filtertest.MapLister{ksID: ks}, "")
+	objects := filtertest.MapLister{ksID: ks, depID: refObj(depID)}
+	f := NewFilter(NewSet([]string{"ks.yaml"}), filterFixture{files: map[manifest.NamedResource]string{ksID: "ks.yaml"}, objects: objects}.index(), objects, "")
 
 	assert.Equal(t, f.ShouldReconcile(gitID), true)
 	assert.Equal(t, f.ShouldReconcile(depID), false)
@@ -514,25 +515,51 @@ func TestFilter_ContentDependencies(t *testing.T) {
 
 func TestFilter_DependsOnNotFollowed(t *testing.T) {
 	t.Parallel()
-	// dependsOn is reconcile-ordering only. A change to `a` must not
-	// drag `b` into the keep set just because `a` depends on `b`.
-	a := &manifest.Kustomization{
-		Name: "a", Namespace: "flux-system", Path: "./a",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "src", Namespace: "flux-system"},
-		DependsOn: []kustomizev1.DependencyReference{{
-			Namespace: "flux-system", Name: "b",
-		}},
-	}
-	b := &manifest.Kustomization{Name: "b", Namespace: "flux-system", Path: "./b"}
-	aID, bID := a.Named(), b.Named()
-
-	f := NewFilter(NewSet([]string{"a.yaml"}), filterFixture{files: map[manifest.NamedResource]string{aID: "a.yaml"}, root: "", objects: filtertest.MapLister{aID: a, bID: b}}.index(), filtertest.MapLister{aID: a, bID: b}, "")
-
-	if !f.ShouldReconcile(aID) {
-		t.Fatalf("a should be kept; keep=%v", f.KeepNames())
-	}
-	if f.ShouldReconcile(bID) {
-		t.Errorf("dependsOn dragged b into keep set; keep=%v", f.KeepNames())
+	for _, mode := range []string{"present", "file_indexed", "bare_file_indexed", "generated", "absent", "selected"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			a := &manifest.Kustomization{Name: "a", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: "b"}}}
+			b := &manifest.Kustomization{Name: "b", Namespace: "apps"}
+			producer := testutil.KustomizationID("apps", "producer")
+			st := store.New()
+			st.AddObject(a)
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				a.Named(): {File: "a.yaml"},
+				b.Named(): {File: "b.yaml", Productions: []manifest.Production{{Owner: producer}}},
+			}}
+			if mode == "present" || mode == "selected" {
+				st.AddObject(b)
+			}
+			if mode == "file_indexed" || mode == "bare_file_indexed" {
+				id := b.Named()
+				if mode == "bare_file_indexed" {
+					id.Namespace = ""
+				}
+				index.Records[id] = manifest.DiscoveryRecord{Path: "/repo/b.yaml", File: "b.yaml"}
+			}
+			if mode == "absent" {
+				delete(index.Records, b.Named())
+			}
+			changes := []string{"a.yaml"}
+			if mode == "selected" {
+				changes = append(changes, "b.yaml")
+			}
+			f := NewFilter(NewSet(changes), index, st, "/repo")
+			assert.Equal(t, f.keep[a.Named()], primary)
+			want := absent
+			switch mode {
+			case "generated", "absent":
+				want = kept
+			case "selected":
+				want = primary
+			}
+			assert.Equal(t, f.keep[b.Named()], want)
+			assert.Equal(t, f.ShouldReconcile(producer), mode == "generated" || mode == "selected")
+			if mode == "selected" {
+				s := selection{filter: f, objects: st}
+				assert.Diff(t, slices.Collect(s.deps(a, a.Named(), false)), []manifest.NamedResource{b.Named()})
+			}
+		})
 	}
 }
 

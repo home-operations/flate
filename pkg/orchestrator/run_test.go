@@ -51,7 +51,7 @@ spec: {}
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
-	e := &orchestratorExistence{o: &Orchestrator{
+	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
 		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{WipeSecrets: true}},
 		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
 	}}
@@ -121,7 +121,7 @@ spec: {url: https://example.test/excluded.git}
 	st.SetArtifact(manifest.BootstrapSourceID, input)
 	controller := base.New(st, nil)
 	controller.Configure(base.Options{Filter: filter, Index: idx.Index})
-	e := &orchestratorExistence{o: &Orchestrator{
+	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
 		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{WipeSecrets: true}}, filter: filter,
 		ksc: &kustomization.Controller{Controller: controller},
 	}}
@@ -171,7 +171,7 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	st.SetArtifact(source.Named(), input)
 	controller := base.New(st, nil)
 	controller.Configure(base.Options{Filter: filter, Index: index})
-	e := &orchestratorExistence{o: &Orchestrator{
+	e := &orchestratorExistence{DiscoveryIndex: index, o: &Orchestrator{
 		store: st, index: index, filter: filter,
 		ksc: &kustomization.Controller{Controller: controller},
 	}}
@@ -206,7 +206,7 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 			} else {
 				idx.Index.Records[id] = manifest.DiscoveryRecord{File: "target.yaml"}
 			}
-			e := &orchestratorExistence{o: &Orchestrator{store: idx.Store, index: idx.Index}}
+			e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{store: idx.Store, index: idx.Index}}
 			id.Namespace = tc.requested
 			if got := e.IsFileIndexed(id); got != tc.want {
 				t.Errorf("IsFileIndexed(%s) = %v, want %v", id, got, tc.want)

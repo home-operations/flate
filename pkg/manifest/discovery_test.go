@@ -115,3 +115,33 @@ func TestDiscoveryIndex_OwnersOfFileUnclaimed(t *testing.T) {
 		t.Fatalf("unclaimed allocations = %g, want 0", allocations)
 	}
 }
+
+func TestDiscoveryIndex_IsFileIndexed(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, recorded, requested string
+		path, file                string
+		want                      bool
+	}{
+		{name: "exact", recorded: "apps", requested: "apps", path: "target.yaml", want: true},
+		{name: "inherited", requested: "apps", path: "target.yaml", want: true},
+		{name: "other_namespace", recorded: "other", requested: "apps", path: "target.yaml"},
+		{name: "bare_query", recorded: "apps", path: "target.yaml"},
+		{name: "generated", recorded: "apps", requested: "apps", file: "target.yaml"},
+		{name: "bare_generated", requested: "apps", file: "target.yaml"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			id := NamedResource{Group: HelmReleaseDomain, Kind: KindHelmRelease, Namespace: tt.recorded, Name: "target"}
+			index := &DiscoveryIndex{Records: map[NamedResource]DiscoveryRecord{id: {Path: tt.path, File: tt.file}}}
+			id.Namespace = tt.requested
+			if got := index.IsFileIndexed(id); got != tt.want {
+				t.Fatalf("IsFileIndexed(%s) = %v, want %v", id, got, tt.want)
+			}
+		})
+	}
+	var index *DiscoveryIndex
+	if index.IsFileIndexed(NamedResource{Name: "target", Namespace: "apps"}) {
+		t.Fatal("nil index has a file-indexed target")
+	}
+}

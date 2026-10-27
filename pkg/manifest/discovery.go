@@ -71,6 +71,20 @@ func (i *DiscoveryIndex) Lookup(id NamedResource) (DiscoveryRecord, bool) {
 	return r, ok
 }
 
+// IsFileIndexed reports whether id has a raw resource file, including an inherited namespace.
+func (i *DiscoveryIndex) IsFileIndexed(id NamedResource) bool {
+	if r, ok := i.Lookup(id); ok && r.Path != "" {
+		return true
+	}
+	if id.Namespace == "" {
+		return false
+	}
+	// Discovery retains bare identities until parsing applies the parent namespace.
+	id.Namespace = ""
+	r, ok := i.Lookup(id)
+	return ok && r.Path != ""
+}
+
 // Files yields records with a change-coordinate file, including generator declarations.
 // Iteration is unordered; callers MUST sort any order-sensitive result.
 func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {

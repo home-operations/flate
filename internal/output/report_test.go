@@ -57,21 +57,32 @@ func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 		Missing: []Missing{{ID: testutil.KustomizationID("flux-system", "missing"), RequiredBy: []manifest.NamedResource{testutil.KustomizationID("flux-system", "dependent")}}},
 		Blocked: 3,
 	}
-	for _, color := range []bool{false, true} {
-		t.Run(fmt.Sprint(color), func(t *testing.T) {
+	for _, context := range []string{"", "current snapshot"} {
+		t.Run("context_"+context, func(t *testing.T) {
 			t.Parallel()
-			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization", color) + "  flux-system/root  may not add resource with an already registered id: X\n" +
-				"         duplicate resource(s) produced by multiple accumulated paths:\n         - ./one\n         - ./two" +
-				"\n         " + Dim("blocks flux-system/leaf, flux-system/mid", color) +
-				"\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization", color) + "  flux-system/missing  " + Fail("not found", color) +
-				"\n         " + Dim("required by flux-system/dependent", color) +
-				"\n\n  " + Fail(GlyphFail, color) + " " + Fail("2 failed", color) + " · " + Dim("3 blocked", color) + "\n"
-			var b bytes.Buffer
-			if err := writeModel(Encoder{Writer: &b, Color: color}, m); err != nil {
-				t.Fatal(err)
+			m := m
+			m.Context = context
+			prefix := ""
+			if context != "" {
+				prefix = context + ": "
 			}
-			if got := b.String(); got != want {
-				t.Fatalf("report = %q, want %q", got, want)
+			for _, color := range []bool{false, true} {
+				t.Run(fmt.Sprint(color), func(t *testing.T) {
+					t.Parallel()
+					want := "\n  " + Fail(GlyphFail, color) + "  " + Dim(prefix+"Kustomization", color) + "  flux-system/root  may not add resource with an already registered id: X\n" +
+						"         duplicate resource(s) produced by multiple accumulated paths:\n         - ./one\n         - ./two" +
+						"\n         " + Dim(prefix+"blocks flux-system/leaf, flux-system/mid", color) +
+						"\n  " + Fail(GlyphFail, color) + "  " + Dim(prefix+"Kustomization", color) + "  flux-system/missing  " + Fail("not found", color) +
+						"\n         " + Dim(prefix+"required by flux-system/dependent", color) +
+						"\n\n  " + Fail(GlyphFail, color) + " " + Fail("2 failed", color) + " · " + Dim("3 blocked", color) + "\n"
+					var b bytes.Buffer
+					if err := writeModel(Encoder{Writer: &b, Color: color}, m); err != nil {
+						t.Fatal(err)
+					}
+					if got := b.String(); got != want {
+						t.Fatalf("report = %q, want %q", got, want)
+					}
+				})
 			}
 		})
 	}

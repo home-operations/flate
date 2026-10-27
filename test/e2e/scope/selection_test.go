@@ -105,7 +105,8 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 	}
 	failures := 0
 	for line := range strings.SplitSeq(stderr, "\n") {
-		if strings.HasPrefix(line, "  ✗  Kustomization  flux-system/apps  ") {
+		if strings.HasPrefix(line, "  ✗  orig snapshot: Kustomization  flux-system/apps  ") ||
+			strings.HasPrefix(line, "  ✗  current snapshot: Kustomization  flux-system/apps  ") {
 			failures++
 			if !strings.Contains(line, "missing.yaml") {
 				t.Errorf("snapshot failure missing resource detail:\n%s", stderr)

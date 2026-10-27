@@ -5,7 +5,7 @@
 //     or immutable source artifacts through their authoritative fs.FS. Generated
 //     files use one private overlay; artifact labels need not exist on disk.
 //   - Prepare: the standard pre-render dance (Clone + expand
-//     postBuild.substituteFrom + overlay) for embedders rendering a single
+//     postBuild.substituteFrom + authored inline values) for embedders rendering a single
 //     Kustomization. Symmetric to helm.Prepare for HelmReleases, minus
 //     a values cache; the substituteFrom path has no YAML parse to
 //     memoize; see Prepare's docstring.

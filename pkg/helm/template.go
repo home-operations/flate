@@ -97,7 +97,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		)
 
 		inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
-		inst.SkipSchemaValidation = schemaValidationSkipped(opts, hr, hrValues)
+		inst.SkipSchemaValidation = schemaValidationSkipped(hr, hrValues)
 
 		rel, err := inst.RunWithContext(ctx, ch, finalValues)
 		if err != nil {
@@ -109,15 +109,15 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 
 		// Disabled dependencies must be pruned before validating their CRDs.
-		crds, _ := selectedActionPolicy(hr, opts.IsUpgrade)
-		if opts.SkipCRDs && crds != helmv2.Skip {
+		policy := (&helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}).GetInstall()
+		if opts.SkipCRDs && policy.CRDs != helmv2.Skip {
 			if err := validateCRDs(ch); err != nil {
 				return nil, nil, err
 			}
 		}
 
 		skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
-		out := releaseManifest(relV1, opts, disableHooks, skipTests)
+		out := releaseManifest(relV1, disableHooks, skipTests)
 		docs, err := manifest.DecodeDocs(strings.NewReader(out), manifest.RequiredDocuments)
 		if err != nil {
 			return nil, nil, err
@@ -265,12 +265,9 @@ func (c *Client) prepareTemplate(ctx context.Context, hr *manifest.HelmRelease, 
 	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(binding) {
 		binding = loaded.record.binding
 	} else {
-		binding.Options.SkipKinds, binding.Options.ShowOnly = nil, nil
+		binding.Options.SkipKinds = nil
 		if len(input.SkipKinds) > 0 {
 			binding.Options.SkipKinds = slices.Clone(input.SkipKinds)
-		}
-		if len(input.ShowOnly) > 0 {
-			binding.Options.ShowOnly = slices.Clone(input.ShowOnly)
 		}
 	}
 	return templateRequest{loaded: loaded, caps: caps, capabilityErr: capabilityErr, key: key, values: hrValues, binding: binding}, nil
@@ -367,31 +364,9 @@ func crdReader(crd chart.CRD) io.Reader {
 		bytes.NewReader(crd.File.Data), strings.NewReader("\n"))
 }
 
-// schemaValidationSkipped uses the selected action's policy. Placeholder values
-// cannot be validated against constraints intended for resolved secrets.
-func schemaValidationSkipped(opts Options, hr *manifest.HelmRelease, values map[string]any) bool {
-	disabled := hr.DisableSchemaValidation
-	if opts.IsUpgrade {
-		disabled = hr.Upgrade != nil && hr.Upgrade.DisableSchemaValidation
-	}
-	return disabled || manifest.ContainsValuePlaceholder(values)
-}
-
-func selectedActionPolicy(hr *manifest.HelmRelease, isUpgrade bool) (helmv2.CRDsPolicy, bool) {
-	release := helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}
-	var crds helmv2.CRDsPolicy
-	var disableOpenAPI bool
-	if isUpgrade {
-		policy := release.GetUpgrade()
-		crds, disableOpenAPI = policy.CRDs, policy.DisableOpenAPIValidation
-	} else {
-		policy := release.GetInstall()
-		crds, disableOpenAPI = policy.CRDs, policy.DisableOpenAPIValidation
-	}
-	if crds == "" {
-		crds = helmv2.Create
-	}
-	return crds, disableOpenAPI
+// Placeholder values cannot satisfy constraints intended for resolved secrets.
+func schemaValidationSkipped(hr *manifest.HelmRelease, values map[string]any) bool {
+	return hr.DisableSchemaValidation || manifest.ContainsValuePlaceholder(values)
 }
 
 func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts Options, caps *common.Capabilities) (*action.Install, bool) {
@@ -404,26 +379,12 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	// HR renders cleanly in flate (which doesn't consult Devel for local
 	// chart resolution) but fails in cluster, or vice versa.
 	inst.Devel = true
-	crds, disableOpenAPI := selectedActionPolicy(hr, opts.IsUpgrade)
-	inst.IncludeCRDs = !opts.SkipCRDs && crds != helmv2.Skip
-	disableHooks := hr.Install != nil && hr.Install.DisableHooks
-	if opts.IsUpgrade {
-		disableHooks = hr.Upgrade != nil && hr.Upgrade.DisableHooks
-	}
-	disableHooks = opts.NoHooks || disableHooks
-	inst.DisableHooks = disableHooks
-	inst.IsUpgrade = opts.IsUpgrade
+	policy := (&helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}).GetInstall()
+	inst.IncludeCRDs = !opts.SkipCRDs && policy.CRDs != helmv2.Skip
+	inst.DisableHooks = policy.DisableHooks
 	inst.EnableDNS = opts.EnableDNS
-	// Honor spec.install.replace per helm-controller's
-	// internal/action/install.go: install.Replace = obj.GetInstall().Replace.
-	// Default false (the chart fields' zero value); set true only when
-	// the HR explicitly asks. Mostly a no-op under DryRunClient but
-	// keeps flate's render path matching upstream so any future
-	// validation behavior change in helm.action lands consistently.
-	if hr.Install != nil {
-		inst.Replace = hr.Install.Replace
-	}
-	inst.DisableOpenAPIValidation = disableOpenAPI
+	inst.Replace = policy.Replace
+	inst.DisableOpenAPIValidation = policy.DisableOpenAPIValidation
 	// inst.SkipSchemaValidation is values-dependent, so Template sets it once
 	// the effective values are resolved (see schemaValidationSkipped).
 	// spec.postRenderers — pipe rendered output through one or more
@@ -444,7 +405,7 @@ func newInstallAction(cfg *action.Configuration, hr *manifest.HelmRelease, opts 
 	if hr.Chart.Version != "" {
 		inst.Version = hr.Chart.Version
 	}
-	return inst, disableHooks
+	return inst, inst.DisableHooks
 }
 
 type chartValuesFile struct {
@@ -659,7 +620,7 @@ func chartValuesCacheKey(loaded chartDescription, names []string, ignoreMissing 
 	}{loaded.fingerprint, loaded.oci, names, ignoreMissing, loaded.valuesFS != nil, loaded.valuesPin, inputs})
 }
 
-func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests bool) string {
+func releaseManifest(rel *release.Release, disableHooks, skipTests bool) string {
 	// Reserve hook framing as well as bodies to avoid repeated growth on large releases.
 	size := len(rel.Manifest)
 	if !disableHooks {
@@ -687,39 +648,5 @@ func releaseManifest(rel *release.Release, opts Options, disableHooks, skipTests
 			lastNewline = strings.HasSuffix(h.Manifest, "\n")
 		}
 	}
-	out := b.String()
-	if len(opts.ShowOnly) > 0 {
-		out = filterShowOnly(out, opts.ShowOnly)
-	}
-	return out
-}
-
-// filterShowOnly keeps only sections whose "# Source: <path>" header
-// matches one of the requested template paths. Paths lists are short
-// (typically 1-5 entries from --show-only), so linear scan avoids a
-// map allocation on the hot render path.
-func filterShowOnly(content string, paths []string) string {
-	var out strings.Builder
-	var opening string
-	for section := range strings.SplitAfterSeq(content, "\n---\n") {
-		frame, nextOpening := section, ""
-		if strings.HasSuffix(section, "\n---\n") {
-			// The boundary newline terminates this frame; the separator opens the next.
-			frame = strings.TrimSuffix(section, "---\n")
-			nextOpening = "---\n"
-		}
-		var header string
-		for line := range strings.SplitSeq(frame, "\n") {
-			if rest, ok := strings.CutPrefix(line, sourceHeader); ok {
-				header = rest
-				break
-			}
-		}
-		if slices.Contains(paths, header) {
-			out.WriteString(opening)
-			out.WriteString(frame)
-		}
-		opening = nextOpening
-	}
-	return out.String()
+	return b.String()
 }

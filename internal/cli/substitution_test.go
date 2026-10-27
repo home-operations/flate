@@ -57,7 +57,6 @@ const externalSecret = "apiVersion: v1\nkind: Secret\nmetadata: {name: external,
 func TestRun_ExternalSubstitution(t *testing.T) {
 	cases := []struct {
 		name, postBuild, input, want string
-		pairs                        []string
 		fail, strict                 bool
 	}{
 		{name: "required absent", postBuild: substitutionReference("ConfigMap", false), fail: true},
@@ -65,19 +64,13 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 		{name: "wrong kind", postBuild: substitutionReference("ConfigMap", false), input: externalSecret, fail: true},
 		{name: "wrong namespace", postBuild: substitutionReference("ConfigMap", false), input: strings.Replace(externalCM, "namespace: apps", "namespace: other", 1), fail: true},
 		{name: "wrong name", postBuild: substitutionReference("ConfigMap", false), input: strings.Replace(externalCM, "name: external", "name: other", 1), fail: true},
-		{name: "overlay cannot satisfy reference", postBuild: substitutionReference("ConfigMap", false), pairs: []string{"VALUE=overlay"}, fail: true},
 		{name: "optional absent", postBuild: substitutionReference("ConfigMap", true), want: "${VALUE}"},
 		{name: "optional supplied", postBuild: substitutionReference("ConfigMap", true), input: externalCM, want: "supplied"},
 		{name: "secret stringData", postBuild: substitutionReference("Secret", false), input: externalSecret, want: "supplied", strict: true},
 		{name: "secret data", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "stringData: {VALUE: supplied}", "data: {VALUE: c3VwcGxpZWQ=}", 1), want: "supplied"},
 		{name: "secret ciphertext wiped", postBuild: substitutionReference("Secret", false), input: strings.Replace(externalSecret, "supplied", "'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'", 1) + "sops: {encrypted_regex: data}\n", want: "..PLACEHOLDER_VALUE.."},
-		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), want: "${VALUE}"},
+		{name: "missing unsupplied secret", postBuild: substitutionReference("Secret", false), fail: true},
 		{name: "inline beats reference", postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n", input: externalCM, want: "inline", strict: true},
-		{name: "overlay beats inline and reference", postBuild: substitutionReference("ConfigMap", false) + "    substitute: {VALUE: inline}\n", input: externalCM, pairs: []string{"VALUE=first", "VALUE=overlay"}, want: "overlay", strict: true},
-		{name: "overlay with empty postBuild", postBuild: "  postBuild: {}\n", pairs: []string{"VALUE=overlay"}, want: "overlay", strict: true},
-		{name: "empty overlay value", postBuild: "  postBuild: {}\n", pairs: []string{"VALUE="}, strict: true},
-		{name: "embedded equals and comma", postBuild: "  postBuild: {}\n", pairs: []string{"VALUE=left,right=tail"}, want: "left,right=tail"},
-		{name: "overlay without postBuild", pairs: []string{"VALUE=overlay"}, want: "${VALUE}", strict: true},
 		{name: "later reference wins", postBuild: substitutionReference("ConfigMap", false) + "      - kind: Secret\n        name: external\n", input: externalCM + "---\n" + strings.Replace(externalSecret, "supplied", "second", 1), want: "second", strict: true},
 	}
 	for _, tc := range cases {
@@ -87,9 +80,6 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 			if tc.input != "" {
 				args = append(args, "--supply", substitutionInput(t, tc.input))
 			}
-			for _, pair := range tc.pairs {
-				args = append(args, "--substitute", pair)
-			}
 			if tc.strict {
 				args = append(args, "--strict-substitutions")
 			}
@@ -98,7 +88,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 				t.Fatalf("exit=%d: %s", code, diagnostic)
 			}
 			if tc.fail {
-				if !strings.Contains(diagnostic, "ConfigMap") || !strings.Contains(diagnostic, "apps/external") {
+				if !strings.Contains(diagnostic, "ConfigMap") && !strings.Contains(diagnostic, "Secret") || !strings.Contains(diagnostic, "apps/external") {
 					t.Fatalf("missing reference diagnostic: %s", diagnostic)
 				}
 				return
@@ -190,22 +180,16 @@ func TestRun_SubstitutionEnvironment(t *testing.T) {
 	input := substitutionInput(t, externalCM)
 	second := substitutionInput(t, strings.Replace(externalCM, "supplied", "last", 1))
 	for _, tc := range []struct {
-		name, files, pairs, strict, want string
-		flags                            []string
+		name, files, strict, want string
+		flags                     []string
 	}{
 		{name: "colon file list", files: input + ":" + second, strict: "true", want: "last"},
-		{name: "CSV pairs", files: input, pairs: `"VALUE=left,right=tail",VALUE=final`, strict: "1", want: "final"},
-		{name: "quoted CSV value", files: input, pairs: `"VALUE=left,right=tail"`, want: "left,right=tail"},
-		{name: "quoted CSV newline", files: input, pairs: "\"VALUE=left\nright\"", want: "leftright"},
-		{name: "empty env lists", want: "", flags: []string{"--supply", input, "--substitute", "VALUE="}},
 		{name: "file flags override invalid env", files: ":", strict: "true", want: "supplied", flags: []string{"--supply", input}},
-		{name: "pair flags override invalid env", files: input, pairs: `"private-fixture-value`, want: "flag", flags: []string{"--substitute", "VALUE=flag"}},
 		{name: "false flag overrides invalid bool env", files: input, strict: "invalid", want: "supplied", flags: []string{"--strict-substitutions=false"}},
 		{name: "false flag overrides true env", files: input, strict: "true", want: "supplied", flags: []string{"--strict-substitutions=false"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("FLATE_SUPPLY", tc.files)
-			t.Setenv("FLATE_SUBSTITUTE", tc.pairs)
 			t.Setenv("FLATE_STRICT_SUBSTITUTIONS", tc.strict)
 			if tc.strict == "" {
 				t.Setenv("FLATE_STRICT_SUBSTITUTIONS", "false")
@@ -223,30 +207,10 @@ func TestRun_SubstitutionEnvironment(t *testing.T) {
 	}
 }
 
-func TestRun_SubstitutionDiagnosticsRedacted(t *testing.T) {
-	for _, tc := range []struct{ name, env, flag, origin, position string }{
-		{"missing equals flag", "", "private-fixture-value", "--substitute", "pair 1"},
-		{"invalid name flag", "", "INVALID-NAME=private-fixture-value", "--substitute", "pair 1"},
-		{"empty name flag", "", "=private-fixture-value", "--substitute", "pair 1"},
-		{"invalid env pair", "VALUE=private-fixture-value,bad", "", "FLATE_SUBSTITUTE", "pair 2"},
-		{"malformed CSV", `VALUE=ok,"private-fixture-value`, "", "FLATE_SUBSTITUTE", "pair 2"},
-		{"multiple CSV records", "VALUE=one\nVALUE=two", "", "FLATE_SUBSTITUTE", "pair 2"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("FLATE_SUBSTITUTE", tc.env)
-			root := substitutionFixture(t, "  postBuild: {}\n", "${VALUE}")
-			args := []string{"build", "all", "--path", root, "--cache-dir", t.TempDir()}
-			if tc.flag != "" {
-				args = append(args, "--substitute", tc.flag)
-			}
-			_, diagnostic, code := runCLI(t, args...)
-			if code != 1 || !strings.Contains(diagnostic, tc.origin) || !strings.Contains(diagnostic, tc.position) || strings.Contains(diagnostic, "private-fixture-value") || strings.Contains(diagnostic, "VALUE=one") || strings.Contains(diagnostic, "VALUE=two") {
-				t.Fatalf("unredacted or incomplete diagnostic: %s", diagnostic)
-			}
-		})
-	}
+func TestSupplyEnv_EmptyPath(t *testing.T) {
+	t.Parallel()
 	for _, input := range []string{":", "file:", ":file"} {
-		if _, err := substitutionEnv("supply", input); !errors.Is(err, manifest.ErrInput) {
+		if _, err := supplyEnv(input); !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("empty file component accepted: %v", err)
 		}
 	}
@@ -303,14 +267,14 @@ func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 			if code != 0 {
 				t.Fatal(diagnostic)
 			}
-			for _, flag := range []string{"supply", "substitute", "strict-substitutions"} {
+			for _, flag := range []string{"supply", "allow-missing-kinds", "strict-substitutions"} {
 				for _, want := range []string{"--" + flag, envKey(flag)} {
 					if !strings.Contains(help, want) {
 						t.Fatalf("help missing %s", want)
 					}
 				}
 			}
-			args := []string{verb, "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", input, "--substitute", "VALUE=overlay", "--strict-substitutions"}
+			args := []string{verb, "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", input, "--strict-substitutions"}
 			if verb == "diff" {
 				base := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-base")
 				args = append(args, "--path-orig", base, "-o", "diff", "--skip-kinds", "CustomResourceDefinition")
@@ -319,7 +283,7 @@ func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("shared inputs failed: %s", diagnostic)
 			}
-			if verb == "diff" && (strings.Contains(out, "name: external") || !strings.Contains(out, "overlay")) {
+			if verb == "diff" && (strings.Contains(out, "name: external") || !strings.Contains(out, "supplied")) {
 				t.Fatalf("diff emitted input or omitted selected consumer: %s", out)
 			}
 		})
@@ -437,7 +401,7 @@ func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 				args = append(args, "--supply", input)
 			}
 			out, diagnostic, code := runCLI(t, args...)
-			if (code == 1) != supplied || supplied && !strings.Contains(out+diagnostic, "greeting needed") {
+			if code != 1 || supplied && !strings.Contains(out+diagnostic, "greeting needed") || !supplied && !strings.Contains(out+diagnostic, "cluster-secrets") {
 				t.Fatalf("exit %d: %s %s", code, out, diagnostic)
 			}
 		})
@@ -466,7 +430,6 @@ func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
 	for _, tc := range []struct{ name, kind, input string }{
 		{"ConfigMap", "ConfigMap", externalCM},
 		{"Secret", "Secret", externalSecret},
-		{"overlay", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			postBuild := "  postBuild: {}\n"
@@ -478,12 +441,8 @@ func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
 			var outputs []string
 			for i, value := range []string{"first", "second", "second", "first"} {
 				args := []string{"build", "all", "--path", root, "--cache-dir", cache, "--concurrency", "2", "--strict-substitutions"}
-				if tc.kind == "" {
-					args = append(args, "--substitute", "VALUE="+value)
-				} else {
-					testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
-					args = append(args, "--supply", filepath.Join(inputs, "values.yaml"))
-				}
+				testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
+				args = append(args, "--supply", filepath.Join(inputs, "values.yaml"))
 				out, diagnostic, code := runCLI(t, args...)
 				if code != 0 {
 					t.Fatal(diagnostic)

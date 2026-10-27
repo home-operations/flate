@@ -554,7 +554,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	for _, field := range []string{
 		"Name", "Namespace", "HelmReleaseSpec.ReleaseName", "TargetNamespace",
 		"Install.CRDs", "DisableSchemaValidation", "Install.DisableOpenAPIValidation",
-		"Install.DisableHooks", "Install.Replace", "Upgrade.DisableHooks", "Test.Enable",
+		"Install.DisableHooks", "Install.Replace", "Test.Enable",
 		"Chart.Version", "ChartValuesFiles", "IgnoreMissingValuesFiles", "PostRenderers",
 	} {
 		t.Run("HelmRelease/"+field, func(t *testing.T) {
@@ -603,39 +603,39 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 func TestComputeTemplateKey_SelectedActionPolicy(t *testing.T) {
 	t.Parallel()
 	loaded := chartFixtureDescription(t, minimalChart())
-	for _, isUpgrade := range []bool{false, true} {
-		t.Run(fmt.Sprintf("upgrade=%t", isUpgrade), func(t *testing.T) {
-			t.Parallel()
-			opts := Options{IsUpgrade: isUpgrade}
-			hr := minimalHR()
-			base := computeTemplateKey(loaded, nil, opts, hr)
-			for _, tc := range []struct {
-				name                   string
-				policy                 helmv2.CRDsPolicy
-				openAPI, active, equal bool
-			}{
-				{"empty", "", false, true, true},
-				{"default", helmv2.Create, false, true, true},
-				{"replace", helmv2.CreateReplace, false, true, false},
-				{"skip", helmv2.Skip, false, true, false},
-				{"openapi", "", true, true, false},
-				{"inactive", helmv2.Skip, true, false, true},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					t.Parallel()
-					changed := hr.Clone()
-					if isUpgrade == tc.active {
-						changed.Upgrade = &helmv2.Upgrade{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
-					} else {
-						changed.Install = &helmv2.Install{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
-					}
-					key := computeTemplateKey(loaded, nil, opts, changed)
-					assert.Equal(t, key != "", true)
-					assert.Equal(t, key == base, tc.equal)
-				})
-			}
-		})
-	}
+
+	t.Run("install", func(t *testing.T) {
+		t.Parallel()
+		opts := Options{}
+		hr := minimalHR()
+		base := computeTemplateKey(loaded, nil, opts, hr)
+		for _, tc := range []struct {
+			name                   string
+			policy                 helmv2.CRDsPolicy
+			openAPI, active, equal bool
+		}{
+			{"empty", "", false, true, true},
+			{"default", helmv2.Create, false, true, true},
+			{"replace", helmv2.CreateReplace, false, true, false},
+			{"skip", helmv2.Skip, false, true, false},
+			{"openapi", "", true, true, false},
+			{"inactive", helmv2.Skip, true, false, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				changed := hr.Clone()
+				if !tc.active {
+					changed.Upgrade = &helmv2.Upgrade{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
+				} else {
+					changed.Install = &helmv2.Install{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
+				}
+				key := computeTemplateKey(loaded, nil, opts, changed)
+				assert.Equal(t, key != "", true)
+				assert.Equal(t, key == base, tc.equal)
+			})
+		}
+	})
+
 }
 
 // Common metadata MUST remain outside the cached render and its key.
@@ -1425,19 +1425,13 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 	warm := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	warmSources := resolver
 	for i, state := range []struct {
-		isUpgrade, install, upgrade, noHooks bool
-		wantHook                             bool
+		install, upgrade, wantHook bool
 	}{
-		{false, false, true, false, true},
-		{true, false, true, false, false},
-		{true, false, false, false, true},
-		{true, false, false, true, false},
-		{false, false, false, true, false},
-		{false, false, false, false, true},
-		{false, true, false, false, false},
-		{false, false, true, false, true},
+		{false, true, true},
+		{true, false, false},
+		{false, false, true},
 	} {
-		opts := Options{IsUpgrade: state.isUpgrade, NoHooks: state.noHooks}
+		opts := Options{}
 		want := []string{"ConfigMap/demo-cm"}
 		if state.wantHook {
 			want = append(want, "ConfigMap/demo-pre")

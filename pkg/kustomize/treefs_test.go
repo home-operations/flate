@@ -332,7 +332,8 @@ func TestRender_ConcurrentPrivateOverlays(t *testing.T) {
 						projected := original.Clone()
 						projected.NamePrefix = fmt.Sprintf("render%d-", n)
 						projected.TargetNamespace = fmt.Sprintf("namespace%d", n)
-						spec, err := Prepare(projected, nil, map[string]string{"SLOT": fmt.Sprint(n)})
+						projected.PostBuild.Substitute = map[string]string{"SLOT": fmt.Sprint(n)}
+						spec, err := Prepare(projected, nil)
 						if err != nil {
 							t.Error(err)
 							return

@@ -161,7 +161,7 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 		{name: "required-chain", kind: "ConfigMap", broken: true, chain: true},
 		{name: "healthy", kind: "ConfigMap"},
 		{name: "optional", kind: "ConfigMap", optional: true, broken: true},
-		{name: "tolerated", kind: "Secret", extra: "--allow-missing-secrets", absent: true, broken: true},
+		{name: "tolerated", kind: "Secret", extra: "--allow-missing-kinds=Secret,ConfigMap", absent: true, broken: true},
 		{name: "producer-backed", kind: "Secret", absent: true, broken: true},
 		{name: "absent-healthy", kind: "Secret", absent: true},
 	} {
@@ -184,7 +184,11 @@ func TestRun_NamedScope_FailedDataOwner(t *testing.T) {
 				input = "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: values-producer, namespace: apps}\nspec:\n  target: {name: values}\n  dataFrom: [{extract: {key: values}}]\n"
 			}
 			testutil.WriteFile(t, root, inputFile, input)
-			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingSecrets: tc.extra != ""}
+			var allowed []string
+			if tc.extra != "" {
+				allowed = []string{manifest.KindSecret, manifest.KindConfigMap}
+			}
+			cfg := orchestrator.Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed}
 			runs, err := orchestrator.RenderTrees(t.Context(), []orchestrator.Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: filepath.Join(root, "cluster"), RepoRoot: root}}, cfg)
 			if len(runs) != 1 {
 				t.Fatalf("missing run: %v", err)

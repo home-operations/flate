@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -46,31 +47,6 @@ func TestBindCommon_CacheDirFlag(t *testing.T) {
 	}
 	if f.cacheDir != "/tmp/explicit" {
 		t.Errorf("cacheDir = %q, want /tmp/explicit", f.cacheDir)
-	}
-}
-
-// TestBindCommon_ForceGenericProviderFlag pins the whole
-// --force-generic-provider handoff: flag → commonFlags →
-// orchestrator.Config. Config is what puts ForceGeneric on the git/OCI/
-// bucket fetchers, so dropping that assignment would silently disable the
-// flag with every other test still green.
-func TestBindCommon_ForceGenericProviderFlag(t *testing.T) {
-	t.Parallel()
-	parse := func(t *testing.T, args ...string) orchestrator.Config {
-		t.Helper()
-		var f commonFlags
-		fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
-		bindCommon(fs, &f)
-		if err := fs.Parse(args); err != nil {
-			t.Fatalf("Parse: %v", err)
-		}
-		return buildOrchCfg(f)
-	}
-	if cfg := parse(t); cfg.ForceGenericProvider {
-		t.Errorf("default: ForceGenericProvider = true, want false")
-	}
-	if cfg := parse(t, "--force-generic-provider"); !cfg.ForceGenericProvider {
-		t.Errorf("--force-generic-provider: ForceGenericProvider = false, want true")
 	}
 }
 
@@ -567,9 +543,9 @@ func TestBindCommon_HelmOptions(t *testing.T) {
 		want helm.Options
 	}{
 		{name: "defaults", want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret"}}},
-		{name: "CRD only", args: []string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--is-upgrade", "--no-hooks", "-s", "templates/main.yaml", "--enable-dns", "--skip-kinds=CustomResourceDefinition"}, want: helm.Options{KubeVersion: "1.31.2", APIVersions: "fixture.example/v1", IsUpgrade: true, NoHooks: true, ShowOnly: []string{"templates/main.yaml"}, EnableDNS: true, SkipTests: true, SkipCRDs: true, SkipKinds: []string{}}},
+		{name: "CRD only", args: []string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--enable-dns", "--skip-kinds=CustomResourceDefinition"}, want: helm.Options{KubeVersion: "1.31.2", APIVersions: "fixture.example/v1", EnableDNS: true, SkipTests: true, SkipCRDs: true, SkipKinds: []string{}}},
 		{name: "mixed", args: []string{"--skip-kinds=Secret,CustomResourceDefinition,ConfigMap"}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipCRDs: true, SkipKinds: []string{"Secret", "ConfigMap"}}},
-		{name: "explicit false and empty", args: []string{"--is-upgrade=false", "--no-hooks=false", "--enable-dns=false", "--show-only=", "--skip-kinds="}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, ShowOnly: []string{}, SkipKinds: []string{}}},
+		{name: "explicit false and empty", args: []string{"--enable-dns=false", "--skip-kinds="}, want: helm.Options{KubeVersion: helm.BundledKubeVersion(), SkipTests: true, SkipKinds: []string{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1130,3 +1106,121 @@ func (w *phaseFailWriter) Write(p []byte) (int, error) {
 }
 
 func (w *phaseFailWriter) WriteString(s string) (int, error) { return w.Write([]byte(s)) }
+
+func TestBindCommon_AllowMissingKinds(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		args, want []string
+	}{
+		{name: "default"},
+		{name: "Secret", args: []string{"--allow-missing-kinds=Secret"}, want: []string{manifest.KindSecret}},
+		{name: "ConfigMap", args: []string{"--allow-missing-kinds=ConfigMap"}, want: []string{manifest.KindConfigMap}},
+		{name: "CRD", args: []string{"--allow-missing-kinds=CustomResourceDefinition"}, want: []string{manifest.KindCustomResourceDefinition}},
+		{name: "repeated CSV and duplicates", args: []string{"--allow-missing-kinds=Secret,ConfigMap", "--allow-missing-kinds=Secret,CustomResourceDefinition"}, want: []string{manifest.KindSecret, manifest.KindConfigMap, manifest.KindSecret, manifest.KindCustomResourceDefinition}},
+		{name: "explicit empty", args: []string{"--allow-missing-kinds="}, want: []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var flags commonFlags
+			fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			bindCommon(fs, &flags)
+			assert.NoError(t, fs.Parse(tc.args))
+			assert.NoError(t, flags.loadInputs(t.Context()))
+			assert.Diff(t, buildOrchCfg(flags).AllowMissingKinds, tc.want)
+		})
+	}
+}
+
+func TestRun_AllowMissingKindsValidation(t *testing.T) {
+	root := substitutionFixture(t, "", "literal")
+	for _, arg := range []string{"secret", "Unknown", "true", "Secret,,ConfigMap", "Secret,"} {
+		t.Run(arg, func(t *testing.T) {
+			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--supply", filepath.Join(root, "absent.yaml"), "--allow-missing-kinds="+arg)
+			if code != 1 || !strings.Contains(diagnostic, "--allow-missing-kinds") || strings.Contains(diagnostic, "--supply") {
+				t.Fatalf("validation after input I/O: exit=%d %s", code, diagnostic)
+			}
+		})
+	}
+	_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--allow-missing-kinds")
+	if code != 1 || !strings.Contains(diagnostic, "needs an argument") {
+		t.Fatalf("bare selection accepted: exit=%d %s", code, diagnostic)
+	}
+}
+
+func TestEnv_AllowMissingKindsPrecedence(t *testing.T) {
+	root := substitutionFixture(t, "", "literal")
+	for _, tc := range []struct {
+		name, environment string
+		flags             []string
+		fail              bool
+	}{
+		{name: "CSV", environment: "Secret,ConfigMap,CustomResourceDefinition"},
+		{name: "invalid", environment: "secret", fail: true},
+		{name: "CLI replaces environment", environment: "invalid", flags: []string{"--allow-missing-kinds=Secret"}},
+		{name: "empty replaces environment", environment: "invalid", flags: []string{"--allow-missing-kinds="}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FLATE_ALLOW_MISSING_KINDS", tc.environment)
+			args := append([]string{"build", "all", "--path", root, "--concurrency=2"}, tc.flags...)
+			_, diagnostic, code := runCLI(t, args...)
+			if (code != 0) != tc.fail {
+				t.Fatalf("exit=%d %s", code, diagnostic)
+			}
+		})
+	}
+}
+
+func TestRun_FlagInventory(t *testing.T) {
+	names := map[string]bool{}
+	for _, route := range []string{"", "build all", "get ks", "get images", "test all", "diff all", "diff images", "cache gc", "completion fish"} {
+		args := append(strings.Fields(route), "--help")
+		help, diagnostic, code := runCLI(t, args...)
+		if code != 0 {
+			t.Fatalf("help %q: %s", route, diagnostic)
+		}
+		for line := range strings.SplitSeq(help, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			token := fields[0]
+			if len(fields) > 1 && strings.HasSuffix(token, ",") {
+				token = fields[1]
+			}
+			if after, ok := strings.CutPrefix(token, "--"); ok {
+				names[after] = true
+			}
+		}
+		if strings.Contains(help, "--base diff") {
+			t.Fatalf("incorrect base metavar: %s", help)
+		}
+	}
+	if len(names) != 30 {
+		t.Fatalf("distinct flags=%d: %v", len(names), slices.Sorted(maps.Keys(names)))
+	}
+}
+
+func TestRun_ProviderCredentialPolicy(t *testing.T) {
+	root := substitutionFixture(t, "", "local")
+	testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: cloud, namespace: apps}\nspec: {provider: aws, url: 'oci://fixture.invalid/image'}\n")
+	testutil.WriteFile(t, root, "remote.yaml", testutil.KustomizationYAML("remote", "apps", "  path: ./remote\n  sourceRef: {kind: OCIRepository, name: cloud}\n"))
+	registry := filepath.Join(t.TempDir(), "config.json")
+	testutil.WriteFileAt(t, registry, `{"auths":{}}`)
+	for _, tc := range []struct {
+		name, selection string
+		want            int
+	}{
+		{name: "default", want: 1}, {name: "ConfigMap", selection: "ConfigMap", want: 1}, {name: "Secret", selection: "Secret"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--registry-config", registry, "--allow-missing-kinds="+tc.selection, "--concurrency=2")
+			if code != tc.want || !strings.Contains(out, "value: local") {
+				t.Fatalf("provider blocked unrelated output: exit=%d %s %s", code, out, diagnostic)
+			}
+			if code == 0 && !strings.Contains(diagnostic, "SourceCredentialsUnavailable") {
+				t.Fatalf("missing source warning: %s", diagnostic)
+			}
+		})
+	}
+}

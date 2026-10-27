@@ -61,58 +61,53 @@ data:
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, isUpgrade := range []bool{false, true} {
-		for _, tc := range []struct {
-			name    string
-			policy  *helmv2.CRDsPolicy
-			include bool
-		}{
-			{"nil", nil, true},
-			{"empty", new(helmv2.CRDsPolicy("")), true},
-			{"create", new(helmv2.Create), true},
-			{"replace", new(helmv2.CreateReplace), true},
-			{"skip", new(helmv2.Skip), false},
-		} {
-			for _, skip := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/upgrade=%t/skip=%t", tc.name, isUpgrade, skip), func(t *testing.T) {
-					t.Parallel()
-					hr := newHR()
-					inactive := helmv2.Skip
-					if !tc.include {
-						inactive = helmv2.Create
-					}
-					if isUpgrade {
-						hr.Install = &helmv2.Install{CRDs: inactive, DisableOpenAPIValidation: true}
-						if tc.policy != nil {
-							hr.Upgrade = &helmv2.Upgrade{CRDs: *tc.policy}
-						}
-					} else {
-						hr.Upgrade = &helmv2.Upgrade{CRDs: inactive, DisableOpenAPIValidation: true}
-						if tc.policy != nil {
-							hr.Install = &helmv2.Install{CRDs: *tc.policy}
-						}
-					}
-					opts := Options{SkipCRDs: skip, IsUpgrade: isUpgrade}
-					inst, _ := newInstallAction(new(action.Configuration), hr, opts, chartcommon.DefaultCapabilities.Copy())
-					assert.Equal(t, inst.IncludeCRDs, tc.include && !skip)
-					assert.Equal(t, inst.DisableOpenAPIValidation, false)
-					want := wantAll[1:]
-					if tc.include && !skip {
-						want = wantAll
-					}
-					for range 2 {
-						docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
-						assert.NoError(t, err)
-						assert.Diff(t, docs, want)
-					}
-					fresh := NewClient(cachetest.New(t, "", sourcecache.New))
-					cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+
+	for _, tc := range []struct {
+		name    string
+		policy  *helmv2.CRDsPolicy
+		include bool
+	}{
+		{"nil", nil, true},
+		{"empty", new(helmv2.CRDsPolicy("")), true},
+		{"create", new(helmv2.Create), true},
+		{"replace", new(helmv2.CreateReplace), true},
+		{"skip", new(helmv2.Skip), false},
+	} {
+		for _, skip := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/skip=%t", tc.name, skip), func(t *testing.T) {
+				t.Parallel()
+				hr := newHR()
+				inactive := helmv2.Skip
+				if !tc.include {
+					inactive = helmv2.Create
+				}
+
+				hr.Upgrade = &helmv2.Upgrade{CRDs: inactive, DisableOpenAPIValidation: true}
+				if tc.policy != nil {
+					hr.Install = &helmv2.Install{CRDs: *tc.policy}
+				}
+
+				opts := Options{SkipCRDs: skip}
+				inst, _ := newInstallAction(new(action.Configuration), hr, opts, chartcommon.DefaultCapabilities.Copy())
+				assert.Equal(t, inst.IncludeCRDs, tc.include && !skip)
+				assert.Equal(t, inst.DisableOpenAPIValidation, false)
+				want := wantAll[1:]
+				if tc.include && !skip {
+					want = wantAll
+				}
+				for range 2 {
+					docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 					assert.NoError(t, err)
-					assert.Diff(t, cold, want)
-				})
-			}
+					assert.Diff(t, docs, want)
+				}
+				fresh := NewClient(cachetest.New(t, "", sourcecache.New))
+				cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+				assert.NoError(t, err)
+				assert.Diff(t, cold, want)
+			})
 		}
 	}
+
 }
 
 func TestTemplate_ReleaseName(t *testing.T) {
@@ -144,38 +139,36 @@ func TestTemplate_ReleaseName(t *testing.T) {
 
 func TestTemplate_SelectedActionPolicy(t *testing.T) {
 	t.Parallel()
-	for _, isUpgrade := range []bool{false, true} {
-		for _, tc := range []struct {
-			name                           string
-			install, upgrade               helmv2.CRDsPolicy
-			installOpenAPI, upgradeOpenAPI bool
-		}{
-			{"opposite install create", helmv2.Create, helmv2.Skip, false, true},
-			{"opposite upgrade create", helmv2.Skip, helmv2.CreateReplace, true, false},
-		} {
-			t.Run(fmt.Sprintf("%s/upgrade=%t", tc.name, isUpgrade), func(t *testing.T) {
-				t.Parallel()
-				parsed, _, _, err := manifest.ParseDoc(map[string]any{
-					"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
-					"metadata": map[string]any{"name": "demo", "namespace": "default"},
-					"spec": map[string]any{
-						"chart":   map[string]any{"spec": map[string]any{"chart": "mychart", "sourceRef": map[string]any{"kind": "GitRepository", "name": "chart-repo"}}},
-						"install": map[string]any{"crds": string(tc.install), "disableOpenAPIValidation": tc.installOpenAPI},
-						"upgrade": map[string]any{"crds": string(tc.upgrade), "disableOpenAPIValidation": tc.upgradeOpenAPI},
-					},
-				}, manifest.ParseDocOptions{})
-				assert.NoError(t, err)
-				hr := parsed.(*manifest.HelmRelease)
-				policy, openAPI := tc.install, tc.installOpenAPI
-				if isUpgrade {
-					policy, openAPI = tc.upgrade, tc.upgradeOpenAPI
-				}
-				inst, _ := newInstallAction(new(action.Configuration), hr, Options{IsUpgrade: isUpgrade}, chartcommon.DefaultCapabilities.Copy())
-				assert.Equal(t, inst.IncludeCRDs, policy != helmv2.Skip)
-				assert.Equal(t, inst.DisableOpenAPIValidation, openAPI)
-			})
-		}
+
+	for _, tc := range []struct {
+		name                           string
+		install, upgrade               helmv2.CRDsPolicy
+		installOpenAPI, upgradeOpenAPI bool
+	}{
+		{"opposite install create", helmv2.Create, helmv2.Skip, false, true},
+		{"opposite upgrade create", helmv2.Skip, helmv2.CreateReplace, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parsed, _, _, err := manifest.ParseDoc(map[string]any{
+				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease",
+				"metadata": map[string]any{"name": "demo", "namespace": "default"},
+				"spec": map[string]any{
+					"chart":   map[string]any{"spec": map[string]any{"chart": "mychart", "sourceRef": map[string]any{"kind": "GitRepository", "name": "chart-repo"}}},
+					"install": map[string]any{"crds": string(tc.install), "disableOpenAPIValidation": tc.installOpenAPI},
+					"upgrade": map[string]any{"crds": string(tc.upgrade), "disableOpenAPIValidation": tc.upgradeOpenAPI},
+				},
+			}, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			hr := parsed.(*manifest.HelmRelease)
+			policy, openAPI := tc.install, tc.installOpenAPI
+
+			inst, _ := newInstallAction(new(action.Configuration), hr, Options{}, chartcommon.DefaultCapabilities.Copy())
+			assert.Equal(t, inst.IncludeCRDs, policy != helmv2.Skip)
+			assert.Equal(t, inst.DisableOpenAPIValidation, openAPI)
+		})
 	}
+
 }
 
 func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
@@ -196,46 +189,43 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
-	for _, isUpgrade := range []bool{false, true} {
-		for _, tc := range []struct {
-			name   string
-			policy string
-			skip   bool
-		}{
-			{"Create skip", "Create", true},
-			{"Create include", "Create", false},
-			{"CreateReplace skip", "CreateReplace", true},
-			{"CreateReplace include", "CreateReplace", false},
-			{"unset skip", "", true},
-			{"unset include", "", false},
-			{"Skip skip", "Skip", true},
-			{"Skip include", "Skip", false},
-		} {
-			t.Run(fmt.Sprintf("%s/upgrade=%t", tc.name, isUpgrade), func(t *testing.T) {
-				t.Parallel()
-				hr := newHR()
-				if isUpgrade {
-					hr.Install = &helmv2.Install{CRDs: helmv2.Skip}
-					hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.CRDsPolicy(tc.policy)}
-				} else {
-					hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(tc.policy)}
-					hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
+
+	for _, tc := range []struct {
+		name   string
+		policy string
+		skip   bool
+	}{
+		{"Create skip", "Create", true},
+		{"Create include", "Create", false},
+		{"CreateReplace skip", "CreateReplace", true},
+		{"CreateReplace include", "CreateReplace", false},
+		{"unset skip", "", true},
+		{"unset include", "", false},
+		{"Skip skip", "Skip", true},
+		{"Skip include", "Skip", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := newHR()
+
+			hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(tc.policy)}
+			hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
+
+			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			if tc.policy != "Skip" {
+				if !errors.Is(err, manifest.ErrInput) {
+					t.Fatalf("got %v, want malformed CRD input error", err)
 				}
-				docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
-				if tc.policy != "Skip" {
-					if !errors.Is(err, manifest.ErrInput) {
-						t.Fatalf("got %v, want malformed CRD input error", err)
-					}
-					assert.Equal(t, err.Error(), wantErr.Error())
-					return
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-				assert.Diff(t, docs, want)
-			})
-		}
+				assert.Equal(t, err.Error(), wantErr.Error())
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assert.Diff(t, docs, want)
+		})
 	}
+
 }
 
 func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
@@ -283,45 +273,42 @@ dependencies:
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, isUpgrade := range []bool{false, true} {
-		for _, tc := range []struct {
-			name    string
-			policy  string
-			enabled bool
-		}{
-			{"disabled unset", "", false},
-			{"disabled Create", "Create", false},
-			{"enabled unset", "", true},
-			{"enabled Create", "Create", true},
-		} {
-			t.Run(fmt.Sprintf("%s/upgrade=%t", tc.name, isUpgrade), func(t *testing.T) {
-				t.Parallel()
-				hr := newHR()
-				if isUpgrade {
-					hr.Install = &helmv2.Install{CRDs: helmv2.Skip}
-					hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.CRDsPolicy(tc.policy)}
-				} else {
-					hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(tc.policy)}
-					hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
+
+	for _, tc := range []struct {
+		name    string
+		policy  string
+		enabled bool
+	}{
+		{"disabled unset", "", false},
+		{"disabled Create", "Create", false},
+		{"enabled unset", "", true},
+		{"enabled Create", "Create", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			hr := newHR()
+
+			hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(tc.policy)}
+			hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
+
+			values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
+			included, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+			if tc.enabled {
+				if !errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput) {
+					t.Fatalf("included: %v, omitted: %v; want malformed CRD input errors", wantErr, err)
 				}
-				values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
-				included, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
-				docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
-				if tc.enabled {
-					if !errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput) {
-						t.Fatalf("included: %v, omitted: %v; want malformed CRD input errors", wantErr, err)
-					}
-					assert.Equal(t, err.Error(), wantErr.Error())
-					return
-				}
-				if wantErr != nil || err != nil {
-					t.Fatalf("included: %v, omitted: %v; want success", wantErr, err)
-				}
-				assert.Diff(t, included, want)
-				assert.Diff(t, docs, want)
-			})
-		}
+				assert.Equal(t, err.Error(), wantErr.Error())
+				return
+			}
+			if wantErr != nil || err != nil {
+				t.Fatalf("included: %v, omitted: %v; want success", wantErr, err)
+			}
+			assert.Diff(t, included, want)
+			assert.Diff(t, docs, want)
+		})
 	}
+
 }
 
 func TestMergeChartValuesFiles_Cached(t *testing.T) {
@@ -603,17 +590,13 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\n")
 	testutil.WriteFile(t, dir, "mychart/values.schema.json", `{"type":"object","properties":{"name":{"type":"string","pattern":"^valid$"}},"required":["name"]}`)
 	for _, tc := range []struct {
-		name                                               string
-		install, upgrade, isUpgrade, placeholder, wantSkip bool
+		name                                    string
+		install, upgrade, placeholder, wantSkip bool
 	}{
 		{name: "install validation disabled, upgrade enabled", install: true, wantSkip: true},
 		{name: "install validation enabled, upgrade disabled", upgrade: true},
-		{name: "upgrade validation enabled, install disabled", install: true, isUpgrade: true},
-		{name: "upgrade validation disabled, install enabled", upgrade: true, isUpgrade: true, wantSkip: true},
 		{name: "nil install"},
-		{name: "nil upgrade", isUpgrade: true},
 		{name: "placeholder install", placeholder: true, wantSkip: true},
-		{name: "placeholder upgrade", isUpgrade: true, placeholder: true, wantSkip: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -627,7 +610,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			if tc.upgrade {
 				hr.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
 			}
-			opts := Options{IsUpgrade: tc.isUpgrade}
+			opts := Options{}
 			values := map[string]any{"name": "invalid"}
 			if tc.placeholder {
 				values["name"] = "..PLACEHOLDER_name.."
@@ -738,50 +721,6 @@ mychart:
 	assert.Equal(t, first.Error(), want)
 	assert.Equal(t, second.Error(), want)
 	assert.Equal(t, first.Error(), second.Error())
-}
-
-func TestTemplate_ShowOnlyFraming(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 0.1.0\n")
-	testutil.WriteFile(t, dir, "demo/templates/a.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}")
-	testutil.WriteFile(t, dir, "demo/templates/b.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}")
-	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-
-	const a = "---\n# Source: demo/templates/a.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: a}\n"
-	const b = "---\n# Source: demo/templates/b.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: b}\n"
-	for _, tc := range []struct {
-		name  string
-		paths []string
-		want  string
-		names []string
-	}{
-		{"both", []string{"demo/templates/a.yaml", "demo/templates/b.yaml"}, a + b, []string{"ConfigMap/a", "ConfigMap/b"}},
-		{"reversed-paths", []string{"demo/templates/b.yaml", "demo/templates/a.yaml"}, a + b, []string{"ConfigMap/a", "ConfigMap/b"}},
-		{"first", []string{"demo/templates/a.yaml"}, a, []string{"ConfigMap/a"}},
-		{"second", []string{"demo/templates/b.yaml"}, b, []string{"ConfigMap/b"}},
-		{"unmatched", []string{"demo/templates/missing.yaml"}, "", []string{}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			var first []map[string]any
-			for i := range 2 {
-				hr := newHR()
-				hr.Chart.Name = "demo"
-				out, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{ShowOnly: tc.paths, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
-				assert.NoError(t, err)
-				want, err := testutil.SplitDocs([]byte(tc.want))
-				assert.NoError(t, err)
-				assert.Diff(t, out, want)
-				assert.Diff(t, templateResources(t, out), tc.names)
-				if i == 0 {
-					first = out
-				} else {
-					assert.Diff(t, out, first)
-				}
-			}
-		})
-	}
 }
 
 func TestTemplate_EmittedLists(t *testing.T) {

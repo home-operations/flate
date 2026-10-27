@@ -161,7 +161,7 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	}
 	tr.onAuth = nil
 	before = tr.authenticated.Load()
-	stdout, stderr, code = harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--allow-missing-secrets")...)
+	stdout, stderr, code = harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
 	if code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") || !strings.Contains(stderr, "ursa-major-ssh") || strings.Contains(stderr, "ExternalSource") || strings.Contains(stderr, "LocalSSHAgent") || tr.authenticated.Load() != before {
 		t.Fatalf("absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}

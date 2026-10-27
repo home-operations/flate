@@ -16,20 +16,12 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Fetcher acquires a Flux Bucket into an immutable filesystem. Only the
-// "generic" provider (any S3-API-compatible storage) is wired up
-// today via minio-go. The aws/gcp/azure providers parse and route
-// here but return a clear "not implemented" error rather than silently
-// falling back, unless ForceGeneric sends them down the generic path.
+// Fetcher acquires S3-compatible content using captured static credentials.
 type Fetcher struct {
 	Cache *cache.Cache
 
 	// Network is the required non-nil invocation owner, borrowed by this fetcher.
 	Network *source.Network
-
-	// ForceGeneric skips the provider gate; the generic path then needs
-	// static credentials (a SecretRef) or it fails.
-	ForceGeneric bool
 }
 
 // Fetch implements source.TypedFetcher[*manifest.Bucket].
@@ -46,11 +38,9 @@ func (f *Fetcher) Fetch(ctx context.Context, b *manifest.Bucket, reads *store.Re
 }
 
 func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy cache.Policy) (*store.SourceArtifact, error) {
-	if !f.ForceGeneric && b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric {
-		return nil, source.ErrUnsupportedProvider(b.Named(), b.Provider, sourcev1.BucketProviderGeneric,
-			"S3-compatible")
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
 	client, material, err := f.newMinioClient(b)
 	if err != nil {
 		return nil, err
@@ -85,10 +75,7 @@ func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy 
 }
 
 func (f *operation) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error) {
-	creds, err := f.resolveCredentials(b)
-	if err != nil {
-		return nil, nil, err
-	}
+	creds, authErr := f.resolveCredentials(b)
 	endpoint, secure, err := normalizeEndpoint(b.Endpoint, b.Insecure)
 	if err != nil {
 		return nil, nil, err
@@ -105,7 +92,13 @@ func (f *operation) newMinioClient(b *manifest.Bucket) (*minio.Client, any, erro
 	if _, err := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); err != nil {
 		return nil, nil, fmt.Errorf("%w: resolve bucket proxy: invalid proxy configuration", manifest.ErrInput)
 	}
+	if authErr != nil {
+		return nil, nil, authErr
+	}
 	value, _ := creds.GetWithContext(nil)
+	if b.STS != nil || b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric && (b.Provider != sourcev1.BucketProviderAmazon || value.AccessKeyID == "") {
+		return nil, nil, source.MissingSecretErr(b.Named(), "", "provider authentication unavailable offline")
+	}
 	var credentials any
 	if value.AccessKeyID != "" || value.SecretAccessKey != "" {
 		credentials = value

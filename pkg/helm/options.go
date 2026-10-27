@@ -41,12 +41,6 @@ type Options struct {
 	// (.Capabilities.APIVersions). Comma-separated.
 	APIVersions string
 
-	// IsUpgrade sets .Release.IsUpgrade instead of .Release.IsInstall.
-	IsUpgrade bool
-	// NoHooks excludes hook-annotated templates.
-	NoHooks bool
-	// ShowOnly limits output to specific template paths.
-	ShowOnly []string
 	// EnableDNS enables DNS lookups during templating.
 	EnableDNS bool
 }

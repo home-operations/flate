@@ -33,10 +33,8 @@ type diffFlags struct {
 }
 
 func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
-	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", diff.DefaultStripAttrs,
-		"metadata annotation/label key to strip before diffing (repeatable; supplying any value replaces the default set)")
-	cmd.Flags().StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields,
-		"dotted spec field-path to delete before diffing, e.g. spec.restic.unlock (repeatable; supplying any value replaces the default set)")
+	cmd.Flags().StringArrayVar(&d.stripAttrs, "strip-attr", diff.DefaultStripAttrs, "Ignore a metadata key in diffs (repeatable; replaces defaults)")
+	cmd.Flags().StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields, "Ignore a dotted field in diffs (repeatable; replaces defaults)")
 }
 
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
@@ -74,8 +72,7 @@ func newDiffImagesCmd() *cobra.Command {
 	}
 	bindCommon(cmd.Flags(), c)
 	bindOutput(cmd.Flags(), &c.output, output.FormatName, output.FormatYAML, output.FormatJSON)
-	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false,
-		"also emit images present only in --path-orig (default: only newly added images)")
+	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false, "Include images found only in the baseline")
 	return cmd
 }
 

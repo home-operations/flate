@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"maps"
 	"slices"
 
 	"oras.land/oras-go/v2/errdef"
@@ -38,14 +37,13 @@ type renderBinding struct {
 	Source                                       manifest.NamedResource
 	Kind, URL, Path, Root, Key, Revision, Digest string
 	Alias                                        bool
-	Substitute                                   map[string]string `json:",omitempty"`
 	Wipe, Strict                                 bool
 	Skip                                         []string `json:",omitempty"`
 	Dependencies                                 values.DependencySubstitutions
 }
 
 func (a renderBinding) equal(b renderBinding) bool {
-	return a.Render == b.Render && a.Source == b.Source && a.Kind == b.Kind && a.URL == b.URL && a.Path == b.Path && a.Root == b.Root && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest && a.Alias == b.Alias && maps.Equal(a.Substitute, b.Substitute) && a.Wipe == b.Wipe && a.Strict == b.Strict && slices.Equal(a.Skip, b.Skip) && a.Dependencies.Equal(b.Dependencies)
+	return a.Render == b.Render && a.Source == b.Source && a.Kind == b.Kind && a.URL == b.URL && a.Path == b.Path && a.Root == b.Root && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest && a.Alias == b.Alias && a.Wipe == b.Wipe && a.Strict == b.Strict && slices.Equal(a.Skip, b.Skip) && a.Dependencies.Equal(b.Dependencies)
 }
 
 type renderFrame struct {

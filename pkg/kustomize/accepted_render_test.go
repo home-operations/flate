@@ -188,14 +188,12 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			t.Parallel()
 			renderer := newTestTreeCache(t, t.TempDir())
 			input := req
-			input.Substitute = map[string]string{"VALUE": "before"}
 			input.SkipKinds = []string{"Skipped"}
 			_, pending, err := testutil.RenderMaps(Render(t.Context(), renderer, input, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
-			input.Substitute["VALUE"], input.SkipKinds[0] = "after", "Different"
+			input.SkipKinds[0] = "Different"
 			assert.NoError(t, renderer.RecordRender(t.Context(), owner, pending, maps.All(records)))
 			before := input
-			before.Substitute = map[string]string{"VALUE": "before"}
 			before.SkipKinds = []string{"Skipped"}
 			if _, complete := renderer.PreviousRender(t.Context(), before, owner); !complete {
 				t.Fatal("caller mutation changed the prepared receipt")
@@ -343,7 +341,6 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			}},
 			{"wipe", func(r *RenderRequest) { r.WipeSecrets = true }},
 			{"strict", func(r *RenderRequest) { r.StrictSubstitutions = true }},
-			{"overlay", func(r *RenderRequest) { r.Substitute = map[string]string{"ROOT": "apps/blue"} }},
 			{"skip kinds", func(r *RenderRequest) { r.SkipKinds = []string{manifest.KindKustomization} }},
 			{"source binding", func(r *RenderRequest) { source := *r.Source; source.URL = "different"; r.Source = &source }},
 		} {

@@ -180,14 +180,32 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 		t.Fatalf("missing render: %v", err)
 	}
 	res := renderedSingleton2[0].Result
-	if err != nil {
-		t.Fatalf("Render: %v", err)
+	if err == nil || len(res.Failed) != 2 {
+		t.Fatalf("required absent Secrets were admitted: error=%v failures=%v", err, res.Failed)
 	}
-
+	for _, warning := range res.Warnings {
+		if warning.Category == manifest.WarnUnresolvedSubstitution {
+			t.Fatalf("failed reference reported success warning: %+v", warning)
+		}
+	}
+	testutil.WriteFile(t, dir, "kubernetes/apps/external-secret.yaml", `apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: cluster-secrets, namespace: flux-system}
+spec:
+  target: {name: cluster-secrets}
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n  - ./external-secret.yaml\n")
+	renderedSingleton2, err = RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
+	if err != nil || len(renderedSingleton2) != 1 {
+		t.Fatalf("producer-declared render: %v", err)
+	}
+	res = renderedSingleton2[0].Result
+	assert.Equal(t, len(res.Failed), 0)
 	var warnings []manifest.Warning
-	for _, w := range res.Warnings {
-		if w.Category == manifest.WarnUnresolvedSubstitution {
-			warnings = append(warnings, w)
+	for _, warning := range res.Warnings {
+		if warning.Category == manifest.WarnUnresolvedSubstitution {
+			warnings = append(warnings, warning)
 		}
 	}
 	want := manifest.Warning{

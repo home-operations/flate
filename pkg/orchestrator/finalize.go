@@ -104,7 +104,7 @@ func (o *Orchestrator) finalize() error {
 }
 
 func (o *Orchestrator) warnMissingCRDs() {
-	if !o.cfg.AllowMissingCRDs {
+	if !slices.Contains(o.cfg.AllowMissingKinds, manifest.KindCustomResourceDefinition) {
 		return
 	}
 	missing := make(map[manifest.NamedResource]map[manifest.NamedResource]struct{})

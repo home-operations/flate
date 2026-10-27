@@ -112,12 +112,12 @@ spec:
 				format = "json"
 			}
 			stdout, stderr, code := runCLI(t, "diff", "hr", "--path", current, "--path-orig", orig,
-				"--allow-missing-secrets", "--output", format, "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+				"--allow-missing-kinds=Secret,ConfigMap", "--output", format, "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
 			if code != 0 {
 				t.Fatalf("diff hr exited %d: stderr=%s", code, stderr)
 			}
 			images, imageStderr, imageCode := runCLI(t, "diff", "images", "--include-removed", "--path", current, "--path-orig", orig,
-				"--allow-missing-secrets", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+				"--allow-missing-kinds=Secret,ConfigMap", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, imageCode, 0)
 			if tc.wantRemove {
 				assert.Equal(t, images, "ghcr.io/demo/private:v1\n")
@@ -137,7 +137,7 @@ spec:
 				cmd := New("test")
 				cmd.SetContext(t.Context())
 				cmd.SetArgs([]string{"diff", "images", "--path", current, "--path-orig", orig,
-					"--allow-missing-secrets", "--cache-dir", t.TempDir(), "--concurrency", "2"})
+					"--allow-missing-kinds=Secret,ConfigMap", "--cache-dir", t.TempDir(), "--concurrency", "2"})
 				cmd.SetOut(&bytes.Buffer{})
 				cmd.SetErr(failingWriter{err: writeErr})
 				if err := cmd.Execute(); !errors.Is(err, writeErr) {
@@ -237,7 +237,7 @@ spec:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,
-				"--namespace", tc.namespace, "--allow-missing-secrets", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+				"--namespace", tc.namespace, "--allow-missing-kinds=Secret,ConfigMap", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, tc.wantCode)
 			parent := "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps:"
 			if tc.namespace != "" {
@@ -300,7 +300,7 @@ data:
 `)
 		}
 		stdout, stderr, code := runCLI(t, "diff", "all", "--path", current, "--path-orig", orig,
-			"--allow-missing-secrets", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
+			"--allow-missing-kinds=Secret,ConfigMap", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
 		if code != 0 || !strings.Contains(stdout, "-  greeting: before") || !strings.Contains(stdout, "+  greeting: after") {
 			t.Errorf("moved release change must remain visible: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 		}
@@ -448,7 +448,7 @@ spec:
 					verb = tc.verb
 				}
 				args := []string{"diff", verb, "--path", current, "--path-orig", orig,
-					"--cache-dir", cache, "--concurrency", "2", "--output", output, "--no-progress", "--allow-missing-secrets"}
+					"--cache-dir", cache, "--concurrency", "2", "--output", output, "--no-progress", "--allow-missing-kinds=Secret,ConfigMap"}
 				if tc.resource != "" {
 					args = append(args, tc.resource)
 				}

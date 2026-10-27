@@ -5,11 +5,10 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-// Prepare clones ks and resolves referenced, inline and overlay substitutions.
-// A nil overlay adds no overrides.
-func Prepare(ks *manifest.Kustomization, provider values.Provider, overlay map[string]string) (*manifest.Kustomization, error) {
+// Prepare clones ks and resolves referenced and inline substitutions.
+func Prepare(ks *manifest.Kustomization, provider values.Provider) (*manifest.Kustomization, error) {
 	ks = ks.Clone()
-	if err := values.ExpandPostBuildSubstituteReferenceWithSubstitutions(ks, provider, overlay); err != nil {
+	if err := values.ExpandPostBuildSubstituteReference(ks, provider); err != nil {
 		return nil, err
 	}
 	return ks, nil

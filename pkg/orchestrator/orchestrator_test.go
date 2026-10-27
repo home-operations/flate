@@ -725,7 +725,7 @@ func kindsOf(docs []map[string]any) []string {
 }
 
 // TestOrchestrator_AllowMissingSecretsPropagates locks the #190 fix:
-// when --allow-missing-secrets is on AND a source's auth Secret isn't
+// when --allow-missing-kinds Secret is on AND a source's auth Secret isn't
 // in the offline tree, the source soft-skips (Ready/ReasonSkipped) and
 // the downstream KS that consumes it propagates the skip rather than
 // failing with "source artifact not found". `flate test` then reports
@@ -745,7 +745,7 @@ spec:
 `)
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("private-app", "default", "  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n"))
 
-	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingSecrets: true})
+	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	if len(renderedSingleton4) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -759,7 +759,7 @@ spec:
 	ksID := testutil.KustomizationID("default", "private-app")
 
 	if _, failed := res.Failed[ociID]; failed {
-		t.Errorf("OCIRepository must not be in Failed when --allow-missing-secrets is on; got %v", res.Failed[ociID])
+		t.Errorf("OCIRepository must not be in Failed when --allow-missing-kinds Secret is on; got %v", res.Failed[ociID])
 	}
 	if _, failed := res.Failed[ksID]; failed {
 		t.Errorf("dependent KS must propagate skip, not fail; got %v", res.Failed[ksID])
@@ -810,7 +810,7 @@ spec:
     namespace: flux-system
 `)
 
-	renderedSingleton5, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingSecrets: true})
+	renderedSingleton5, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	if len(renderedSingleton5) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}

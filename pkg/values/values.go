@@ -26,9 +26,6 @@ import (
 // whole postBuild rather than silently substituting nothing.
 var varsubRegex = regexp.MustCompile(`^[_a-zA-Z][_a-zA-Z0-9]*$`)
 
-// ValidSubstitutionName reports whether name follows Flux's variable-name rule.
-func ValidSubstitutionName(name string) bool { return varsubRegex.MatchString(name) }
-
 // Provider exposes lazy ConfigMap/Secret data by canonical identity.
 type Provider interface {
 	Data(manifest.NamedResource) manifest.Data
@@ -380,18 +377,9 @@ func stripMatchingQuotes(value string) (string, bool) {
 	return value, false
 }
 
-// ExpandPostBuildSubstituteReference resolves substituteFrom references
-// against the provider and updates ks.PostBuild.Substitute. Missing
-// references are logged (Secrets silently) and the
-// substitution proceeds with what's available.
+// ExpandPostBuildSubstituteReference resolves referenced and authored inline substitutions.
 func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) error {
-	return ExpandPostBuildSubstituteReferenceWithSubstitutions(ks, p, nil)
-}
-
-// ExpandPostBuildSubstituteReferenceWithSubstitutions applies overlay after
-// referenced and inline values. An overlay never enables absent postBuild.
-func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomization, p Provider, overlay map[string]string) error {
-	if ks == nil || ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 && len(overlay) == 0 {
+	if ks == nil || ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0 && len(ks.PostBuild.Substitute) == 0 {
 		return nil
 	}
 	if len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
@@ -438,7 +426,6 @@ func ExpandPostBuildSubstituteReferenceWithSubstitutions(ks *manifest.Kustomizat
 		}
 	}
 	maps.Copy(values, ks.PostBuild.Substitute)
-	maps.Copy(values, overlay)
 
 	// Flux rejects invalid variable names; sort diagnostics for determinism.
 	var invalid []string

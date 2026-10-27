@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -46,8 +45,6 @@ type RenderRequest struct {
 	SubPath string
 	// Spec is the prepared Flux Kustomization; nil builds without a Flux owner.
 	Spec *manifest.Kustomization
-	// Substitute binds the configured substitution overlay to accepted history.
-	Substitute map[string]string
 	// WipeSecrets binds the parse policy to accepted history.
 	WipeSecrets bool
 	// StrictSubstitutions binds undefined-variable handling to accepted history.
@@ -249,7 +246,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 		source = req.Spec.SourceID()
 	}
 	return renderRequest{lower: lower, root: root, key: key,
-		binding: renderBinding{key, source, req.Source.Kind, req.Source.URL, req.Source.LocalPath, req.Source.LocalRoot, req.Source.Key, req.Source.Revision, req.Source.Digest, req.Source.InputAlias, maps.Clone(req.Substitute), req.WipeSecrets, req.StrictSubstitutions, slices.Clone(req.SkipKinds), req.DependencySubstitutions},
+		binding: renderBinding{key, source, req.Source.Kind, req.Source.URL, req.Source.LocalPath, req.Source.LocalRoot, req.Source.Key, req.Source.Revision, req.Source.Digest, req.Source.InputAlias, req.WipeSecrets, req.StrictSubstitutions, slices.Clone(req.SkipKinds), req.DependencySubstitutions},
 	}, nil
 }
 

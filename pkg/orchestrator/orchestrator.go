@@ -45,30 +45,14 @@ type Config struct {
 	HelmOptions helm.Options
 	// WipeSecrets controls Secret cleartext placeholders.
 	WipeSecrets bool
-	// AllowMissingSecrets converts source auth-secret-not-found errors
-	// into skips and omits HelmRelease valuesFrom Secret/ConfigMap refs
-	// that cannot materialize in the offline tree. Skipped source
-	// resources mark Ready with ReasonSkipped; omitted valuesFrom
-	// refs let HelmReleases render with the remaining values.
-	AllowMissingSecrets bool
+	// AllowMissingKinds tolerates missing source Secret material, Helm valuesFrom kinds, and CRDs.
+	// Required postBuild references and malformed data remain errors.
+	AllowMissingKinds []string
 	// Supply contains invocation data, never stored as canonical objects or emitted.
 	Supply   []store.SuppliedObject
 	supplied *store.Supplied
-	// Substitute overrides referenced and inline values when postBuild is present.
-	Substitute map[string]string
 	// StrictSubstitutions fails undefined postBuild variables without defaults.
 	StrictSubstitutions bool
-
-	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
-	// because the cluster installs them at runtime, and reports each missing CRD
-	// with its dependent ResourceSets.
-	AllowMissingCRDs bool
-
-	// ForceGenericProvider sends non-generic spec.provider sources
-	// (GitRepository, OCIRepository, Bucket) down the generic SecretRef path
-	// instead of rejecting them up front. That path works offline when static
-	// credentials are supplied; otherwise it fails on the missing secret.
-	ForceGenericProvider bool
 
 	// RestrictEgress is the untrusted-render switch. It (1) enables the SSRF
 	// egress guard for ALL source fetches (kustomize remote resources/bases +
@@ -260,7 +244,7 @@ func (o *Orchestrator) childrenByParent() map[manifest.NamedResource][]manifest.
 func (o *Orchestrator) discover(ctx context.Context) error {
 	gitFetcher := &git.Fetcher{
 		Cache: o.cache, Depth: o.cfg.GitDepth,
-		RestrictSchemes: o.cfg.RestrictEgress, ForceGeneric: o.cfg.ForceGenericProvider,
+		RestrictSchemes: o.cfg.RestrictEgress,
 	}
 	o.ksc.Trees.SetGitBaseFetcher(func(ctx context.Context, request kustomize.GitBaseRequest, retry sourcecache.RetryConfig) (*store.SourceArtifact, error) {
 		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
@@ -301,12 +285,12 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 
 func (o *Orchestrator) completeBootstrap() {
 	o.failDependsOnCycles()
-	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
+	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
 		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
-			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network, ForceGeneric: o.cfg.ForceGenericProvider}),
+			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network}),
 		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
 		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
 	} {

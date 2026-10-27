@@ -89,12 +89,9 @@ Set --dry-run to see what would be removed without touching disk.`,
 			return errors.Join(writeErr, encoder.Report(report, encoder))
 		},
 	}
-	cmd.Flags().DurationVar(&f.maxAge, "max-age", 30*24*time.Hour,
-		"prune entries with mtime older than this duration (default 30d); 0 disables age pruning")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false,
-		"report what would be removed without touching disk")
-	bindCacheDir(cmd.Flags(), &f.cacheDir,
-		"explicit cache root to sweep (or set FLATE_CACHE_DIR)")
+	cmd.Flags().DurationVar(&f.maxAge, "max-age", 30*24*time.Hour, "Prune cache entries unused for this duration (0 disables)")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "List cache entries to prune without deleting them")
+	bindCacheDir(cmd.Flags(), &f.cacheDir, "Prune this cache directory")
 	return cmd
 }
 

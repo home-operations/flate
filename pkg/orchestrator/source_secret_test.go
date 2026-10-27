@@ -203,7 +203,7 @@ spec:
     name: ca
 `, strings.TrimPrefix(server.URL, "https://")))
 	o, err := newTestOrchestrator(t, Tree{Path: dir}, Config{CacheDir: t.TempDir(), WipeSecrets: true,
-		AllowMissingSecrets: true, Concurrency: 4},
+		AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}, Concurrency: 4},
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

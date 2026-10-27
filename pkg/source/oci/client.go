@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -25,7 +26,7 @@ import (
 const dockerConfigJSONKey = ".dockerconfigjson"
 
 // newRepoClient binds one credential and transport snapshot before cache admission.
-func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store) (*remote.Repository, any, error) {
+func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, policy cache.Policy) (*remote.Repository, any, error) {
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return nil, nil, err
@@ -33,13 +34,6 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 	client, err := remote.NewRepository(reference)
 	if err != nil {
 		return nil, nil, fmt.Errorf("oras: %w", err)
-	}
-	cred := auth.EmptyCredential
-	if credStore != nil {
-		cred, err = credentials.Credential(credStore)(ctx, client.Reference.Host())
-		if err != nil {
-			return nil, nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
-		}
 	}
 	owner := repo.Named()
 	owner.Name = repo.Namespace + "/" + repo.Name
@@ -52,6 +46,27 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 	}
 	if _, err := resolved.ProxyURL(&url.URL{Scheme: "https", Host: client.Reference.Host()}); err != nil {
 		return nil, nil, fmt.Errorf("%w: resolve registry proxy: invalid proxy configuration", manifest.ErrInput)
+	}
+	if credStore == nil {
+		credStore, err = f.resolveRegistryConfig(ctx, repo, policy)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	cred := auth.EmptyCredential
+	if credStore != nil {
+		cred, err = credentials.Credential(credStore)(ctx, client.Reference.Host())
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
+		}
+	}
+	if cred == auth.EmptyCredential && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
+		if repo.SecretRef != nil {
+			missing := source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "no credentials for the source registry")
+			_, err := f.registryFallback(ctx, repo, missing, policy)
+			return nil, nil, err
+		}
+		return nil, nil, source.MissingSecretErr(repo.Named(), "", "provider authentication unavailable offline")
 	}
 	var credentials any
 	if cred != auth.EmptyCredential {
@@ -117,7 +132,9 @@ func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepo
 		if credStore == nil {
 			return nil, missing
 		}
-		if cred, err := credentials.Credential(credStore)(ctx, ref.Host()); err != nil || cred == auth.EmptyCredential {
+		var cred auth.Credential
+		cred, configErr = credentials.Credential(credStore)(ctx, ref.Host())
+		if configErr == nil && cred == auth.EmptyCredential {
 			return nil, missing
 		}
 	}
@@ -148,17 +165,10 @@ func loadCredentials(configPath string) (credentials.Store, error) {
 	}
 	s, err := credentials.NewStoreFromDocker(credentials.StoreOptions{AllowPlaintextPut: false})
 	if err != nil {
-		// Missing docker config is not fatal — anonymous pulls work.
-		// Distinguish os.ErrNotExist (the common case: no docker login
-		// on this machine) from permission / corrupt-JSON errors so an
-		// operator running flate with a broken ~/.docker/config.json
-		// gets a breadcrumb instead of a silent "401 unauthorized"
-		// from the registry.
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
-		slog.Debug("oci: docker credentials load failed; falling back to anonymous pulls",
-			"err", err)
+		slog.Debug("oci: docker credentials load failed; falling back to anonymous pulls", "err", err)
 		return nil, nil
 	}
 	return s, nil

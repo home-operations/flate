@@ -33,7 +33,7 @@ func TestE2E_ResourceSetExpandsIntoChildKustomizations(t *testing.T) {
 	var out string
 	for _, verb := range []string{"get", "build", "test"} {
 		for range 2 {
-			args := []string{verb, "all", "--path", root, "--concurrency=2", "--allow-missing-crds"}
+			args := []string{verb, "all", "--path", root, "--concurrency=2", "--allow-missing-kinds=CustomResourceDefinition"}
 			if verb == "get" {
 				args[1] = "ks"
 			}

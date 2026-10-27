@@ -3,7 +3,6 @@ package helm
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -111,7 +110,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		{"post renderers", `{"postRenderers":[{"kustomize":{"images":[{"name":"image","newTag":"different"}]}}]}`, false},
 		{"install hooks", `{"install":{"disableHooks":true}}`, false},
 		{"install replace", `{"install":{"replace":true}}`, false},
-		{"upgrade hooks", `{"upgrade":{"disableHooks":true}}`, false},
+		{"upgrade hooks", `{"upgrade":{"disableHooks":true}}`, true},
 		{"test enable", `{"test":{"enable":true}}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,9 +149,6 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		{"skip tests", func(_ *manifest.HelmRelease, o *RenderOptions) { o.SkipTests = true }},
 		{"kube version", func(_ *manifest.HelmRelease, o *RenderOptions) { o.KubeVersion = "1.31.0" }},
 		{"api versions", func(_ *manifest.HelmRelease, o *RenderOptions) { o.APIVersions = "custom.io/v1" }},
-		{"upgrade", func(_ *manifest.HelmRelease, o *RenderOptions) { o.IsUpgrade = true }},
-		{"no hooks", func(_ *manifest.HelmRelease, o *RenderOptions) { o.NoHooks = true }},
-		{"show only", func(_ *manifest.HelmRelease, o *RenderOptions) { o.ShowOnly = []string{"different.yaml"} }},
 		{"dns", func(_ *manifest.HelmRelease, o *RenderOptions) { o.EnableDNS = true }},
 		{"digest policy", func(_ *manifest.HelmRelease, o *RenderOptions) { o.DisableChartDigestTracking = true }},
 		{"wipe policy", func(_ *manifest.HelmRelease, o *RenderOptions) { o.WipeSecrets = true }},
@@ -187,54 +183,54 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 	chartDir := t.TempDir()
 	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, chartDir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\n")
-	for _, isUpgrade := range []bool{false, true} {
-		t.Run(fmt.Sprintf("upgrade=%t", isUpgrade), func(t *testing.T) {
-			t.Parallel()
-			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
-			hr := newHR()
-			input := RenderOptions{IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
-			_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
-			assert.NoError(t, err)
-			child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "demo"}
-			records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {}}
-			assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
-			for _, tc := range []struct {
-				name                      string
-				policy                    helmv2.CRDsPolicy
-				openAPI, active, complete bool
-				target, release           string
-			}{
-				{name: "empty", active: true, complete: true},
-				{name: "default", policy: helmv2.Create, active: true, complete: true},
-				{name: "replace", policy: helmv2.CreateReplace, active: true},
-				{name: "skip", policy: helmv2.Skip, active: true},
-				{name: "openapi", openAPI: true, active: true},
-				{name: "inactive", policy: helmv2.Skip, openAPI: true, complete: true},
-				{name: "target namespace", target: "apps"},
-				{name: "release name", release: "chosen"},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					t.Parallel()
-					changed := hr.Clone()
-					if isUpgrade == tc.active {
-						changed.Upgrade = &helmv2.Upgrade{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
-					} else {
-						changed.Install = &helmv2.Install{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
-					}
-					changed.TargetNamespace, changed.HelmReleaseSpec.ReleaseName = tc.target, tc.release
-					previous, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
-					assert.Equal(t, complete, tc.complete)
-					if complete {
-						assert.Diff(t, maps.Collect(previous), records)
-					}
-					warm, _, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, input))
-					assert.NoError(t, err)
-					fresh := NewClient(cachetest.New(t, "", cache.New))
-					cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), changed, nil, input))
-					assert.NoError(t, err)
-					assert.Diff(t, warm, cold)
-				})
-			}
-		})
-	}
+
+	t.Run("install", func(t *testing.T) {
+		t.Parallel()
+		renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+		hr := newHR()
+		input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
+		_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
+		assert.NoError(t, err)
+		child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "demo"}
+		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {}}
+		assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
+		for _, tc := range []struct {
+			name                      string
+			policy                    helmv2.CRDsPolicy
+			openAPI, active, complete bool
+			target, release           string
+		}{
+			{name: "empty", active: true, complete: true},
+			{name: "default", policy: helmv2.Create, active: true, complete: true},
+			{name: "replace", policy: helmv2.CreateReplace, active: true},
+			{name: "skip", policy: helmv2.Skip, active: true},
+			{name: "openapi", openAPI: true, active: true},
+			{name: "inactive", policy: helmv2.Skip, openAPI: true, complete: true},
+			{name: "target namespace", target: "apps"},
+			{name: "release name", release: "chosen"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				changed := hr.Clone()
+				if !tc.active {
+					changed.Upgrade = &helmv2.Upgrade{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
+				} else {
+					changed.Install = &helmv2.Install{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
+				}
+				changed.TargetNamespace, changed.HelmReleaseSpec.ReleaseName = tc.target, tc.release
+				previous, complete := renderer.PreviousRender(t.Context(), changed, nil, input)
+				assert.Equal(t, complete, tc.complete)
+				if complete {
+					assert.Diff(t, maps.Collect(previous), records)
+				}
+				warm, _, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, input))
+				assert.NoError(t, err)
+				fresh := NewClient(cachetest.New(t, "", cache.New))
+				cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), changed, nil, input))
+				assert.NoError(t, err)
+				assert.Diff(t, warm, cold)
+			})
+		}
+	})
+
 }

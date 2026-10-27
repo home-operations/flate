@@ -192,7 +192,11 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("enabled_%t/%s", tc.enabled, tc.mode), func(t *testing.T) {
 			dir := crdFixture(t, tc.mode)
-			renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingCRDs: tc.enabled})
+			var allowed []string
+			if tc.enabled {
+				allowed = []string{manifest.KindCustomResourceDefinition}
+			}
+			renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: t.TempDir(), Concurrency: 2, AllowMissingKinds: allowed})
 			if len(renderedSingleton1) != 1 {
 				t.Fatalf("missing render: %v", err)
 			}
@@ -261,7 +265,7 @@ func TestWarnMissingCRDs_NoAcceptedInputs(t *testing.T) {
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady})
 			st.SetArtifact(rs.Named(), &store.Emission{})
-			o := &Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}}}
+			o := &Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}}}
 			allocations[shape] = testing.AllocsPerRun(10, o.warnMissingCRDs)
 			assert.Equal(t, len(st.Warnings()), 0)
 		})
@@ -273,7 +277,7 @@ func TestWarnMissingCRDs_NoAcceptedInputs(t *testing.T) {
 func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	o := &Orchestrator{store: s, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}, Tree: Tree{}}}
+	o := &Orchestrator{store: s, cfg: treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}, Tree: Tree{}}}
 	crdA := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "a.example.com"}
 	crdB := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "b.example.com"}
 	ungatedCRD := manifest.NamedResource{Group: crdA.Group, Kind: crdA.Kind, Namespace: "ns"}
@@ -390,7 +394,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 				}
 			}
 			assert.Diff(t, slices.SortedFunc(st.RequiredInputs(owner.Named()), manifest.NamedResource.Compare), tc.required)
-			(&Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}}}).warnMissingCRDs()
+			(&Orchestrator{store: st, cfg: treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}}}).warnMissingCRDs()
 			var want []manifest.Warning
 			for _, crd := range tc.warned {
 				want = append(want, manifest.Warning{
@@ -412,7 +416,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			st.AddObject(rs)
 			st.UpdateStatus(rs.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			st.SetArtifact(rs.Named(), &store.Emission{})
-			cfg := treeConfig{AllowMissingCRDs: true, Tree: Tree{}}
+			cfg := treeConfig{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}, Tree: Tree{}}
 			switch state {
 			case "foreign object":
 				st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: crdA.Kind, Name: crdA.Name})
@@ -423,7 +427,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			case "object":
 				st.AddObject(&manifest.RawObject{APIVersion: crdA.Group + "/v1", Kind: crdA.Kind, Name: crdA.Name})
 			case "disabled":
-				cfg.AllowMissingCRDs = false
+				cfg.AllowMissingKinds = nil
 			default:
 				status := store.StatusReady
 				if state == "pending" {
@@ -452,10 +456,10 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			tasks := task.NewBounded(2)
-			o := &Orchestrator{store: s, cfg: treeConfig{Config: Config{AllowMissingCRDs: true}, Tree: Tree{}}}
+			o := &Orchestrator{store: s, cfg: treeConfig{Config: Config{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}, Tree: Tree{}}}
 			parent := testutil.KustomizationID("flux-system", "parent")
 			s.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			opts := base.Options{AllowMissingCRDs: true}
+			opts := base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}
 			c := resourcesetctrl.New(s, tasks, true)
 			c.Configure(opts)
 			c.StartLifecycle()
@@ -603,7 +607,7 @@ spec:
 `, name, dependencies, name, name)
 		}
 		testutil.WriteFile(t, dir, "apps/sets.yaml", sets.String())
-		renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: cache, Concurrency: 2, AllowMissingCRDs: true})
+		renderedSingleton2, err := RenderTrees(t.Context(), []Tree{{Path: dir, RepoRoot: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{CacheDir: cache, Concurrency: 2, AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}})
 		if len(renderedSingleton2) != 1 {
 			t.Fatalf("missing render: %v", err)
 		}

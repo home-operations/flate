@@ -271,7 +271,7 @@ data:
 	// Isolated cache so the baseline is freshly materialized (the fixture's
 	// deterministic commit SHA would otherwise reuse a cached baseline tree).
 	out := harness.RunCLI(t, "diff", "ks", "--path", repoRoot, "--base", "HEAD",
-		"--allow-missing-secrets", "--cache-dir", t.TempDir())
+		"--allow-missing-kinds=Secret,ConfigMap", "--cache-dir", t.TempDir())
 	// The baseline must have rendered the old value, so the diff is a value
 	// change. With the bug the baseline is empty and `original` never
 	// appears — the whole ConfigMap shows as a wholesale addition.
@@ -401,9 +401,9 @@ spec:
   sourceRef: {kind: GitRepository, name: side-repo, namespace: flux-system}
 `))
 
-	// --allow-missing-secrets soft-skips the external source; a skip is not a
+	// --allow-missing-kinds Secret soft-skips the external source; a skip is not a
 	// failure so the run is clean (harness.RunCLI requires exit 0).
-	out := harness.RunCLI(t, "test", "all", "--path", dir, "--allow-missing-secrets")
+	out := harness.RunCLI(t, "test", "all", "--path", dir, "--allow-missing-kinds=Secret,ConfigMap")
 	if !strings.Contains(out, "app-a") || !strings.Contains(out, "passed") {
 		t.Errorf("a bootstrap-sourced app must render, not block, behind an external-sourced wide-path KS:\n%s", out)
 	}
@@ -486,7 +486,7 @@ spec:
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", resources)
 				args := []string{"build", "all", "--path", filepath.Join(dir, "flux"), "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
 				if tc.allowMissing {
-					args = append(args, "--allow-missing-secrets")
+					args = append(args, "--allow-missing-kinds=Secret,ConfigMap")
 				}
 				stdout, stderr, code := harness.RunCLIBuffers(args...)
 				wantCode := 1
@@ -560,7 +560,7 @@ data: {value: rendered}
 `)
 			testutil.WriteFile(t, dir, "kubernetes/apps/orphan/ks.yaml", testutil.KustomizationYAML("orphan", "flux-system", "  path: ./missing\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 			stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", dir,
-				"--allow-missing-secrets", "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
+				"--allow-missing-kinds=Secret,ConfigMap", "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
 			if code != 0 || !strings.Contains(stdout, "name: healthy-output") || strings.Contains(stdout, "name: orphan\n") {
 				t.Fatalf("unreferenced child failed a healthy local build: exit=%d\n%s\n%s", code, stdout, stderr)
 			}

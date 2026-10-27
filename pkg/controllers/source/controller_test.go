@@ -775,8 +775,9 @@ func TestController_AmbientPolicy(t *testing.T) {
 			{name: "success allowed", allow: true},
 			{name: "failure", failure: manifest.ErrInput},
 			{name: "failure allowed", allow: true, failure: manifest.ErrInput},
-			{name: "timeout", failure: context.DeadlineExceeded},
-			{name: "canceled", failure: context.Canceled},
+			{name: "unavailable allowed", allow: true, failure: src.MissingSecretErr(repo.Named(), "", "no ambient credentials")},
+			{name: "timeout", allow: true, failure: context.DeadlineExceeded},
+			{name: "canceled", allow: true, failure: context.Canceled},
 		} {
 			t.Run(repo.Named().Kind+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
@@ -806,7 +807,7 @@ func TestController_AmbientPolicy(t *testing.T) {
 				if tt.producer {
 					wantCalls = 0
 				}
-				wantSkip := tt.producer || tt.allow && failure != nil
+				wantSkip := tt.producer || tt.allow && errors.Is(failure, manifest.ErrMissingSecret) && !errors.Is(failure, context.Canceled) && !errors.Is(failure, context.DeadlineExceeded)
 				wantStatus := store.StatusReady
 				if failure != nil && !wantSkip {
 					wantStatus = store.StatusFailed
@@ -839,10 +840,10 @@ func TestPendingSource_AmbientContextError(t *testing.T) {
 		t.Run(cause.Error(), func(t *testing.T) {
 			t.Parallel()
 			repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
-			failure := fmt.Errorf("%w: %w", manifest.ErrFlux, cause)
+			failure := errors.Join(src.MissingSecretErr(repo.Named(), "", "unavailable"), cause)
 			missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(repo.Named(), "auth", "not found"))
 			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) { return nil, failure }
-			controller, st := newController(t, nil)
+			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
 			st.AddObject(repo)
 			c := &execution{Controller: controller}
 			c.run.Init(controller.Controller, repo.Named())
@@ -851,7 +852,7 @@ func TestPendingSource_AmbientContextError(t *testing.T) {
 			var err error
 			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { err = pending.Settle(ctx, manifest.DrainCascade) })
 			c.Tasks.BlockTillDone()
-			if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrMissingSecret) {
+			if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrSourceSkipped) {
 				t.Fatalf("default settlement error = %v; want %v and ErrFlux", err, cause)
 			}
 		})

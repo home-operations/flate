@@ -21,7 +21,7 @@ func TestConfigure_MissingCRDs(t *testing.T) {
 	deps := []manifest.DependencyRef{{Group: apix.GroupName, Kind: manifest.KindCustomResourceDefinition, Name: "widgets.example.com"}}
 	err := controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade)
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
-	c.Configure(base.Options{AllowMissingCRDs: true})
+	c.Configure(base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}})
 	assert.Equal(t, controllertest.NewExecution(c, id).Require(t.Context(), deps, manifest.DrainCascade) == nil, true)
 	c.StartLifecycle()
 	defer func() {

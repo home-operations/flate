@@ -160,7 +160,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 	}
 }
 
-func TestFetcher_NonGenericProvider(t *testing.T) {
+func TestFetcher_ProviderUnavailable(t *testing.T) {
 	t.Parallel()
 	f := &Fetcher{}
 	repo := &manifest.GitRepository{
@@ -172,8 +172,8 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("error should say 'not implemented'; got %v", err)
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("expected missing provider credentials; got %v", err)
 	}
 }
 
@@ -292,13 +292,10 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 	}
 }
 
-func TestFetcher_ForceGenericProvider(t *testing.T) {
+func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
-	// Gate bypassed: the generic path runs and fails on the absent secret.
 	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
-	f := &Fetcher{
-		ForceGeneric: true,
-	}
+	f := &Fetcher{}
 	repo := &manifest.GitRepository{
 		Name: "g", Namespace: "ns",
 		URL:       "https://github.com/x/y.git",
@@ -308,9 +305,6 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 	_, err := f.Fetch(context.Background(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
-	}
-	if strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("provider gate should be bypassed with ForceGeneric; got %v", err)
 	}
 	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)

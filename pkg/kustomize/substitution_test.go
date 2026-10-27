@@ -56,7 +56,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	t.Parallel()
 	docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", `  path: ./app
   postBuild:
-    substitute: {VALUE: inline}
+    substitute: {VALUE: inline, EXTRA: "one\ntwo"}
     substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]
 `)))
 	if err != nil {
@@ -69,7 +69,6 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	original := obj.(*manifest.Kustomization)
 	snapshot := original.Clone()
 	projected := original.WithNamespace("effective").(*manifest.Kustomization)
-	overlay := map[string]string{"VALUE": "overlay", "EXTRA": "one\ntwo"}
 	st := store.New()
 	for _, cm := range []*manifest.ConfigMap{
 		{Name: "first", Namespace: "effective", Data: map[string]any{"VALUE": "first", "REF": "first", "NORMALIZED": "one\ntwo"}},
@@ -78,11 +77,11 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 		st.AddObject(cm)
 	}
 	provider := values.NewStoreProvider(st, true)
-	prepared, err := Prepare(projected, provider, overlay)
+	prepared, err := Prepare(projected, provider)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"VALUE": "overlay", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
+	want := map[string]string{"VALUE": "inline", "REF": "second", "NORMALIZED": "onetwo", "EXTRA": "one\ntwo"}
 	if d := cmp.Diff(want, prepared.PostBuild.Substitute); d != "" {
 		t.Fatalf("layers (-want +got): %s", d)
 	}
@@ -92,40 +91,29 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	if d := cmp.Diff(snapshot, original, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection")); d != "" {
 		t.Fatalf("stored input mutated (-want +got): %s", d)
 	}
-	if overlay["VALUE"] != "overlay" || overlay["EXTRA"] != "one\ntwo" {
-		t.Fatal("overlay mutated")
-	}
-	if prepared.PostBuild.Substitute["VALUE"] != "overlay" {
-		t.Fatal("effective values missing from prepared spec")
-	}
-	if manifest.VarsMap(prepared.PostBuild.Substitute)["EXTRA"] != "onetwo" {
-		t.Fatal("overlay normalization changed")
-	}
-	ordinary, err := Prepare(projected, provider, nil)
-	if err != nil || ordinary.PostBuild.Substitute["VALUE"] != "inline" {
-		t.Fatalf("exported Prepare changed: %v", err)
-	}
 	for _, tc := range []struct {
 		name      string
 		postBuild *kustomizev1.PostBuild
 		want      bool
 	}{
-		{name: "absent"}, {name: "empty", postBuild: &kustomizev1.PostBuild{}, want: true},
+		{name: "absent"}, {name: "empty", postBuild: &kustomizev1.PostBuild{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "plain", Namespace: "apps"}
 			ks.PostBuild = tc.postBuild
-			got, err := Prepare(ks, provider, overlay)
+			got, err := Prepare(ks, provider)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if (got.PostBuild != nil && len(got.PostBuild.Substitute) > 0) != tc.want {
-				t.Fatal("overlay changed absent-postBuild behavior")
+				t.Fatal("empty authored postBuild enabled substitution")
 			}
 		})
 	}
-	invalid, err := Prepare(original, provider, map[string]string{"z-invalid": "private", "a-invalid": "private"})
+	bad := original.Clone()
+	bad.PostBuild.Substitute = map[string]string{"z-invalid": "private", "a-invalid": "private"}
+	invalid, err := Prepare(bad, provider)
 	if invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) || !strings.Contains(err.Error(), "[a-invalid z-invalid]") {
 		t.Fatalf("invalid keys not classified/sorted: %v", err)
 	}

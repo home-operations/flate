@@ -86,10 +86,12 @@ func (a *agentAuthentication) NewUploadPackSession(endpoint *transport.Endpoint,
 
 func acquisitionAgent(t *testing.T, identity string) (<-chan struct{}, *atomic.Int32) {
 	t.Helper()
-	key, err := ssh.ParseRawPrivateKey([]byte(identity))
-	assert.NoError(t, err)
 	keyring := agent.NewKeyring()
-	assert.NoError(t, keyring.Add(agent.AddedKey{PrivateKey: key}))
+	if identity != "" {
+		key, err := ssh.ParseRawPrivateKey([]byte(identity))
+		assert.NoError(t, err)
+		assert.NoError(t, keyring.Add(agent.AddedKey{PrivateKey: key}))
+	}
 	// Unix socket paths must fit even with a long TMPDIR and test name.
 	t.Chdir(t.TempDir())
 	path := "a"
@@ -118,7 +120,7 @@ func acquisitionAgent(t *testing.T, identity string) (<-chan struct{}, *atomic.I
 }
 
 func TestFetcher_AmbientAcquisition(t *testing.T) {
-	for _, shape := range []string{"accepted", "rejected", "absent", "unverified", "bad ref", "source only", "retry"} {
+	for _, shape := range []string{"accepted", "rejected", "absent", "refused", "unset", "empty agent", "provider", "unverified", "bad ref", "source only", "retry"} {
 		t.Run(shape, func(t *testing.T) {
 			identity, signer := testSSHIdentity(t)
 			_, host := testSSHIdentity(t)
@@ -141,9 +143,22 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 			testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
 			var closed <-chan struct{}
 			var opened *atomic.Int32
-			if shape == "absent" {
+			switch shape {
+			case "refused":
+				t.Chdir(t.TempDir())
+				listener, err := net.Listen("unix", "a")
+				assert.NoError(t, err)
+				listener.(*net.UnixListener).SetUnlinkOnClose(false)
+				assert.NoError(t, listener.Close())
+				t.Setenv("SSH_AUTH_SOCK", "a")
+			case "unset":
+				t.Setenv("SSH_AUTH_SOCK", "")
+			case "absent":
 				t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "absent"))
-			} else {
+			default:
+				if shape == "empty agent" {
+					identity = ""
+				}
 				closed, opened = acquisitionAgent(t, identity)
 			}
 			if shape == "rejected" {
@@ -155,6 +170,9 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 			repo := gitRepoWithSecret("agent", "ssh://git@fixture"+root, "auth")
 			if shape == "source only" {
 				repo.SecretRef = nil
+			}
+			if shape == "provider" {
+				repo.Provider = sourcev1.GitProviderGitHub
 			}
 			if shape == "bad ref" {
 				repo.Reference = &sourcev1.GitRepositoryRef{Branch: "absent"}
@@ -176,9 +194,9 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				t.Fatalf("missing identity = %s", missing.Secret)
 			}
 			artifact, err = missing.RetryAmbient(t.Context())
-			success := shape == "accepted" || shape == "source only" || shape == "retry"
+			success := shape == "accepted" || shape == "source only" || shape == "retry" || shape == "provider"
 			if !success {
-				if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) || !errors.Is(err, manifest.ErrFlux) {
+				if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != (shape == "absent" || shape == "refused" || shape == "unset" || shape == "empty agent") || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("failed ambient acquisition = %v, %v; want acquisition error", artifact, err)
 				}
 			} else {

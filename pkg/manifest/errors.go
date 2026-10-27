@@ -45,13 +45,13 @@ var (
 	ErrInvalidValuesReference     = sentinel("invalid values reference")
 	ErrInvalidSubstituteReference = sentinel("invalid substitute reference")
 	// ErrMissingSecret marks absent or wiped source auth, cert or proxy material.
-	// The source is skipped only under producer or --allow-missing-secrets policy;
+	// The source is skipped only under producer or --allow-missing-kinds Secret policy;
 	// configured TLS/proxy requirements are never discarded for a fetch.
 	// Malformed real material remains a failure. Signature refs are ignored.
 	ErrMissingSecret = sentinel("missing secret")
 	// ErrSourceSkipped signals that a downstream consumer (KS sourceRef,
 	// HR chartRef) cannot proceed because its source was skipped —
-	// typically by --allow-missing-secrets. Consumers translate this
+	// typically by --allow-missing-kinds Secret. Consumers translate this
 	// into their own skip rather than a hard failure.
 	ErrSourceSkipped = sentinel("source skipped")
 )

@@ -96,7 +96,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	// Wait for the declared chart source to be Ready, BEFORE the fingerprint
 	// dedup gate (a re-emit that finds the prior fingerprint cached must not
 	// replay stale docs over a source that has since failed or soft-skipped
-	// via --allow-missing-secrets).
+	// via --allow-missing-kinds Secret).
 	if _, err := c.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level); err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (
 		if ref.Use != "valuesFrom" {
 			continue
 		}
-		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional, AllowMissing: c.AllowMissingSecrets}, manifest.DrainNone)
+		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional, AllowMissing: slices.Contains(c.AllowMissingKinds, ref.Kind)}, manifest.DrainNone)
 		if availability.Kind != schedule.Terminal {
 			return nil, false
 		}

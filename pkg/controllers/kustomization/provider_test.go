@@ -40,7 +40,7 @@ func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 			assert.NoError(t, err)
 			st.SetSupplied(snapshot)
 			c := New(st, task.NewBounded(2), nil, true)
-			c.Configure(Options{Substitute: map[string]string{"VALUE": "overlay"}}, sourcecache.RetryConfig{})
+			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
 			input := execution.data.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"})

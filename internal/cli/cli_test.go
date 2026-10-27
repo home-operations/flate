@@ -415,11 +415,6 @@ func TestRun_GetImages_RejectsBadOutput(t *testing.T) {
 	}
 }
 
-// TestRun_TestAll exercises the report path on the fixture — every
-// resource should pass (✓ rows, no failures in the summary).
-// writeUnreadableSecretFixture writes a tree whose Flux Kustomization
-// substituteFroms a Secret flate can't read offline (absent, non-SOPS, no
-// producer), so the render emits a WarnUnresolvedSubstitution advisory.
 func writeUnreadableSecretFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -432,7 +427,8 @@ func writeUnreadableSecretFixture(t *testing.T) string {
       - kind: Secret
         name: cluster-secrets
 `))
-	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "kustomization.yaml"), "resources:\n- cm.yaml\n")
+	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "producer.yaml"), "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: cluster-secrets, namespace: flux-system}\nspec: {target: {name: cluster-secrets}}\n")
+	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "kustomization.yaml"), "resources:\n- cm.yaml\n- producer.yaml\n")
 	testutil.WriteFileAt(t, filepath.Join(k8s, "apps", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
@@ -753,9 +749,6 @@ func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 		}{
 			{"kube-version", "string", "", helm.BundledKubeVersion()},
 			{"api-versions", "string", "a", ""},
-			{"is-upgrade", "bool", "", "false"},
-			{"no-hooks", "bool", "", "false"},
-			{"show-only", "stringSlice", "s", "[]"},
 			{"enable-dns", "bool", "", "false"},
 		} {
 			flag := sub.Flags().Lookup(binding.name)
@@ -781,13 +774,13 @@ func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 		if !strings.Contains(flag.Usage, envKey("disable-chart-digest-tracking")) {
 			t.Errorf("%v: missing environment usage", argv)
 		}
-		assert.NoError(t, sub.ParseFlags([]string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--is-upgrade", "--no-hooks", "-s", "templates/main.yaml", "--enable-dns"}))
-		for name, want := range map[string]string{"kube-version": "1.31.2", "api-versions": "fixture.example/v1", "is-upgrade": "true", "no-hooks": "true", "show-only": "[templates/main.yaml]", "enable-dns": "true"} {
+		assert.NoError(t, sub.ParseFlags([]string{"--kube-version=1.31.2", "-a", "fixture.example/v1", "--enable-dns"}))
+		for name, want := range map[string]string{"kube-version": "1.31.2", "api-versions": "fixture.example/v1", "enable-dns": "true"} {
 			assert.Equal(t, sub.Flags().Lookup(name).Value.String(), want)
 		}
 		fresh, _, err := New("test").Find(argv)
 		assert.NoError(t, err)
-		for _, name := range []string{"kube-version", "api-versions", "is-upgrade", "no-hooks", "show-only", "enable-dns"} {
+		for _, name := range []string{"kube-version", "api-versions", "enable-dns"} {
 			assert.Equal(t, fresh.Flags().Lookup(name).Value.String(), fresh.Flags().Lookup(name).DefValue)
 		}
 
@@ -1262,7 +1255,7 @@ spec:
   values: {tag: after}
 `)
 	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
-	testutil.WriteFile(t, root, "charts/app/templates/main.yaml", `{{- if or (ne .Capabilities.KubeVersion.Version "v1.31.2") (not (.Capabilities.APIVersions.Has "fixture.example/v1")) (not .Release.IsUpgrade) }}
+	testutil.WriteFile(t, root, "charts/app/templates/main.yaml", `{{- if or (ne .Capabilities.KubeVersion.Version "v1.31.2") (not (.Capabilities.APIVersions.Has "fixture.example/v1")) (or .Release.IsUpgrade (not .Release.IsInstall)) }}
 {{ fail "CLI Helm options did not reach rendering" }}
 {{- end }}
 apiVersion: apps/v1
@@ -1291,11 +1284,10 @@ spec:
 	hr, err := os.ReadFile(filepath.Join(original, "cluster/hr.yaml"))
 	assert.NoError(t, err)
 	testutil.WriteFile(t, original, "cluster/hr.yaml", strings.ReplaceAll(string(hr), "tag: after", "tag: before"))
-	flags := []string{"--path", filepath.Join(root, "cluster"), "--concurrency=2", "--kube-version=1.31.2", "-a", "fixture.example/v1", "--is-upgrade"}
+	flags := []string{"--path", filepath.Join(root, "cluster"), "--concurrency=2", "--kube-version=1.31.2", "-a", "fixture.example/v1"}
 	for _, command := range []string{"build hr", "get all", "get hr", "get images", "test hr", "diff hr", "diff images"} {
 		t.Run(command, func(t *testing.T) {
 			args := append(strings.Fields(command), flags...)
-			args = append(args, "--no-hooks", "-s", "app/templates/main.yaml")
 			if strings.HasPrefix(command, "diff") {
 				args = append(args, "--path-orig", filepath.Join(original, "cluster"))
 			}
@@ -1304,29 +1296,37 @@ spec:
 				t.Fatalf("Helm options: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
 			}
 			if command == "build hr" {
-				for _, want := range []string{"fixture/kube: v1.31.2", "fixture/api: \"true\"", "fixture/upgrade: \"true\"", "fixture/main:after"} {
+				for _, want := range []string{"fixture/kube: v1.31.2", "fixture/api: \"true\"", "fixture/upgrade: \"false\"", "fixture/main:after"} {
 					if !strings.Contains(out, want) {
 						t.Errorf("missing %q in %s", want, out)
 					}
 				}
 			}
-			if strings.HasSuffix(command, "images") && (!strings.Contains(out, "fixture/main") || strings.Contains(out, "fixture/extra") || strings.Contains(out, "fixture/hook")) {
+			if strings.HasSuffix(command, "images") && (!strings.Contains(out, "fixture/main") || !strings.Contains(out, "fixture/extra") || !strings.Contains(out, "fixture/hook")) {
 				t.Fatalf("image filtering lost Helm options: %s", out)
 			}
 		})
 	}
 	for _, tc := range []struct {
-		name        string
-		args        []string
-		extra, hook bool
+		name         string
+		disableHooks bool
+		extra, hook  bool
 	}{
 		{name: "hooks included", extra: true, hook: true},
-		{name: "hooks excluded", args: []string{"--no-hooks"}, extra: true},
-		{name: "show only", args: []string{"-s", "app/templates/main.yaml"}},
+		{name: "hooks excluded", disableHooks: true, extra: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"build", "hr"}, flags...)
-			out, diagnostic, code := runCLI(t, append(args, tc.args...)...)
+			local := t.TempDir()
+			testutil.CopyTree(t, root, local)
+			if tc.disableHooks {
+				path := filepath.Join(local, "cluster/hr.yaml")
+				body, err := os.ReadFile(path)
+				assert.NoError(t, err)
+				testutil.WriteFileAt(t, path, string(body)+"  install: {disableHooks: true}\n")
+			}
+			args = append(args, "--path", filepath.Join(local, "cluster"))
+			out, diagnostic, code := runCLI(t, args...)
 			if code != 0 || !strings.Contains(out, "name: main") || strings.Contains(out, "name: extra") != tc.extra || strings.Contains(out, "name: hook") != tc.hook {
 				t.Fatalf("template filtering: exit=%d stdout=%s stderr=%s", code, out, diagnostic)
 			}

@@ -28,7 +28,7 @@ func defaultParseDocOptions() ParseDocOptions {
 // mustYAML decodes a single YAML document literal into a generic map.
 func mustYAML(t *testing.T, doc string) map[string]any {
 	t.Helper()
-	docs, err := SplitDocs([]byte(doc))
+	docs, err := splitDocMaps([]byte(doc))
 	if err != nil {
 		t.Fatalf("SplitDocs: %v\n%s", err, doc)
 	}
@@ -1886,7 +1886,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata: {name: b, namespace: ns}
 `)
-	docs, err := SplitDocs(data)
+	docs, err := splitDocMaps(data)
 	if err != nil {
 		t.Fatalf("SplitDocs: %v", err)
 	}
@@ -1950,7 +1950,7 @@ data:
 	for _, input := range []string{string(hr), string(ks), string(cm), secret, raw} {
 		t.Run(DocKind(mustYAML(t, input)), func(t *testing.T) {
 			t.Parallel()
-			docs, err := DecodeDocs(strings.NewReader(input))
+			docs, err := decodeDocMaps(strings.NewReader(input))
 			assert.NoError(t, err)
 			obj, _, _, err := ParseDoc(docs[0], defaultParseDocOptions())
 			assert.NoError(t, err)
@@ -1961,7 +1961,7 @@ data:
 				assert.NoError(t, err)
 			}
 			ReleaseDoc(docs[0])
-			next, err := DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {key: next}\n"))
+			next, err := decodeDocMaps(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {key: next}\n"))
 			assert.NoError(t, err)
 			ReleaseDoc(next[0])
 			assert.Equal(t, Fingerprint(obj), before)
@@ -2005,7 +2005,7 @@ data:
 	}
 
 	for _, input := range []string{string(hr), string(ks), string(cm), secret, raw} {
-		docs, err := DecodeDocs(strings.NewReader(input))
+		docs, err := decodeDocMaps(strings.NewReader(input))
 		assert.NoError(t, err)
 		doc := docs[0]
 		delete(doc["metadata"].(map[string]any), "namespace")
@@ -2020,7 +2020,7 @@ data:
 		assert.Equal(t, replay.Named(), obj.Named())
 		assert.Equal(t, changed, false)
 		{
-			next, err := DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\ndata: {key: next}\n"))
+			next, err := decodeDocMaps(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\ndata: {key: next}\n"))
 			assert.NoError(t, err)
 			_, _, _, err = ParseDoc(next[0], opts)
 			assert.NoError(t, err)
@@ -2058,7 +2058,7 @@ spec:
       *app :
         replicas: 2
 `)
-	docs, err := SplitDocs(data)
+	docs, err := splitDocMaps(data)
 	if err != nil {
 		t.Fatalf("SplitDocs: %v", err)
 	}

@@ -15,7 +15,7 @@ import (
 
 func parsedDependency(t *testing.T, name, spec string) *manifest.Kustomization {
 	t.Helper()
-	docs, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML(name, "apps", spec)))
+	docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML(name, "apps", spec)))
 	if err != nil {
 		t.Fatal(err)
 	}

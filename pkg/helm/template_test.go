@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math"
@@ -56,7 +57,7 @@ data:
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
-	wantAll, err := manifest.SplitDocs([]byte(crd + "---\n" + cm))
+	wantAll, err := testutil.SplitDocs([]byte(crd + "---\n" + cm))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,12 +101,12 @@ data:
 						want = wantAll
 					}
 					for range 2 {
-						docs, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+						docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 						assert.NoError(t, err)
 						assert.Diff(t, docs, want)
 					}
 					fresh := NewClient(cachetest.New(t, "", sourcecache.New))
-					cold, _, err := fresh.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+					cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 					assert.NoError(t, err)
 					assert.Diff(t, cold, want)
 				})
@@ -131,7 +132,7 @@ func TestTemplate_ReleaseName(t *testing.T) {
 			hr := newHR()
 			hr.TargetNamespace, hr.HelmReleaseSpec.ReleaseName = tc.target, tc.explicit
 			for range 2 {
-				docs, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 				assert.NoError(t, err)
 				assert.Equal(t, len(docs), 1)
 				name, _ := manifest.DocMetadata(docs[0])
@@ -187,11 +188,11 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
-	want, err := manifest.SplitDocs([]byte(cm))
+	want, err := testutil.SplitDocs([]byte(cm))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	_, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
@@ -220,7 +221,7 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 					hr.Install = &helmv2.Install{CRDs: helmv2.CRDsPolicy(tc.policy)}
 					hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
 				}
-				docs, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{SkipCRDs: tc.skip, IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 				if tc.policy != "Skip" {
 					if !errors.Is(err, manifest.ErrInput) {
 						t.Fatalf("got %v, want malformed CRD input error", err)
@@ -247,12 +248,12 @@ func TestTemplate_MalformedSubchartCRDs(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/charts/child/crds/bad.yaml", cm+"---\napiVersion: [\n")
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
-	_, _, wantErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	_, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
 	for range 2 {
-		_, _, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+		_, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 		if !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("got %v, want malformed CRD input error", err)
 		}
@@ -278,7 +279,7 @@ dependencies:
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", cm)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
-	want, err := manifest.SplitDocs([]byte(cm))
+	want, err := testutil.SplitDocs([]byte(cm))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,8 +305,8 @@ dependencies:
 					hr.Upgrade = &helmv2.Upgrade{CRDs: helmv2.Skip}
 				}
 				values := map[string]any{"child": map[string]any{"enabled": tc.enabled}}
-				included, _, wantErr := cli.Template(t.Context(), hr, values, RenderOptions{IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
-				docs, _, err := cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				included, _, wantErr := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+				docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{SkipCRDs: true, IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 				if tc.enabled {
 					if !errors.Is(wantErr, manifest.ErrInput) || !errors.Is(err, manifest.ErrInput) {
 						t.Fatalf("included: %v, omitted: %v; want malformed CRD input errors", wantErr, err)
@@ -580,7 +581,7 @@ data:
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			docs, _, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{KubeVersion: tc.version, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{KubeVersion: tc.version, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 			if tc.fail {
 				if err == nil {
 					t.Fatal("invalid override accepted")
@@ -635,11 +636,11 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 			warm := hr.Clone()
 			warm.DisableSchemaValidation = true
 			warm.Upgrade = &helmv2.Upgrade{DisableSchemaValidation: true}
-			if _, _, err := cli.Template(t.Context(), warm, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}); err != nil {
+			if _, _, err := testutil.RenderMaps(cli.Template(t.Context(), warm, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})); err != nil {
 				t.Fatalf("warm cache: %v", err)
 			}
 			for range 2 {
-				_, _, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				_, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 				assert.Diff(t, hr.HelmReleaseSpec, original.HelmReleaseSpec)
 				assert.Equal(t, hr.DisableSchemaValidation, original.DisableSchemaValidation)
 				if tc.wantSkip {
@@ -686,8 +687,8 @@ func TestTemplate_SchemaErrorOrder(t *testing.T) {
 		},
 	}
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}
-	_, _, first := cli.Template(t.Context(), hr, values, input)
-	_, _, second := cli.Template(t.Context(), hr, values, input)
+	_, _, first := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
+	_, _, second := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 	if first == nil || second == nil {
 		t.Fatalf("schema failures: %v; %v", first, second)
 	}
@@ -725,8 +726,8 @@ func TestTemplate_SchemaPropertyOrder(t *testing.T) {
 	hr := newHR()
 	values := map[string]any{"zulu": true, "alpha": true, "mu": true, "beta": true, "theta": true, "omega": true}
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}
-	_, _, first := cli.Template(t.Context(), hr, values, input)
-	_, _, second := cli.Template(t.Context(), hr, values, input)
+	_, _, first := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
+	_, _, second := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 	if first == nil || second == nil {
 		t.Fatalf("schema failures: %v; %v", first, second)
 	}
@@ -767,9 +768,9 @@ func TestTemplate_ShowOnlyFraming(t *testing.T) {
 			for i := range 2 {
 				hr := newHR()
 				hr.Chart.Name = "demo"
-				out, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{ShowOnly: tc.paths, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				out, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{ShowOnly: tc.paths, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 				assert.NoError(t, err)
-				want, err := manifest.SplitDocs([]byte(tc.want))
+				want, err := testutil.SplitDocs([]byte(tc.want))
 				assert.NoError(t, err)
 				assert.Diff(t, out, want)
 				assert.Diff(t, templateResources(t, out), tc.names)
@@ -841,14 +842,14 @@ items:
 			}
 			if tc.name == "ordinary AllowList" {
 				var err error
-				want, err = manifest.SplitDocs([]byte(tc.input))
+				want, err = testutil.SplitDocs([]byte(tc.input))
 				assert.NoError(t, err)
 			}
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 			testutil.WriteFile(t, dir, "mychart/templates/list.yaml", tc.input)
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
-			docs, _, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+			docs, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 			if oracleErr != nil {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), oracleErr.Error()) {
 					t.Fatalf("Template error = %v, want upstream: %v", err, oracleErr)
@@ -884,38 +885,44 @@ apiVersion: v1
 kind: ConfigMap
 metadata: {name: after}
 `)
-	docs, err := manifest.SplitDocs(input)
+	docs, err := manifest.DecodeDocs(bytes.NewReader(input), manifest.RequiredDocuments)
 	assert.NoError(t, err)
 	snapshot, err := manifest.EncodeRender(docs)
 	assert.NoError(t, err)
-	out, err := normalizeLists(docs)
-	assert.NoError(t, err)
-	assert.NoError(t, err)
+	out := normalizeLists(docs)
 	var names []string
 	for _, doc := range out {
-		name, _ := manifest.DocMetadata(doc)
+		name, _ := manifest.DocMetadata(doc.Document)
 		names = append(names, name)
 	}
 	assert.Diff(t, names, []string{"before", "expanded", "after"})
-	out[1]["data"].(map[string]any)["key"] = "changed"
+	ordinals := make([]int, len(out))
+	for i, doc := range out {
+		ordinals[i] = doc.Ordinal
+	}
+	assert.Diff(t, ordinals, []int{0, 2, 3})
+	cached, err := manifest.DecodeRender(snapshot)
+	assert.NoError(t, err)
+	replayed := normalizeLists(cached)
+	assert.Diff(t, replayed, out)
+
+	out[1].Document["data"].(map[string]any)["key"] = "changed"
 	unchanged, err := manifest.EncodeRender(docs)
 	assert.NoError(t, err)
 	assert.Diff(t, unchanged, snapshot)
-	out[0]["retained"] = true
-	assert.Equal(t, docs[0]["retained"], any(true))
-	out[2]["retained"] = true
-	assert.Equal(t, docs[3]["retained"], any(true))
+	out[0].Document["retained"] = true
+	assert.Equal(t, docs[0].Document["retained"], any(true))
+	out[2].Document["retained"] = true
+	assert.Equal(t, docs[3].Document["retained"], any(true))
 }
 
 func TestNormalizeLists_NoItems(t *testing.T) {
-	docs := []map[string]any{{"kind": "AllowList", "spec": map[string]any{"items": []any{"value"}}}, {"kind": "ConfigMap"}}
-	out, err := normalizeLists(docs)
-	assert.NoError(t, err)
+	docs := testutil.DocumentOccurrences([]map[string]any{{"kind": "AllowList", "spec": map[string]any{"items": []any{"value"}}}, {"kind": "ConfigMap"}})
+	out := normalizeLists(docs)
 	assert.Equal(t, &out[0] == &docs[0], true)
 	allocations := testing.AllocsPerRun(100, func() {
-		out, err = normalizeLists(docs)
+		out = normalizeLists(docs)
 	})
-	assert.NoError(t, err)
 	assert.Equal(t, allocations, float64(0))
 }
 
@@ -937,15 +944,15 @@ items:
 	assert.NoError(t, err)
 	var names []string
 	for _, doc := range out {
-		name, _ := manifest.DocMetadata(doc)
+		name, _ := manifest.DocMetadata(doc.Document)
 		names = append(names, name)
 	}
 	assert.Diff(t, names, []string{"nested", "sibling"})
 }
 
-func TestNormalizeLists_ErrorDiscardsPartialOutput(t *testing.T) {
+func TestNormalizeLists_RetainsFailedOutcome(t *testing.T) {
 	t.Parallel()
-	docs, err := manifest.SplitDocs([]byte(`apiVersion: v1
+	docs, err := manifest.DecodeDocs(strings.NewReader(`apiVersion: v1
 kind: ConfigMap
 metadata: {name: ordinary}
 ---
@@ -954,15 +961,37 @@ kind: ConfigMapList
 items:
 - {apiVersion: v1, kind: ConfigMap, metadata: {name: valid}}
 - {apiVersion: v1, metadata: {name: invalid}}
-`))
+`), manifest.RequiredDocuments)
 	assert.NoError(t, err)
 	before, err := manifest.EncodeRender(docs)
 	assert.NoError(t, err)
-	out, err := normalizeLists(docs)
-	if out != nil || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
-		t.Fatalf("invalid stream returned partial success: %#v, %v", out, err)
+	out := normalizeLists(docs)
+	failure := manifest.DocumentFailure(out)
+	if len(out) != 2 || out[0].Err != nil || out[1].Ordinal != 1 || out[1].Document == nil || !errors.Is(failure, manifest.ErrInput) || !errors.Is(failure, manifest.ErrFlux) {
+		t.Fatalf("invalid stream lost its outcome: %#v, %v", out, failure)
 	}
 	after, err := manifest.EncodeRender(docs)
 	assert.NoError(t, err)
 	assert.Diff(t, after, before)
+}
+
+func TestTemplate_RetainsFailedStream(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
+	testutil.WriteFile(t, root, "mychart/templates/output.yaml", "null\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: invalid}\ndata: {key: first, key: duplicate}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling}\n")
+	client := NewClient(cachetest.New(t, "", sourcecache.New))
+	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", root)}
+	var diagnostic string
+	for _, phase := range []string{"cold", "repeat"} {
+		docs, receipt, err := client.Template(t.Context(), newHR(), nil, input)
+		assert.NoError(t, err)
+		if len(docs) != 2 || docs[0].Ordinal != 0 || docs[0].Err == nil || docs[0].Document != nil || docs[1].Ordinal != 1 || manifest.DocIdentity(docs[1].Document).Name != "sibling" || receipt != nil {
+			t.Fatalf("%s lost outcomes or cached subset: %+v, %v", phase, docs, receipt)
+		}
+		if diagnostic == "" {
+			diagnostic = manifest.DocumentFailure(docs).Error()
+		}
+		assert.Equal(t, manifest.DocumentFailure(docs).Error(), diagnostic)
+	}
 }

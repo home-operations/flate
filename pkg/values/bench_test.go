@@ -213,11 +213,11 @@ spec:
 	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}}}
 	b.ReportAllocs()
 	for b.Loop() {
-		docs, err := manifest.DecodeDocs(strings.NewReader(input))
+		docs, err := manifest.DecodeDocs(strings.NewReader(input), manifest.IncidentalDocuments)
 		if err != nil {
 			b.Fatal(err)
 		}
-		obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{DefaultNamespace: ""})
+		obj, _, _, err := manifest.ParseDoc(docs[0].Document, manifest.ParseDocOptions{DefaultNamespace: ""})
 		if err != nil {
 			b.Fatal(err)
 		}

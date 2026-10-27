@@ -3,11 +3,15 @@ package base
 import "github.com/home-operations/flate/pkg/manifest"
 
 // Stamp applies producer overlays to caller-owned decoded documents before substitution.
-func Stamp(policy manifest.EmissionPolicy, docs []map[string]any) {
+func Stamp(policy manifest.EmissionPolicy, docs []manifest.DocOccurrence) {
 	if !policy.Owner && len(policy.Labels) == 0 && len(policy.Annotations) == 0 {
 		return
 	}
-	for _, doc := range docs {
+	for _, occurrence := range docs {
+		if occurrence.Err != nil || occurrence.Document == nil {
+			continue
+		}
+		doc := occurrence.Document
 		md := manifest.EnsureMetadata(doc)
 		hook := func() bool {
 			if policy.HookAnnotation == "" {

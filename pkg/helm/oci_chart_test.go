@@ -101,7 +101,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 							errs[i] = ctx.Err()
 							return
 						}
-						output[i], _, errs[i] = cli.Template(ctx, release, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)})
+						output[i], _, errs[i] = testutil.RenderMaps(cli.Template(ctx, release, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}))
 					})
 				}
 				<-entered
@@ -158,11 +158,11 @@ func TestTemplate_OCIInvalidChartVersion(t *testing.T) {
 				&store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Revision: "6.15.0@" + digest, Digest: digest})
 			cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
-			if _, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}); err != nil {
+			if _, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)})); err != nil {
 				t.Fatal(err)
 			}
 			writeChartFiles(t, dir, "podinfo", "invalid")
-			if _, _, err := cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)}); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			if _, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{DisableChartDigestTracking: mode.disable, Sources: NewSources(st)})); !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid chart version bypassed validation: %v", err)
 			}
 

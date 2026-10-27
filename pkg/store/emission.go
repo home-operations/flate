@@ -21,18 +21,19 @@ type Child struct {
 	output      *ReadSet
 }
 
-// Emission is an immutable accepted inventory. Maps and objects are borrowed read-only.
+// Emission is an immutable assessed inventory. Maps and objects are borrowed read-only.
 type Emission struct {
 	// Reads records the accepted assessment's consumed inputs.
 	Reads *ReadSet
-	// OutputReads retains the provenance of the last complete inventory.
+	// OutputReads retains provenance for attempted output or the last complete inventory.
 	OutputReads  *ReadSet
 	payloadReads *ReadSet
 	borrowed     map[*ReadSet]struct{}
 
 	family      *manifest.DiscoveryIndex
 	Children    []Child
-	Manifests   []map[string]any
+	Manifests   []manifest.DocOccurrence
+	Failures    []manifest.DocOccurrence
 	Fingerprint string
 	Unreadable  []manifest.NamedResource
 	Complete    bool
@@ -64,7 +65,7 @@ type RenderedOutput struct {
 	// Render retains immutable pre-admission renderer metadata and output.
 	Render      *manifest.RenderReceipt
 	Children    []Child
-	Manifests   []map[string]any
+	Manifests   []manifest.DocOccurrence
 	Fingerprint string
 	Unreadable  []manifest.NamedResource
 	warnings    []manifest.Warning
@@ -81,7 +82,7 @@ func (e *Emission) Retains(reads *ReadSet) bool {
 // Replay returns completed content matching the caller's canonical input key.
 // Stale accepted inventory remains unavailable through GetEmission.
 func (e *Emission) Replay(fingerprint string) (RenderedOutput, bool) {
-	if e == nil || fingerprint == "" {
+	if e == nil || fingerprint == "" || len(e.Failures) != 0 {
 		return RenderedOutput{}, false
 	}
 	if e.Complete && e.Fingerprint == fingerprint {
@@ -314,6 +315,9 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 			e.Children = prev.Children
 			e.Manifests = prev.Manifests
 			e.Unreadable = prev.Unreadable
+			if reads == nil || prev.Reads == reads {
+				e.Failures = prev.Failures
+			}
 		}
 	}
 	if obj == nil {
@@ -680,6 +684,9 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 	if !next.Reads.Valid() {
 		return
 	}
+	if len(next.Failures) != 0 {
+		next.Complete = false
+	}
 	if !next.Complete {
 		next.Fingerprint = ""
 	}
@@ -728,12 +735,14 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 		candidate.OutputReads = nil
 		if next.Complete {
 			candidate.OutputReads = next.Reads
+		} else if len(next.Failures) != 0 {
+			candidate.OutputReads = next.Reads
 		} else if prev != nil && prev.OutputReads.Valid() {
 			candidate.OutputReads = prev.OutputReads
 		} else if len(payloads) != 0 {
 			candidate.OutputReads = next.Reads
 		}
-		unchanged := prev != nil &&
+		unchanged := prev != nil && len(next.Failures) == 0 && len(prev.Failures) == 0 &&
 			(next.Complete && len(candidate.Children) == len(prev.entries) && prev.Complete && prev.shadows(next.binding) ||
 				!next.Complete && candidate.OutputReads == prev.OutputReads)
 		if unchanged {
@@ -767,7 +776,7 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 		}
 		stable := prev != nil && (proposal == prev || sameMembership(prev, proposal) && slices.EqualFunc(prev.Children, proposal.Children, func(a, b Child) bool { return a.payload == b.payload }))
 		unchanged = proposal == prev || proposal.sameContent(prev)
-		if unchanged && !proposal.Complete && prev.Complete {
+		if unchanged && len(proposal.Failures) == 0 && !proposal.Complete && prev.Complete {
 			proposal.Complete = true
 		}
 		unchanged = unchanged && prev.Complete == proposal.Complete
@@ -787,7 +796,7 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 		}
 		if proposal != prev {
 			proposal.cached = nil
-			if !proposal.Complete && prev != nil {
+			if !proposal.Complete && len(proposal.Failures) == 0 && prev != nil {
 				proposal.cached = prev.cached
 				if prev.Complete && prev.Fingerprint != "" {
 					output := prev.renderedOutput()
@@ -808,12 +817,11 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 			return
 		}
 		if next.Complete && proposal.Complete {
-			accepted := *proposal
-			accepted.Reads = next.Reads
-			accepted.input, accepted.inputDoc, accepted.inputHead = next.input, next.inputDoc, next.inputHead
-			accepted.binding, accepted.previous = next.binding, next.previous
-			accepted.accepted = true
-			*next = accepted
+			*next = *proposal
+			next.Reads = candidate.Reads
+			next.input, next.inputDoc, next.inputHead = candidate.input, candidate.inputDoc, candidate.inputHead
+			next.binding, next.previous = candidate.binding, candidate.previous
+			next.accepted = true
 		}
 		if prev != nil {
 			if !proposal.Retains(prev.OutputReads) {
@@ -962,7 +970,7 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 }
 
 func (e *Emission) sameContent(other *Emission) bool {
-	return other != nil &&
+	return other != nil && len(e.Failures) == 0 && len(other.Failures) == 0 &&
 		slices.EqualFunc(other.entries, e.entries, admissionEqual) && e.sameOutput(other)
 }
 
@@ -973,7 +981,9 @@ func (e *Emission) sameOutput(other *Emission) bool {
 		other.inputHead.revision == e.inputHead.revision && other.inputHead.binding.equal(&e.inputHead.binding) && manifest.Equal(other.input, e.input) ||
 		e.input != nil && semanticEqual(Child{Obj: other.input, Doc: other.inputDoc}, Child{Obj: e.input, Doc: e.inputDoc})
 	return sameInput && other.family == e.family &&
-		(sameDocuments || slices.EqualFunc(other.Manifests, e.Manifests, func(a, b map[string]any) bool { return manifest.ValueEqual(a, b) })) &&
+		(sameDocuments || slices.EqualFunc(other.Manifests, e.Manifests, func(a, b manifest.DocOccurrence) bool {
+			return a.Ordinal == b.Ordinal && manifest.ValueEqual(a.Document, b.Document)
+		})) &&
 		other.Fingerprint == e.Fingerprint &&
 		slices.Equal(other.documentOwners, e.documentOwners) &&
 		other.binding.equal(&e.binding) &&
@@ -1240,17 +1250,18 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 	if prev != nil {
 		e.shadowed = slices.Clone(prev.shadowed)
 	}
-	if next.Complete && !e.shadows(next.binding) {
+	if (next.Complete || len(next.Failures) != 0) && !e.shadows(next.binding) {
 		e.shadowed = append(e.shadowed, next.binding)
 	}
 	e.previous = nil
 	capacity := len(prepared)
-	if prev != nil && !next.Complete {
+	if prev != nil && !next.Complete && len(next.Failures) == 0 {
 		capacity += len(prev.entries)
 	}
 	e.entries = make([]admission, 0, capacity)
 	e.Children, e.payloadReads, e.borrowed = nil, nil, nil
 	e.Manifests = slices.Clone(next.Manifests)
+	e.Failures = slices.Clone(next.Failures)
 	e.Unreadable = slices.Clone(next.Unreadable)
 	clear(byID)
 	for i, a := range prepared {
@@ -1268,7 +1279,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 				entry.objectGeneration = old.objectGeneration
 				e.entries = append(e.entries, entry)
 				delete(byID, id)
-			} else if !next.Complete {
+			} else if !next.Complete && len(next.Failures) == 0 {
 				old.changed, old.objectChanged = false, false
 				e.entries = append(e.entries, old)
 			}
@@ -1298,13 +1309,15 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 			}
 		}
 	}
-	inherited := prev != nil && slices.EqualFunc(next.Manifests, prev.Manifests, func(a, b map[string]any) bool { return manifest.ValueEqual(a, b) })
+	inherited := prev != nil && slices.EqualFunc(next.Manifests, prev.Manifests, func(a, b manifest.DocOccurrence) bool {
+		return a.Ordinal == b.Ordinal && manifest.ValueEqual(a.Document, b.Document)
+	})
 	if inherited && (!next.Complete || slices.EqualFunc(prev.entries, e.entries, func(a, b admission) bool { return a.child.Obj.Named() == b.child.Obj.Named() })) {
 		e.documentOwners = prev.documentOwners
 	} else {
 		e.documentOwners = bindDocuments(next.Manifests, prepared)
 	}
-	if !next.Complete && prev != nil {
+	if !next.Complete && len(next.Failures) == 0 && prev != nil {
 		if !inherited {
 			visited := make(map[manifest.NamedResource]struct{}, len(prepared))
 			for _, entry := range prepared {
@@ -1312,7 +1325,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 			}
 			available := make(map[manifest.NamedResource][]int, len(e.Manifests))
 			for i, doc := range e.Manifests {
-				key := manifest.DocIdentity(doc)
+				key := manifest.DocIdentity(doc.Document)
 				available[key] = append(available[key], i)
 			}
 			used := make([]bool, len(e.Manifests))
@@ -1322,8 +1335,8 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 					continue
 				}
 				present := false
-				for _, j := range available[manifest.DocIdentity(doc)] {
-					if !used[j] && manifest.ValueEqual(doc, e.Manifests[j]) {
+				for _, j := range available[manifest.DocIdentity(doc.Document)] {
+					if !used[j] && manifest.ValueEqual(doc.Document, e.Manifests[j].Document) {
 						used[j], present = true, true
 						break
 					}
@@ -1346,7 +1359,7 @@ func prepareEmission(next, prev *Emission, prepared []admission, byID map[manife
 	return &e
 }
 
-func bindDocuments(docs []map[string]any, entries []admission) []manifest.NamedResource {
+func bindDocuments(docs []manifest.DocOccurrence, entries []admission) []manifest.NamedResource {
 	byDocument := make(map[manifest.NamedResource][]admission, len(entries))
 	for _, entry := range entries {
 		if entry.child.Doc != nil {
@@ -1356,8 +1369,8 @@ func bindDocuments(docs []map[string]any, entries []admission) []manifest.NamedR
 	}
 	owners := make([]manifest.NamedResource, len(docs))
 	for i, doc := range docs {
-		for _, entry := range byDocument[manifest.DocIdentity(doc)] {
-			if manifest.ValueEqual(doc, entry.child.Doc) {
+		for _, entry := range byDocument[manifest.DocIdentity(doc.Document)] {
+			if manifest.ValueEqual(doc.Document, entry.child.Doc) {
 				owners[i] = entry.child.Obj.Named()
 				break
 			}

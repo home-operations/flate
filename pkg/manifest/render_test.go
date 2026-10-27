@@ -18,7 +18,7 @@ import (
 
 func TestRenderCodec_Fidelity(t *testing.T) {
 	t.Parallel()
-	docs, err := SplitDocs([]byte(`plain: 2001-01-01
+	docs, err := splitDocMaps([]byte(`plain: 2001-01-01
 timestamp: !!timestamp 2001-01-01T12:34:56+05:30
 large: 9007199254740993
 unsigned: 18446744073709551615
@@ -41,7 +41,7 @@ order: second
 	assert.NoError(t, err)
 	docs[0]["int64"] = int64(math.MinInt64)
 	docs[0]["false"] = false
-	payload, err := EncodeRender(docs)
+	payload, err := encodeRenderMaps(docs)
 	assert.NoError(t, err)
 	equalFloat := cmp.Comparer(func(a, b float64) bool {
 		return math.IsNaN(a) && math.IsNaN(b) || a == b && math.Signbit(a) == math.Signbit(b)
@@ -51,9 +51,9 @@ order: second
 		_, bo := b.Zone()
 		return a.Equal(b) && ao == bo
 	})
-	first, err := DecodeRender(payload)
+	first, err := decodeRenderMaps(payload)
 	assert.NoError(t, err)
-	second, err := DecodeRender(payload)
+	second, err := decodeRenderMaps(payload)
 	assert.NoError(t, err)
 	for _, got := range []([]map[string]any){first, second} {
 		if diff := cmp.Diff(docs, got, equalFloat, equalTime); diff != "" {
@@ -69,13 +69,16 @@ order: second
 
 func TestRenderCodec_EmptyAndErrors(t *testing.T) {
 	t.Parallel()
+	if data, err := EncodeRender([]DocOccurrence{{Ordinal: -1, Document: map[string]any{}}}); data != nil || !errors.Is(err, ErrFlux) {
+		t.Fatalf("negative ordinal encode: %v, %v", data, err)
+	}
 	for _, docs := range [][]map[string]any{nil, {}} {
-		payload, err := EncodeRender(docs)
+		payload, err := encodeRenderMaps(docs)
 		assert.NoError(t, err)
 		if len(payload) == 0 {
 			t.Fatal("empty output has no encoded stream")
 		}
-		got, err := DecodeRender(payload)
+		got, err := decodeRenderMaps(payload)
 		assert.NoError(t, err)
 		assert.Equal(t, len(got), 0)
 	}
@@ -83,14 +86,14 @@ func TestRenderCodec_EmptyAndErrors(t *testing.T) {
 		make(chan int), []any{make(chan int)}, map[any]any{make(chan int): nil},
 		map[any]any{1: make(chan int)}, time.Date(2001, 1, 1, 0, 0, 0, 0, time.FixedZone("invalid", 86400*30)),
 	} {
-		if data, err := EncodeRender([]map[string]any{{"unsupported": value}}); data != nil || !errors.Is(err, ErrFlux) {
+		if data, err := encodeRenderMaps([]map[string]any{{"unsupported": value}}); data != nil || !errors.Is(err, ErrFlux) {
 			t.Fatalf("unsupported encode: %v, %v", data, err)
 		}
 	}
-	payload, err := EncodeRender([]map[string]any{{"first": "valid prefix"}, {"last": "truncated"}})
+	payload, err := encodeRenderMaps([]map[string]any{{"first": "valid prefix"}, {"last": "truncated"}})
 	assert.NoError(t, err)
 	for _, data := range [][]byte{nil, []byte("corrupt"), payload[:len(payload)-1]} {
-		if docs, err := DecodeRender(data); docs != nil || !errors.Is(err, ErrFlux) {
+		if docs, err := decodeRenderMaps(data); docs != nil || !errors.Is(err, ErrFlux) {
 			t.Fatalf("corrupt decode: %v, %v", docs, err)
 		}
 	}
@@ -106,14 +109,14 @@ func TestRenderCodec_Deterministic(t *testing.T) {
 	for _, v := range []string{"first", "second"} {
 		docs[0]["mixed"].(map[any]any)[math.NaN()] = v
 	}
-	first, err := EncodeRender(docs)
+	first, err := encodeRenderMaps(docs)
 	assert.NoError(t, err)
-	second, err := EncodeRender(docs)
+	second, err := encodeRenderMaps(docs)
 	assert.NoError(t, err)
 	if !bytes.Equal(first, second) {
 		t.Fatal("equal documents have different encoded bytes")
 	}
-	got, err := DecodeRender(first)
+	got, err := decodeRenderMaps(first)
 	assert.NoError(t, err)
 	assert.Equal(t, len(got[0]["mixed"].(map[any]any)), 102)
 }
@@ -121,11 +124,12 @@ func TestRenderCodec_Deterministic(t *testing.T) {
 func TestRenderCodec_Corruption(t *testing.T) {
 	t.Parallel()
 	wrap := func(node []byte) []byte {
-		return append([]byte{1, renderStringMap, 1, 1, 'x'}, node...)
+		return append([]byte{1, 0, renderStringMap, 1, 1, 'x'}, node...)
 	}
 	deep := append(bytes.Repeat([]byte{renderSequence, 1}, 10002), renderNull)
 	for name, data := range map[string][]byte{
-		"document":        {1, renderNull},
+		"document":        {1, 0, renderNull},
+		"ordinal":         append(binary.AppendUvarint([]byte{1}, math.MaxUint64), renderStringMap, 0),
 		"node":            wrap(nil),
 		"trailing":        {0, 0},
 		"tag":             wrap([]byte{255}),
@@ -140,7 +144,7 @@ func TestRenderCodec_Corruption(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if docs, err := DecodeRender(data); docs != nil || !errors.Is(err, ErrFlux) {
+			if docs, err := decodeRenderMaps(data); docs != nil || !errors.Is(err, ErrFlux) {
 				t.Fatalf("corrupt decode: %v, %v", docs, err)
 			}
 		})
@@ -158,7 +162,7 @@ func TestRenderCodec_AllocationBound(t *testing.T) {
 		{name: "any map", tag: renderAnyMap},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			payload := []byte{1, renderStringMap, 1, 1, 'x'}
+			payload := []byte{1, 0, renderStringMap, 1, 1, 'x'}
 			for range depth {
 				payload = binary.AppendUvarint(append(payload, tc.tag), count)
 				switch tc.tag {
@@ -170,11 +174,11 @@ func TestRenderCodec_AllocationBound(t *testing.T) {
 			}
 			payload = append(payload, 255)
 			payload = append(payload, make([]byte, padding)...)
-			_, _ = DecodeRender(payload)
+			_, _ = decodeRenderMaps(payload)
 			runtime.GC()
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
-			docs, err := DecodeRender(payload)
+			docs, err := decodeRenderMaps(payload)
 			runtime.ReadMemStats(&after)
 			allocated := after.TotalAlloc - before.TotalAlloc
 			limit := uint64(256*len(payload) + 64*1024)
@@ -233,8 +237,8 @@ func TestRenderCodec_FirstError(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			data := append(append([]byte{2}, tc.first...), renderInt)
-			if docs, err := DecodeRender(data); docs != nil || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), tc.want) {
+			data := append(append([]byte{2, 0}, tc.first...), 0, renderInt)
+			if docs, err := decodeRenderMaps(data); docs != nil || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("document failure: %v, %v; want %q", docs, err, tc.want)
 			}
 		})
@@ -254,11 +258,11 @@ func TestRenderCodec_DenseAndNested(t *testing.T) {
 		nested = []any{map[string]any{"": map[any]any{nil: nested}}}
 	}
 	docs := []map[string]any{{"": nil}, {"sequence": nested, "strings": stringsMap, "any": anyMap}, {}}
-	payload, err := EncodeRender(docs)
+	payload, err := encodeRenderMaps(docs)
 	assert.NoError(t, err)
-	got, err := DecodeRender(payload)
+	got, err := decodeRenderMaps(payload)
 	assert.NoError(t, err)
-	encoded, err := EncodeRender(got)
+	encoded, err := encodeRenderMaps(got)
 	assert.NoError(t, err)
 	if !bytes.Equal(encoded, payload) {
 		t.Fatal("dense nested containers changed encoded values")

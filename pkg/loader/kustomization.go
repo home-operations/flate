@@ -44,7 +44,7 @@ type document struct {
 
 type parsedObject struct {
 	store.Child
-	ordinal int
+	outcome manifest.DocOccurrence
 	version string
 }
 
@@ -194,12 +194,7 @@ func (l *Loader) mountSources() {
 				l.Store.DeleteObject(id)
 			}
 		}
-		for file := range l.Index.Errors {
-			abs := filepath.Join(l.SourceRoot, filepath.FromSlash(file))
-			if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
-				delete(l.Index.Errors, file)
-			}
-		}
+
 	}
 	l.documents.changed = l.documents.changed[:0]
 }

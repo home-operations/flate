@@ -447,9 +447,29 @@ func TestE2E_InvalidHelmList(t *testing.T) {
 	dir := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
 	testutil.WriteFile(t, dir, "charts/mychart/templates/configmap.yaml", "apiVersion: v1\nkind: ConfigMapList\nitems: [{apiVersion: v1, metadata: {name: invalid}}]\n")
-	out, stderr, code := harness.RunCLIBuffers("build", "hr", "--path", dir, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
-	if code != 1 || !strings.Contains(stderr, "Object 'Kind' is missing") || strings.Contains(out, "name: invalid") || strings.Contains(out, "kind: ConfigMapList") {
-		t.Fatalf("invalid list exit=%d stdout=%s stderr=%s", code, out, stderr)
+	for _, tc := range []struct {
+		name string
+		skip bool
+	}{
+		{name: "included"},
+		{name: "excluded", skip: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"build", "hr", "--path", dir, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			if tc.skip {
+				args = append(args, "--skip-kinds=ConfigMapList")
+			}
+			out, stderr, code := harness.RunCLIBuffers(args...)
+			diagnostic := harness.MustExtractLine(t, stderr, "Object 'Kind' is missing")
+			if code != 1 || strings.Count(stderr, "Object 'Kind' is missing") != 1 || strings.Count(diagnostic, "apps/demo") != 1 {
+				t.Fatalf("invalid list exit=%d stdout=%s stderr=%s", code, out, stderr)
+			}
+			for _, text := range []string{"name: invalid", "kind: ConfigMapList"} {
+				if got := strings.Contains(out, text); got != !tc.skip {
+					t.Errorf("output contains %q=%v, want %v:\n%s", text, got, !tc.skip, out)
+				}
+			}
+		})
 	}
 }
 
@@ -566,6 +586,28 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 			if note.Parent.Kind != "HelmRelease" || note.Parent.Name != "demo" || note.Parent.Namespace != "apps" || note.Side != tc.side || note.Count != 1 {
 				t.Fatalf("failed-release suppression changed: %s", stdout)
 			}
+		})
+	}
+}
+
+func TestE2E_MalformedChartFailsProducer(t *testing.T) {
+	for _, tc := range []struct{ name, body, symptom string }{
+		{"duplicate keys", "null\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: invalid}\ndata:\n  key: first\n  key: duplicate\n", "already defined"},
+		{"typed child", "null\n---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: invalid}\nspec:\n  interval: []\n  suspend: true\n  chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: charts}}}\n", "cannot unmarshal"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.CopyTree(t, harness.TestdataPath(t, "simple"), dir)
+			testutil.WriteFile(t, dir, "charts/mychart/templates/invalid.yaml", tc.body+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-sibling}\n")
+			args := []string{"build", "hr", "--path", dir, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			if code != 1 || (!strings.Contains(stderr, "HelmRelease") || !strings.Contains(stderr, "apps/demo")) || strings.Count(stderr, tc.symptom) != 1 || !strings.Contains(stdout, "chart-sibling") {
+				t.Fatalf("exit=%d\n%s\n%s", code, stdout, stderr)
+			}
+			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			assert.Equal(t, nextCode, code)
+			assert.Equal(t, nextOut, stdout)
+			assert.Equal(t, nextErr, stderr)
 		})
 	}
 }

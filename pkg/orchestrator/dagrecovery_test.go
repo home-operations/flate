@@ -217,7 +217,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 				if !ok || len(art.Manifests) != 1 {
 					t.Fatalf("recovered output = %+v", art)
 				}
-				assert.Diff(t, art.Manifests[0]["data"], map[string]any{"k": "v"})
+				assert.Diff(t, art.Manifests[0].Document["data"], map[string]any{"k": "v"})
 			})
 			o.stop()
 		})

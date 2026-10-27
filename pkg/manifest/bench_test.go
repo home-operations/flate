@@ -34,7 +34,7 @@ data:
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		docs, err := DecodeDocs(bytes.NewReader(data))
+		docs, err := DecodeDocs(bytes.NewReader(data), IncidentalDocuments)
 		if err != nil {
 			b.Fatalf("DecodeDocs: %v", err)
 		}
@@ -42,7 +42,7 @@ data:
 			b.Fatalf("expected 50 docs, got %d", len(docs))
 		}
 		for _, d := range docs {
-			ReleaseDoc(d)
+			ReleaseDoc(d.Document)
 		}
 	}
 }
@@ -100,7 +100,7 @@ func BenchmarkArtifactRetain_Current(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		docs, err := SplitDocs(data)
+		docs, err := DecodeDocs(bytes.NewReader(data), RequiredDocuments)
 		if err != nil {
 			b.Fatalf("SplitDocs: %v", err)
 		}
@@ -113,14 +113,14 @@ func BenchmarkArtifactRetain_DeepCopyRelease(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		docs, err := SplitDocs(data)
+		docs, err := DecodeDocs(bytes.NewReader(data), RequiredDocuments)
 		if err != nil {
 			b.Fatalf("SplitDocs: %v", err)
 		}
 		retained := make([]map[string]any, len(docs))
 		for i, d := range docs {
-			retained[i] = DeepCopyMap(d) // break the pool alias
-			ReleaseDoc(d)                // return the original for reuse
+			retained[i] = DeepCopyMap(d.Document) // break the pool alias
+			ReleaseDoc(d.Document)                // return the original for reuse
 		}
 		_ = retained
 	}
@@ -333,7 +333,7 @@ func BenchmarkParseDoc_ConfigMapAndStringData(b *testing.B) {
 // the benchmark loop is measured.
 func mustDecodeSingle(b *testing.B, body string) map[string]any {
 	b.Helper()
-	docs, err := SplitDocs([]byte(body))
+	docs, err := splitDocMaps([]byte(body))
 	if err != nil {
 		b.Fatalf("SplitDocs: %v\n%s", err, body)
 	}

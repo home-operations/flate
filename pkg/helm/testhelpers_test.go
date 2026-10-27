@@ -126,7 +126,7 @@ func hasRenderField(value any, key, want string) bool {
 
 func encodedRender(tb testing.TB, docs []map[string]any) []byte {
 	tb.Helper()
-	data, err := manifest.EncodeRender(docs)
+	data, err := testutil.EncodeRender(docs)
 	if err != nil {
 		tb.Fatal(err)
 	}

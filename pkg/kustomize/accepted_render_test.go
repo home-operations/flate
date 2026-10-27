@@ -69,7 +69,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		}
 		assert.Equal(t, counted.opens.Load(), 0)
 	})
-	docs, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+	docs, receipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
 	if receipt == nil {
 		t.Fatal("successful raw render supplied no receipt")
@@ -82,7 +82,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 	original := bytes.Clone(frame.output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
 	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
-	raw, err := manifest.DecodeRender(frame.output)
+	raw, err := testutil.DecodeRender(frame.output)
 	assert.NoError(t, err)
 	assert.Equal(t, hasRenderField(raw, "name", "original"), true)
 	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}
@@ -168,7 +168,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			mutable := req
 			mutable.Source = localSource(t, directory)
 			isolated := newTestTreeCache(t, t.TempDir())
-			_, current, err := Render(t.Context(), isolated, mutable, sourcecache.RetryConfig{})
+			_, current, err := testutil.RenderMaps(Render(t.Context(), isolated, mutable, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			assert.NoError(t, isolated.RecordRender(t.Context(), owner, current, maps.All(records)))
 			if _, complete := isolated.PreviousRender(t.Context(), mutable, owner); !complete {
@@ -190,7 +190,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			input := req
 			input.Substitute = map[string]string{"VALUE": "before"}
 			input.SkipKinds = []string{"Skipped"}
-			_, pending, err := Render(t.Context(), renderer, input, sourcecache.RetryConfig{})
+			_, pending, err := testutil.RenderMaps(Render(t.Context(), renderer, input, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			input.Substitute["VALUE"], input.SkipKinds[0] = "after", "Different"
 			assert.NoError(t, renderer.RecordRender(t.Context(), owner, pending, maps.All(records)))
@@ -250,7 +250,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			}
 			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
 			initialKey := storedKey()
-			_, pending, err = Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
+			_, pending, err = testutil.RenderMaps(Render(t.Context(), renderer, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			resident := pending.Value().(renderFrame)
 			if resident.accepted == nil || resident.acceptedKey == "" || resident.identity == "" {
@@ -293,7 +293,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			for range previous {
 				t.Fatal("changed complete-empty frame retained children")
 			}
-			_, borrowedReceipt, err := Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
+			_, borrowedReceipt, err := testutil.RenderMaps(Render(t.Context(), renderer, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			foreign := accepting
 			foreign.Namespace = "foreign"
@@ -356,7 +356,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 				if _, complete := isolated.PreviousRender(t.Context(), changed, owner); complete {
 					t.Fatal("incompatible policy or source borrowed history")
 				}
-				out, _, err := Render(t.Context(), isolated, changed, sourcecache.RetryConfig{})
+				out, _, err := testutil.RenderMaps(Render(t.Context(), isolated, changed, sourcecache.RetryConfig{}))
 				assert.NoError(t, err)
 				assert.Diff(t, out, raw)
 			})
@@ -428,7 +428,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			renderer := newTestTreeCache(t, t.TempDir())
-			_, receipt, err := Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
+			_, receipt, err := testutil.RenderMaps(Render(t.Context(), renderer, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			assert.NoError(t, renderer.RecordRender(t.Context(), owner, receipt, emptyRenderInventory))
 			if _, complete := renderer.PreviousRender(t.Context(), req, owner); !complete {
@@ -471,7 +471,7 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	}
 	renderer := newTestTreeCache(t, t.TempDir())
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
-	payload, err := manifest.EncodeRender([]map[string]any{{"value": "original"}})
+	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
 	assert.NoError(t, err)
 	frame := renderFrame{header: renderHeader{Key: "oversized-accepted"}, output: payload}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)

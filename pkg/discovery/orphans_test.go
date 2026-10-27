@@ -209,7 +209,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../bundle.yaml]\n")
 	st := store.New()
 	admitDiscoveryForTest(st, dir)
-	docs, err := manifest.SplitDocs([]byte(body))
+	docs, err := testutil.SplitDocs([]byte(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			testutil.WriteFile(t, dir, "bundle.yaml", body)
 			if scenario == "graph-owned" {
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [../bundle.yaml]\n")
-				ksDoc, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")))
+				ksDoc, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML("owner", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: source}}\n")))
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -108,9 +108,7 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 		if visit.role != kustomizeinput.Resource {
 			continue
 		}
-		if len(l.Index.Errors) != 0 {
-			delete(l.Index.Errors, l.fileCoordinate(visit.file))
-		}
+
 		cached := l.documents.cache[visit.file]
 		cached.selected = true
 		l.documents.cache[visit.file] = cached

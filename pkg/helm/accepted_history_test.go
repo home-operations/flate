@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"github.com/home-operations/flate/internal/testutil"
 	"iter"
 	"maps"
 	"runtime"
@@ -23,7 +24,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 	source := manifest.BootstrapSourceID
 	child := owner
 	child.Name = "child"
-	payload, err := manifest.EncodeRender([]map[string]any{{"data": map[string]any{"key": "original"}}})
+	payload, err := testutil.EncodeRender([]map[string]any{{"data": map[string]any{"key": "original"}}})
 	assert.NoError(t, err)
 	receipt, err := encodeFrame(renderHeader{Key: "raw-key", Binding: "source-and-policy", Analysis: &chartAnalysis{Version: "1.0.0"}}, payload)
 	assert.NoError(t, err)
@@ -273,7 +274,7 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 func TestRenderReceipt_CompactBacking(t *testing.T) {
 	t.Parallel()
 	owner := manifest.NamedResource{Kind: "owner", Name: "renderer"}
-	payload, err := manifest.EncodeRender([]map[string]any{{"data": map[string]any{"key": "original"}}})
+	payload, err := testutil.EncodeRender([]map[string]any{{"data": map[string]any{"key": "original"}}})
 	assert.NoError(t, err)
 	raw, err := encodeFrame(renderHeader{Key: "key", Binding: "binding"}, payload)
 	assert.NoError(t, err)
@@ -308,7 +309,7 @@ func TestRenderReceipt_CompactBacking(t *testing.T) {
 func TestRenderReceipt_FrameBounds(t *testing.T) {
 	t.Parallel()
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
-	payload, err := manifest.EncodeRender([]map[string]any{{"value": "original"}})
+	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
 	assert.NoError(t, err)
 	raw, err := encodeFrame(renderHeader{Key: "key", Binding: "binding"}, payload)
 	assert.NoError(t, err)
@@ -434,7 +435,7 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 	}
 	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	released := func() <-chan struct{} {
-		payload, err := manifest.EncodeRender([]map[string]any{{"value": string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))}})
+		payload, err := testutil.EncodeRender([]map[string]any{{"value": string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))}})
 		assert.NoError(t, err)
 		done := make(chan struct{})
 		runtime.AddCleanup(&payload[0], func(done chan struct{}) { close(done) }, done)
@@ -443,7 +444,7 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 		assert.NoError(t, renderer.RecordRender(t.Context(), owner, receipt, emptyRenderInventory))
 		assert.NoError(t, renderer.cache.Close())
 		runtime.GC()
-		docs, err := manifest.DecodeRender(receipt.Value().(renderFrame).output)
+		docs, err := testutil.DecodeRender(receipt.Value().(renderFrame).output)
 		assert.NoError(t, err)
 		assert.Equal(t, len(docs[0]["value"].(string)), frameHeaderLimit+1)
 		runtime.KeepAlive(receipt)

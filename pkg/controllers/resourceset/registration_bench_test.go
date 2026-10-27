@@ -146,7 +146,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 				generation := 0
 				var expected [2]struct {
 					fingerprint string
-					manifests   []map[string]any
+					manifests   []manifest.DocOccurrence
 				}
 				b.ReportAllocs()
 				for b.Loop() {
@@ -180,9 +180,10 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							b.Fatal(errs[i])
 						}
 						id := sets[i].Named()
-						base.Stamp(sets[i].EmissionPolicy(), artifacts[i].Manifests)
+						outcomes := artifacts[i].Manifests
+						base.Stamp(sets[i].EmissionPolicy(), outcomes)
 						_, _, next := s.GetEmission(id)
-						next.Children, next.Manifests = c.ParseChildren(c.Store.GetObject(id), artifacts[i].Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
+						next.Children, next.Manifests, next.Failures = c.ParseChildren(c.Store.GetObject(id), outcomes, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
 						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
 						c.Emit(id, &next, nil)
 						expected[i].fingerprint, expected[i].manifests = next.Fingerprint, next.Manifests
@@ -191,9 +192,10 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 					}
 					for range 32 {
 						for _, i := range commitOrder {
-							docs := make([]map[string]any, len(artifacts[i].Manifests))
+							docs := make([]manifest.DocOccurrence, len(artifacts[i].Manifests))
 							for j, doc := range artifacts[i].Manifests {
-								docs[j] = manifest.DeepCopyMap(doc)
+								docs[j] = doc
+								docs[j].Document = manifest.DeepCopyMap(doc.Document)
 							}
 							publishResourceSetDocuments(b, c, sets[i].Named(), docs)
 							tasks.Go(b.Context(), "equal", func(ctx context.Context) {
@@ -293,7 +295,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, inventory := replay.run.Reads.GetEmission(rs.Named())
-	inventory.Children, inventory.Manifests = c.ParseChildren(rs, initial.Manifests, manifest.ParseDocOptions{WipeSecrets: true})
+	inventory.Children, inventory.Manifests, inventory.Failures = c.ParseChildren(rs, initial.Manifests, manifest.ParseDocOptions{WipeSecrets: true})
 	inventory.Complete = true
 	replay.run.Emit(rs.Named(), &inventory, nil)
 	inventory.Finish()
@@ -343,13 +345,13 @@ func selectorFixture(name, color string) *manifest.ResourceSet {
 		ResourcesTemplate: "<< if inputs >>\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.provider.name >>', namespace: ns}\ndata: {value: selected}\n<< end >>\n"}
 }
 
-func publishResourceSetDocuments(tb testing.TB, c *Controller, id manifest.NamedResource, docs []map[string]any) {
+func publishResourceSetDocuments(tb testing.TB, c *Controller, id manifest.NamedResource, docs []manifest.DocOccurrence) {
 	tb.Helper()
 	parent := c.Store.GetObject(id).(*manifest.ResourceSet)
 	base.Stamp(parent.EmissionPolicy(), docs)
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
-	next.Children, next.Manifests = c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
+	next.Children, next.Manifests, next.Failures = c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
 	next.Complete = true
 	c.Emit(id, &next, nil)
 }

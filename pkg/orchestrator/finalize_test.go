@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -36,14 +35,13 @@ func TestReportOwnership_LocalPartition(t *testing.T) {
 	st.UpdateStatus(local.Named(), store.StatusInfo{Status: store.StatusReady})
 	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
 	index := indexForTest(map[manifest.NamedResource]string{child.Named(): "apps/deeper/child.yaml"})
-	index.Errors = map[string]error{"apps/deeper/invalid.yaml": fmt.Errorf("%w: invalid yaml", manifest.ErrInput)}
 	o := &Orchestrator{store: st, index: index}
 	all := loader.Claims(o.store, o.repoRoot)
 	localClaims := o.reportOwnership(all)
 	assert.Diff(t, all, []manifest.KSClaim{{ID: external.Named(), Prefix: "apps/deeper/"}, {ID: local.Named(), Prefix: "elsewhere/"}})
 	assert.Diff(t, localClaims, []manifest.KSClaim{{ID: local.Named(), Prefix: "elsewhere/"}})
-	_, unowned := o.decodeFailures(all)
-	assert.Equal(t, len(unowned), 0)
+	_, owned := manifest.StrictParent(all, "apps/deeper/invalid.yaml", manifest.NamedResource{}, nil)
+	assert.Equal(t, owned, true)
 	o.classifyCompleted()
 	info, _ := st.GetStatus(child.Named())
 	assert.Equal(t, info.Status, store.StatusFailed)
@@ -91,11 +89,9 @@ func TestReportOwnership_FreshPasses(t *testing.T) {
 				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
 			st.AddObject(child)
-			failure := fmt.Errorf("%w: invalid yaml", manifest.ErrInput)
 			index := indexForTest(map[manifest.NamedResource]string{parent.Named(): "parent.yaml", child.Named(): base + "/child.yaml"})
 			index.Claims = map[string][]manifest.NamedResource{"startup/": {parent.Named()}}
 			index.Readers = map[string][]manifest.FileReader{"unrelated.yaml": {{Reader: child.Named(), Source: manifest.BootstrapSourceID}}}
-			index.Errors = map[string]error{base + "/invalid.yaml": failure}
 			records := maps.Clone(index.Records)
 			claims := map[string][]manifest.NamedResource{"startup/": slices.Clone(index.Claims["startup/"])}
 			readers := map[string][]manifest.FileReader{"unrelated.yaml": slices.Clone(index.Readers["unrelated.yaml"])}
@@ -128,21 +124,19 @@ func TestReportOwnership_FreshPasses(t *testing.T) {
 				st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "unwired"})
 				all := loader.Claims(o.store, o.repoRoot)
 				localClaims := o.reportOwnership(all)
-				_, unowned := o.decodeFailures(all)
-				assert.Equal(t, len(unowned) == 0, tc.owned[pass])
+				_, owned := manifest.StrictParent(all, base+"/invalid.yaml", manifest.NamedResource{}, nil)
+				assert.Equal(t, owned, tc.owned[pass])
 				assert.Equal(t, len(localClaims) != 0 && tc.owned[pass], tc.orphaned[pass])
-				assert.Equal(t, errors.Is(o.finalize(), failure), !tc.owned[pass])
 				o.classifyCompleted()
 				info, _ := st.GetStatus(child.Named())
 				assert.Equal(t, info.Status == store.StatusReady, tc.orphaned[pass])
 				assert.Equal(t, len(o.orphans) != 0, tc.orphaned[pass])
+				assert.Equal(t, o.finalize() != nil, !tc.orphaned[pass])
 				assert.Diff(t, previousAll, savedAll)
 				assert.Diff(t, previousLocal, savedLocal)
 				assert.Diff(t, index.Records, records)
 				assert.Diff(t, index.Claims, claims)
 				assert.Diff(t, index.Readers, readers)
-				assert.Equal(t, len(index.Errors), 1)
-				assert.Equal(t, index.Errors[base+"/invalid.yaml"], failure)
 				previousAll, previousLocal = all, localClaims
 				savedAll, savedLocal = slices.Clone(all), slices.Clone(localClaims)
 			}
@@ -157,7 +151,6 @@ func TestClassifyCompleted_ZeroClaims(t *testing.T) {
 	st.AddObject(child)
 	st.UpdateStatus(child.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
 	index := indexForTest(map[manifest.NamedResource]string{child.Named(): "apps/child.yaml"})
-	index.Errors = map[string]error{"apps/invalid.yaml": fmt.Errorf("%w: invalid yaml", manifest.ErrInput)}
 	o := &Orchestrator{store: st, index: index}
 	for range 2 {
 		o.classifyCompleted()

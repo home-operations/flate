@@ -3,10 +3,11 @@ package kustomize
 import (
 	"context"
 	"errors"
-	kustomizestate "github.com/home-operations/flate/internal/kustomize"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"strings"
 	"testing"
+
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
+	"sigs.k8s.io/kustomize/kyaml/filesys"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 
@@ -28,12 +29,12 @@ func TestRender_RespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err := Render(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	_, _, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, t.TempDir()), ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "k", "namespace": "ns"},
 		"spec":       map[string]any{"path": "./"},
-	})}, sourcecache.RetryConfig{})
+	})}, sourcecache.RetryConfig{}))
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
@@ -138,18 +139,18 @@ func TestRender_UnstampedMetadata(t *testing.T) {
 			snapshot := manifest.DeepCopyMap(borrowed)
 			cache := newTestTreeCache(t, "")
 			req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: ks}
-			out, _, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+			out, _, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			assert.Diff(t, borrowed, snapshot)
-			repeated, _, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+			repeated, _, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 			assert.Diff(t, repeated, out)
 			assert.NoError(t, err)
 			assert.Diff(t, borrowed, snapshot)
 			got := out[0]
-			rawWant, err := manifest.SplitDocs([]byte(tc.fixture))
+			rawWant, err := testutil.SplitDocs([]byte(tc.fixture))
 			assert.NoError(t, err)
 			assert.Diff(t, out, rawWant)
-			base.Stamp(ks.EmissionPolicy(), out)
+			base.Stamp(ks.EmissionPolicy(), testutil.DocumentOccurrences(out))
 			md := got["metadata"].(map[string]any)
 			labels, _ := md["labels"].(map[string]any)
 			annotations, _ := md["annotations"].(map[string]any)
@@ -201,7 +202,7 @@ patches:
 				"cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo, labels: {app: original}}\ndata: {value: original}\n",
 			})
 			req := RenderRequest{Source: localSource(t, root), SubPath: ".", Spec: parsedKS(t, ksDoc(tc.spec))}
-			out, _, err := Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			out, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}))
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
 					t.Fatalf("render error = %v, want %q", err, tc.wantError)
@@ -209,11 +210,11 @@ patches:
 				return
 			}
 			assert.NoError(t, err)
-			repeated, _, err := Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			repeated, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			assert.Diff(t, repeated, out)
 			req.Spec = parsedKS(t, ksDoc(nil))
-			absent, _, err := Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{})
+			absent, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			assert.Diff(t, out, absent)
 			got := out[0]
@@ -268,7 +269,7 @@ items:
 			if (oracleErr != nil) != tc.wantError {
 				t.Fatalf("complete upstream build error = %v, wantError = %t", oracleErr, tc.wantError)
 			}
-			out, _, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), SubPath: "."}, sourcecache.RetryConfig{})
+			out, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), SubPath: "."}, sourcecache.RetryConfig{}))
 			if oracleErr != nil {
 				if err == nil || out != nil {
 					t.Fatalf("Render = %#v, %v; upstream error = %v", out, err, oracleErr)
@@ -276,7 +277,7 @@ items:
 				return
 			}
 			assert.NoError(t, err)
-			want, err := manifest.SplitDocs(raw)
+			want, err := testutil.SplitDocs(raw)
 			assert.NoError(t, err)
 			assert.Diff(t, out, want)
 			if tc.name == "nested" {

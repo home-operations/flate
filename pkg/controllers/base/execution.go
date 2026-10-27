@@ -84,13 +84,18 @@ func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission, payloa
 		return err
 	}
 	e.publish(id, next, payloads)
-	return nil
+	return manifest.DocumentFailure(next.Failures)
 }
 
 func (e *Execution) publish(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
+	borrowed := next.Reads
 	e.Reads.Bind(next)
+	if e.Reused && borrowed.Valid() && next.Complete && len(next.Failures) == 0 {
+		next.Reads = borrowed
+	}
 	next.Unreadable = e.Unreadable
 	e.Controller.Emit(id, next, payloads)
+	next.Reads = &e.Reads
 	if next.Complete && e.Reads.Valid() {
 		e.recovering = true
 	}
@@ -195,7 +200,7 @@ func (e *Execution) finish(err error) {
 			e.Store.SetArtifact(id, nil)
 		}
 		_, _, next := e.Reads.GetEmission(id)
-		if e.Store.HasInventory(id) {
+		if e.Store.HasInventory(id) && len(next.Failures) == 0 {
 			next.Complete = !next.OutputReads.Valid()
 			e.publish(id, &next, nil)
 		}
@@ -375,17 +380,10 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, att
 	attempt.Fingerprint = output.Fingerprint
 	attempt.Unreadable = e.Unreadable
 	attempt.Complete = true
-	for _, child := range output.Children {
-		e.KeepEmitted(id, child, &e.Reads)
-	}
 	if current != nil && current.Complete && current.Fingerprint == fp && current.OutputReads.Valid() && slices.Equal(output.Unreadable, e.Unreadable) {
 		attempt.Reads = current.OutputReads
-		e.Store.RecordEmitted(id, attempt, nil)
-		attempt.Reads = &e.Reads
-	} else {
-		return fp, true, e.Emit(id, attempt, nil)
 	}
-	return fp, true, nil
+	return fp, true, e.Emit(id, attempt, nil)
 }
 
 // Outcome returns the retained readiness decision without reading the store.

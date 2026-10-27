@@ -583,7 +583,7 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 	assert.Diff(t, l.Index.Claims["target/"], []manifest.NamedResource{parent.Named(), peer})
 	assert.Diff(t, l.Index.Readers["missing"], []manifest.FileReader{{Reader: parent.Named(), Source: manifest.BootstrapSourceID}, {Reader: peer, Source: manifest.BootstrapSourceID}})
-	assert.Equal(t, len(l.Index.Errors), 1)
+	assert.Equal(t, len(retainedErrorsForTest(l)), 1)
 	assert.Equal(t, l.scopes == nil, true)
 	frozen := snapshotIndexForTest(l.Index)
 	for id, record := range frozen.Records {

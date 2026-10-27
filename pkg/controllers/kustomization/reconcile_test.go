@@ -161,16 +161,16 @@ func TestReconcile_HappyPath(t *testing.T) {
 	}
 	assert.Equal(t, len(art.Manifests), 5)
 	for _, doc := range art.Manifests {
-		name, ns := manifest.DocMetadata(doc)
-		labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+		name, ns := manifest.DocMetadata(doc.Document)
+		labels := doc.Document["metadata"].(map[string]any)["labels"].(map[string]any)
 		assert.Equal(t, labels["team"], any("flate"))
 		assert.Equal(t, labels["kustomize.toolkit.fluxcd.io/name"], any(ks.Name))
 		want := ks.TargetNamespace
-		if manifest.DocKind(doc) == "ClusterRole" && manifest.DocAPIVersion(doc) == "rbac.authorization.k8s.io/v1" {
+		if manifest.DocKind(doc.Document) == "ClusterRole" && manifest.DocAPIVersion(doc.Document) == "rbac.authorization.k8s.io/v1" {
 			want = ""
 		}
 		assert.Equal(t, ns, want)
-		id := manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}
+		id := manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc.Document), manifest.DocKind(doc.Document)).Group, Kind: manifest.DocKind(doc.Document), Namespace: want, Name: name}
 		if !slices.Contains(testutil.Owners(s.Productions(id, nil)), ks.Named()) {
 			t.Errorf("child %s lost parent edge", id)
 		}
@@ -427,8 +427,8 @@ spec:
 				t.Fatalf("expected four rendered manifests, got %+v", art)
 			}
 			for _, doc := range art.Manifests {
-				if manifest.DocKind(doc) == manifest.KindConfigMap {
-					assert.Equal(t, doc["data"].(map[string]any)["greeting"], any(tc.want))
+				if manifest.DocKind(doc.Document) == manifest.KindConfigMap {
+					assert.Equal(t, doc.Document["data"].(map[string]any)["greeting"], any(tc.want))
 				}
 			}
 			published := make(map[manifest.NamedResource]map[string]any)
@@ -627,7 +627,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 				if other.Fingerprint == "" || len(other.Manifests) != 1 {
 					t.Fatalf("consumer emission = %+v", other)
 				}
-				assert.Diff(t, other.Manifests[0]["data"], map[string]any{"greeting": "hi"})
+				assert.Diff(t, other.Manifests[0].Document["data"], map[string]any{"greeting": "hi"})
 			}
 			warnings := s.Warnings()
 			if len(warnings) != 1 || warnings[0].Category != manifest.WarnUnresolvedSubstitution {
@@ -664,7 +664,7 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	art := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 	before := make([]map[string]any, len(art.Manifests))
 	for i, doc := range art.Manifests {
-		before[i] = manifest.DeepCopyMap(doc)
+		before[i] = manifest.DeepCopyMap(doc.Document)
 	}
 
 	// Re-AddObject a copy with kustomize ownership labels stamped, then drive a
@@ -683,18 +683,18 @@ func TestReconcile_FingerprintDedup_SkipsRender(t *testing.T) {
 	if firstFP != secondFP {
 		t.Errorf("fingerprint changed across label-only re-AddObject: %q vs %q", firstFP, secondFP)
 	}
-	assert.Diff(t, art.Manifests, before)
+	assert.Diff(t, testutil.DocumentMaps(art.Manifests), before)
 	for _, doc := range art.Manifests {
-		name, ns := manifest.DocMetadata(doc)
+		name, ns := manifest.DocMetadata(doc.Document)
 		want := ks.TargetNamespace
-		if manifest.DocAPIVersion(doc) == "rbac.authorization.k8s.io/v1" {
+		if manifest.DocAPIVersion(doc.Document) == "rbac.authorization.k8s.io/v1" {
 			want = ""
 		}
 		assert.Equal(t, ns, want)
-		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc.Document), manifest.DocKind(doc.Document)).Group, Kind: manifest.DocKind(doc.Document), Namespace: want, Name: name}) == nil {
 			t.Errorf("replayed child %s/%s missing", want, name)
 		}
-		if want != "" && s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Name: name}) != nil {
+		if want != "" && s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc.Document), manifest.DocKind(doc.Document)).Group, Kind: manifest.DocKind(doc.Document), Name: name}) != nil {
 			t.Errorf("replay published duplicate bare child %s", name)
 		}
 	}
@@ -745,7 +745,7 @@ func TestReconcile_AlreadyReady_NoTransientPending(t *testing.T) {
 				c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { c.ReconcileNode(ctx, ks.Named(), 0) })
 				c.Tasks.BlockTillDone()
 				next := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
-				if !sawPending.Load() || next.Fingerprint == first.Fingerprint || next.Manifests[0]["data"].(map[string]any)["greeting"] != "changed" {
+				if !sawPending.Load() || next.Fingerprint == first.Fingerprint || next.Manifests[0].Document["data"].(map[string]any)["greeting"] != "changed" {
 					t.Fatalf("mutable source reused stale content: pending=%v output=%+v", sawPending.Load(), next.Manifests)
 				}
 			}
@@ -1164,7 +1164,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			s.AddObject(&manifest.GitRepository{Name: sourceID.Name, Namespace: sourceID.Namespace, URL: "file://" + root})
 			s.SetArtifact(sourceID, &initial)
 			s.UpdateStatus(sourceID, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			docs, err := manifest.DecodeDocs(strings.NewReader("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: apps, namePrefix: 'first-', sourceRef: {kind: GitRepository, name: source, namespace: apps}, postBuild: {substitute: {VALUE: original, OWNER: accepted}}, commonMetadata: {labels: {kustomize.toolkit.fluxcd.io/name: '${OWNER}'}}}\n"))
+			docs, err := testutil.DecodeDocs(strings.NewReader("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: producer, namespace: apps}\nspec: {path: apps, namePrefix: 'first-', sourceRef: {kind: GitRepository, name: source, namespace: apps}, postBuild: {substitute: {VALUE: original, OWNER: accepted}}, commonMetadata: {labels: {kustomize.toolkit.fluxcd.io/name: '${OWNER}'}}}\n"))
 			assert.NoError(t, err)
 			obj, _, _, err := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
 			assert.NoError(t, err)
@@ -1226,13 +1226,13 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			freshOutput := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
 			wantManifests := make([]map[string]any, len(freshOutput.Manifests))
 			for i, doc := range freshOutput.Manifests {
-				wantManifests[i] = manifest.DeepCopyMap(doc)
-				labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+				wantManifests[i] = manifest.DeepCopyMap(doc.Document)
+				labels := doc.Document["metadata"].(map[string]any)["labels"].(map[string]any)
 				assert.Equal(t, labels["kustomize.toolkit.fluxcd.io/name"], any("accepted"))
-				if manifest.DocKind(doc) == manifest.KindConfigMap {
+				if manifest.DocKind(doc.Document) == manifest.KindConfigMap {
 					assert.Equal(t, labels["flag"], any("true"))
 					assert.Equal(t, labels["code"], any("012"))
-					assert.Equal(t, doc["data"].(map[string]any)["value"], any("original"))
+					assert.Equal(t, doc.Document["data"].(map[string]any)["value"], any("original"))
 				}
 			}
 
@@ -1269,7 +1269,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			before := guard.opened.Load()
 			prepared, err := kustomize.Prepare(ks, nil, nil)
 			assert.NoError(t, err)
-			rendered, _, err := kustomize.Render(t.Context(), trees, kustomize.RenderRequest{Source: &initial, SubPath: ks.Path, Spec: prepared}, sourcecache.RetryConfig{})
+			rendered, _, err := testutil.RenderMaps(kustomize.Render(t.Context(), trees, kustomize.RenderRequest{Source: &initial, SubPath: ks.Path, Spec: prepared}, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			for _, doc := range rendered {
 				metadata := doc["metadata"].(map[string]any)
@@ -1290,7 +1290,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			}
 			guard.deny.Store(false)
 			cachedOutput := s.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
-			assert.Diff(t, cachedOutput.Manifests, wantManifests)
+			assert.Diff(t, testutil.DocumentMaps(cachedOutput.Manifests), wantManifests)
 			assert.Equal(t, len(cachedOutput.Children), len(freshOutput.Children))
 			for _, child := range cachedOutput.Children {
 				if configMap, ok := child.Obj.(*manifest.ConfigMap); ok {
@@ -1424,7 +1424,7 @@ func TestReconcile_DeclarationChangeBeforeCapture(t *testing.T) {
 				}
 			default:
 				emission, ok := st.GetArtifact(input.Named(), store.ArtifactContent).(*store.Emission)
-				if run.Outcome() == schedule.Blocked || !ok || !emission.Complete || len(emission.Manifests) != 1 || emission.Manifests[0]["metadata"].(map[string]any)["name"] != "from-b" {
+				if run.Outcome() == schedule.Blocked || !ok || !emission.Complete || len(emission.Manifests) != 1 || emission.Manifests[0].Document["metadata"].(map[string]any)["name"] != "from-b" {
 					t.Fatalf("replacement did not prepare B: blocked=%v output=%v", run.Blocked, emission)
 				}
 			}

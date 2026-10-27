@@ -112,18 +112,16 @@ func TestE2E_SourceWarnings(t *testing.T) {
 	}
 }
 
-func TestE2E_LoaderParseWarnings(t *testing.T) {
+func TestE2E_LoaderIncidentalParseFailure(t *testing.T) {
 	for _, site := range []string{"sibling", "component"} {
 		t.Run(site, func(t *testing.T) {
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
-			message := "bootstrap-sibling parse failed"
 			if site == "component" {
 				testutil.WriteFile(t, root, "component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [bad.yaml]\n")
 				testutil.WriteFile(t, root, "component/bad.yaml", "apiVersion: v1\nkind: ConfigMap\nbroken: [unclosed\n")
-				message = "component data file failed to parse"
 			} else {
 				testutil.WriteFile(t, root, "apps/bad.yaml", "apiVersion: v1\nkind: ConfigMap\nbroken: [unclosed\n")
 			}
@@ -132,7 +130,7 @@ func TestE2E_LoaderParseWarnings(t *testing.T) {
 					var previous string
 					for range 2 {
 						stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", root, "--concurrency=2")
-						if strings.Count(stderr, "[InputParseFailed]") != 1 || !strings.Contains(stderr, message) || !strings.Contains(stderr, "bad.yaml") || strings.Contains(stdout, message) || strings.Contains(stdout, "warnings (") {
+						if strings.Contains(stdout+stderr, "[InputParseFailed]") || strings.Contains(stdout+stderr, "bad.yaml") || strings.Contains(stdout, "warnings (") {
 							t.Fatalf("parse destination: stdout=%s stderr=%s", stdout, stderr)
 						}
 						if verb == "build" && !strings.Contains(stdout, "name: rendered") || verb == "test" && !strings.Contains(stdout, "passed") {

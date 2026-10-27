@@ -148,8 +148,8 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			if len(l.Index.Errors) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "selected"}) == nil {
-				t.Fatalf("unlisted input affected selected source: errors=%v", l.Index.Errors)
+			if len(retainedErrorsForTest(l)) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "selected"}) == nil {
+				t.Fatalf("unlisted input affected selected source: errors=%v", retainedErrorsForTest(l))
 			}
 		})
 	}
@@ -199,8 +199,12 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 	if first == nil || other == nil || first.Namespace != "working" || other.Namespace != "committed" {
 		t.Fatalf("source views were mixed: working=%v committed=%v", first, other)
 	}
-	if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{DefaultNamespace: ""}); !errors.Is(err, fs.ErrNotExist) {
-		t.Fatalf("absent committed file fell through to disk: %v", err)
+	host := filepath.Join(committed, "host.yaml")
+	objects, err := r.parseFile(host, manifest.ParseDocOptions{DefaultNamespace: ""})
+	assert.NoError(t, err)
+	assert.Equal(t, len(objects), 0)
+	if failed := r.cache[host].objects; len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist) || failed[0].Obj != nil || failed[0].Doc != nil {
+		t.Fatalf("absent committed file fell through to disk: %+v", failed)
 	}
 	testutil.WriteFile(t, working, "Kustomization", "namespace: changed\n")
 	if got, gotFile := r.read(working); got != first || gotFile != file {
@@ -257,13 +261,19 @@ metadata: {name: pending}
 		var objects []manifest.BaseManifest
 		opts := manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "apps"}
 		var ordinals []int
-		err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(child store.Child, ordinal int, _ string) {
+		var failures []manifest.DocOccurrence
+		err := reader.decodeFileObjects(filepath.Join(root, "mixed.yaml"), opts, false, func(child parsedObject) {
+			if child.outcome.Err != nil {
+				failures = append(failures, child.outcome)
+				return
+			}
+			ordinal := child.outcome.Ordinal
 			obj := child.Obj
 			objects = append(objects, obj)
 			ordinals = append(ordinals, ordinal)
 		})
-		assert.Diff(t, ordinals, []int{0, 7})
-		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || len(objects) != 2 {
+		assert.Diff(t, ordinals, []int{0, 7, 9})
+		if err != nil || len(failures) != 2 || len(objects) != 3 || !errors.Is(failures[0].Err, manifest.ErrInput) {
 			t.Fatalf("objects=%v err=%v", objects, err)
 		}
 		k := objects[0].(*manifest.Kustomization)
@@ -296,7 +306,7 @@ metadata: {name: pending}
 		if _, err := loadForTest(t.Context(), t, l, child); !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("missing mounted child error = %v, want absent source content", err)
 		}
-		if len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(l.Index.Errors) != 0 {
+		if len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 || len(l.Index.Records) != 0 || len(retainedErrorsForTest(l)) != 0 {
 			t.Fatal("physical decoy supplied an object or indexed evidence")
 		}
 		if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != input || l.documents.mountedRoot(child) != committed {
@@ -508,10 +518,10 @@ metadata: {name: pending}
 					t.Fatalf("remounted source Load = %d, %v; want one object", n, err)
 				}
 				l.documents.read(committed)
-				l.Index.Errors = map[string]error{"host.yaml": manifest.ErrInput}
+
 				st.SetArtifact(manifest.BootstrapSourceID, nil)
 				l.mountSources()
-				if l.documents.mountedRoot(committed) != "" || len(l.documents.cache) != 0 || len(l.Index.Errors) != 0 || len(l.Index.Records) != 0 || len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 {
+				if l.documents.mountedRoot(committed) != "" || len(l.documents.cache) != 0 || len(retainedErrorsForTest(l)) != 0 || len(l.Index.Records) != 0 || len(st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)) != 0 {
 					t.Fatal("removed artifact retained a stale binding, document or index error")
 				}
 			})

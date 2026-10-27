@@ -450,7 +450,7 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 					defer next.Finish()
 					child := &manifest.ConfigMap{Name: id.Name, Namespace: "ns", Data: map[string]any{"value": run}}
 					next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
-					next.Manifests, next.Complete = []map[string]any{child.Snapshot()}, true
+					next.Manifests, next.Complete = testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
 					e.Emit(id, &next, nil)
 					if blocked {
 						return e.Require(ctx, []manifest.DependencyRef{{NamedResource: other}}, level)
@@ -569,7 +569,7 @@ func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 			_, _, next := e.Reads.GetEmission(id)
 			defer next.Finish()
 			child := &manifest.ConfigMap{Name: "rendered", Namespace: "ns", Data: map[string]any{"value": "identical"}}
-			next.Children, next.Manifests, next.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, []map[string]any{child.Snapshot()}, true
+			next.Children, next.Manifests, next.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
 			e.Emit(id, &next, nil)
 			return nil
 		})
@@ -622,7 +622,7 @@ func TestScheduler_RegisteredLateDeclaration(t *testing.T) {
 				late.Path = "./late"
 				foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Namespace: "ns", Name: "late"}
 				next.Children = []store.Child{{Obj: foreign, Doc: docs[0]}, {Obj: late, Doc: docs[1]}}
-				next.Manifests, next.Complete = docs, true
+				next.Manifests, next.Complete = testutil.DocumentOccurrences(docs), true
 				e.Emit(id, &next, nil)
 				e.Tasks.YieldSlot(func() { <-ready })
 				close(published)
@@ -703,7 +703,7 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 			defer next.Finish()
 			child := &manifest.ConfigMap{Name: "output", Namespace: "ns", Data: map[string]any{"value": captured.Data["value"]}}
 			next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
-			next.Manifests, next.Complete = []map[string]any{child.Snapshot()}, true
+			next.Manifests, next.Complete = testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
 			return e.Emit(id, &next, nil)
 		}}
 		s := schedule.New(tasks, d)

@@ -21,7 +21,7 @@ func TestRender_MisnamedKustomization(t *testing.T) {
 	testutil.WriteFile(t, root, "app/cm.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: x}\ndata: {k: v}\n")
 
-	_, _, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "app", Spec: fluxKS()}, sourcecache.RetryConfig{})
+	_, _, err := testutil.RenderMaps(Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "app", Spec: fluxKS()}, sourcecache.RetryConfig{}))
 	if err == nil {
 		t.Fatal("expected an error for the misnamed kustomization file")
 	}

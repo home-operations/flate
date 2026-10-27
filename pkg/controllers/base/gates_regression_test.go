@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/pkg/values"
 	"slices"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
+
+	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/values"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -68,7 +70,7 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	}); allocations != 0 {
 		t.Fatalf("repeated publication allocates %g times", allocations)
 	}
-	next.Manifests = []map[string]any{{"kind": "ConfigMap"}}
+	next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"kind": "ConfigMap"}})
 	c.Emit(parent.Named(), &next, nil)
 	info, _ = s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 1 objects")
@@ -255,7 +257,7 @@ func TestStamp_CommonMetadataIntroducesHook(t *testing.T) {
 	t.Parallel()
 	h := &manifest.HelmRelease{Name: "owner", Namespace: "apps", CommonMetadata: &helmv2.CommonMetadata{Labels: map[string]string{manifest.HelmReleaseDomain + "/name": "common"}, Annotations: map[string]string{"helm.sh/hook": ""}}}
 	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hook"}}
-	Stamp(h.EmissionPolicy(), []map[string]any{doc})
+	Stamp(h.EmissionPolicy(), testutil.DocumentOccurrences([]map[string]any{doc}))
 	metadata := doc["metadata"].(map[string]any)
 	assert.Diff(t, metadata["labels"], map[string]any{manifest.HelmReleaseDomain + "/name": "common"})
 	assert.Diff(t, metadata["annotations"], map[string]any{"helm.sh/hook": ""})
@@ -276,7 +278,7 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "data"}},
 				{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": "cluster"}},
 			}
-			children, visible := c.ParseChildren(producer, docs, manifest.ParseDocOptions{DefaultNamespace: "wrong"})
+			children, visible := testutil.ParseChildren(c, producer, docs, manifest.ParseDocOptions{DefaultNamespace: "wrong"})
 			if len(children) != 2 || len(visible) != 2 {
 				t.Fatalf("children=%v, visible=%v", children, visible)
 			}
@@ -313,9 +315,9 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			s.AddObject(producer)
 			c := New(s, task.NewBounded(2))
 			c.Configure(Options{SkipKinds: []string{"ConfigMap", "Kustomization", "GitRepository"}})
-			docs, err := manifest.SplitDocs([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: nested, namespace: apps}\nspec: {path: ., sourceRef: {kind: GitRepository, name: repo}}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: repo, namespace: apps}\nspec: {url: https://example.test/repo}\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata: {name: visible, namespace: apps}\n"))
+			docs, err := testutil.SplitDocs([]byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data, namespace: apps}\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: nested, namespace: apps}\nspec: {path: ., sourceRef: {kind: GitRepository, name: repo}}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: repo, namespace: apps}\nspec: {url: https://example.test/repo}\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata: {name: visible, namespace: apps}\n"))
 			assert.NoError(t, err)
-			children, visible := c.ParseChildren(producer, docs, manifest.ParseDocOptions{})
+			children, visible := testutil.ParseChildren(c, producer, docs, manifest.ParseDocOptions{})
 			if len(visible) != 1 || manifest.DocKind(visible[0]) != "ServiceAccount" {
 				t.Fatalf("visible=%v", visible)
 			}
@@ -328,7 +330,7 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			}
 			_, _, next := s.GetEmission(producer.Named())
 			defer next.Finish()
-			next.Children, next.Manifests, next.Complete = children, visible, true
+			next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(visible), true
 			c.Emit(producer.Named(), &next, nil)
 			accepted, _ := s.GetArtifact(producer.Named(), store.ArtifactContent).(*store.Emission)
 			if accepted == nil || len(accepted.Manifests) != 1 {

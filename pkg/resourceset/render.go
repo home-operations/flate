@@ -54,7 +54,7 @@ type ProviderResolver func(ref fluxopv1.InputProviderReference, id manifest.Name
 // Referenced providers with no combined inputs produce no resources.
 // admit receives borrowed canonical content before matrix/template work; true skips rendering.
 // resolve is optional and supplies providers referenced by spec.inputsFrom.
-func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) (bool, error)) ([]map[string]any, []manifest.Warning, error) {
+func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) (bool, error)) ([]manifest.DocOccurrence, []manifest.Warning, error) {
 	if rs == nil {
 		return nil, nil, nil
 	}
@@ -100,7 +100,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 	if len(steps) == 0 {
 		steps = []fluxopv1.ResourceSetStep{{Resources: rs.Resources, ResourcesTemplate: rs.ResourcesTemplate}}
 	}
-	var docs []map[string]any
+	var docs []manifest.DocOccurrence
 	stepOfObject := make(map[manifest.NamedResource]string)
 	for _, step := range steps {
 		rendered, err := renderStep(step, inputs)
@@ -112,7 +112,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 		}
 		if len(rs.Steps) > 0 {
 			for _, doc := range rendered {
-				key := DedupKey(doc)
+				key := DedupKey(doc.Document)
 				if prev, found := stepOfObject[key]; found && prev != step.Name {
 					return nil, warnings, fmt.Errorf("%w: duplicate resource %s in step %q, already defined in step %q", manifest.ErrInput, key, step.Name, prev)
 				}
@@ -122,15 +122,18 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 		if docs == nil {
 			docs = rendered
 		} else {
-			docs = append(docs, rendered...)
+			for _, doc := range rendered {
+				doc.Ordinal = len(docs)
+				docs = append(docs, doc)
+			}
 		}
 	}
 	return docs, warnings, nil
 }
 
-func renderStep(step fluxopv1.ResourceSetStep, inputs []map[string]any) ([]map[string]any, error) {
+func renderStep(step fluxopv1.ResourceSetStep, inputs []map[string]any) ([]manifest.DocOccurrence, error) {
 	seen := make(map[manifest.NamedResource]struct{})
-	var docs []map[string]any
+	var docs []manifest.DocOccurrence
 	appendUnique := func(rendered []map[string]any, dedup bool) {
 		for _, doc := range rendered {
 			if dedup && disabledByReconcileAnnotation(doc) {
@@ -141,7 +144,10 @@ func renderStep(step fluxopv1.ResourceSetStep, inputs []map[string]any) ([]map[s
 				continue
 			}
 			seen[key] = struct{}{}
-			docs = append(docs, doc)
+			if docs == nil {
+				docs = make([]manifest.DocOccurrence, 0, len(rendered))
+			}
+			docs = append(docs, manifest.DocOccurrence{Document: doc, Ordinal: len(docs)})
 		}
 	}
 	// Flux preserves no-input JSON duplicates while giving them precedence over YAML.

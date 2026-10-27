@@ -212,7 +212,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 		}
 		o := renderedSingleton1[0].Orchestrator
 		res := renderedSingleton1[0].Result
-		if err == nil || !strings.Contains(err.Error(), "invalid.yaml") || strings.Count(err.Error(), "ResourceSet spec.dependsOn[0].apiVersion") != 1 {
+		if err == nil || !strings.Contains(err.Error(), "ResourceSet.fluxcd.controlplane.io/flux-system/invalid") || strings.Count(err.Error(), "ResourceSet spec.dependsOn[0].apiVersion") != 1 {
 			t.Fatalf("selected malformed reference lost its source: %v", err)
 		}
 		if info := res.Failed[testutil.KustomizationID("flux-system", "peer")]; !strings.Contains(info.String(), "missing.yaml") {

@@ -424,7 +424,7 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 						var docs []map[string]any
 						body, readErr := os.ReadFile(filepath.Join(root, file))
 						assert.NoError(t, readErr)
-						docs, err = manifest.DecodeDocs(strings.NewReader(string(body)))
+						docs, err = testutil.DecodeDocs(strings.NewReader(string(body)))
 						assert.NoError(t, err)
 						obj, _, _, parseErr := manifest.ParseDoc(docs[0], manifest.ParseDocOptions{})
 						assert.NoError(t, parseErr)

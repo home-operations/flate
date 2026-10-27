@@ -6,8 +6,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -15,6 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestResourceSetFingerprint_SelectorInputs(t *testing.T) {
@@ -257,5 +259,5 @@ func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderR
 		fp, hit, err = run.FingerprintDedup(rs.Named(), content, &store.Emission{})
 		return hit, err
 	})
-	return docs, fp, err
+	return testutil.DocumentMaps(docs), fp, err
 }

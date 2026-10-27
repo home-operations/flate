@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"iter"
 	"path/filepath"
@@ -379,7 +378,6 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 	return true
 }
 
-// Decode errors retain their file coordinate until scope attribution.
 func (l *Loader) loadFile(path string) (int, error) {
 	if l.documents.parsed != nil {
 		l.documents.restore(path)
@@ -389,32 +387,16 @@ func (l *Loader) loadFile(path string) (int, error) {
 	}
 	reader := l.documents
 	reader.regular = true
-	objs := []parsedObject{}
-	collect := func(child store.Child, ordinal int, version string) {
-		objs = append(objs, parsedObject{child, ordinal, version})
-	}
-	var err error
-	if cached := l.documents.cache[path]; cached.objects != nil {
-		objs = cached.objects
-	} else {
-		err = reader.decodeFileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""}, true, collect)
-	}
+	objs, err := reader.fileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
 	if err != nil {
-		if !errors.Is(err, manifest.ErrInput) {
-			return 0, err
-		}
-		if l.Index.Errors == nil {
-			l.Index.Errors = make(map[string]error)
-		}
-		file := l.fileCoordinate(path)
-		if _, seen := l.Index.Errors[file]; !seen {
-			l.Index.Errors[file] = fmt.Errorf("loader: %w", err)
-		}
-		return 0, nil
+		return 0, err
 	}
 	count := 0
 	for _, child := range objs {
 		obj := child.Obj
+		if obj == nil || child.outcome.Err != nil {
+			continue
+		}
 		info := manifest.KindOf(obj)
 		if !info.Tracked {
 			if len(manifest.ProducerTargets(obj)) != 0 {

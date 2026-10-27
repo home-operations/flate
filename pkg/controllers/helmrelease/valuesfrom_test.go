@@ -113,7 +113,7 @@ data:
 			if !ok {
 				t.Fatal("HelmRelease artifact was not written")
 			}
-			assert.Equal(t, renderedConfigMapValue(art.Manifests, "greeting"), tc.wantGreeting)
+			assert.Equal(t, renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "greeting"), tc.wantGreeting)
 		})
 	}
 }
@@ -238,7 +238,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	seed, omitted, err := helm.Prepare(hr, helm.NewSources(st).HelmChart, values.NewStoreProvider(st, false), c.Helm.ValuesCache())
 	assert.NoError(t, err)
 	assert.Equal(t, len(omitted), 0)
-	_, receipt, err := c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)})
+	_, receipt, err := testutil.RenderMaps(c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)}))
 	assert.NoError(t, err)
 	assert.NoError(t, c.Helm.RecordRender(t.Context(), hr.Named(), receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
 	probe := func() bool {

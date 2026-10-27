@@ -20,9 +20,9 @@ func TestObjectDocument_Ownership(t *testing.T) {
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			t.Parallel()
-			docs, err := SplitDocs([]byte("apiVersion: " + tc.version + "\nkind: " + tc.kind + "\nmetadata: {name: original, namespace: authored, labels: {}, annotations: {}}\nspec: {}\n"))
+			docs, err := splitDocMaps([]byte("apiVersion: " + tc.version + "\nkind: " + tc.kind + "\nmetadata: {name: original, namespace: authored, labels: {}, annotations: {}}\nspec: {}\n"))
 			assert.NoError(t, err)
-			specs, err := SplitDocs([]byte(tc.spec))
+			specs, err := splitDocMaps([]byte(tc.spec))
 			assert.NoError(t, err)
 			docs[0]["spec"] = specs[0]
 			obj, _, _, err := ParseDoc(docs[0], ParseDocOptions{})

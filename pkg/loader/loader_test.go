@@ -261,8 +261,8 @@ metadata: {name: a, namespace: ns}
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if n != 0 || len(l.Index.Records) != 1 || len(l.Index.Errors) != 0 {
-		t.Errorf("templates scan: admitted=%d records=%v errors=%v", n, l.Index.Records, l.Index.Errors)
+	if n != 0 || len(l.Index.Records) != 1 || len(retainedErrorsForTest(l)) != 0 {
+		t.Errorf("templates scan: admitted=%d records=%v errors=%v", n, l.Index.Records, retainedErrorsForTest(l))
 	}
 }
 
@@ -483,8 +483,8 @@ metadata: {name: real, namespace: ns}
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if n != 0 || len(l.Index.Records) != len(tc.want) || len(l.Index.Errors) != 0 {
-				t.Fatalf("generator scan: admitted=%d records=%v errors=%v, want %v", n, l.Index.Records, l.Index.Errors, tc.want)
+			if n != 0 || len(l.Index.Records) != len(tc.want) || len(retainedErrorsForTest(l)) != 0 {
+				t.Fatalf("generator scan: admitted=%d records=%v errors=%v, want %v", n, l.Index.Records, retainedErrorsForTest(l), tc.want)
 			}
 			for _, id := range tc.want {
 				if _, ok := l.Index.Lookup(id); !ok {
@@ -1045,18 +1045,18 @@ brokenPointer: [ unclosed
 				if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 					t.Fatalf("indexed discovery aborted before ownership was known: %v", err)
 				}
-				first := l.Index.Errors["app/blackbox-exporter.yaml"]
+				first := retainedErrorsForTest(l)["app/blackbox-exporter.yaml"]
 				if tc.tolerated {
-					if _, indexed := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "healthy"}); first != nil || !indexed {
+					if _, indexed := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "healthy"}); !indexed {
 						t.Fatalf("unrelated document poisoned its healthy sibling: error=%v", first)
 					}
-				} else if !errors.Is(first, manifest.ErrInput) || !strings.Contains(first.Error(), filepath.Join(dir, "blackbox-exporter.yaml")) {
+				} else if !errors.Is(first, manifest.ErrInput) {
 					t.Fatalf("source-qualified decode error = %v, want manifest.ErrInput", first)
 				}
 				if _, err := loadForTest(t.Context(), t, l, filepath.Dir(dir)); err != nil {
 					t.Fatal(err)
 				}
-				if got := l.Index.Errors["app/blackbox-exporter.yaml"]; !errors.Is(got, first) {
+				if got := retainedErrorsForTest(l)["app/blackbox-exporter.yaml"]; !errors.Is(got, first) {
 					t.Fatalf("second walk replaced the first decode failure: first=%+v got=%+v", first, got)
 				}
 			})
@@ -1238,7 +1238,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 					if l.documents.views[roots[0]] != view {
 						t.Fatal("outside SourceRoot load replaced the mounted view")
 					}
-					if _, indexed := l.Index.Lookup(ids[1]); indexed || l.Store.GetObject(ids[1]) != nil || len(l.Index.Records) != 1 || len(l.Index.Errors) != 0 {
+					if _, indexed := l.Index.Lookup(ids[1]); indexed || l.Store.GetObject(ids[1]) != nil || len(l.Index.Records) != 1 || len(retainedErrorsForTest(l)) != 0 {
 						t.Fatal("unrelated root supplied objects or evidence outside SourceRoot")
 					}
 				} else if err != nil {
@@ -1328,11 +1328,20 @@ func TestLoader_WarningConditions(t *testing.T) {
 			w.walk(t.Context().Err, graphVisit{root: root, file: root}, nil)
 			assert.NoError(t, w.err)
 			warnings := st.Warnings()
-			category := manifest.WarnInputParseFailed
-			if site == "readdir" {
-				category = manifest.WarnInputReadFailed
+			if site == "sibling" || site == "component" || site == "kustomization" {
+				if len(warnings) != 0 {
+					t.Fatalf("census failure produced warnings: %v", warnings)
+				}
+				file := "bad.yaml"
+				if site == "kustomization" {
+					file = "kustomization.yaml"
+				}
+				if doc := l.documents.cache[filepath.Join(root, file)]; len(doc.objects) != 1 || doc.objects[0].outcome.Err == nil {
+					t.Fatal("census failure was not retained")
+				}
+				return
 			}
-			if len(warnings) != 1 || warnings[0].Category != category || warnings[0].Count != 1 || warnings[0].Resource != (manifest.NamedResource{}) || !strings.HasPrefix(warnings[0].Detail[0], root) || len(warnings[0].Detail) != 2 {
+			if len(warnings) != 1 || warnings[0].Category != manifest.WarnInputReadFailed || warnings[0].Count != 1 || warnings[0].Resource != (manifest.NamedResource{}) || !strings.HasPrefix(warnings[0].Detail[0], root) || len(warnings[0].Detail) != 2 {
 				t.Fatalf("%s warning = %+v", site, warnings)
 			}
 		})
@@ -1349,14 +1358,18 @@ func TestLoader_WarningConditions(t *testing.T) {
 		l.documents = readerForTest(root)
 		l.documents.views[root] = unreadableInputFS{FS: os.DirFS(root), denied: "nested/blocked.yaml"}
 		count, err := l.Load(t.Context(), root)
-		if count != 0 || !errors.Is(err, fs.ErrPermission) {
-			t.Fatalf("Load = (%d, %v), want parent count 0 and permission error", count, err)
+		if count != 1 || err != nil {
+			t.Fatalf("Load = (%d, %v), want preserved predecessor and completed census", count, err)
+		}
+		failed := l.documents.cache[filepath.Join(root, "nested/blocked.yaml")].objects
+		if len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrPermission) {
+			t.Fatalf("nested failure not retained: %+v", failed)
 		}
 		if _, found := l.Index.Lookup(testutil.KustomizationID("apps", "first")); !found {
 			t.Fatal("failed successor removed previously read evidence")
 		}
-		if _, scanned := l.scopes.scanned[root]; scanned {
-			t.Fatal("failed root marked scanned")
+		if _, scanned := l.scopes.scanned[root]; !scanned {
+			t.Fatal("completed census was not marked scanned")
 		}
 	})
 

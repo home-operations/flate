@@ -15,6 +15,8 @@ import (
 	"testing/fstest"
 	"testing/synctest"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -384,8 +386,8 @@ func consumedPublication(t *testing.T, publication, change string) []byte {
 				_, _, next := producer.Reads.GetEmission(supplier.Named())
 				defer next.Finish()
 				childDoc := map[string]any{"apiVersion": manifest.SourceDomain + "/v1", "kind": repo.Kind, "metadata": map[string]any{"name": repo.Name, "namespace": repo.Namespace}}
-				children, docs := generator.ParseChildren(supplier, []map[string]any{childDoc}, manifest.ParseDocOptions{})
-				next.Children, next.Manifests, next.Complete = children, docs, true
+				children, docs := testutil.ParseChildren(generator, supplier, []map[string]any{childDoc}, manifest.ParseDocOptions{})
+				next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(docs), true
 				if err := producer.Emit(supplier.Named(), &next, map[manifest.NamedResource]*store.SourceArtifact{repo: input}); err != nil {
 					t.Error(err)
 				}
@@ -423,7 +425,7 @@ func consumedPublication(t *testing.T, publication, change string) []byte {
 			if name == "schedule/"+consumer.Named().String() || name == "schedule/settle/"+consumer.Named().String() {
 				inventory, ok := st.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
 				if ok && inventory.Complete && len(inventory.Manifests) == 1 {
-					value := inventory.Manifests[0]["data"].(map[string]any)["value"]
+					value := inventory.Manifests[0].Document["data"].(map[string]any)["value"]
 					if value == "S1" && consumerSignaled.CompareAndSwap(false, true) {
 						close(firstConsumer)
 					}
@@ -529,7 +531,7 @@ func consumedPublication(t *testing.T, publication, change string) []byte {
 				t.Fatal("publication listener ran before S2 commit/unlock")
 			}
 			inventory := st.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
-			if inventory.Manifests[0]["data"].(map[string]any)["value"] != "S1" {
+			if inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "S1" {
 				t.Fatal("paused notification did not permit the last completed S1 inventory")
 			}
 			select {
@@ -613,7 +615,7 @@ func consumedPublication(t *testing.T, publication, change string) []byte {
 			}
 		}
 		inventory := st.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
-		if !inventory.Complete || len(inventory.Manifests) != 1 || inventory.Manifests[0]["data"].(map[string]any)["value"] != value {
+		if !inventory.Complete || len(inventory.Manifests) != 1 || inventory.Manifests[0].Document["data"].(map[string]any)["value"] != value {
 			t.Fatalf("final consumer inventory = %+v", inventory)
 		}
 		documents, err = json.Marshal(inventory.Manifests)

@@ -1,8 +1,10 @@
 package kustomize
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -24,6 +26,8 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
 )
+
+var errUncacheableRender = errors.New("uncacheable kustomize render")
 
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
@@ -57,7 +61,7 @@ type RenderRequest struct {
 // Render returns unstamped renderer documents from an admitted source and a private overlay.
 // Generated files never mutate the source. Cancellation is checked around the
 // upstream build, which does not accept a context.
-func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]map[string]any, *manifest.RenderReceipt, error) {
+func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sourcecache.RetryConfig) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
 	prepared, err := cache.prepareRender(ctx, req)
 	if err != nil {
 		return nil, nil, err
@@ -68,7 +72,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		maxAge = req.Spec.Interval.Duration
 	}
 	key := prepared.key
-	var docs []map[string]any
+	var docs []manifest.DocOccurrence
 	var receipt *manifest.RenderReceipt
 	blobKey := sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending, Validate: func(ctx context.Context, generation fs.FS) (bool, error) {
 		receipt = nil
@@ -177,9 +181,12 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 			if err != nil {
 				return sourcecache.ProducerResult{}, fmt.Errorf("kustomize render %s: %w", subPath, err)
 			}
-			docs, err = manifest.SplitDocs(out)
+			docs, err = manifest.DecodeDocs(bytes.NewReader(out), manifest.RequiredDocuments)
 			if err != nil {
 				return sourcecache.ProducerResult{}, err
+			}
+			if manifest.DocumentFailure(docs) != nil {
+				return sourcecache.ProducerResult{}, errUncacheableRender
 			}
 			payload, err := manifest.EncodeRender(docs)
 			if err != nil {
@@ -196,6 +203,9 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		req.HeldSlot.YieldSlot(acquire)
 	} else {
 		acquire()
+	}
+	if errors.Is(err, errUncacheableRender) {
+		return docs, nil, nil
 	}
 	if err != nil {
 		return nil, nil, err

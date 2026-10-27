@@ -148,7 +148,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		return fmt.Errorf("%w: expand outputs: %w", manifest.ErrInput, err)
 	}
 	var desired []store.Child
-	var documents []map[string]any
+	var documents []manifest.DocOccurrence
 	for _, req := range requests {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -182,7 +182,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		}
 		outputMetadata := map[string]any{"name": req.Output.Name, "namespace": id.Namespace}
 		generated := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": manifest.KindExternalArtifact, "metadata": outputMetadata, "spec": map[string]any{"sourceRef": map[string]any{"apiVersion": raw.APIVersion, "kind": raw.Kind, "name": id.Name, "namespace": id.Namespace}}}
-		batch := []map[string]any{generated}
+		batch := []manifest.DocOccurrence{{Document: generated, Ordinal: len(documents)}}
 		base.Stamp(manifest.EmissionPolicy{Labels: spec.CommonMetadata.Labels, Annotations: spec.CommonMetadata.Annotations}, batch)
 		labels, _ := outputMetadata["labels"].(map[string]any)
 		if labels == nil {
@@ -193,8 +193,12 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 			labels[key] = value
 		}
 		labels["app.kubernetes.io/managed-by"], labels["source.extensions.fluxcd.io/generator"] = "source-watcher", uid
-		children, docs := c.ParseChildren(raw, batch, manifest.ParseDocOptions{})
+		children, docs, failures := c.ParseChildren(raw, batch, manifest.ParseDocOptions{})
 		targetID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Name: req.Output.Name, Namespace: id.Namespace}
+		if len(failures) != 0 {
+			attempt.Children, attempt.Manifests, attempt.Failures = children, docs, failures
+			return c.run.Emit(id, &attempt, nil)
+		}
 		if len(children) != 1 || children[0].Obj.Named() != targetID || children[0].Doc == nil {
 			return fmt.Errorf("%w: expected exactly one generated ExternalArtifact %s", manifest.ErrInput, targetID)
 		}

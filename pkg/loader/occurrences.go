@@ -81,6 +81,9 @@ func (l *Loader) PathObjects() []store.Child {
 				continue
 			}
 			for _, child := range doc.objects {
+				if child.Obj == nil || child.outcome.Err != nil {
+					continue
+				}
 				source, path, ok := child.Obj.SourcePath()
 				if !ok {
 					continue
@@ -142,8 +145,11 @@ func (l *Loader) Packages(ctx context.Context) ([]PackageEvidence, error) {
 			continue
 		}
 		relative, _ := filepath.Rel(l.SourceRoot, file)
-		if !covered[OccurrenceID{Source: l.SourceRoot, File: filepath.ToSlash(relative), Document: doc.objects[0].ordinal}] {
-			packages[filepath.Dir(file)] = struct{}{}
+		for _, child := range doc.objects {
+			if child.Obj != nil && child.outcome.Err == nil && !covered[OccurrenceID{Source: l.SourceRoot, File: filepath.ToSlash(relative), Document: child.outcome.Ordinal}] {
+				packages[filepath.Dir(file)] = struct{}{}
+				break
+			}
 		}
 	}
 	byPath := map[string]PackageEvidence{}
@@ -201,11 +207,14 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 		source := l.documents.mountedRoot(origin)
 		file, _ := filepath.Rel(source, origin)
 		for _, child := range doc.objects {
+			if child.Obj == nil || child.outcome.Err != nil {
+				continue
+			}
 			id, err := projectIdentity(child.Obj, v, child.version)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, Occurrence{Declaration: OccurrenceID{Source: source, File: filepath.ToSlash(file), Document: child.ordinal}, Identity: id, Authored: child.Obj.Named(), Object: child.Obj})
+			out = append(out, Occurrence{Declaration: OccurrenceID{Source: source, File: filepath.ToSlash(file), Document: child.outcome.Ordinal}, Identity: id, Authored: child.Obj.Named(), Object: child.Obj})
 		}
 	}
 	return out, nil
@@ -260,10 +269,45 @@ func (l *Loader) AdmitsOccurrence(occurrence Occurrence) bool {
 		}
 		doc := l.documents.cache[record.Path]
 		for _, child := range doc.objects {
-			if child.Obj.Named() == record.Authored && child.ordinal == occurrence.Declaration.Document {
+			if child.Obj == nil || child.outcome.Err != nil {
+				continue
+			}
+			if child.Obj.Named() == record.Authored && child.outcome.Ordinal == occurrence.Declaration.Document {
 				return l.AdmitsRoot(id, record.Path)
 			}
 		}
 	}
 	return false
+}
+
+// EntryFailure assesses retained failures admitted as unowned native entry resources.
+func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
+	l.Admit(repoRoot)
+	relative, _ := filepath.Rel(repoRoot, l.entryPath)
+	var files []string
+	for _, visit := range l.scopeWalk(graphVisit{root: repoRoot, dir: filepath.ToSlash(relative), role: kustomizeinput.Resource, entryResources: true}) {
+		if visit.role != kustomizeinput.Resource || visit.document != nil || !visit.readable || visit.deferDecode {
+			continue
+		}
+		doc := l.documents.cache[visit.file]
+		if doc.selected {
+			continue
+		}
+		admission := l.rootAdmission(visit.file, visit.coordinate, false)
+		if !admission.denied && len(admission.owners) == 0 {
+			files = append(files, visit.file)
+		}
+	}
+	slices.Sort(files)
+	for _, file := range slices.Compact(files) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for _, child := range l.documents.cache[file].objects {
+			if child.outcome.Err != nil {
+				return fmt.Errorf("entry %s: %w", l.fileCoordinate(l.documents.localPath(file)), manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}))
+			}
+		}
+	}
+	return nil
 }

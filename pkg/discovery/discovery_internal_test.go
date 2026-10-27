@@ -665,15 +665,14 @@ spec:
 			if _, err := d.loader.Load(t.Context(), d.cfg.Path); err != nil {
 				t.Fatal(err)
 			}
-			const selectedFile = "app/selected.yaml"
-			rawError := d.loader.Index.Errors[selectedFile]
+			rawError := d.loader.EntryFailure(t.Context(), root)
 			if !errors.Is(rawError, manifest.ErrInput) {
 				t.Fatalf("raw selected error = %v, want ErrInput", rawError)
 			}
 			if err := d.buildPackage(t.Context(), root, "app"); !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid package build error = %v, want ErrFlux", err)
 			}
-			if !errors.Is(d.loader.Index.Errors[selectedFile], rawError) {
+			if got := d.loader.EntryFailure(t.Context(), root); got == nil || got.Error() != rawError.Error() {
 				t.Fatal("failed entry build replaced its raw error")
 			}
 			if len(d.documents) != 0 {

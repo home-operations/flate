@@ -31,7 +31,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 	hr := newHR()
 	assert.NoError(t, json.Unmarshal([]byte(`{"chart":{"spec":{"chart":"mychart","sourceRef":{"kind":"GitRepository","name":"chart-repo","namespace":"flux-system"}}}}`), &hr.HelmReleaseSpec))
 	input := RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
-	_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
+	_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
 	assert.NoError(t, err)
 	child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/blue"}}}}
@@ -170,7 +170,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		t.Parallel()
 		changed := hr.Clone()
 		assert.NoError(t, json.Unmarshal([]byte(`{"commonMetadata":{"labels":{"rev":"changed"}}}`), &changed.HelmReleaseSpec))
-		_, next, err := renderer.Template(t.Context(), changed, nil, RenderOptions{Sources: input.Sources})
+		_, next, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, RenderOptions{Sources: input.Sources}))
 		assert.NoError(t, err)
 		assert.NoError(t, renderer.RecordRender(t.Context(), changed.Named(), next, maps.All(records)))
 		after, err := os.ReadFile(indexPath)
@@ -193,7 +193,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			hr := newHR()
 			input := RenderOptions{IsUpgrade: isUpgrade, Sources: localChartResolver(t, "chart-repo", "flux-system", chartDir)}
-			_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
+			_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
 			assert.NoError(t, err)
 			child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "demo"}
 			records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {}}
@@ -227,10 +227,10 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 					if complete {
 						assert.Diff(t, maps.Collect(previous), records)
 					}
-					warm, _, err := renderer.Template(t.Context(), changed, nil, input)
+					warm, _, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, input))
 					assert.NoError(t, err)
 					fresh := NewClient(cachetest.New(t, "", cache.New))
-					cold, _, err := fresh.Template(t.Context(), changed, nil, input)
+					cold, _, err := testutil.RenderMaps(fresh.Template(t.Context(), changed, nil, input))
 					assert.NoError(t, err)
 					assert.Diff(t, warm, cold)
 				})

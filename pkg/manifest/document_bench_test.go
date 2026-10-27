@@ -20,11 +20,11 @@ func BenchmarkObjectDocument_DesiredSpec(b *testing.B) {
 		{KindHelmRelease, HelmReleaseDomain + "/v2", "chartRef: {kind: OCIRepository, name: chart}\nvalues: {nested: {integer: 42, releaseVersion: v1}}"},
 	} {
 		b.Run(tc.kind, func(b *testing.B) {
-			docs, err := SplitDocs([]byte("apiVersion: " + tc.version + "\nkind: " + tc.kind + "\nmetadata: {name: app, namespace: flux-system}\nspec: {}\n"))
+			docs, err := splitDocMaps([]byte("apiVersion: " + tc.version + "\nkind: " + tc.kind + "\nmetadata: {name: app, namespace: flux-system}\nspec: {}\n"))
 			if err != nil {
 				b.Fatal(err)
 			}
-			specs, err := SplitDocs([]byte(tc.spec))
+			specs, err := splitDocMaps([]byte(tc.spec))
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -133,7 +133,7 @@ spec:
 				again, _ := harness.RequireCLIOK(t, args...)
 				assert.Equal(t, again, stdout)
 			}
-			docs, err := manifest.DecodeDocs(strings.NewReader(stdout))
+			docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
 			assert.NoError(t, err)
 			identities := make([]string, 0, len(docs))
 			for _, doc := range docs {
@@ -165,7 +165,10 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	args := []string{"build", "all", "--path", path, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 	var previous string
 	for range 2 {
-		out, _ := harness.RequireCLIOK(t, args...)
+		out, stderr, code := harness.RunCLIBuffers(args...)
+		if code != 1 || !strings.Contains(stderr, "flux-system/documents") || !strings.Contains(stderr, "document 1:") || !strings.Contains(stderr, "missing metadata.name for List") {
+			t.Fatalf("invalid ResourceSet output: exit=%d stderr=%s", code, stderr)
+		}
 		counts := map[string]int{}
 		decoder := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(out), 2048)
 		for {
@@ -221,17 +224,29 @@ func TestE2E_ResourceSetDocumentBoundary(t *testing.T) {
 	testutil.WriteFile(t, path, "apps/rs.yaml", strings.ReplaceAll(string(body), "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}", "metadata: {name: duplicate, annotations: {fluxcd.controlplane.io/reconcile: disabled}}\n      spec: {replicas: 2}"))
 	var previousDiff, previousWarnings string
 	for run := range 2 {
-		product, diagnostics := harness.RequireCLIOK(t, "diff", "all", "--path", path, "--path-orig", original, "--output=json", "--concurrency=2")
+		product, diagnostics, code := harness.RunCLIBuffers("diff", "all", "--path", path, "--path-orig", original, "--output=json", "--concurrency=2")
+		if code != 1 || !strings.Contains(diagnostics, "missing metadata.name for List") {
+			t.Fatalf("invalid ResourceSet diff: exit=%d stderr=%s", code, diagnostics)
+		}
 		if strings.Count(diagnostics, "[DuplicateDocument]") != 2 || !strings.Contains(diagnostics, "duplicate") || !strings.Contains(diagnostics, "orig") || !strings.Contains(diagnostics, "current") || strings.Contains(product, "[DuplicateDocument]") {
 			t.Fatalf("duplicate diff: stdout=%s stderr=%s", product, diagnostics)
 		}
 		var changes struct {
 			Changes    []map[string]any
-			Suppressed []any
+			Suppressed []struct {
+				Parent struct{ Name string }
+				Side   string
+				Count  int
+				Reason string
+			}
 		}
 		assert.NoError(t, json.Unmarshal([]byte(product), &changes))
-		if len(changes.Changes) == 0 || len(changes.Suppressed) != 0 {
+		if len(changes.Changes) == 0 || len(changes.Suppressed) != 1 {
 			t.Fatalf("duplicate product changed: %s", product)
+		}
+		suppressed := changes.Suppressed[0]
+		if suppressed.Parent.Name != "child" || suppressed.Side != "both" || suppressed.Count != 2 || !strings.Contains(suppressed.Reason, "missing metadata.name for List") {
+			t.Fatalf("failed ResourceSet descendant was not suppressed: %+v", suppressed)
 		}
 		if run == 0 {
 			previousDiff, previousWarnings = product, diagnostics

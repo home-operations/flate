@@ -113,6 +113,9 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			}
 		}
 	}
+	if err := l.EntryFailure(ctx, repoRoot); err != nil {
+		return nil, err
+	}
 	if err := l.FinalizeIndex(ctx, repoRoot); err != nil {
 		return nil, err
 	}
@@ -294,15 +297,15 @@ func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) er
 	}
 	built := []store.Child{}
 	for _, doc := range docs {
-		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets})
-		if err != nil {
-			return fmt.Errorf("discovery package %q document: %w", root, err)
+		child, outcome, _ := loader.Prepare(doc, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets})
+		if outcome.Err != nil {
+			return fmt.Errorf("discovery package %q: %w", root, manifest.DocumentFailure([]manifest.DocOccurrence{outcome}))
 		}
-		if obj == nil {
-			manifest.ReleaseDoc(doc)
-			continue
+		if child.Obj != nil {
+			built = append(built, child)
+		} else {
+			manifest.ReleaseDoc(outcome.Document)
 		}
-		built = append(built, store.Child{Obj: obj, Doc: authoritative})
 	}
 	packageRoot := filepath.Join(repoRoot, filepath.FromSlash(root))
 	selected := packageRoot == d.cfg.Path

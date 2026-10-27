@@ -269,7 +269,7 @@ spec:
 				prepared, omitted, err := helm.Prepare(hr, helm.NewSources(reads).HelmChart, values.NewStoreProvider(reads, cfg.WipeSecrets), warm.hrc.Helm.ValuesCache())
 				assert.NoError(t, err)
 				assert.Equal(t, len(omitted), 0)
-				_, receipt, err := warm.hrc.Helm.Template(t.Context(), prepared, prepared.Values, helm.RenderOptions{Options: warm.hrc.Options, DependencySubstitutions: warm.dependencySubstitutions, Sources: helm.NewSources(reads), WipeSecrets: cfg.WipeSecrets})
+				_, receipt, err := testutil.RenderMaps(warm.hrc.Helm.Template(t.Context(), prepared, prepared.Values, helm.RenderOptions{Options: warm.hrc.Options, DependencySubstitutions: warm.dependencySubstitutions, Sources: helm.NewSources(reads), WipeSecrets: cfg.WipeSecrets}))
 				assert.NoError(t, err)
 				assert.NoError(t, warm.hrc.Helm.RecordRender(t.Context(), owner, receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
 			} else {
@@ -277,7 +277,7 @@ spec:
 				prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(reads, cfg.WipeSecrets), cfg.Substitute)
 				assert.NoError(t, err)
 				source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-				_, receipt, err := kustomize.Render(t.Context(), warm.ksc.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: true, SubPath: prepared.Path, Spec: prepared, DependencySubstitutions: warm.dependencySubstitutions, Substitute: cfg.Substitute, StrictSubstitutions: cfg.StrictSubstitutions}, cfg.SourceRetry)
+				_, receipt, err := testutil.RenderMaps(kustomize.Render(t.Context(), warm.ksc.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: true, SubPath: prepared.Path, Spec: prepared, DependencySubstitutions: warm.dependencySubstitutions, Substitute: cfg.Substitute, StrictSubstitutions: cfg.StrictSubstitutions}, cfg.SourceRetry))
 				assert.NoError(t, err)
 				assert.NoError(t, warm.ksc.Trees.RecordRender(t.Context(), owner, receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
 			}

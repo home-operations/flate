@@ -382,7 +382,8 @@ func TestDAGDispatch_WithdrawalNotificationDrain(t *testing.T) {
 					s.RecordEmitted(p, &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
 					_, _, late := s.GetEmission(k)
 					doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "late", "namespace": "apps"}, "data": map[string]any{"value": "private"}}
-					late.Children, late.Manifests = parseChildrenForTest(k, []map[string]any{doc}, manifest.ParseDocOptions{})
+					children, retained := parseChildrenForTest(k, []map[string]any{doc}, manifest.ParseDocOptions{})
+					late.Children, late.Manifests = children, testutil.DocumentOccurrences(retained)
 					late.Complete = true
 					publishRelease, entered, deliveryRelease := make(chan struct{}), make(chan struct{}), make(chan struct{})
 					consumerStarted, woken := make(chan struct{}), make(chan struct{})
@@ -630,7 +631,8 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							}
 							_, _, next := s.GetEmission(p)
 							defer next.Finish()
-							next.Children, next.Manifests = parseChildrenForTest(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
+							children, retained := parseChildrenForTest(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
+							next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
 							next.Complete = true
 							o.ksc.Emit(p, &next, nil)
 							s.UpdateStatus(p, store.StatusInfo{Status: store.StatusReady})
@@ -878,7 +880,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							if len(output.Manifests) != 1 {
 								t.Errorf("consumer %s emitted %d documents", id, len(output.Manifests))
 							}
-							outputs[run] = append(outputs[run], output.Manifests)
+							outputs[run] = append(outputs[run], testutil.DocumentMaps(output.Manifests))
 							output.Finish()
 						}
 					})
@@ -943,7 +945,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 			}
 			settled.Store(true)
 			obj := &manifest.ConfigMap{Name: "hello", Namespace: "flux-system", Data: map[string]any{"value": "pinned"}}
-			run.Emit(id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}, Complete: true}, nil)
+			run.Emit(id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: testutil.DocumentOccurrences([]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}), Complete: true}, nil)
 			return nil
 		})
 		return schedule.Result{Assessment: run}
@@ -956,7 +958,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	output, ok := o.store.GetArtifact(consumer, store.ArtifactContent).(*store.Emission)
-	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 || output.Manifests[0]["data"].(map[string]any)["value"] != "pinned" {
+	if !blocked.Load() || !settled.Load() || !ok || len(output.Manifests) != 1 || output.Manifests[0].Document["data"].(map[string]any)["value"] != "pinned" {
 		t.Fatalf("after-drain transitive output: blocked=%t settled=%t output=%+v", blocked.Load(), settled.Load(), output)
 	}
 }
@@ -973,7 +975,8 @@ func TestDAGDispatch_CanceledCommittedNotificationHarvest(t *testing.T) {
 		s.RecordEmitted(publisher, captureEmission(s, publisher, &store.Emission{Children: []store.Child{{Obj: &manifest.Kustomization{Name: child.Name, Namespace: child.Namespace}}}, Complete: true}), nil)
 		doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "withdrawn", "namespace": "apps"}}
 		_, _, accepted := s.GetEmission(child)
-		accepted.Children, accepted.Manifests = base.New(s, tasks).ParseChildren(s.GetObject(child), []map[string]any{doc}, manifest.ParseDocOptions{})
+		children, retained := testutil.ParseChildren(base.New(s, tasks), s.GetObject(child), []map[string]any{doc}, manifest.ParseDocOptions{})
+		accepted.Children, accepted.Manifests = children, testutil.DocumentOccurrences(retained)
 		accepted.Complete = true
 		s.RecordEmitted(child, &accepted, nil)
 		accepted.Finish()

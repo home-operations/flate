@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcecontroller "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/kustomize"
@@ -168,11 +169,11 @@ func partialSourcePublication(t *testing.T) []map[string]any {
 		}
 		status, _ := st.GetStatus(consumer.Named())
 		inventory, ok := st.GetArtifact(consumer.Named(), store.ArtifactContent).(*store.Emission)
-		if !ok || !inventory.Complete || len(inventory.Manifests) != 1 || inventory.Manifests[0]["data"].(map[string]any)["value"] != "stable" || status.Status != store.StatusReady || !s.Results()[consumer.Named()].Assessment.Valid() {
+		if !ok || !inventory.Complete || len(inventory.Manifests) != 1 || inventory.Manifests[0].Document["data"].(map[string]any)["value"] != "stable" || status.Status != store.StatusReady || !s.Results()[consumer.Named()].Assessment.Valid() {
 			t.Fatalf("unaccepted stable consumer: status=%+v inventory=%+v", status, inventory)
 		}
 		assert.Equal(t, captures.Load(), int64(1))
-		output = inventory.Manifests
+		output = testutil.DocumentMaps(inventory.Manifests)
 	})
 	return output
 }

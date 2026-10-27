@@ -343,7 +343,8 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 		}
 		return n, err
 	})
-	docs, decodeErr := manifest.DecodeDocs(reader)
+	docs, decodeErr := manifest.DecodeDocs(reader, manifest.IncidentalDocuments)
+	decodeErr = errors.Join(decodeErr, manifest.DocumentFailure(docs))
 	if decodeErr != nil && terminal == nil {
 		// A parser error must not hide later file errors or cancellation.
 		_, _ = io.Copy(io.Discard, reader)
@@ -354,14 +355,18 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 	}
 	if err != nil {
 		for _, doc := range docs {
-			manifest.ReleaseDoc(doc)
+			manifest.ReleaseDoc(doc.Document)
 		}
 		return err
 	}
 	if decodeErr != nil {
+		for _, doc := range docs {
+			manifest.ReleaseDoc(doc.Document)
+		}
 		return nil
 	}
-	for _, doc := range docs {
+	for _, occurrence := range docs {
+		doc := occurrence.Document
 		id := manifest.NamedResource{Kind: manifest.DocKind(doc)}
 		id.Name, id.Namespace = manifest.DocMetadata(doc)
 		eligible := manifest.DocAPIVersion(doc) == manifest.CoreAPIVersion && id.KindInfo().Data &&

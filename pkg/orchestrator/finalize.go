@@ -13,7 +13,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// External sources own decode errors but cannot parent local-tree orphans.
+// External sources cannot parent local-tree orphans.
 func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSClaim {
 	local := make([]manifest.KSClaim, 0, len(claims))
 	for _, claim := range claims {
@@ -62,40 +62,7 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 
 const orphanedMessage = "orphaned (not referenced by any parent kustomization.yaml)"
 
-func (o *Orchestrator) decodeFailures(prefixes []manifest.KSClaim) (map[manifest.NamedResource]error, []error) {
-	var unowned []error
-	attributed := make(map[manifest.NamedResource]error)
-	if o.index == nil {
-		return attributed, unowned
-	}
-	for _, file := range slices.Sorted(maps.Keys(o.index.Errors)) {
-		_, owned := manifest.StrictParent(prefixes, file, manifest.NamedResource{}, nil)
-		for reader := range o.index.ReadersOfFile(file) {
-			owned = true
-			if o.filter.ShouldReconcile(reader.Reader) && attributed[reader.Reader] == nil {
-				attributed[reader.Reader] = o.index.Errors[file]
-			}
-		}
-		if !owned {
-			unowned = append(unowned, o.index.Errors[file])
-		}
-	}
-	return attributed, unowned
-}
-
 func (o *Orchestrator) classifyCompleted() {
-	var claims []manifest.KSClaim
-	hasErrors := o.index != nil && len(o.index.Errors) != 0
-	if hasErrors {
-		claims = loader.Claims(o.store, o.repoRoot)
-		attributed, _ := o.decodeFailures(claims)
-		for _, id := range slices.SortedFunc(maps.Keys(attributed), manifest.NamedResource.Compare) {
-			if info, _ := o.store.GetStatus(id); info.Status != store.StatusFailed && info.Outcome() != store.OutcomeSuspended &&
-				(info.Message != orphanedMessage || o.orphans[id] != attributed[id].Error()) {
-				o.store.UpdateFailure(id, attributed[id])
-			}
-		}
-	}
 	for id := range o.orphans {
 		if info, _ := o.store.GetStatus(id); info.Status != store.StatusReady || info.Message != orphanedMessage {
 			delete(o.orphans, id)
@@ -105,9 +72,7 @@ func (o *Orchestrator) classifyCompleted() {
 	if len(failed) == 0 {
 		return
 	}
-	if !hasErrors {
-		claims = loader.Claims(o.store, o.repoRoot)
-	}
+	claims := loader.Claims(o.store, o.repoRoot)
 	orphans := o.detectOrphans(failed, o.reportOwnership(claims))
 	if len(orphans) != 0 && o.orphans == nil {
 		o.orphans = make(map[manifest.NamedResource]string)
@@ -119,10 +84,6 @@ func (o *Orchestrator) classifyCompleted() {
 }
 
 func (o *Orchestrator) finalize() error {
-	var inputErrs []error
-	if o.index != nil && len(o.index.Errors) != 0 {
-		_, inputErrs = o.decodeFailures(loader.Claims(o.store, o.repoRoot))
-	}
 	failed := o.store.FailedResources()
 	ksCount := len(o.store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	hrCount := len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease))
@@ -139,7 +100,7 @@ func (o *Orchestrator) finalize() error {
 	if len(failed) != 0 {
 		errs = append(errs, o.aggregateFailures(failed))
 	}
-	return errors.Join(append(errs, inputErrs...)...)
+	return errors.Join(errs...)
 }
 
 func (o *Orchestrator) warnMissingCRDs() {

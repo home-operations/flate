@@ -61,7 +61,7 @@ metadata:
 	if len(docs) != 1 {
 		t.Fatalf("expected 1 doc (1 inline × 1 static = 1), got %d:\n%+v", len(docs), docs)
 	}
-	md, _ := docs[0]["metadata"].(map[string]any)
+	md, _ := docs[0].Document["metadata"].(map[string]any)
 	if got, _ := md["name"].(string); got != "prod-alpha" {
 		t.Errorf("expected name=prod-alpha, got %q", got)
 	}
@@ -105,7 +105,7 @@ metadata:
 	}
 	gotNames := map[string]struct{}{}
 	for _, d := range docs {
-		md, _ := d["metadata"].(map[string]any)
+		md, _ := d.Document["metadata"].(map[string]any)
 		name, _ := md["name"].(string)
 		gotNames[name] = struct{}{}
 	}
@@ -244,7 +244,7 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 	}
 	names := map[string]string{}
 	for _, doc := range docs {
-		md := doc["metadata"].(map[string]any)
+		md := doc.Document["metadata"].(map[string]any)
 		names[md["name"].(string)] = md["namespace"].(string)
 	}
 	assert.Diff(t, names, map[string]string{"frontend-cm": "frontend", "backend-cm": "backend"})
@@ -327,7 +327,7 @@ func TestRender_PreservesNamespaces(t *testing.T) {
 		t.Fatalf("documents = %d", len(docs))
 	}
 	for i, want := range []string{"", "", "", "authored", "authored"} {
-		_, ns := manifest.DocMetadata(docs[i])
+		_, ns := manifest.DocMetadata(docs[i].Document)
 		if ns != want {
 			t.Errorf("document %d namespace = %q, want %q", i, ns, want)
 		}
@@ -355,7 +355,7 @@ func TestRender_UnstampedCommonMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	md := docs[0]["metadata"].(map[string]any)
+	md := docs[0].Document["metadata"].(map[string]any)
 	if md["labels"] != nil || md["annotations"] != nil {
 		t.Fatal("raw ResourceSet render contains controller stamps")
 	}
@@ -385,7 +385,7 @@ func TestRender_UnstampedOwnerLabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	md := docs[0]["metadata"].(map[string]any)
+	md := docs[0].Document["metadata"].(map[string]any)
 	if md["labels"] != nil || md["annotations"] != nil {
 		t.Fatal("raw ResourceSet render contains controller stamps")
 	}
@@ -420,11 +420,11 @@ func TestRender_SprigFunctions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	md := docs[0]["metadata"].(map[string]any)
+	md := docs[0].Document["metadata"].(map[string]any)
 	if md["name"] != "team-one" {
 		t.Errorf("slugify failed: %v", md["name"])
 	}
-	data := docs[0]["data"].(map[string]any)
+	data := docs[0].Document["data"].(map[string]any)
 	if data["upper"] != "TEAM ONE" {
 		t.Errorf("sprig upper failed: %v", data["upper"])
 	}
@@ -460,7 +460,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 	if len(docs) != 1 {
 		t.Fatalf("expected 1 doc (disabled filtered), got %d", len(docs))
 	}
-	md := docs[0]["metadata"].(map[string]any)
+	md := docs[0].Document["metadata"].(map[string]any)
 	if md["name"] != "a" {
 		t.Errorf("wrong tenant kept: %v", md["name"])
 	}
@@ -471,7 +471,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 	docs, _, err = resourceset.Render(rs, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 1)
-	assert.Diff(t, docs[0]["data"], map[string]any{"value": "enabled"})
+	assert.Diff(t, docs[0].Document["data"], map[string]any{"value": "enabled"})
 	for _, value := range []string{"Disabled", "false", "enabled"} {
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
@@ -509,7 +509,7 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	data := docs[0]["data"].(map[string]any)
+	data := docs[0].Document["data"].(map[string]any)
 	if data["providerKind"] != "ResourceSet" {
 		t.Errorf("inputs.provider.kind=%v want ResourceSet", data["providerKind"])
 	}
@@ -578,10 +578,10 @@ func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 	if len(docs) != 1 {
 		t.Fatalf("expected one status-exported doc, got %d", len(docs))
 	}
-	if docs[0]["metadata"].(map[string]any)["name"] != "feature-a" {
+	if docs[0].Document["metadata"].(map[string]any)["name"] != "feature-a" {
 		t.Fatalf("status exported name not used: %+v", docs[0])
 	}
-	if docs[0]["data"].(map[string]any)["id"] != "status-id" {
+	if docs[0].Document["data"].(map[string]any)["id"] != "status-id" {
 		t.Fatalf("status exported id should be preserved: %+v", docs[0])
 	}
 }
@@ -653,7 +653,7 @@ spec:
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	spec := docs[0]["spec"].(map[string]any)
+	spec := docs[0].Document["spec"].(map[string]any)
 	sel := spec["layerSelector"].(map[string]any)
 	if sel["mediaType"] != "x" || sel["operation"] != "copy" {
 		t.Errorf("toYaml|nindent did not produce nested map: %v", sel)
@@ -702,8 +702,8 @@ data:
 	}
 	caps := map[string]string{}
 	for _, doc := range docs {
-		md := doc["metadata"].(map[string]any)
-		data := doc["data"].(map[string]any)
+		md := doc.Document["metadata"].(map[string]any)
+		data := doc.Document["data"].(map[string]any)
 		caps[md["name"].(string)] = data["capacity"].(string)
 	}
 	assert.Diff(t, caps, map[string]string{"alpha": "1Gi", "bravo": "5Gi"})
@@ -957,7 +957,7 @@ metadata:
 	if len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider || warnings[0].Resource != rs.Named() || warnings[0].Detail[0] != rsip.Named().String() {
 		t.Fatalf("offline provider warning = %+v", warnings)
 	}
-	md := docs[0]["metadata"].(map[string]any)
+	md := docs[0].Document["metadata"].(map[string]any)
 	if md["name"] != "inline-only" {
 		t.Errorf("expected name=inline-only; got %v", md["name"])
 	}
@@ -1017,7 +1017,7 @@ spec:
 		if len(docs) != 1 {
 			t.Fatalf("documents = %d, want 1", len(docs))
 		}
-		assert.Diff(t, docs[0]["spec"], map[string]any{"postgresql": map[string]any{"value": "last"}})
+		assert.Diff(t, docs[0].Document["spec"], map[string]any{"postgresql": map[string]any{"value": "last"}})
 	})
 }
 
@@ -1040,7 +1040,7 @@ data:
 	if len(docs) != 1 {
 		t.Fatalf("documents = %d, want 1", len(docs))
 	}
-	assert.Diff(t, docs[0]["data"], map[string]any{"value": "null", "malformed": "omitted"})
+	assert.Diff(t, docs[0].Document["data"], map[string]any{"value": "null", "malformed": "omitted"})
 }
 
 func TestRender_SlugifyLength(t *testing.T) {
@@ -1065,7 +1065,7 @@ metadata: {name: << inputs.name | slugify >>}`,
 			if len(docs) != 1 {
 				t.Fatalf("documents = %d, want 1", len(docs))
 			}
-			assert.Equal(t, docs[0]["metadata"].(map[string]any)["name"].(string), tc.want)
+			assert.Equal(t, docs[0].Document["metadata"].(map[string]any)["name"].(string), tc.want)
 		})
 	}
 }
@@ -1119,11 +1119,11 @@ func TestRender_Steps(t *testing.T) {
 			names := make([]string, 0, len(docs))
 			base.Stamp(rs.EmissionPolicy(), docs)
 			for _, doc := range docs {
-				name, ns := manifest.DocMetadata(doc)
+				name, ns := manifest.DocMetadata(doc.Document)
 				if ns != "" {
 					t.Errorf("namespace = %q", ns)
 				}
-				labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+				labels := doc.Document["metadata"].(map[string]any)["labels"].(map[string]any)
 				if labels[fluxopv1.OwnerLabelResourceSetName] != "steps" {
 					t.Errorf("labels = %v", labels)
 				}
@@ -1199,7 +1199,7 @@ metadata: {name: incomplete}`}
 	if len(docs) != 10 {
 		t.Fatalf("docs = %d, want 10", len(docs))
 	}
-	assert.Diff(t, []string{manifest.DocAPIVersion(docs[0]), manifest.DocAPIVersion(docs[len(docs)-1])}, []string{"apps/v1", "other.example/v1"})
+	assert.Diff(t, []string{manifest.DocAPIVersion(docs[0].Document), manifest.DocAPIVersion(docs[len(docs)-1].Document)}, []string{"apps/v1", "other.example/v1"})
 	malformed := map[string]any{"apiVersion": "example.io/v1/extra", "kind": "Deployment", "metadata": map[string]any{"name": "shared", "namespace": "default"}}
 	assert.Equal(t, manifest.DocIdentity(malformed).Group, "example.io")
 	assert.Equal(t, resourceset.DedupKey(malformed), manifest.NamedResource{Kind: "Deployment", Namespace: "default", Name: "shared"})
@@ -1225,7 +1225,7 @@ metadata:
 		t.Fatalf("docs = %d, want 2 JSON duplicates", len(docs))
 	}
 	for _, doc := range docs {
-		if doc["metadata"].(map[string]any)["annotations"].(map[string]any)[fluxopv1.ReconcileAnnotation] != fluxopv1.DisabledValue {
+		if doc.Document["metadata"].(map[string]any)["annotations"].(map[string]any)[fluxopv1.ReconcileAnnotation] != fluxopv1.DisabledValue {
 			t.Fatalf("wrong resource: %v", doc)
 		}
 	}
@@ -1256,7 +1256,7 @@ items:
 	}
 	names := make([]string, 0, len(docs))
 	for _, doc := range docs {
-		name, ns := manifest.DocMetadata(doc)
+		name, ns := manifest.DocMetadata(doc.Document)
 		names = append(names, name)
 		if ns != "" {
 			t.Errorf("namespace = %q", ns)
@@ -1295,14 +1295,14 @@ items:
 			assert.NoError(t, err)
 			assert.Equal(t, len(got), tc.count)
 			if tc.name == "typed incomplete items" && len(got) == 2 {
-				assert.Equal(t, manifest.DocKind(got[0]), "")
-				assert.Equal(t, manifest.DocAPIVersion(got[0]), "")
-				name, _ := manifest.DocMetadata(got[1])
+				assert.Equal(t, manifest.DocKind(got[0].Document), "")
+				assert.Equal(t, manifest.DocAPIVersion(got[0].Document), "")
+				name, _ := manifest.DocMetadata(got[1].Document)
 				assert.Equal(t, name, "")
 			}
 			if tc.name == "nested list stays wrapped" && len(got) == 1 {
-				assert.Equal(t, manifest.DocKind(got[0]), "List")
-				assert.Equal(t, len(got[0]["items"].([]any)), 1)
+				assert.Equal(t, manifest.DocKind(got[0].Document), "List")
+				assert.Equal(t, len(got[0].Document["items"].([]any)), 1)
 			}
 		})
 	}
@@ -1377,7 +1377,7 @@ func TestRender_UsesOneProviderQuery(t *testing.T) {
 		return []*manifest.ResourceSetInputProvider{provider}, nil
 	}, nil)
 	assert.NoError(t, err)
-	if calls != 1 || len(docs) != 1 || docs[0]["metadata"].(map[string]any)["name"] != "captured" {
+	if calls != 1 || len(docs) != 1 || docs[0].Document["metadata"].(map[string]any)["name"] != "captured" {
 		t.Fatalf("query calls=%d output=%v", calls, docs)
 	}
 }

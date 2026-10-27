@@ -613,7 +613,7 @@ func TestFingerprintDedup(t *testing.T) {
 	if fp == "" || handled || err != nil {
 		t.Fatalf("first key = %q, handled=%v, err=%v", fp, handled, err)
 	}
-	s.SetArtifact(id, &store.Emission{Manifests: docs, Fingerprint: fp, Complete: true})
+	s.SetArtifact(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs), Fingerprint: fp, Complete: true})
 	if _, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, "other", &store.Emission{}); handled || err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
@@ -644,7 +644,7 @@ func TestFingerprintDedup(t *testing.T) {
 	}
 	emptyStore := store.New()
 	emptyStore.AddObject(ks)
-	emptyStore.SetArtifact(id, &store.Emission{Manifests: docs})
+	emptyStore.SetArtifact(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs)})
 	if _, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).FingerprintDedup(id, []string{"one"}, &store.Emission{}); handled {
 		t.Error("empty stored fingerprint replayed")
 	}
@@ -810,7 +810,7 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 			_, _, prior := st.GetEmission(input.Named())
 			defer prior.Finish()
 			prior.Fingerprint, prior.Complete = manifest.Fingerprint("A"), true
-			prior.Manifests = []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "A"}}}
+			prior.Manifests = testutil.DocumentOccurrences([]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "A"}}})
 			st.RecordEmitted(input.Named(), &prior, nil)
 			run := controllertest.NewExecution(c, input.Named())
 			run.Reads.GetDeclaration(input.Named())

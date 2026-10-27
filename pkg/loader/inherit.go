@@ -506,6 +506,7 @@ func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[mani
 				projected = projected.WithNamespace(ns)
 			}
 			record := r
+			record.Productions = nil
 			if old, ok := l.Index.Lookup(id); ok && old.Path == r.Path && previous.Obj == projected {
 				record.Refs = old.Refs
 			} else {
@@ -527,6 +528,9 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 			doc.lookup = make(map[manifest.NamedResource]store.Child, len(doc.objects))
 			for _, child := range doc.objects {
 				obj := child.Obj
+				if obj == nil || child.outcome.Err != nil {
+					continue
+				}
 				if doc.lookup[obj.Named()].Obj == nil {
 					doc.lookup[obj.Named()] = child.Child
 				}
@@ -535,7 +539,7 @@ func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Ch
 		}
 		return doc.lookup[id]
 	}
-	if len(doc.objects) == 1 && doc.objects[0].Obj.Named() == id {
+	if len(doc.objects) == 1 && doc.objects[0].Obj != nil && doc.objects[0].outcome.Err == nil && doc.objects[0].Obj.Named() == id {
 		return doc.objects[0].Child
 	}
 	return store.Child{}

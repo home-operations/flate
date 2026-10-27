@@ -25,11 +25,18 @@ const (
 )
 
 // EncodeRender encodes constructed render documents without changing scalar types.
-func EncodeRender(docs []map[string]any) ([]byte, error) {
+func EncodeRender(docs []DocOccurrence) ([]byte, error) {
 	data := binary.AppendUvarint(make([]byte, 0, 256*len(docs)), uint64(len(docs)))
 	for _, doc := range docs {
+		if doc.Err != nil {
+			return nil, doc.Err
+		}
+		if doc.Ordinal < 0 {
+			return nil, fmt.Errorf("%w: encode render: negative document ordinal", ErrFlux)
+		}
+		data = binary.AppendUvarint(data, uint64(doc.Ordinal))
 		var err error
-		data, err = appendRender(data, doc)
+		data, err = appendRender(data, doc.Document)
 		if err != nil {
 			return nil, fmt.Errorf("%w: encode render: %w", ErrFlux, err)
 		}
@@ -117,19 +124,25 @@ func appendRender(data []byte, value any) ([]byte, error) {
 }
 
 // DecodeRender returns independently owned constructed render documents.
-func DecodeRender(data []byte) ([]map[string]any, error) {
+func DecodeRender(data []byte) ([]DocOccurrence, error) {
 	d := renderDecoder{data: data, budget: len(data)}
-	var docs []map[string]any
+	var docs []DocOccurrence
 	if count := d.reserve(1); count != 0 {
-		docs = make([]map[string]any, count)
+		docs = make([]DocOccurrence, count)
 	}
 	for i := range docs {
+		ordinal := d.unsigned()
+		if ordinal > math.MaxInt {
+			d.err = fmt.Errorf("render document ordinal exceeds integer range")
+			break
+		}
+		docs[i].Ordinal = int(ordinal)
 		value := d.value(0)
 		if d.err != nil {
 			break
 		}
 		var ok bool
-		docs[i], ok = value.(map[string]any)
+		docs[i].Document, ok = value.(map[string]any)
 		if !ok {
 			d.err = fmt.Errorf("render document is not a string-keyed map")
 			break

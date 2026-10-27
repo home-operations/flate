@@ -1,7 +1,7 @@
 package manifest
 
 import (
-	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +18,6 @@ var decodedMapPool = sync.Pool{
 	},
 }
 
-// getDecodedMap returns a cleared, ready-to-use map from the pool.
 func getDecodedMap() map[string]any {
 	return decodedMapPool.Get().(map[string]any)
 }
@@ -37,31 +36,28 @@ func ReleaseDoc(m map[string]any) {
 	decodedMapPool.Put(m)
 }
 
-// DecodeDocs reads zero or more YAML documents from r and returns each
-// as a generic map. Implicit timestamps retain their scalar text; explicit
-// tags and alias/merge construction use the upstream YAML policy. Empty maps
-// and recoverable LoadErrors are skipped; other errors wrap ErrInput.
-//
-// Returned maps belong to the caller. Release them only when no authoritative
-// document or render artifact retains them; never copy retained maps
-// merely to recycle the originals.
-func DecodeDocs(r io.Reader) ([]map[string]any, error) {
-	return decodeDocs(r, func(doc map[string]any, _ int) map[string]any { return doc })
-}
-
-// DocOccurrence retains a decoded document and its original stream ordinal.
+// DocOccurrence retains a constructed document or failure at its original stream ordinal.
 type DocOccurrence struct {
 	Document map[string]any
 	Ordinal  int
+	Err      error
 }
 
-// DecodeDocOccurrences retains original stream ordinals across skipped documents.
-func DecodeDocOccurrences(r io.Reader) ([]DocOccurrence, error) {
-	return decodeDocs(r, func(doc map[string]any, ordinal int) DocOccurrence { return DocOccurrence{doc, ordinal} })
-}
+// DocumentRole determines whether nonmapping documents are required manifests.
+type DocumentRole bool
 
-func decodeDocs[T any](r io.Reader, record func(map[string]any, int) T) ([]T, error) {
-	dec := yaml.NewDecoder(r)
+const (
+	// IncidentalDocuments permits nonmapping repository content.
+	IncidentalDocuments DocumentRole = false
+	// RequiredDocuments requires each nonempty document to be a mapping.
+	RequiredDocuments DocumentRole = true
+)
+
+// DecodeDocs retains document and read failures, returning cancellation and deadline errors.
+// Returned maps belong to the caller and MUST remain live while retained.
+func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
+	stream := &documentStream{Reader: r}
+	dec := yaml.NewDecoder(stream)
 	var priorAliases, priorConstructs, lastAliases, lastConstructs int
 	guard := limit.New()
 	// Node.Load creates a constructor per document; the decoder's alias policy
@@ -74,31 +70,55 @@ func decodeDocs[T any](r io.Reader, record func(map[string]any, int) T) ([]T, er
 		lastAliases, lastConstructs = aliases, constructs
 		return guard.CheckAlias(priorAliases+aliases, priorConstructs+constructs)
 	})))
-	var out []T
+	var out []DocOccurrence
 	for ordinal := 0; ; ordinal++ {
 		var node yaml.Node
-		var m map[string]any
 		err := dec.Decode(&node)
-		if err == nil {
-			preserveTimestampStrings(&node)
-			m = getDecodedMap()
-			err = node.Load(&m, constructionOption)
-		}
 		if err != nil {
-			ReleaseDoc(m)
+			if stream.err != nil {
+				failure := fmt.Errorf("%w: read documents: %w", ErrInput, stream.err)
+				if errors.Is(stream.err, context.Canceled) || errors.Is(stream.err, context.DeadlineExceeded) {
+					return out, failure
+				}
+				return append(out, DocOccurrence{Ordinal: ordinal, Err: failure}), nil
+			}
 			if errors.Is(err, io.EOF) {
 				return out, nil
 			}
-			if _, ok := errors.AsType[*yaml.LoadErrors](err); ok {
-				continue
+			out = append(out, DocOccurrence{Ordinal: ordinal, Err: fmt.Errorf("%w: %w", ErrInput, err)})
+			return out, nil
+		}
+		preserveTimestampStrings(&node)
+		mapping := &node
+		if mapping.Kind == yaml.DocumentNode && len(mapping.Content) != 0 {
+			mapping = mapping.Content[0]
+		}
+		var m map[string]any
+		shapeFailure := false
+		if mapping.Kind == yaml.MappingNode {
+			m = getDecodedMap()
+			err = node.Load(&m, constructionOption)
+		} else {
+			var value any
+			err = node.Load(&value, constructionOption)
+			if err == nil && value != nil && role == RequiredDocuments {
+				err = fmt.Errorf("document must be a mapping")
+				shapeFailure = true
 			}
-			return nil, fmt.Errorf("%w: %w", ErrInput, err)
+		}
+		if err != nil {
+			ReleaseDoc(m)
+			out = append(out, DocOccurrence{Ordinal: ordinal, Err: fmt.Errorf("%w: %w", ErrInput, err)})
+			if _, recoverable := errors.AsType[*yaml.LoadErrors](err); !recoverable && !shapeFailure {
+				return out, nil
+			}
+			continue
 		}
 		if len(m) == 0 {
 			ReleaseDoc(m)
 			continue
 		}
-		out = append(out, record(m, ordinal))
+		out = append(out, DocOccurrence{Document: m, Ordinal: ordinal})
 	}
 }
 
@@ -112,7 +132,28 @@ func preserveTimestampStrings(n *yaml.Node) {
 	}
 }
 
-// SplitDocs is the byte-slice convenience wrapper for DecodeDocs.
-func SplitDocs(data []byte) ([]map[string]any, error) {
-	return DecodeDocs(bytes.NewReader(data))
+type documentStream struct {
+	io.Reader
+	err error
+}
+
+func (s *documentStream) Read(p []byte) (int, error) {
+	n, err := s.Reader.Read(p)
+	if err != nil && err != io.EOF {
+		s.err = err
+	}
+	return n, err
+}
+
+// DocumentFailure returns the first required failure in stream order.
+func DocumentFailure(docs []DocOccurrence) error {
+	for _, doc := range docs {
+		if doc.Err != nil {
+			if id := DocIdentity(doc.Document); id.Name != "" {
+				return fmt.Errorf("document %d (%s): %w", doc.Ordinal+1, id, doc.Err)
+			}
+			return fmt.Errorf("document %d: %w", doc.Ordinal+1, doc.Err)
+		}
+	}
+	return nil
 }

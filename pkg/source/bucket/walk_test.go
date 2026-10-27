@@ -506,6 +506,9 @@ type gatedCancelContext struct {
 	gate <-chan struct{}
 }
 
+// Err MUST preserve the cancellation cause when AfterFunc cancels a child.
+func (c gatedCancelContext) Err() error { return context.Cause(c.Context) }
+
 func (c gatedCancelContext) Value(any) any { return nil }
 
 func (c gatedCancelContext) AfterFunc(f func()) func() bool {
@@ -532,11 +535,22 @@ func (w *cancelArchiveWriter) Write(p []byte) (int, error) {
 }
 
 func TestWalkBucket_Ranges(t *testing.T) {
+	t.Parallel()
 	const part = 8 << 20
 	for _, behavior := range []string{"ordered", "ignore", "changed", "wrong_range", "short", "long", "cancel", "ignore_short", "ignore_long", "ignore_cancel", "ignore_changed", "ignore_missing", "ignore_server", "ignore_big", "ignore_cancel_ordered", "probe_forbidden", "probe_limited", "probe_server"} {
 		t.Run(behavior, func(t *testing.T) {
+			t.Parallel()
 			copyCtx, cancelCopy := context.WithCancel(t.Context())
 			defer cancelCopy()
+			ctx := t.Context()
+			var cancel context.CancelCauseFunc
+			if behavior == "cancel" || behavior == "ignore_cancel" {
+				ctx, cancel = context.WithCancelCause(ctx)
+				defer cancel(nil)
+				gate := make(chan struct{})
+				close(gate)
+				ctx = gatedCancelContext{Context: ctx, gate: gate}
+			}
 			var gets atomic.Int32
 			later := make(chan struct{})
 			streamed := make(chan struct{})
@@ -637,9 +651,21 @@ func TestWalkBucket_Ranges(t *testing.T) {
 					<-copyCtx.Done()
 					return
 				}
-				if i == 1 && (behavior == "ignore_cancel" || behavior == "cancel" && start == part) {
-					_, _ = w.Write(make([]byte, 64<<10))
+				if i == 1 && (behavior == "ignore_cancel" && r.Header.Get("Range") == "" || behavior == "cancel" && start == part) {
+					wantRange := ""
+					if behavior == "cancel" {
+						wantRange = fmt.Sprintf("bytes=%d-%d", part, 2*part-1)
+					}
+					if got := r.Header.Get("Range"); got != wantRange {
+						t.Errorf("cancel Range=%q, want %q", got, wantRange)
+					}
+					if _, err := w.Write(make([]byte, 64<<10)); err != nil {
+						t.Errorf("partial stream: %v", err)
+						return
+					}
 					w.(http.Flusher).Flush()
+					close(streamed)
+					cancel(context.DeadlineExceeded)
 					<-r.Context().Done()
 					return
 				}
@@ -674,14 +700,6 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			timeout := 2 * time.Second
-			if behavior == "ignore_big" {
-				timeout = 10 * time.Second
-			} else if strings.HasSuffix(behavior, "cancel") {
-				timeout = 200 * time.Millisecond
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), timeout)
-			defer cancel()
 			var data bytes.Buffer
 			var archive io.Writer = &data
 			if behavior == "ignore_cancel_ordered" {
@@ -757,6 +775,11 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				case "cancel", "ignore_cancel":
 					if !errors.Is(err, context.DeadlineExceeded) {
 						t.Fatalf("context identity: %v", err)
+					}
+					select {
+					case <-streamed:
+					default:
+						t.Fatal("canceled before partial stream")
 					}
 				}
 				return

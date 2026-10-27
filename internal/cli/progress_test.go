@@ -165,33 +165,9 @@ func progressProgram(t *testing.T, w *barWriter) *tea.Program {
 	return w.prog
 }
 
-type recheckContext struct {
-	done, entered, acknowledged chan struct{}
-	calls                       int
-}
-
-func (c *recheckContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (c *recheckContext) Value(any) any               { return nil }
-func (c *recheckContext) Err() error {
-	select {
-	case <-c.done:
-		return context.Canceled
-	default:
-		return nil
-	}
-}
-func (c *recheckContext) Done() <-chan struct{} {
-	c.calls++
-	if c.calls == 2 {
-		close(c.entered)
-		<-c.acknowledged
-	}
-	return c.done
-}
-
 func TestBarWriter_ProgressLifecycle(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"completed-during-delay", "canceled-during-delay", "recheck-completed", "recheck-canceled"} {
+	for _, name := range []string{"pre-completed", "pre-canceled"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
@@ -203,67 +179,27 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 				release := sync.OnceFunc(func() { close(out.release) })
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				runCtx := ctx
-				m := newBarModel(false)
-				recheck := strings.HasPrefix(name, "recheck-")
-				boundary := &recheckContext{done: make(chan struct{}), entered: make(chan struct{}), acknowledged: make(chan struct{})}
-				acknowledge := sync.OnceFunc(func() { close(boundary.acknowledged) })
-				if recheck {
-					runCtx = boundary
-					m.startedAt = time.Now().Add(-progressDelay)
+				if name == "pre-completed" {
+					complete()
+				} else {
+					cancel()
 				}
-				start := time.Now()
-				go func() { defer close(done); w.runProgress(runCtx, m, completed, finish) }()
+				m := newBarModel(false)
+				go func() { defer close(done); w.runProgress(ctx, m, completed, finish) }()
 				defer func() {
 					complete()
 					shutdown()
-					acknowledge()
 					release()
 					<-done
 					time.Sleep(time.Second)
 				}()
-				wantOutput := ""
-				if recheck {
-					select {
-					case <-boundary.entered:
-					case <-out.probe:
-						t.Fatal("post-timer recheck was bypassed: output initialized")
-					}
-					if name == "recheck-completed" {
-						complete()
-					} else {
-						close(boundary.done)
-					}
-					acknowledge()
-				} else {
-					time.Sleep(100 * time.Millisecond)
-					select {
-					case <-out.probe:
-						t.Fatal("program initialized before delay")
-					default:
-					}
-					if name == "completed-during-delay" {
-						assert.Equal(t, out.String(), "")
-						_, err := w.Write([]byte("explicit-during-delay\n"))
-						assert.NoError(t, err)
-						wantOutput = "explicit-during-delay\n"
-						complete()
-					} else {
-						cancel()
-					}
-				}
 				shutdown()
 				select {
 				case <-done:
 				case <-out.probe:
 					t.Fatal("suppressed run initialized terminal output")
 				}
-				wantElapsed := 100 * time.Millisecond
-				if recheck {
-					wantElapsed = 0
-				}
-				assert.Equal(t, time.Since(start), wantElapsed)
-				assert.Equal(t, out.String(), wantOutput)
+				assert.Equal(t, out.String(), "")
 				if progressProgram(t, w) != nil {
 					t.Error("suppressed run left a program attached")
 				}
@@ -300,14 +236,8 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 				<-done
 				time.Sleep(time.Second)
 			}()
-			time.Sleep(progressDelay - time.Nanosecond)
-			synctest.Wait()
-			if progressProgram(t, w) != nil {
-				t.Error("program attached before deadline")
-			}
-			assert.Equal(t, out.String(), "")
-			time.Sleep(time.Nanosecond)
 			<-out.probe
+			assert.Equal(t, time.Since(m.startedAt), time.Duration(0))
 			p := progressProgram(t, w)
 			if p == nil {
 				t.Fatal("started run never attached a program")
@@ -458,7 +388,6 @@ func TestBarWriter_ProgramExitLogging(t *testing.T) {
 		out = &progressOutput{probe: make(chan struct{}), release: make(chan struct{}), fail: true}
 		w = &barWriter{out: out}
 		m := newBarModel(false)
-		m.startedAt = time.Now().Add(-progressDelay)
 		completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 		complete := sync.OnceFunc(func() { close(completed) })
 		shutdown := sync.OnceFunc(func() { close(finish) })

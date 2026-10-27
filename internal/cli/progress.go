@@ -60,8 +60,6 @@ func (w *barWriter) Write(p []byte) (int, error) {
 	return w.out.Write(p)
 }
 
-const progressDelay = 250 * time.Millisecond
-
 func (w *barWriter) progress(ctx context.Context) (func(manifest.TreeID, manifest.NamedResource, store.StatusInfo), func()) {
 	m := newBarModel(w.color)
 	events := m.events
@@ -95,15 +93,6 @@ func (e *progressEvents) observe(tree manifest.TreeID, id manifest.NamedResource
 }
 
 func (w *barWriter) runProgress(ctx context.Context, m barModel, completed, finish <-chan struct{}) {
-	timer := time.NewTimer(time.Until(m.startedAt.Add(progressDelay)))
-	defer timer.Stop()
-	select {
-	case <-completed:
-		return
-	case <-ctx.Done():
-		return
-	case <-timer.C:
-	}
 	select {
 	case <-completed:
 		return

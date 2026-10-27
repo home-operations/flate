@@ -307,14 +307,7 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 		obj = view.declaration()
 	}
 	e := Emission{Reads: reads, input: obj, inputDoc: view.child.Doc, previous: prev,
-		inputHead: inputStamp{owner: view.owner, generation: view.generation, binding: view.sourceBinding()}}
-	if view.owner != nil {
-		if reads != nil {
-			e.inputHead.revision = reads.input(view.owner.id).producer
-		} else {
-			e.inputHead.revision = view.record.publication()
-		}
-	}
+		inputHead: inputStamp{owner: view.owner, generation: view.generation, revision: view.revision, binding: view.sourceBinding()}}
 	if prev != nil {
 		e.OutputReads = prev.OutputReads
 		if prev.OutputReads.Valid() {
@@ -1458,23 +1451,23 @@ func ownershipLabel(key string) bool {
 }
 
 type capture struct {
-	excluded      bool
-	accepted      bool
-	independent   bool
-	bound         bool
-	binding       *Input
-	support       *Input
-	preflight     string
-	child         Child
-	owner         *producerSlot
-	record        *Emission
-	payload       *SourceArtifact
-	payloadInput  *ArtifactInput
-	payloadOwner  *producerSlot
-	payloadRecord *Emission
-	source        *sourceBinding
-	generation    uint64
-	position      int
+	excluded     bool
+	accepted     bool
+	independent  bool
+	bound        bool
+	binding      *Input
+	support      *Input
+	preflight    string
+	child        Child
+	owner        *producerSlot
+	record       *Emission
+	revision     uint64
+	payload      *SourceArtifact
+	payloadInput *ArtifactInput
+	payloadOwner *producerSlot
+	source       *sourceBinding
+	generation   uint64
+	position     int
 }
 
 func (c *capture) sourceBinding() sourceBinding {
@@ -1519,7 +1512,7 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view 
 			record := m.slot.current.Load()
 			payload := record.entries[m.position].child.payload
 			if payload != nil && (view.payloadOwner == nil || m.slot.id.Compare(view.payloadOwner.id) > 0) {
-				view.payload, view.payloadOwner, view.payloadRecord = payload, m.slot, record
+				view.payload, view.payloadOwner = payload, m.slot
 				view.payloadInput = record.entries[m.position].input
 			}
 		}
@@ -1529,7 +1522,7 @@ func (sh *shard) captureLocked(id manifest.NamedResource, cell objectCell, view 
 			record := chosen.slot.current.Load()
 			child := &record.entries[chosen.position].child
 			if view != nil {
-				view.owner, view.record, view.child, view.source = chosen.slot, record, *child, &record.entries[chosen.position].binding
+				view.owner, view.record, view.revision, view.child, view.source = chosen.slot, record, record.publication(), *child, &record.entries[chosen.position].binding
 				view.generation = max(cell.generation, record.entries[chosen.position].objectGeneration)
 				view.position = chosen.position
 			}

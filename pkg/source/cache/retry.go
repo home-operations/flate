@@ -29,8 +29,10 @@ type RetryConfig struct {
 	Jitter float64
 }
 
-// Policy is the caller's immutable freshness and retry policy.
+// Policy is the caller's immutable freshness, retry and operation timeout policy.
 type Policy struct {
+	// Timeout bounds each production attempt; nil adds no deadline.
+	Timeout *time.Duration
 	// MaxAge bounds freshness; Forever retains immutable pins.
 	MaxAge time.Duration
 	// Retry applies only to producer failures.

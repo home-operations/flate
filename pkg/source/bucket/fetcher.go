@@ -62,6 +62,8 @@ func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy 
 		ignore = *b.Ignore
 	}
 	key := cache.ArchiveKey{Content: struct{ Source, Transport any }{b.Content(endpoint, secure), material}, Ignore: ignore, Policy: "", Required: []string{"revision", "object-count"}}
+	timeout := b.OperationTimeout()
+	policy.Timeout = &timeout
 	input, desc, id, err := f.Cache.Acquire(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		desc, err := walkBucket(ctx, client, b, w)
 		return cache.ProducerResult{Descriptor: desc}, err

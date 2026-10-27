@@ -5,6 +5,7 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // GitRepository is the Flux GitRepository CRD. The embedded
@@ -72,6 +73,9 @@ func (g *GitRepository) ExistenceOnly() bool { return false }
 
 // SourceInterval returns the authored source refresh interval.
 func (g *GitRepository) SourceInterval() time.Duration { return g.Interval.Duration }
+
+// OperationTimeout returns the authored operation timeout or the Flux default.
+func (g *GitRepository) OperationTimeout() time.Duration { return operationTimeout(g.Timeout) }
 
 // Active source credentials MUST name a Secret, even when missing secrets are allowed.
 func validateSecretReference(id NamedResource, err *error) func(Reference) bool {
@@ -196,6 +200,9 @@ func (o *OCIRepository) ExistenceOnly() bool { return false }
 // SourceInterval returns the authored source refresh interval.
 func (o *OCIRepository) SourceInterval() time.Duration { return o.Interval.Duration }
 
+// OperationTimeout returns the authored operation timeout or the Flux default.
+func (o *OCIRepository) OperationTimeout() time.Duration { return operationTimeout(o.Timeout) }
+
 // ChartVersion returns the digest, semver constraint or tag declared by the source.
 func (o *OCIRepository) ChartVersion() string {
 	if o.Reference == nil {
@@ -293,4 +300,11 @@ func (e *ExternalArtifact) references(yield func(Reference) bool) {
 	}
 	ref := e.SourceRef
 	yield(Reference{NamedResource: Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Name: ref.Name, Namespace: ref.Namespace}, "", e.Namespace), Use: "materializer", Gate: GateInputs})
+}
+
+func operationTimeout(timeout *metav1.Duration) time.Duration {
+	if timeout != nil {
+		return timeout.Duration
+	}
+	return time.Minute
 }

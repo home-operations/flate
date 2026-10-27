@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -98,7 +97,7 @@ type remoteKey struct {
 // Acquire returns an immutable filesystem containing content and shares
 // complete acquisitions with equal policies. Successes
 // and definitive client errors remain available for this owner's lifetime.
-// Shared work outlives individual waiters and uses bounded HTTP requests. Only
+// Shared work outlives individual waiters. Only
 // Close guarantees worker cleanup; an Acquire return does not join the owner.
 // heldSlot is the borrowed service when the caller holds its slot, or nil.
 func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.RetryConfig, heldSlot *task.Service) (fs.FS, error) {
@@ -188,13 +187,11 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 	return input, err
 }
 func (h *HTTPInputs) httpGetURL(ctx context.Context, urlStr string, w cache.ProducerInput) (result cache.ProducerResult, resultErr error) {
-	fetchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	previous, err := w.Previous(fetchCtx)
+	previous, err := w.Previous(ctx)
 	if err != nil {
 		return cache.ProducerResult{}, err
 	}
-	req, err := http.NewRequestWithContext(fetchCtx, http.MethodGet, urlStr, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
 	if err != nil {
 		return cache.ProducerResult{}, err
 	}

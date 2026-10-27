@@ -32,6 +32,11 @@ func (h *HelmRepository) ExistenceOnly() bool { return true }
 // SourceInterval returns the authored source refresh interval.
 func (h *HelmRepository) SourceInterval() time.Duration { return h.Interval.Duration }
 
+// OperationTimeout returns the authored operation timeout or the Flux default.
+func (h *HelmRepository) OperationTimeout() time.Duration {
+	return (sourcev1.HelmRepository{Spec: h.HelmRepositorySpec}).GetTimeout()
+}
+
 // Content returns the repository inputs that define HTTP acquisitions.
 func (h *HelmRepository) Content() any {
 	var auth []NamedResource

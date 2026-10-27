@@ -154,15 +154,11 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		ignore = *repo.Ignore
 	}
 	viewOptions := gittree.ViewOptions{Content: content, Sparse: repo.SparseCheckout, Ignore: ignore}
+	timeout := repo.OperationTimeout()
+	policy.Timeout = &timeout
 	var input *gittree.FS
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
-		timeout := time.Minute
-		if repo.Timeout != nil {
-			timeout = repo.Timeout.Duration
-		}
-		ctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
 		cloned, err := f.acquire(ctx, storer, worktree, request)
 		if err != nil {
 			return plumbing.ZeroHash, err
@@ -250,8 +246,12 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		Depth: options.Depth, Tags: git.NoTags,
 	}
 	fetchRef := func(repo *git.Repository) error {
-		fetchCtx, cancel := operationContext(ctx, request.timeout)
-		defer cancel()
+		fetchCtx := ctx
+		if request.timeout > 0 {
+			var cancel context.CancelFunc
+			fetchCtx, cancel = context.WithTimeout(ctx, request.timeout)
+			defer cancel()
+		}
 		return repo.FetchContext(fetchCtx, fetch)
 	}
 
@@ -285,9 +285,15 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 		specs = []config.RefSpec{spec}
 	}
 	if len(specs) == 0 || worktree != nil {
-		cloneCtx, cancel := operationContext(ctx, request.timeout)
+		cloneCtx := ctx
+		var cancel context.CancelFunc
+		if request.timeout > 0 {
+			cloneCtx, cancel = context.WithTimeout(ctx, request.timeout)
+		}
 		repo, err := git.CloneContext(cloneCtx, storer, worktree, &options)
-		cancel()
+		if cancel != nil {
+			cancel()
+		}
 		if err != nil {
 			return nil, err
 		}

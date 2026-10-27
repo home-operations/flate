@@ -66,6 +66,12 @@ func TestSynthesizeOCIRepository(t *testing.T) {
 	if defaultSyn.Timeout == nil || defaultSyn.Timeout.Duration != time.Minute || defaultRepo.Timeout != nil {
 		t.Fatalf("synthetic default=%v, parsed source=%v", defaultSyn.Timeout, defaultRepo.Timeout)
 	}
+	zeroRepo := *r
+	zeroRepo.Timeout = &metav1.Duration{}
+	zeroSyn := synthesizeOCIRepository(&zeroRepo, helmChart(r.Name, "kromgo", "3.0.0"))
+	if zeroSyn.Timeout == nil || zeroSyn.Timeout.Duration != 0 {
+		t.Fatalf("synthetic zero timeout=%v", zeroSyn.Timeout)
+	}
 	if syn.URL != "oci://oci.trueforge.org/truecharts/kromgo" {
 		t.Errorf("URL = %q (trailing slash should be normalized)", syn.URL)
 	}

@@ -1255,7 +1255,7 @@ func TestAcquire_NetworkSuppressionOwnerCancellation(t *testing.T) {
 	}
 }
 
-func TestAcquire_RequestTimeout(t *testing.T) {
+func TestAcquire_NoWorkerDeadline(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		c := newTestHTTPInputs(t, "")
@@ -1264,14 +1264,18 @@ func TestAcquire_RequestTimeout(t *testing.T) {
 		entered := make(chan struct{})
 		c.httpClient.Transport = remoteRoundTrip(func(r *http.Request) (*http.Response, error) {
 			hits++
-			if deadline, ok := r.Context().Deadline(); !ok || deadline != start.Add(5*time.Second) {
+			if deadline, ok := r.Context().Deadline(); ok {
 				t.Errorf("worker deadline=%v present=%t", deadline, ok)
 			}
-			body := remoteBody{Reader: remoteRead(func([]byte) (int, error) {
+			body := remoteBody{Reader: io.MultiReader(remoteRead(func([]byte) (int, error) {
 				close(entered)
-				<-r.Context().Done()
-				return 0, r.Context().Err()
-			}), close: func() error { return nil }}
+				select {
+				case <-time.After(6 * time.Second):
+					return 0, io.EOF
+				case <-r.Context().Done():
+					return 0, r.Context().Err()
+				}
+			}), strings.NewReader("complete")), close: func() error { return nil }}
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body, Request: r}, nil
 		})
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -1283,13 +1287,19 @@ func TestAcquire_RequestTimeout(t *testing.T) {
 		}()
 		<-entered
 		go func() {
-			_, err := c.Acquire(t.Context(), "https://example.invalid/resource", sourcecache.RetryConfig{}, nil)
+			input, err := c.Acquire(t.Context(), "https://example.invalid/resource", sourcecache.RetryConfig{}, nil)
+			if err == nil {
+				data, readErr := fs.ReadFile(input, "content")
+				if readErr != nil || string(data) != "complete" {
+					t.Errorf("shared content=%q error=%v", data, readErr)
+				}
+			}
 			second <- err
 		}()
 		if err := <-first; !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != time.Second {
 			t.Fatalf("first waiter: elapsed=%v error=%v", time.Since(start), err)
 		}
-		if err := <-second; !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second || hits != 1 {
+		if err := <-second; err != nil || time.Since(start) != 6*time.Second || hits != 1 {
 			t.Fatalf("shared body: elapsed=%v requests=%d error=%v", time.Since(start), hits, err)
 		}
 	})

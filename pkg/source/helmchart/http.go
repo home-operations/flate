@@ -14,7 +14,6 @@ import (
 	"slices"
 	"strings"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -31,6 +30,8 @@ import (
 func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
 	chartName, version := hc.Chart, hc.Version
 	key := cache.BlobKey{Content: struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material}, Required: []string{"chart-version", "chart-url"}}
+	timeout := r.OperationTimeout()
+	policy.Timeout = &timeout
 	generation, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		idx, err := f.fetchIndex(ctx, r, policy.Retry)
 		if err != nil {
@@ -171,8 +172,6 @@ func normalizeChartDigest(d string) string {
 }
 
 func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (ocispec.Descriptor, error) {
-	ctx, cancel := context.WithTimeout(ctx, (sourcev1.HelmRepository{Spec: r.HelmRepositorySpec}).GetTimeout())
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
 	if err != nil {
 		return ocispec.Descriptor{}, err

@@ -1,7 +1,9 @@
 package sourceref
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
@@ -150,6 +153,93 @@ data: {v: "${K}"}
 			}
 		})
 	}
+}
+
+func TestE2E_DiscoveryIndex_ChangedOnlyGeneratorInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, generator, input, before, after string
+	}{
+		{"secret_env", "Secret", "secretGenerator:\n- name: settings\n  envs: [values.sops.env]\nconfigMapGenerator:\n- name: stable-settings\n  literals: [STABLE=unchanged]\n", "values.sops.env", "VALUE=before\n", "VALUE=after\n"},
+		{"configmap_file", "ConfigMap", "configMapGenerator:\n- name: settings\n  files: [VALUE=value.txt]\n- name: stable-settings\n  literals: [STABLE=unchanged]\n", "value.txt", "before", "after"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orig, root := t.TempDir(), t.TempDir()
+			repo := testutil.GitInit(t, orig)
+			testutil.WriteFile(t, orig, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: "https://example.test/cluster.git", ref: {branch: main}}
+`)
+			testutil.WriteFile(t, orig, "flux/ks.yaml", testutil.KustomizationYAML("producer", "flux-system", "  path: ./producer\n  sourceRef: {kind: GitRepository, name: flux-system}\n")+"---\n"+
+				testutil.KustomizationYAML("consumer", "flux-system", "  path: ./consumer\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild: {substituteFrom: [{kind: "+tc.kind+", name: settings}]}\n")+"---\n"+
+				testutil.KustomizationYAML("sibling", "flux-system", "  path: ./sibling\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: stable-settings}]}\n")+"---\n"+
+				testutil.KustomizationYAML("unrelated", "flux-system", "  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(t, orig, "producer/kustomization.yaml", "namespace: flux-system\ngeneratorOptions: {disableNameSuffixHash: true}\n"+tc.generator)
+			testutil.WriteFile(t, orig, filepath.Join("producer", tc.input), tc.before)
+			for _, consumer := range []struct{ name, value string }{{"consumer", "${VALUE}"}, {"sibling", "${STABLE}"}, {"unrelated", "independent"}} {
+				testutil.WriteFile(t, orig, consumer.name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+				testutil.WriteFile(t, orig, consumer.name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+consumer.name+", namespace: apps}\ndata: {value: '"+consumer.value+"'}\n")
+			}
+			testutil.GitCommitAll(t, repo, "add generators and consumers", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.CopyTree(t, orig, root)
+			testutil.WriteFile(t, root, filepath.Join("producer", tc.input), tc.after)
+
+			var full [2]string
+			for side, dir := range []string{orig, root} {
+				args := []string{"build", "all", "--path", filepath.Join(dir, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress", "--log-level", "warn", "-o", "json"}
+				out, warnings := harness.RequireCLIOK(t, args...)
+				again, againWarnings := harness.RequireCLIOK(t, args...)
+				assert.Equal(t, again, out)
+				assert.Equal(t, againWarnings, warnings)
+				t.Logf("full side=%d stdout=%x stderr=%x", side, sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
+				full[side] = out
+				value := []string{"before", "after"}[side]
+				consumer := generatorConsumer(t, out, "consumer")
+				if !strings.Contains(consumer, `"value": "`+value+`"`) || strings.Contains(out, `"kind": "Secret"`) {
+					t.Fatalf("expected public consumer with %s and suppressed Secrets:\n%s", value, out)
+				}
+				if !strings.Contains(generatorConsumer(t, out, "sibling"), `"value": "unchanged"`) || !strings.Contains(generatorConsumer(t, out, "unrelated"), `"value": "independent"`) {
+					t.Fatalf("missing stable full-side oracles:\n%s", out)
+				}
+			}
+			assert.Equal(t, generatorConsumer(t, full[1], "sibling"), generatorConsumer(t, full[0], "sibling"))
+			for side, dir := range []string{orig, root} {
+				other := []string{root, orig}[side]
+				args := []string{"build", "all", "--path", filepath.Join(dir, "flux"), "--path-orig", filepath.Join(other, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress", "--log-level", "warn", "-o", "json"}
+				out, warnings := harness.RequireCLIOK(t, args...)
+				again, againWarnings := harness.RequireCLIOK(t, args...)
+				assert.Equal(t, again, out)
+				assert.Equal(t, againWarnings, warnings)
+				t.Logf("selected side=%d stdout=%x stderr=%x", side, sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
+				assert.Equal(t, generatorConsumer(t, out, "consumer"), generatorConsumer(t, full[side], "consumer"))
+				assert.Equal(t, generatorConsumer(t, out, "sibling"), generatorConsumer(t, full[side], "sibling"))
+				if strings.Contains(out, `"name": "unrelated"`) {
+					t.Fatalf("independent owner selected:\n%s", out)
+				}
+			}
+		})
+	}
+}
+
+func generatorConsumer(t *testing.T, output, name string) string {
+	t.Helper()
+	var docs []json.RawMessage
+	assert.NoError(t, json.Unmarshal([]byte(output), &docs))
+	var found []string
+	for _, raw := range docs {
+		var doc struct {
+			APIVersion, Kind string
+			Metadata         struct{ Name, Namespace string }
+		}
+		assert.NoError(t, json.Unmarshal(raw, &doc))
+		if doc.APIVersion == "v1" && doc.Kind == "ConfigMap" && doc.Metadata.Namespace == "apps" && doc.Metadata.Name == name {
+			found = append(found, string(raw))
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("expected one ConfigMap apps/%s, got %d:\n%s", name, len(found), output)
+	}
+	return found[0]
 }
 
 func TestE2E_BootstrapGeneratorFailureIsolation(t *testing.T) {

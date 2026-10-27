@@ -4,6 +4,7 @@ package sourceref
 import (
 	"bytes"
 	stdcmp "cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -1393,6 +1394,72 @@ spec:
 
 func TestE2E_PinnedDiff_SubstituteFromProducer(t *testing.T) {
 	testPinnedProducerDiff(t, false)
+}
+
+func TestE2E_PinnedDiff_GeneratorInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, generator, input, before, after string
+	}{
+		{"secret_env", "Secret", "secretGenerator:\n- name: settings\n  envs: [values.sops.env]\nconfigMapGenerator:\n- name: stable-settings\n  literals: [STABLE=unchanged]\n", "values.sops.env", "GENERATED=before\n", "GENERATED=after\n"},
+		{"configmap_file", "ConfigMap", "configMapGenerator:\n- name: settings\n  files: [GENERATED=value.txt]\n- name: stable-settings\n  literals: [STABLE=unchanged]\n", "value.txt", "before", "after"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orig, repo, _, _ := sourceRefFixture(t)
+			transport := installSourceRefTransport(t, repo.Storer)
+			testutil.WriteFile(t, orig, "flux/consumer.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: working, namespace: flux-system}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+---
+`+testutil.KustomizationYAML("producer", "apps", "  path: ./producer\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n")+"---\n"+
+				testutil.KustomizationYAML("consumer", "apps", "  path: ./consumer\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n  postBuild:\n    substituteFrom:\n    - {kind: ConfigMap, name: hello}\n    - {kind: "+tc.kind+", name: settings}\n")+"---\n"+
+				testutil.KustomizationYAML("sibling", "apps", "  path: ./sibling\n  sourceRef: {kind: GitRepository, name: working, namespace: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: stable-settings}]}\n"))
+			testutil.WriteFile(t, orig, "producer/kustomization.yaml", "namespace: apps\ngeneratorOptions: {disableNameSuffixHash: true}\n"+tc.generator)
+			testutil.WriteFile(t, orig, filepath.Join("producer", tc.input), tc.before)
+			testutil.WriteFile(t, orig, "consumer/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, orig, "consumer/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: consumer, namespace: apps}
+data:
+  generated: ${GENERATED}
+  pinned: ${value}
+`)
+			testutil.WriteFile(t, orig, "sibling/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, orig, "sibling/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: sibling, namespace: apps}\ndata: {value: '${STABLE}'}\n")
+			testutil.GitCommitAll(t, repo, "add generators and consumers", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			root := t.TempDir()
+			testutil.CopyTree(t, orig, root)
+			testutil.WriteFile(t, root, filepath.Join("producer", tc.input), tc.after)
+
+			var full [2]string
+			for side, dir := range []string{orig, root} {
+				args := []string{"build", "all", "--path", filepath.Join(dir, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn", "-o", "json"}
+				out, warnings := harness.RequireCLIOK(t, args...)
+				again, againWarnings := harness.RequireCLIOK(t, args...)
+				assert.Equal(t, again, out)
+				assert.Equal(t, againWarnings, warnings)
+				t.Logf("full side=%d stdout=%x stderr=%x", side, sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
+				full[side] = out
+				consumer := generatorConsumer(t, out, "consumer")
+				if !strings.Contains(consumer, `"generated": "`+[]string{"before", "after"}[side]+`"`) || !strings.Contains(consumer, `"pinned": "v1.0.0"`) || strings.Contains(out, "v2.0.0") || strings.Contains(out, "${") {
+					t.Fatalf("expected changing generated and stable pinned consumer data:\n%s", out)
+				}
+			}
+			assert.Equal(t, generatorConsumer(t, full[1], "sibling"), generatorConsumer(t, full[0], "sibling"))
+			args := []string{"diff", "all", "--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--log-level", "warn", "-o", "diff"}
+			out, warnings := harness.RequireCLIOK(t, args...)
+			again, againWarnings := harness.RequireCLIOK(t, args...)
+			assert.Equal(t, again, out)
+			assert.Equal(t, againWarnings, warnings)
+			t.Logf("diff stdout=%x stderr=%x", sha256.Sum256([]byte(out)), sha256.Sum256([]byte(warnings)))
+			if strings.Count(out, "-  generated: before") != 1 || strings.Count(out, "+  generated: after") != 1 || !strings.Contains(out, "   pinned: v1.0.0") || !strings.Contains(out, "--- ConfigMap apps/consumer (consumer)") || strings.Contains(out, "sibling") || strings.Contains(out, "v2.0.0") || strings.Contains(out, "${") {
+				t.Fatalf("expected consumer diff with pinned substitution and no sibling change:\n%s\n%s", out, warnings)
+			}
+			assert.Equal(t, transport.calls.Load(), int64(0))
+		})
+	}
 }
 
 func TestE2E_PinnedDiff_DirtyTransitiveSubstituteFrom(t *testing.T) {

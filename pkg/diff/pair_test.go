@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -35,7 +36,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 			right := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
 			right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", tt.apiVersion
 			l, r := []Doc{left}, []Doc{right}
-			if got, _, _, _ := pair(l, r, Options{}); len(got) != tt.pairs {
+			if got := diffprep.Prepare(prepareDocs(l), prepareDocs(r), diffprep.Options{}).Pairs; len(got) != tt.pairs {
 				t.Fatalf("pairs = %+v, want %d", got, tt.pairs)
 			}
 			changes, _ := Changes(l, r, Options{})
@@ -43,12 +44,11 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 				t.Fatalf("changes = %+v, want %d", changes, tt.pairs)
 			}
 			count := 0
-			paired, _, _, _ := pair(l, r, Options{})
-			for c, err := range changedPairs(paired) {
+			prepared := diffprep.Prepare(prepareDocs(l), prepareDocs(r), diffprep.Options{})
+			lines, err := output.PrepareLines(prepared)
+			assert.NoError(t, err)
+			for _, c := range lines {
 				count++
-				if err != nil {
-					t.Fatal(err)
-				}
 				want := left
 				if c.Status != string(StatusRemoved) {
 					want = right
@@ -60,7 +60,7 @@ func TestPair_DistinguishesByParent(t *testing.T) {
 						group = ""
 					}
 				}
-				if c.Parent != want.Parent.NamedResource || c.Resource != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}) {
+				if c.Parent.ID != want.Parent.NamedResource || c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}) {
 					t.Errorf("line change dropped identity: %+v", c)
 				}
 			}
@@ -88,8 +88,8 @@ func TestPair_PathIsPresentation(t *testing.T) {
 	for _, tt := range []struct {
 		name, path, resource, parent string
 	}{
-		{"moved", "new/apps", "ConfigMap apps/shared (new/apps)", "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps (new/apps)"},
-		{"cleared", "", "ConfigMap apps/shared", "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps"},
+		{"moved", "new/apps", "ConfigMap apps/shared (new/apps)", "Kustomization flux-system/apps (new/apps)"},
+		{"cleared", "", "ConfigMap apps/shared", "Kustomization flux-system/apps"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -144,77 +144,6 @@ func TestPair_PathIsPresentation(t *testing.T) {
 	}
 }
 
-func TestPair_DuplicateDocumentsWarnAndLastWins(t *testing.T) {
-	t.Parallel()
-	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "./apps"}
-	for _, side := range []string{"left", "right"} {
-		t.Run(side, func(t *testing.T) {
-			t.Parallel()
-
-			first := cmDoc(parent, manifest.NamedResource{Name: "first", Namespace: "ns"}, "shadowed", "first-1")
-			last := cmDoc(parent, manifest.NamedResource{Name: "last", Namespace: "ns"}, "retained", "last-2")
-			last.Parent.Path = "new/apps"
-			last.Manifest["apiVersion"] = "v2"
-			other := cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "ns"}, "other-side", "other-3")
-			foreign := cmDoc(parent, manifest.NamedResource{Name: "foreign", Namespace: "ns"}, "separate-group", "")
-			foreign.Manifest["apiVersion"] = "example.test/v1"
-			left, right := []Doc{first, last, foreign}, []Doc{other}
-			if side == "right" {
-				left, right = right, left
-			}
-			pairs, warnings, _, _ := pair(left, right, Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
-				meta := m["metadata"].(map[string]any)
-				meta["name"], meta["namespace"] = "normalized", "normalized-ns"
-				apiVersion := "v3"
-				if group := manifest.DocIdentity(m).Group; group != "" {
-					apiVersion = group + "/" + apiVersion
-				}
-				m["apiVersion"] = apiVersion
-			}})
-			if len(pairs) != 2 {
-				t.Fatalf("expected two paired resources, got %d", len(pairs))
-			}
-			assert.Equal(t, pairs[1].resource, manifest.NamedResource{Group: "example.test", Kind: "ConfigMap", Namespace: "normalized-ns", Name: "normalized"})
-			foreignDoc, absent := pairs[1].a, pairs[1].b
-			if side == "right" {
-				foreignDoc, absent = absent, foreignDoc
-			}
-			if absent != nil || foreignDoc["data"].(map[string]any)["k"] != "separate-group" {
-				t.Fatal("cross-group duplicate changed pairing")
-			}
-			retained, counterpart := pairs[0].a, pairs[0].b
-			if side == "right" {
-				retained, counterpart = counterpart, retained
-			}
-			if retained["data"].(map[string]any)["k"] != "retained" || counterpart["data"].(map[string]any)["k"] != "other-side" {
-				t.Fatalf("expected last document paired with other side, got %+v", pairs[0])
-			}
-			retainedChart, counterpartChart := pairs[0].aChart, pairs[0].bChart
-			wantParent := other.Parent
-			if side == "right" {
-				retainedChart, counterpartChart = counterpartChart, retainedChart
-				wantParent = last.Parent
-			}
-			assert.Equal(t, retainedChart, "last-2")
-			assert.Equal(t, counterpartChart, "other-3")
-			assert.Equal(t, pairs[0].parent, wantParent)
-			assert.Equal(t, pairs[0].apiVersion, "v3")
-			assert.Equal(t, pairs[0].resource.Name, "normalized")
-			assert.Equal(t, chartLabel(retained), "")
-			assert.Equal(t, chartLabel(counterpart), "")
-			warningSide := SideOrig
-			if side == "right" {
-				warningSide = SideCurrent
-			}
-			assert.Diff(t, warnings, []manifest.Warning{{
-				Resource: manifest.NamedResource{Kind: "ConfigMap", Namespace: "normalized-ns", Name: "normalized"},
-				Category: manifest.WarnDuplicateDocument, Message: "duplicate document shadows an earlier document",
-				Detail: []string{"side: " + string(warningSide), "parent: " + parent.String(), "parent path: new/apps", "apiVersion: v2"},
-			}})
-		})
-	}
-}
-
 func TestRenderDocs_DuplicateWarningOrder(t *testing.T) {
 	t.Parallel()
 	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "./apps"}
@@ -240,52 +169,6 @@ func TestRenderDocs_DuplicateWarningOrder(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Diff(t, warnings, want)
 	assert.Equal(t, string(first), string(second))
-}
-
-func TestChangedPairs_NormalizeOncePerIteration(t *testing.T) {
-	t.Parallel()
-	left, right := []Doc{cm("x", "ns", "owner", "old")}, []Doc{cm("x", "ns", "owner", "new")}
-	before := []Doc{left[0], right[0]}
-	for i := range before {
-		before[i].Manifest = manifest.DeepCopyMap(before[i].Manifest)
-	}
-	calls := 0
-	paired, warnings, _, _ := pair(left, right, Options{Normalize: func(m map[string]any) {
-		calls++
-		meta := m["metadata"].(map[string]any)
-		meta["name"] = meta["name"].(string) + "-normalized"
-	}})
-	assert.Equal(t, len(warnings), 0)
-	seq := changedPairs(paired)
-	var first []output.LineChange
-	for c, err := range seq {
-		assert.NoError(t, err)
-		first = append(first, c)
-	}
-	assert.Equal(t, calls, 2)
-	if len(first) != 1 {
-		t.Fatalf("want one changed pair, got %+v", first)
-	}
-	assert.Equal(t, first[0].Resource.Name, "x-normalized")
-	calls = 0
-	var second []output.LineChange
-	for c, err := range seq {
-		assert.NoError(t, err)
-		second = append(second, c)
-	}
-	assert.Equal(t, calls, 0)
-	assert.Diff(t, second, first)
-	assert.Diff(t, []Doc{left[0], right[0]}, before)
-	bad := cm("z", "ns", "owner", "unencodable")
-	bad.Manifest["bad"] = make(chan int)
-	lazyPairs, _, _, _ := pair(append(left, bad), nil, Options{})
-	consumed := 0
-	for _, err := range changedPairs(lazyPairs) {
-		assert.NoError(t, err)
-		consumed++
-		break
-	}
-	assert.Equal(t, consumed, 1)
 }
 
 func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {

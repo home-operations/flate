@@ -200,7 +200,7 @@ func TestE2E_HelmSourceRootValuesFilesChangedOnly(t *testing.T) {
 				assert.Equal(t, harness.RunCLIStdout(t, args...), out)
 				args[0] = "test"
 				status := harness.RunCLI(t, args...)
-				for _, kind := range []string{"Kustomization.", "HelmRelease."} {
+				for _, kind := range []string{"Kustomization", "HelmRelease"} {
 					found := false
 					for line := range strings.SplitSeq(status, "\n") {
 						if strings.Contains(line, kind) && strings.Contains(line, "apps/demo") && strings.Contains(line, "✓") {

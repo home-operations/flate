@@ -47,11 +47,11 @@ func testCmd(cmd *cobra.Command, kinds ...string) *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, argv []string) error {
 		return runSelected(cmd.Context(), selectedRequest{
 			flags: *c, roots: c.roots(firstArg(argv), kinds...),
-			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), presentation: presentTest,
+			stdout: cmd.OutOrStdout(), stderr: cmd.ErrOrStderr(), test: true,
 		}, func(inv *selectedInvocation) selectedPayload {
-			rosters := make([]output.TestGroup, len(inv.groups))
+			rosters := make([]output.TestReport, len(inv.groups))
 			for i, group := range inv.groups {
-				rosters[i] = output.TestGroup{Cluster: group.cluster, Report: testrunner.Run(group.sides[0])}
+				rosters[i] = testrunner.Run(group.sides[0])
 			}
 			return selectedPayload{rosters: rosters}
 		})

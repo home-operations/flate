@@ -80,7 +80,13 @@ Set --dry-run to see what would be removed without touching disk.`,
 				warnings[i] = manifest.Warning{Category: manifest.WarnCacheMaintenance, Message: err.Error()}
 			}
 			stderr := cmd.ErrOrStderr()
-			return errors.Join(writeErr, (output.Encoder{Writer: stderr, Color: output.ColorEnabled(stderr)}).Report(output.Model{Warnings: warnings}))
+			report := output.Report{Groups: []output.ReportGroup{{}}}
+			for _, warning := range warnings {
+				report.Warnings = append(report.Warnings, output.Warning{Warning: warning})
+			}
+			report.Prepare(nil)
+			encoder := output.Encoder{Writer: stderr, Color: output.ColorEnabled(stderr)}
+			return errors.Join(writeErr, encoder.Report(report, encoder))
 		},
 	}
 	cmd.Flags().DurationVar(&f.maxAge, "max-age", 30*24*time.Hour,

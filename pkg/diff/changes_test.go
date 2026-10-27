@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diffprep"
+	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -203,7 +205,10 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 			assert.Equal(t, c.NewChart, "app-2.0.0")
 			for _, body := range []map[string]any{c.Old, c.New} {
 				assert.Equal(t, body["metadata"].(map[string]any)["name"].(string), "normalized")
-				assert.Equal(t, chartLabel(body), replacement)
+				meta, _ := body["metadata"].(map[string]any)
+				labels, _ := meta["labels"].(map[string]any)
+				label, _ := labels["helm.sh/chart"].(string)
+				assert.Equal(t, label, replacement)
 			}
 			assert.Equal(t, c.Old["data"].(map[string]any)["k"].(string), "old")
 			assert.Equal(t, c.New["data"].(map[string]any)["k"].(string), "new")
@@ -308,13 +313,10 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 			assert.Diff(t, jsonChanges(t, left, right, opts), got)
 			assert.Diff(t, calls, wantCalls)
 			calls = map[string]int{}
-			lineCount := 0
-			paired, _, _, _ := pair(left, right, opts)
-			for _, err := range changedPairs(paired) {
-				assert.NoError(t, err)
-				lineCount++
-			}
-			assert.Equal(t, lineCount, tt.want)
+			prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(opts))
+			lines, err := output.PrepareLines(prepared)
+			assert.NoError(t, err)
+			assert.Equal(t, len(lines), tt.want)
 			assert.Diff(t, calls, wantCalls)
 			if len(got) != tt.want {
 				t.Fatalf("expected %d changes, got %+v", tt.want, got)

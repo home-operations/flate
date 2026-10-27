@@ -1,4 +1,4 @@
-package diff
+package diffprep
 
 import (
 	"bytes"
@@ -11,24 +11,12 @@ import (
 	yamlv3 "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/yaml"
 
-	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func renderNative(paired []pairedResource, format Format) ([]byte, error) {
-	report, err := nativeReport(paired)
-	if err != nil {
-		return nil, err
-	}
-	var buf bytes.Buffer
-	e := output.Encoder{Writer: &buf, Format: output.Format(format)}
-	if err := e.Native(report); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func nativeReport(paired []pairedResource) (dyff.Report, error) {
+// Native prepares dyff inputs and compares each canonical pair exactly once.
+func (p Prepared) Native() (dyff.Report, error) {
+	paired := p.Pairs
 	from, err := nativeInput("from", paired)
 	if err != nil {
 		return dyff.Report{}, err
@@ -38,38 +26,38 @@ func nativeReport(paired []pairedResource) (dyff.Report, error) {
 		return dyff.Report{}, err
 	}
 	report := dyff.Report{From: from, To: to}
-	rank := func(p pairedResource) int {
-		if p.a == nil {
+	rank := func(p Pair) int {
+		if p.Old == nil {
 			return 2
 		}
-		if p.b == nil {
+		if p.New == nil {
 			return 1
 		}
 		return 0
 	}
-	slices.SortFunc(paired, func(a, b pairedResource) int {
-		return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.aPos, b.aPos), cmp.Compare(a.bPos, b.bPos))
+	slices.SortFunc(paired, func(a, b Pair) int {
+		return cmp.Or(cmp.Compare(rank(a), rank(b)), cmp.Compare(a.OldPos, b.OldPos), cmp.Compare(a.NewPos, b.NewPos))
 	})
 	for _, p := range paired {
 		switch {
-		case p.a == nil && p.b == nil:
+		case p.Old == nil && p.New == nil:
 			continue
-		case p.a == nil:
+		case p.Old == nil:
 			report.Diffs = append(report.Diffs, dyff.Diff{
-				Path:    &ytbx.Path{Root: &report.To, DocumentIdx: p.bPos},
-				Details: []dyff.Detail{{Kind: dyff.ADDITION, To: to.Documents[p.bPos]}},
+				Path:    &ytbx.Path{Root: &report.To, DocumentIdx: p.NewPos},
+				Details: []dyff.Detail{{Kind: dyff.ADDITION, To: to.Documents[p.NewPos]}},
 			})
-		case p.b == nil:
+		case p.New == nil:
 			report.Diffs = append(report.Diffs, dyff.Diff{
-				Path:    &ytbx.Path{Root: &report.From, DocumentIdx: p.aPos},
-				Details: []dyff.Detail{{Kind: dyff.REMOVAL, From: from.Documents[p.aPos]}},
+				Path:    &ytbx.Path{Root: &report.From, DocumentIdx: p.OldPos},
+				Details: []dyff.Detail{{Kind: dyff.REMOVAL, From: from.Documents[p.OldPos]}},
 			})
 		default:
-			if _, differs := classify(p.a, p.b); !differs {
+			if p.Status() == "" {
 				continue
 			}
 			compared, err := dyff.CompareInputFiles(
-				nativeWrapped(from.Documents[p.aPos]), nativeWrapped(to.Documents[p.bPos]),
+				nativeWrapped(from.Documents[p.OldPos]), nativeWrapped(to.Documents[p.NewPos]),
 			)
 			if err != nil {
 				return dyff.Report{}, fmt.Errorf("dyff compare: %w", err)
@@ -78,7 +66,7 @@ func nativeReport(paired []pairedResource) (dyff.Report, error) {
 				// The private outer map prevents dyff from matching documents again;
 				// Kubernetes detection must remain enabled for nested named lists.
 				d.Path.PathElements = d.Path.PathElements[1:]
-				d.Path.Root, d.Path.DocumentIdx = &report.From, p.aPos
+				d.Path.Root, d.Path.DocumentIdx = &report.From, p.OldPos
 				report.Diffs = append(report.Diffs, d)
 			}
 		}
@@ -95,20 +83,20 @@ func nativeWrapped(node *yamlv3.Node) ytbx.InputFile {
 	}}}
 }
 
-func nativeInput(location string, paired []pairedResource) (ytbx.InputFile, error) {
-	slices.SortFunc(paired, func(a, b pairedResource) int {
+func nativeInput(location string, paired []Pair) (ytbx.InputFile, error) {
+	slices.SortFunc(paired, func(a, b Pair) int {
 		if location == "from" {
-			return cmp.Compare(a.aPos, b.aPos)
+			return cmp.Compare(a.OldPos, b.OldPos)
 		}
-		return cmp.Compare(a.bPos, b.bPos)
+		return cmp.Compare(a.NewPos, b.NewPos)
 	})
 	var buf bytes.Buffer
 	input := ytbx.InputFile{Location: location}
 	for i := range paired {
 		p := &paired[i]
-		m, pos := p.a, &p.aPos
+		m, pos := p.Old, &p.OldPos
 		if location == "to" {
-			m, pos = p.b, &p.bPos
+			m, pos = p.New, &p.NewPos
 		}
 		if m == nil {
 			continue
@@ -125,6 +113,9 @@ func nativeInput(location string, paired []pairedResource) (ytbx.InputFile, erro
 		meta, _ := m["metadata"].(map[string]any)
 		if _, ok := meta["namespace"]; ok {
 			label += id.Namespace + "/"
+		}
+		if input.Names == nil {
+			input.Names = make([]string, 0, len(paired))
 		}
 		input.Names = append(input.Names, label+id.Name)
 	}

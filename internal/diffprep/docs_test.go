@@ -1,4 +1,4 @@
-package diff
+package diffprep
 
 import (
 	"reflect"
@@ -7,7 +7,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func TestSelectedDocs_PreservesProducerAndEmissionOrder(t *testing.T) {
+func TestDocuments_PreservesProducerAndEmissionOrder(t *testing.T) {
 	t.Parallel()
 	a := &manifest.Kustomization{Name: "a", Namespace: "ns"}
 	a.Path = "././apps/a"
@@ -24,7 +24,7 @@ func TestSelectedDocs_PreservesProducerAndEmissionOrder(t *testing.T) {
 		{Parent: single, Documents: []map[string]any{{"kind": "ConfigMap"}}},
 		{Documents: []map[string]any{{"kind": "Namespace", "metadata": map[string]any{"name": "root"}}}},
 	}
-	docs := selectedDocs(manifests)
+	docs := Documents(manifests)
 	if len(docs) != 6 {
 		t.Fatalf("want 6 docs, got %d", len(docs))
 	}
@@ -46,7 +46,7 @@ func TestSelectedDocs_PreservesProducerAndEmissionOrder(t *testing.T) {
 	if docs[5].Parent != (Parent{}) || manifest.DocIdentity(docs[5].Manifest).Name != "root" {
 		t.Fatalf("ownerless identity or attribution lost: %+v", docs[5])
 	}
-	if got := selectedDocs(manifests); !reflect.DeepEqual(docs, got) {
-		t.Error("selectedDocs must preserve the completed selection order")
+	if got := Documents(manifests); !reflect.DeepEqual(docs, got) {
+		t.Error("Documents must preserve the completed selection order")
 	}
 }

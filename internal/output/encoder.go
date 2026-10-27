@@ -51,6 +51,7 @@ type ImageGroup struct {
 	Images  []string `json:"images"`
 	Added   bool     `json:"added,omitempty"`
 	Removed bool     `json:"removed,omitempty"`
+	Names   []string `json:"-"`
 }
 
 // SummaryGroup holds one cluster's prepared summary.
@@ -88,7 +89,9 @@ func (e Encoder) DocumentGroups(groups []DocumentGroup) error {
 // ImageGroups writes cluster framing around multiple image groups.
 func (e Encoder) ImageGroups(groups []ImageGroup) error {
 	if len(groups) == 1 && !groups[0].Added && !groups[0].Removed {
-		return e.Images(groups[0].Images)
+		if e.Format == FormatJSON || e.Format == FormatYAML {
+			return e.Images(groups[0].Images)
+		}
 	}
 	switch e.Format {
 	case FormatJSON:
@@ -98,27 +101,13 @@ func (e Encoder) ImageGroups(groups []ImageGroup) error {
 	}
 	return e.lines(func(yield func(string) bool) {
 		for _, g := range groups {
-			if (g.Added || g.Removed) && !yield(clusterLabel(g.Cluster, g.Added, g.Removed)) {
-				return
-			}
-			for _, image := range g.Images {
-				if !yield(g.Cluster + ": " + image) {
+			for _, image := range g.Names {
+				if !yield(image) {
 					return
 				}
 			}
 		}
 	})
-}
-
-func clusterLabel(cluster string, added, removed bool) string {
-	label := "Cluster: " + cluster
-	if added {
-		label += " (added)"
-	}
-	if removed {
-		label += " (removed)"
-	}
-	return label
 }
 
 // ClusterGroups writes cluster framing around multiple summaries.
@@ -134,10 +123,6 @@ func (e Encoder) ClusterGroups(groups []SummaryGroup) error {
 
 // ResourceGroups writes cluster framing around multiple resource groups.
 func (e Encoder) ResourceGroups(cols []Column, groups []ResourceGroup) error {
-	if len(groups) == 1 {
-		g := groups[0]
-		return e.Resources(cols, g.Rows, g.Documents)
-	}
 	if e.Format == FormatJSON || e.Format == FormatYAML {
 		docs := make([]DocumentGroup, len(groups))
 		for i, g := range groups {
@@ -149,14 +134,17 @@ func (e Encoder) ResourceGroups(cols []Column, groups []ResourceGroup) error {
 	for _, g := range groups {
 		for _, row := range g.Rows {
 			r := maps.Clone(row)
-			r["cluster"] = g.Cluster
+			r["name"] = row["displayName"]
 			if e.Format == FormatName {
-				r["name"] = g.Cluster + ":" + row["name"]
+				r["name"] = row["name"]
+				if len(groups) > 1 {
+					r["name"] = g.Cluster + ":" + row["name"]
+				}
 			}
 			rows = append(rows, r)
 		}
 	}
-	return e.Resources(slices.Concat([]Column{{Header: "CLUSTER", Key: "cluster"}}, cols), rows, nil)
+	return e.Resources(cols, rows, nil)
 }
 
 // Documents writes a JSON array or a multi-document YAML stream.

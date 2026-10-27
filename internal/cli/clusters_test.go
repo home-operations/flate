@@ -9,9 +9,11 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/diff"
+	"github.com/homeport/dyff/pkg/dyff"
 )
 
 func writeClusterGroupsFixture(t *testing.T, values map[string]string) string {
@@ -65,13 +67,18 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	stdout, stderr, code = runCLI(t, "get", "ks", "shared", "--path", root, "-o", "name", "--concurrency", "2")
 	assert.Equal(t, code, 0)
 	assert.Equal(t, stdout, "alpha:shared\nomega:shared\n")
-	assert.Equal(t, stderr, "")
+	assert.Equal(t, stderr, "\n  alpha: ✓ 0 failed\n\n  omega: ✓ 0 failed\n")
+	stdout, _, code = runCLI(t, "get", "ks", "--path", root, "--concurrency", "2")
+	assert.Equal(t, code, 0)
+	if strings.Contains(stdout, "CLUSTER") || !strings.Contains(stdout, "alpha: shared") || !strings.Contains(stdout, "omega: shared") {
+		t.Fatalf("table names must carry the shared qualifier: %s", stdout)
+	}
 	stdout, stderr, code = runCLI(t, "get", "images", "--path", root, "--concurrency", "2")
 	assert.Equal(t, code, 0)
 	assert.Equal(t, stdout, "alpha: example.test/app:first\nomega: example.test/app:second\n")
-	assert.Equal(t, stderr, "")
+	assert.Equal(t, stderr, "\n  alpha: ✓ 0 failed\n\n  omega: ✓ 0 failed\n")
 	stdout, stderr, code = runCLI(t, "test", "ks", "shared", "--path", root, "--concurrency", "2")
-	if code != 0 || !strings.Contains(stdout, "Cluster: alpha") || !strings.Contains(stdout, "Cluster: omega") || !strings.Contains(stdout, "Invocation totals") || strings.Contains(stdout, "failed") {
+	if code != 0 || !strings.Contains(stdout, "alpha: flux-system/shared") || !strings.Contains(stdout, "omega: flux-system/shared") || strings.Contains(stdout, "Cluster:") || !strings.Contains(stdout, "Invocation totals") || strings.Contains(stdout, "failed") {
 		t.Fatalf("group tests: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 
@@ -83,6 +90,11 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	if strings.Contains(stderr, "not found") {
 		t.Fatalf("another cluster's absence rejected a named match: %s", stderr)
 	}
+	stdout, stderr, code = runCLI(t, "test", "ks", "only-alpha", "--path", root, "--concurrency", "2")
+	assert.Equal(t, code, 0)
+	if strings.Contains(stdout, "alpha:") || !strings.Contains(stdout, "Kustomization  flux-system/only-alpha") {
+		t.Fatalf("a single retained named cluster must stay unqualified: %s %s", stdout, stderr)
+	}
 	_, stderr, code = runCLI(t, "get", "ks", "absent", "--path", root, "--concurrency", "2")
 	if code != 1 || !strings.Contains(stderr, "absent") {
 		t.Fatalf("global named absence: code=%d stderr=%s", code, stderr)
@@ -93,7 +105,7 @@ func TestRun_ClusterGroups_PartialFailure(t *testing.T) {
 	root := writeClusterGroupsFixture(t, map[string]string{"alpha": "first", "omega": "second"})
 	appendScopeSpec(t, root, "alpha/flux.yaml", "  dependsOn: [{name: missing}]\n")
 	stdout, stderr, code := runCLI(t, "build", "all", "--path", root, "-o", "json", "--concurrency", "2")
-	if code != 1 || !strings.Contains(stderr, "Cluster: alpha") || !strings.Contains(stderr, "missing") {
+	if code != 1 || !strings.Contains(stderr, "alpha: flux-system/missing") || strings.Contains(stderr, "Cluster:") || !strings.Contains(stderr, "missing") {
 		t.Fatalf("unattributed failure: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 	var groups []output.DocumentGroup
@@ -142,10 +154,10 @@ func TestRun_ClusterGroups_DiffAbsenceAndFailure(t *testing.T) {
 					t.Fatalf("absent side suppressed removal: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
 				images, diagnostics, status := runCLI(t, "diff", "images", "--path", current, "--path-orig", base, "--concurrency", "2")
-				if status != 0 || images != "Cluster: alpha (removed)\nomega: example.test/app:new\n" {
+				if status != 0 || images != "omega: example.test/app:new\n" {
 					t.Fatalf("empty removed image group disappeared: code=%d stdout=%s stderr=%s", status, images, diagnostics)
 				}
-			} else if code != 1 || groups[0].Removed || slices.ContainsFunc(groups[0].Changes, hasPod) || len(groups[0].Suppressed) == 0 || !strings.Contains(stderr, "cluster alpha") || !strings.Contains(stderr, "current") {
+			} else if code != 1 || groups[0].Removed || slices.ContainsFunc(groups[0].Changes, hasPod) || len(groups[0].Suppressed) == 0 || !strings.Contains(stderr, "alpha: flux-system/missing") || !strings.Contains(stderr, "current") {
 				t.Fatalf("failed side looked absent: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
 		})
@@ -208,5 +220,163 @@ func TestRun_ClusterGroups_DiffAbsenceAndFailure(t *testing.T) {
 				assert.Diff(t, change.New["data"], map[string]any{"value": "changed"})
 			}
 		})
+	}
+}
+
+func TestRun_ClusterReport_NativeAggregateInputs(t *testing.T) {
+	base := writeClusterGroupsFixture(t, map[string]string{"alpha": "old", "omega": "old"})
+	current := writeClusterGroupsFixture(t, map[string]string{"alpha": "new", "omega": "old"})
+	for _, format := range []string{"human", "diff", "brief", "github", "gitlab", "gitea", "html"} {
+		t.Run(format, func(t *testing.T) {
+			args := []string{"diff", "all", "--path", current, "--path-orig", base, "-o", format, "--concurrency", "2"}
+			out, stderr, code := runCLI(t, args...)
+			if code != 0 {
+				t.Fatalf("diff failed: %s", stderr)
+			}
+			if strings.Contains(out, "Cluster:") || strings.Contains(out, "omega:") || strings.Contains(out, "iframe") {
+				t.Fatalf("unchanged cluster or retired framing in diff: %s", out)
+			}
+			switch format {
+			case "brief":
+				assert.Equal(t, out, "two changes detected between from, two documents and to, two documents\n\n")
+			case "diff":
+				if !strings.Contains(out, "--- alpha: Pod apps/shared") {
+					t.Fatalf("missing unified label: %s", out)
+				}
+			case "html":
+				if strings.Count(strings.ToLower(out), "<!doctype html>") != 1 || !strings.Contains(out, "Pod alpha: apps/shared") || !strings.Contains(out, "Kustomization alpha: flux-system/shared") {
+					t.Fatalf("HTML must share a single named document: %s", out)
+				}
+			default:
+				if !strings.Contains(out, "alpha: v1/Pod/apps/shared") {
+					t.Fatalf("missing native label: %s", out)
+				}
+			}
+			again, _, status := runCLI(t, args...)
+			assert.Equal(t, status, code)
+			assert.Equal(t, again, out)
+		})
+	}
+	testutil.WriteFile(t, current, "omega/flux.yaml", testutil.KustomizationYAML("shared", "flux-system",
+		"  path: ./omega/app\n  postBuild: {substitute: {CLUSTER: new}}\n"))
+	html, diagnostics, status := runCLI(t, "diff", "all", "--path", current, "--path-orig", base, "-o", "html", "--concurrency", "2")
+	assert.Equal(t, status, 0)
+	for _, token := range []string{`<section class="resource" id="r0">`, `<section class="resource" id="r1">`, "Pod alpha: apps/shared", "Pod omega: apps/shared"} {
+		if strings.Count(html, token) != 1 {
+			t.Fatalf("missing or duplicate HTML anchor/label %q: %s %s", token, html, diagnostics)
+		}
+	}
+	if strings.Contains(html, "iframe") {
+		t.Fatalf("retired HTML wrapper: %s", html)
+	}
+	for _, format := range []string{"human", "diff", "brief", "github", "gitlab", "gitea", "html"} {
+		t.Run("unchanged/"+format, func(t *testing.T) {
+			out, stderr, code := runCLI(t, "diff", "all", "--path", base, "--path-orig", base, "-o", format, "--concurrency", "2")
+			assert.Equal(t, code, 0)
+			assert.Equal(t, out, "")
+			if strings.Contains(stderr, "Cluster:") {
+				t.Fatalf("empty body has a cluster heading: %s", stderr)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name          string
+		orig, current bool
+	}{
+		{name: "zero_original", current: true},
+		{name: "one_original_changed", orig: true, current: true},
+		{name: "one_original_removed", orig: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := writeClusterGroupsFixture(t, map[string]string{"alpha": "old", "omega": "old"})
+			current := writeClusterGroupsFixture(t, map[string]string{"alpha": "new", "omega": "old"})
+			for _, side := range []struct {
+				path    string
+				present bool
+			}{{base, tc.orig}, {current, tc.current}} {
+				testutil.WriteFile(t, side.path, "omega/app/kustomization.yaml", "resources: []\n")
+				if !side.present {
+					testutil.WriteFile(t, side.path, "alpha/app/kustomization.yaml", "resources: []\n")
+				}
+			}
+			for _, format := range []string{"human", "brief", "github", "gitlab", "gitea"} {
+				t.Run(format, func(t *testing.T) {
+					out, stderr, code := runCLI(t, "diff", "ks", "shared", "--path", current, "--path-orig", base, "-o", format, "--skip-kinds", "Kustomization", "--concurrency", "2")
+					if code != 0 {
+						t.Fatalf("diff failed: %s", stderr)
+					}
+					want := "one change detected between from and to\n\n"
+					if format != "brief" {
+						path, change, prefix := "@@ (root level) @@", "! + one document added:", "+ "
+						value := "new"
+						if tc.orig {
+							change, prefix, value = "! - one document removed:", "- ", "old"
+						}
+						switch format {
+						case "human":
+							path, change, prefix = "(root level)", strings.TrimPrefix(change, "! "), "  "
+						case "gitlab":
+							path, change = "= (root level)", "#"+strings.TrimPrefix(change, "!")
+						}
+						body := "apiVersion: v1\nkind: Pod\nmetadata:\n  name: shared\n  namespace: apps\n  labels:\n" +
+							"    kustomize.toolkit.fluxcd.io/name: shared\n    kustomize.toolkit.fluxcd.io/namespace: flux-system\n" +
+							"spec:\n  containers:\n  - name: app\n    image: \"example.test/app:" + value + "\""
+						want = "\n" + path + "\n" + change + "\n" + prefix + strings.ReplaceAll(body, "\n", "\n"+prefix) + "\n\n"
+						if tc.orig && tc.current {
+							want = "\n@@ spec.containers.app.image @@\n! ± value change\n- example.test/app:old\n+ example.test/app:new\n\n"
+							switch format {
+							case "human":
+								want = "\nspec.containers.app.image\n  ± value change\n    - example.test/app:old\n    + example.test/app:new\n\n"
+							case "gitlab":
+								want = "\n= spec.containers.app.image\n# ± value change\n- example.test/app:old\n+ example.test/app:new\n\n"
+							}
+						}
+					}
+					assert.Equal(t, out, want)
+					for _, label := range []string{"alpha:", "omega:", "v1/Pod/apps/shared", "Cluster:"} {
+						if strings.Contains(out, label) {
+							t.Fatalf("native omission gained label %q: %s", label, out)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestClusterReport_NativeAggregateIndexes(t *testing.T) {
+	t.Parallel()
+	doc := func(name, value string) diffprep.Doc {
+		return diffprep.Doc{Manifest: map[string]any{"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": name}, "data": map[string]any{"value": value}}}
+	}
+	groups := make([]dyff.Report, 2)
+	var err error
+	groups[0], err = diffprep.Prepare([]diffprep.Doc{doc("same", "old"), doc("removed", "old")}, []diffprep.Doc{doc("same", "new")}, diffprep.Options{}).Native()
+	assert.NoError(t, err)
+	groups[1], err = diffprep.Prepare([]diffprep.Doc{doc("same", "old")}, []diffprep.Doc{doc("same", "new"), doc("added", "new")}, diffprep.Options{}).Native()
+	assert.NoError(t, err)
+	aggregate := aggregateNative(groups)
+	assert.Equal(t, len(aggregate.From.Documents), 3)
+	assert.Equal(t, len(aggregate.To.Documents), 3)
+	assert.Equal(t, len(aggregate.Diffs), 4)
+	assert.Diff(t, aggregate.From.Names, []string{"v1/ConfigMap/same", "v1/ConfigMap/removed", "v1/ConfigMap/same"})
+	assert.Diff(t, aggregate.To.Names, []string{"v1/ConfigMap/same", "v1/ConfigMap/same", "v1/ConfigMap/added"})
+	for i, want := range []struct {
+		to    bool
+		index int
+	}{{false, 0}, {false, 1}, {false, 2}, {true, 2}} {
+		path := aggregate.Diffs[i].Path
+		root := &aggregate.From
+		if want.to {
+			root = &aggregate.To
+		}
+		if path.Root != root || path.DocumentIdx != want.index {
+			t.Fatalf("diff %d has wrong side or offset: %+v", i, path)
+		}
+	}
+	assert.Equal(t, groups[1].Diffs[0].Path.DocumentIdx, 0)
+	if groups[1].Diffs[0].Path.Root == &aggregate.From {
+		t.Fatal("aggregation mutated its input paths")
 	}
 }

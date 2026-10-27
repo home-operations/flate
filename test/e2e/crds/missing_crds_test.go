@@ -272,7 +272,7 @@ func TestE2E_MissingCRDs_DiffSides(t *testing.T) {
 			after := missingCRDRepo(t, strings.Replace(suspendedIssueResourceSet(), "interval: 5m", "interval: 10m", 1))
 			args := []string{"diff", "all", "--path", after, "--path-orig", before, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers)}
 			out, errOut, code := harness.RunCLIBuffers(args...)
-			if code != 1 || !strings.Contains(errOut, "orig snapshot:") || !strings.Contains(errOut, "current snapshot:") {
+			if code != 1 || strings.Count(errOut, "CustomResourceDefinition  helmreleases.helm.toolkit.fluxcd.io  not found") != 2 || !strings.Contains(errOut, "2 failed · 2 blocked") {
 				t.Fatalf("strict diff exit=%d stdout=%s stderr=%s", code, out, errOut)
 			}
 			out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-crds")...)

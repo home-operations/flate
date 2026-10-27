@@ -15,7 +15,8 @@ import (
 )
 
 const persistenceReason = "the binary was built from a dirty checkout"
-const persistenceNotice = "\n  ⚠ warnings (1)\n    [RenderPersistenceDisabled] render persistence is disabled: " + persistenceReason + "; source caching remains available\n"
+const persistenceMessage = "[RenderPersistenceDisabled] render persistence is disabled: " + persistenceReason + "; source caching remains available"
+const persistenceNotice = "\n  ⚠ warnings (1)\n    " + persistenceMessage + "\n"
 
 func preservePersistenceNoticeState(t *testing.T) {
 	t.Helper()
@@ -60,7 +61,7 @@ func TestRun_RenderPersistenceNotice(t *testing.T) {
 			stdout, stderr, code := runCLI(t, tc.args...)
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, stdout, want)
-			assert.Equal(t, stderr, tc.notice+wantErr)
+			assert.Equal(t, stderr, wantErr+tc.notice)
 		})
 	}
 }
@@ -134,7 +135,7 @@ func TestRun_RenderPersistenceNoticeCommands(t *testing.T) {
 			assert.Equal(t, code, 0)
 			assert.Equal(t, strings.Contains(stdout, "render persistence is disabled"), false)
 			assert.Equal(t, strings.Count(stderr, "render persistence is disabled"), count)
-			assert.Equal(t, strings.Count(stderr, persistenceNotice), count)
+			assert.Equal(t, strings.Count(stderr, persistenceMessage), count)
 		})
 	}
 }
@@ -149,14 +150,23 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 		env     string
 		wantErr string
 		notice  string
+		profile string
 	}{
 		{name: "invalid level", args: []string{"--log-level=invalid"}, wantErr: "invalid --log-level"},
 		{name: "invalid arguments", args: []string{"unexpected"}, wantErr: "unknown command"},
 		{name: "invalid environment", env: "invalid", wantErr: "invalid FLATE_CONCURRENCY"},
+		{name: "cache initialization", args: []string{"--cache-dir", filepath.Join(path, "flux/cluster.yaml")}, wantErr: "cache", notice: persistenceNotice},
+		{name: "baseline setup", args: []string{"--path-orig", path, "--base", "HEAD"}, wantErr: "mutually exclusive", notice: persistenceNotice},
+		{name: "invalid substitution", args: []string{"--substitute", "BAD"}, wantErr: "--substitute pair 1", notice: persistenceNotice},
+		{name: "profile startup", profile: "invalid", wantErr: "invalid FLATE_PROFILE", notice: persistenceNotice},
 		{name: "missing path", args: []string{"--path", filepath.Join(t.TempDir(), "missing")}, wantErr: "missing", notice: persistenceNotice},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			invocation := append(append([]string{}, args...), tc.args...)
+			if tc.profile != "" {
+				t.Setenv("FLATE_PROFILE", tc.profile)
+				t.Setenv("FLATE_PROFILE_OUT", t.TempDir())
+			}
 			if tc.env != "" {
 				t.Setenv("FLATE_CONCURRENCY", tc.env)
 				invocation = []string{"build", "all", "--path", path, "--cache-dir", t.TempDir()}
@@ -171,18 +181,18 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 			stdout, stderr, code := runCLI(t, invocation...)
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, stdout, want)
-			assert.Equal(t, stderr, tc.notice+wantErr)
+			assert.Equal(t, stderr, wantErr+tc.notice)
 		})
 	}
 	t.Run("advisory write failure", func(t *testing.T) {
 		renderPersistenceDisabledReason = ""
-		_, _, wantCode := runCLI(t, args...)
+		want, _, wantCode := runCLI(t, args...)
 		assert.Equal(t, wantCode, 0)
 		renderPersistenceDisabledReason = persistenceReason
 		var stdout bytes.Buffer
 		var stderr persistenceNoticeFailWriter
 		assert.Equal(t, Run(args, &stdout, &stderr), 1)
-		assert.Equal(t, stdout.String(), "")
+		assert.Equal(t, stdout.String(), want)
 		if !strings.Contains(stderr.String(), io.ErrClosedPipe.Error()) {
 			t.Fatalf("missing diagnostic writer error: %s", stderr.String())
 		}

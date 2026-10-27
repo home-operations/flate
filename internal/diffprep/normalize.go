@@ -1,4 +1,4 @@
-package diff
+package diffprep
 
 import (
 	"encoding/base64"
@@ -96,3 +96,5 @@ func binaryDataSummary(v any) string {
 	}
 	return fmt.Sprintf(binaryDataSummaryFormat, len(decoded), manifest.SHA256Hex(decoded)[:16])
 }
+
+const helmChartLabel = "helm.sh/chart"

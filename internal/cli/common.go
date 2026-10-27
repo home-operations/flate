@@ -304,15 +304,6 @@ func failureModel(result *selection.Selection) output.Model {
 	return output.Model{Primary: primary, Missing: missing, Blocked: blocked}
 }
 
-type presentation int
-
-const (
-	presentBuild presentation = iota
-	presentData
-	presentTest
-	presentDiff
-)
-
 var renderKinds, runnableKinds = func() ([]string, []string) {
 	var render, runnable []string
 	for info := range manifest.Kinds() {
@@ -327,12 +318,13 @@ var renderKinds, runnableKinds = func() ([]string, []string) {
 }()
 
 type selectedRequest struct {
+	notice         manifest.Warning
 	flags          commonFlags
 	roots          []manifest.NamedResource
 	labels         map[string]string
 	pair           bool
 	stdout, stderr io.Writer
-	presentation   presentation
+	test           bool
 }
 
 type selectedInvocation struct {
@@ -352,32 +344,39 @@ type selectedGroup struct {
 type selectedPayload struct {
 	err      error
 	warnings [][]manifest.Warning
-	rosters  []output.TestGroup
+	rosters  []output.TestReport
+	subjects [][]manifest.NamedResource
+	prepare  func([]output.Names)
+	write    func() error
 }
 
 func runSelected(ctx context.Context, req selectedRequest, payload func(*selectedInvocation) selectedPayload) error {
 	start := time.Now()
+	req.notice, _ = ctx.Value(renderNoticeKey{}).(manifest.Warning)
+	early := func(err error) error {
+		return finishSelected(req, &selectedInvocation{err: err, remainder: err}, selectedPayload{})
+	}
 	c := &req.flags
 	if !req.pair {
 		if c.path == "" {
-			return errors.New("path is required")
+			return early(errors.New("path is required"))
 		}
 		if err := validatePathFlag("--path", c.path); err != nil {
-			return err
+			return early(err)
 		}
 		if c.pathOrig != "" {
 			if err := validatePathFlag("--path-orig", c.pathOrig); err != nil {
-				return err
+				return early(err)
 			}
 		}
 	}
 	if err := c.loadSubstitutions(ctx); err != nil {
-		return err
+		return early(err)
 	}
 	ssrfguard.Restrict(c.restrictEgress)
 	owner, err := sourcecache.New(ctx, c.cacheDir)
 	if err != nil {
-		return err
+		return early(err)
 	}
 	c.owner = owner
 	cfg := buildOrchCfg(*c)
@@ -480,21 +479,18 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 
 func finishSelected(req selectedRequest, inv *selectedInvocation, payload selectedPayload) error {
 	final := errors.Join(payload.err, inv.err)
-	named := req.roots[0].Name != ""
-	encoder := output.Encoder{Writer: req.stderr, Color: output.ColorEnabled(req.stderr)}
-	if req.presentation == presentTest && payload.rosters != nil {
-		out := output.Encoder{Writer: req.stdout, Color: output.ColorEnabled(req.stdout)}
-		err := out.TestGroups(payload.rosters, inv.elapsed)
-		payload.err = errors.Join(payload.err, err)
-		final = errors.Join(final, err)
-		if slices.ContainsFunc(payload.rosters, func(group output.TestGroup) bool { return group.Report.AnyFailed() }) && (!named || inv.err == nil && !slices.ContainsFunc(inv.groups, func(group selectedGroup) bool { return group.err != nil })) {
-			final = errors.Join(errors.New("test failures detected"), final)
-		}
-	}
-	var writeErr error
-	reported := req.presentation == presentTest
 	diagnostic := errors.Join(payload.err, inv.remainder)
+	report := output.Report{Groups: make([]output.ReportGroup, len(inv.groups)), Test: payload.rosters != nil, Elapsed: inv.elapsed}
+	if req.notice.Category != "" {
+		report.Warnings = append(report.Warnings, output.Warning{Warning: req.notice})
+	}
+	named := len(req.roots) > 0 && req.roots[0].Name != ""
 	for i, group := range inv.groups {
+		g := &report.Groups[i]
+		g.Cluster = group.cluster
+		if i < len(payload.rosters) {
+			g.Test = &payload.rosters[i]
+		}
 		groupErr, remainder := group.err, group.remainder
 		if len(inv.groups) > 1 {
 			if groupErr != nil {
@@ -505,47 +501,62 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 			}
 		}
 		final, diagnostic = errors.Join(final, groupErr), errors.Join(diagnostic, remainder)
-		failures := req.presentation == presentBuild || req.presentation == presentTest && named && group.err != nil
-		headed := false
 		for j, side := range group.sides {
 			var model output.Model
-			if failures {
+			if !req.test || named && group.err != nil {
 				model = failureModel(side)
 			}
-			model.Warnings = selectedWarnings(side)
-			if model.Empty() {
-				continue
+			if g.Test != nil {
+				model.Primary = slices.DeleteFunc(model.Primary, func(p output.Primary) bool {
+					return slices.ContainsFunc(g.Test.Cases, func(c output.Case) bool { return c.ID == p.ID && c.Outcome == output.OutcomeFailed })
+				})
 			}
-			if len(inv.groups) > 1 && !headed {
-				_, err := fmt.Fprintln(req.stderr, "Cluster:", group.cluster)
-				writeErr, headed = errors.Join(writeErr, err), true
-			}
+			g.Models = append(g.Models, model)
+			context := ""
 			if req.pair {
-				_, err := io.WriteString(req.stderr, []string{"orig", "current"}[j]+" snapshot:")
-				writeErr = errors.Join(writeErr, err)
+				context = []string{"orig snapshot", "current snapshot"}[j]
 			}
-			writeErr = errors.Join(writeErr, encoder.Report(model))
-			reported = reported || failures
+			for _, warning := range selectedWarnings(side) {
+				report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i, Context: context})
+			}
 		}
-		if i < len(payload.warnings) && len(payload.warnings[i]) > 0 {
-			if len(inv.groups) > 1 && !headed {
-				_, err := fmt.Fprintln(req.stderr, "Cluster:", group.cluster)
-				writeErr = errors.Join(writeErr, err)
+		if i < len(payload.warnings) {
+			for _, warning := range payload.warnings[i] {
+				report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i})
 			}
-			writeErr = errors.Join(writeErr, encoder.Report(output.Model{Warnings: payload.warnings[i]}))
 		}
 	}
-	if req.presentation == presentDiff {
-		reported, diagnostic = final != nil, final
+	names := report.Prepare(payload.subjects)
+	if payload.prepare != nil {
+		payload.prepare(names)
 	}
-	if reported {
-		writeErr = errors.Join(writeErr, encoder.Errors(diagnostic))
-		final = errors.Join(final, writeErr)
-		if final != nil {
+	if payload.write != nil {
+		err := payload.write()
+		final, diagnostic = errors.Join(final, err), errors.Join(diagnostic, err)
+	}
+	if report.Test && slices.ContainsFunc(payload.rosters, output.TestReport.AnyFailed) &&
+		(!named || inv.err == nil && !slices.ContainsFunc(inv.groups, func(g selectedGroup) bool { return g.err != nil })) {
+		final = errors.Join(errors.New("test failures detected"), final)
+	}
+	encoder := output.Encoder{Writer: req.stderr, Color: output.ColorEnabled(req.stderr)}
+	out := output.Encoder{Writer: req.stdout, Color: output.ColorEnabled(req.stdout)}
+	report.Error = diagnostic
+	writeErr := encoder.Report(report, out)
+	final = errors.Join(final, writeErr)
+	if err := encoder.Errors(writeErr); err != nil {
+		return errors.Join(final, err)
+	}
+	if final != nil {
+		presented := diagnostic != nil || writeErr != nil || report.Test && slices.ContainsFunc(payload.rosters, output.TestReport.AnyFailed)
+		for _, group := range report.Groups {
+			presented = presented || slices.ContainsFunc(group.Models, func(m output.Model) bool { return len(m.Primary)+len(m.Missing) > 0 || m.Blocked > 0 })
+		}
+		if presented {
 			return reportedError{final}
 		}
+		return final
 	}
-	return errors.Join(final, writeErr)
+	return nil
 }
 
 func selectedWarnings(side *selection.Selection) []manifest.Warning {

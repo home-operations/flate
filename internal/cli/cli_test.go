@@ -596,7 +596,7 @@ func TestRun_RenderPersistenceNoticeInvocationScope(t *testing.T) {
 		got, gotErr, gotCode := runCLI(t, args...)
 		assert.Equal(t, gotCode, code)
 		assert.Equal(t, got, stdout)
-		assert.Equal(t, gotErr, persistenceNotice+stderr)
+		assert.Equal(t, gotErr, strings.Replace(stderr, "warnings (2)\n", "warnings (3)\n    "+persistenceMessage+"\n", 1))
 	}
 }
 
@@ -899,10 +899,10 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	if strings.Count(stderr, "1 object not rendered on the current side; diff suppressed (") != 1 || stdout != "" {
 		t.Errorf("suppression must appear once on stderr with no product: stdout=%s stderr=%s", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "flate error: current snapshot: reconcile completed with 1 failure(s)") {
+	if !strings.Contains(stderr, "✗ 1 failed") {
 		t.Errorf("stderr should carry the failure summary:\n%s", stderr)
 	}
-	if strings.Count(stderr, "flate error:") != 1 {
+	if strings.Count(stderr, "✗ 1 failed") != 1 || strings.Contains(stderr, "flate error:") {
 		t.Errorf("failure summary should be printed exactly once:\n%s", stderr)
 	}
 }

@@ -2,7 +2,6 @@ package output
 
 import (
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"time"
@@ -40,32 +39,6 @@ type TestReport struct {
 	Matched int
 }
 
-// TestGroup holds one cluster's prepared test report.
-type TestGroup struct {
-	Cluster string
-	Report  TestReport
-}
-
-// TestGroups writes cluster rosters and totals followed by invocation totals.
-func (e Encoder) TestGroups(groups []TestGroup, elapsed time.Duration) error {
-	if len(groups) == 1 {
-		return e.Test(groups[0].Report, elapsed)
-	}
-	var total TestReport
-	var blocks []string
-	for _, g := range groups {
-		r := g.Report
-		blocks = append(blocks, "Cluster: "+g.Cluster, r.rosterBlock(e.Color), r.verdict(e.Color, 0))
-		total.Passed += r.Passed
-		total.Skipped += r.Skipped
-		total.Failed += r.Failed
-		total.Blocked = append(total.Blocked, r.Blocked...)
-	}
-	blocks = append(blocks, "Invocation totals\n"+total.verdict(e.Color, elapsed))
-	_, err := io.WriteString(e.Writer, Document(blocks...))
-	return err
-}
-
 // AnyFailed includes blocked-only runs, even without a primary failure in scope.
 func (r TestReport) AnyFailed() bool { return r.Failed > 0 || len(r.Blocked) > 0 }
 
@@ -83,38 +56,27 @@ func (o Outcome) decorate() (glyph string, paint func(string, bool) string) {
 	}
 }
 
-// Test writes the roster and verdict.
-func (e Encoder) Test(report TestReport, elapsed time.Duration) error {
-	color := e.Color
-	doc := Document(
-		report.rosterBlock(color),
-		report.verdict(color, elapsed),
-	)
-	_, err := io.WriteString(e.Writer, doc)
-	return err
-}
-
 // Cases retain their supplied order; blocked cases follow them.
-func (r TestReport) rosterBlock(color bool) string {
+func (r TestReport) rosterBlock(names Names, color bool) string {
 	all := slices.Concat(r.Cases, r.Blocked)
 	kindW := 0
 	for _, c := range all {
-		kindW = max(kindW, len(c.ID.KindLabel()))
+		kindW = max(kindW, len(names.Subjects[c.ID].Kind))
 	}
 	rows := make([]string, len(all))
 	for i, c := range all {
-		rows[i] = caseRow(c, kindW, color)
+		rows[i] = caseRow(c, names.Subjects[c.ID], kindW, color)
 	}
 	return strings.Join(rows, "\n")
 }
 
-func caseRow(c Case, kindW int, color bool) string {
+func caseRow(c Case, subject Subject, kindW int, color bool) string {
 	glyph, paint := c.Outcome.decorate()
 	var row strings.Builder
 	fmt.Fprintf(&row, "  %s  %s  %s",
 		paint(glyph, color),
-		Dim(fmt.Sprintf("%-*s", kindW, c.ID.KindLabel()), color),
-		c.ID.NamespacedName())
+		Dim(fmt.Sprintf("%-*s", kindW, subject.Kind), color),
+		subject.Name)
 	row.WriteString(MessageTail(c.Reason, Dim, color))
 	return row.String()
 }

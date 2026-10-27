@@ -1,6 +1,7 @@
 package output
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -34,18 +35,11 @@ type Missing struct {
 type Model struct {
 	Primary []Primary
 	Missing []Missing
-	// Warnings are the prepared selected diagnostics.
-	Warnings []manifest.Warning
 	// Blocked is the count of distinct derived (cascaded) failures. It is the
 	// verdict's "N blocked" figure — distinct resources, not the sum of the
 	// per-root Blocks/RequiredBy lists, which can overlap when one resource
 	// traces to more than one root (e.g. a failed parent AND a missing dep).
 	Blocked int
-}
-
-// Empty reports whether there is nothing to render.
-func (m Model) Empty() bool {
-	return len(m.Primary) == 0 && len(m.Missing) == 0 && len(m.Warnings) == 0
 }
 
 // Errors prints the non-resource remainder returned by selection.
@@ -57,49 +51,164 @@ func (e Encoder) Errors(err error) error {
 	return nil
 }
 
-// Report writes the failure model with the destination color policy.
-func (e Encoder) Report(m Model) error {
-	color := e.Color
-	doc := Document(
-		m.failuresBlock(color),
-		warningsBlock(m.Warnings, color),
-		m.verdictBlock(color),
-	)
-	if doc == "" {
-		return nil
+// Warning retains the producer payload and its prepared display context.
+type Warning struct {
+	Warning manifest.Warning
+	Group   int
+	Context string
+	Subject Subject
+}
+
+// ReportGroup contains one cluster's diagnostics and optional test roster.
+type ReportGroup struct {
+	Cluster string
+	Models  []Model
+	Test    *TestReport
+	Names   Names
+}
+
+// Report coordinates the invocation's results, warnings and summaries.
+type Report struct {
+	Groups   []ReportGroup
+	Warnings []Warning
+	Test     bool
+	Elapsed  time.Duration
+	Error    error
+}
+
+// Prepare samples continuations and resolves every printed subject before writing.
+func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
+	clusters := make([]string, len(r.Groups))
+	inventory := make([][]manifest.NamedResource, len(r.Groups))
+	for i, g := range r.Groups {
+		clusters[i] = g.Cluster
+		if i < len(extra) {
+			inventory[i] = append(inventory[i], extra[i]...)
+		}
+		for _, m := range g.Models {
+			for _, p := range m.Primary {
+				inventory[i] = append(inventory[i], p.ID)
+				inventory[i] = append(inventory[i], p.Blocks[:min(len(p.Blocks), blockedSample)]...)
+			}
+			for _, missing := range m.Missing {
+				inventory[i] = append(inventory[i], missing.ID)
+				inventory[i] = append(inventory[i], missing.RequiredBy[:min(len(missing.RequiredBy), blockedSample)]...)
+			}
+		}
+		if g.Test != nil {
+			for _, cases := range [][]Case{g.Test.Cases, g.Test.Blocked} {
+				for _, c := range cases {
+					inventory[i] = append(inventory[i], c.ID)
+				}
+			}
+		}
 	}
-	_, err := io.WriteString(e.Writer, doc)
-	return err
+	for _, w := range r.Warnings {
+		if w.Warning.Resource != (manifest.NamedResource{}) {
+			inventory[w.Group] = append(inventory[w.Group], w.Warning.Resource)
+		}
+	}
+	names := PrepareNames(clusters, inventory)
+	for i := range r.Groups {
+		r.Groups[i].Names = names[i]
+	}
+	for i, w := range r.Warnings {
+		if w.Warning.Resource != (manifest.NamedResource{}) {
+			r.Warnings[i].Subject = names[w.Group].Subjects[w.Warning.Resource]
+		}
+	}
+	return names
+}
+
+// Report writes results, warnings, cluster summaries and the test invocation total in order.
+func (e Encoder) Report(r Report, results Encoder) error {
+	var resultRows, failures, summaries []string
+	var total TestReport
+	for _, g := range r.Groups {
+		if g.Test != nil {
+			resultRows = append(resultRows, g.Test.rosterBlock(g.Names, results.Color))
+			total.Passed += g.Test.Passed
+			total.Skipped += g.Test.Skipped
+			total.Failed += g.Test.Failed
+			total.Blocked = append(total.Blocked, g.Test.Blocked...)
+		}
+		var failed, blocked int
+		for _, m := range g.Models {
+			failures = append(failures, m.failuresBlock(g.Names, e.Color))
+			failed += len(m.Primary) + len(m.Missing)
+			blocked += m.Blocked
+		}
+		var summary string
+		if g.Test != nil {
+			summary = g.Test.verdict(results.Color, 0)
+		} else if failed != 0 || blocked != 0 || g.Names.Prefix != "" {
+			glyph, paint := GlyphPass, Pass
+			if failed != 0 || blocked != 0 {
+				glyph, paint = GlyphFail, Fail
+			}
+			summary = Verdict(e.Color, paint(glyph, e.Color), 0,
+				Count{N: failed, Label: "failed", Paint: paint}, Count{N: blocked, Label: "blocked", Paint: Dim})
+		}
+		if summary != "" && (!r.Test || len(r.Groups) > 1) {
+			summaries = append(summaries, "  "+g.Names.Prefix+strings.TrimPrefix(summary, "  "))
+		}
+	}
+	var writeErr error
+	write := func(w io.Writer, blocks ...string) {
+		if doc := Document(blocks...); doc != "" {
+			_, err := io.WriteString(w, doc)
+			writeErr = errors.Join(writeErr, err)
+		}
+	}
+	write(results.Writer, resultRows...)
+	write(e.Writer, failures...)
+	writeErr = errors.Join(writeErr, e.Errors(r.Error))
+	write(e.Writer, warningsBlock(r.Warnings, e.Color))
+	if r.Test {
+		write(results.Writer, summaries...)
+		verdict := total.verdict(results.Color, r.Elapsed)
+		if len(r.Groups) > 1 {
+			verdict = "Invocation totals\n" + verdict
+		}
+		write(results.Writer, verdict)
+	} else {
+		write(e.Writer, summaries...)
+	}
+	return writeErr
 }
 
 // failuresBlock renders the root-cause rows: each primary failure (its inline
 // message and the resources it blocks) followed by each missing dependency.
-func (m Model) failuresBlock(color bool) string {
+func (m Model) failuresBlock(names Names, color bool) string {
 	rows := make([]string, 0, len(m.Primary)+len(m.Missing))
 	for _, p := range m.Primary {
 		row := fmt.Sprintf("  %s  %s  %s",
-			Fail(GlyphFail, color), Dim(p.ID.KindLabel(), color), p.ID.NamespacedName()) +
+			Fail(GlyphFail, color), Dim(names.Subjects[p.ID].Kind, color), names.Subjects[p.ID].Name) +
 			MessageTail(p.Msg, nil, color)
 		if len(p.Blocks) > 0 {
-			row += "\n" + msgIndent + Dim("blocks "+summarize(p.Blocks), color)
+			row += "\n" + msgIndent + Dim("blocks "+summarize(p.Blocks, names), color)
 		}
 		rows = append(rows, row)
 	}
 	for _, mr := range m.Missing {
 		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s\n%s%s",
-			Fail(GlyphFail, color), Dim(mr.ID.KindLabel(), color), mr.ID.NamespacedName(),
+			Fail(GlyphFail, color), Dim(names.Subjects[mr.ID].Kind, color), names.Subjects[mr.ID].Name,
 			Fail("not found", color), msgIndent,
-			Dim("required by "+summarize(mr.RequiredBy), color)))
+			Dim("required by "+summarize(mr.RequiredBy, names), color)))
 	}
 	return strings.Join(rows, "\n")
 }
 
-func warningsBlock(warnings []manifest.Warning, color bool) string {
+func warningsBlock(warnings []Warning, color bool) string {
 	items := make([]string, 0, len(warnings))
-	for _, wn := range warnings {
+	for _, w := range warnings {
+		wn := w.Warning
 		head := wn.Message
 		if wn.Resource != (manifest.NamedResource{}) {
-			head = wn.Resource.KindLabel() + " " + wn.Resource.NamespacedName() + ": " + wn.Message
+			head = w.Subject.Kind + " " + w.Subject.Name + ": " + wn.Message
+		}
+		if w.Context != "" {
+			head = w.Context + ": " + head
 		}
 		if wn.Category != "" {
 			head = "[" + wn.Category + "] " + head
@@ -114,21 +223,6 @@ func warningsBlock(warnings []manifest.Warning, color bool) string {
 		items = append(items, item)
 	}
 	return section(Warn(fmt.Sprintf("%s warnings (%d)", GlyphWarn, len(warnings)), color), items)
-}
-
-// verdictBlock renders the "✗ N failed · M blocked" line, or "" when
-// nothing failed — a clean run carrying only advisories shows just those, not a
-// misleading red "✗ 0 failed". failed = primary + missing roots; blocked is the
-// distinct cascaded count (m.Blocked, not the sum of per-root lists).
-func (m Model) verdictBlock(color bool) string {
-	failed := len(m.Primary) + len(m.Missing)
-	if failed == 0 && m.Blocked == 0 {
-		return ""
-	}
-	return Verdict(color, Fail(GlyphFail, color), 0,
-		Count{N: failed, Label: "failed", Paint: Fail},
-		Count{N: m.Blocked, Label: "blocked", Paint: Dim},
-	)
 }
 
 // section composes a titled footer block: the header line, then each item
@@ -201,23 +295,25 @@ func Verdict(color bool, glyph string, elapsed time.Duration, counts ...Count) s
 }
 
 // summarize caps an id list at blockedSample and includes kinds for ambiguous names.
-func summarize(ids []manifest.NamedResource) string {
+func summarize(ids []manifest.NamedResource, labels Names) string {
+	total := len(ids)
+	ids = ids[:min(len(ids), blockedSample)]
 	names := make([]string, 0, len(ids))
 	counts := make(map[string]int, len(ids))
 	for _, id := range ids {
-		name := id.NamespacedName()
+		name := labels.Subjects[id].Name
 		names = append(names, name)
 		counts[name]++
 	}
 	for i, name := range names {
 		if counts[name] > 1 {
-			names[i] = ids[i].KindLabel() + " " + name
+			names[i] = labels.Subjects[ids[i]].Kind + " " + name
 		}
 	}
-	if len(names) <= blockedSample {
+	if total <= blockedSample {
 		return strings.Join(names, ", ")
 	}
-	return fmt.Sprintf("%s +%d more", strings.Join(names[:blockedSample], ", "), len(names)-blockedSample)
+	return fmt.Sprintf("%s +%d more", strings.Join(names, ", "), total-blockedSample)
 }
 
 // msgIndent aligns a primary failure's continuation lines (and its "blocks …"

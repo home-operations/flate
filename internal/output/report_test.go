@@ -20,16 +20,13 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"},
 		{Message: "SDK warning"},
 	}
-	m := Model{Warnings: warns}
-	if m.Empty() {
-		t.Fatal("a model with warnings is not empty")
-	}
+	m := Model{}
 	var b bytes.Buffer
-	if err := (Encoder{Writer: &b}).Report(m); err != nil {
+	if err := writeModel(Encoder{Writer: &b}, m, warns...); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
-	for _, want := range []string{"warnings (3)", "HelmRelease.helm.toolkit.fluxcd.io default/app: values not defined", "image.tagg, oldKey", "[StaleValues]", "[EmptyScan]", "no Flux objects found", "    SDK warning\n"} {
+	for _, want := range []string{"warnings (3)", "HelmRelease default/app: values not defined", "image.tagg, oldKey", "[StaleValues]", "[EmptyScan]", "no Flux objects found", "    SDK warning\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("warnings section missing %q:\n%s", want, out)
 		}
@@ -46,7 +43,7 @@ func TestEncoderReport_WarningCount(t *testing.T) {
 	t.Parallel()
 	warns := []manifest.Warning{{Category: manifest.WarnPathConfig, Message: "same root", Count: 4}}
 	var b bytes.Buffer
-	_ = (Encoder{Writer: &b}).Report(Model{Warnings: warns})
+	_ = writeModel(Encoder{Writer: &b}, Model{}, warns...)
 	if out := b.String(); !strings.Contains(out, "×4") {
 		t.Errorf("warning repeat count not rendered:\n%s", out)
 	}
@@ -63,14 +60,14 @@ func TestEncoderReport_PrimaryMessageIsMultiLine(t *testing.T) {
 	for _, color := range []bool{false, true} {
 		t.Run(fmt.Sprint(color), func(t *testing.T) {
 			t.Parallel()
-			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization.kustomize.toolkit.fluxcd.io", color) + "  flux-system/root  may not add resource with an already registered id: X\n" +
+			want := "\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization", color) + "  flux-system/root  may not add resource with an already registered id: X\n" +
 				"         duplicate resource(s) produced by multiple accumulated paths:\n         - ./one\n         - ./two" +
 				"\n         " + Dim("blocks flux-system/leaf, flux-system/mid", color) +
-				"\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization.kustomize.toolkit.fluxcd.io", color) + "  flux-system/missing  " + Fail("not found", color) +
+				"\n  " + Fail(GlyphFail, color) + "  " + Dim("Kustomization", color) + "  flux-system/missing  " + Fail("not found", color) +
 				"\n         " + Dim("required by flux-system/dependent", color) +
 				"\n\n  " + Fail(GlyphFail, color) + " " + Fail("2 failed", color) + " · " + Dim("3 blocked", color) + "\n"
 			var b bytes.Buffer
-			if err := (Encoder{Writer: &b, Color: color}).Report(m); err != nil {
+			if err := writeModel(Encoder{Writer: &b, Color: color}, m); err != nil {
 				t.Fatal(err)
 			}
 			if got := b.String(); got != want {
@@ -87,15 +84,17 @@ func TestSummarize_KindOnCollision(t *testing.T) {
 		ids  []manifest.NamedResource // sorted, as Build delivers them
 		want string
 	}{
-		{"same name, different kind", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "acars"), testutil.KustomizationID("flux-system", "acars")}, "HelmRelease.helm.toolkit.fluxcd.io flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars"},
+		{"same name, different kind", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "acars"), testutil.KustomizationID("flux-system", "acars")}, "HelmRelease flux-system/acars, Kustomization flux-system/acars"},
 		{"same name, different group", []manifest.NamedResource{{Group: "example.test", Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "acars"}, testutil.KustomizationID("flux-system", "acars")}, "Kustomization.example.test flux-system/acars, Kustomization.kustomize.toolkit.fluxcd.io flux-system/acars"},
 		{"same name, different namespace", []manifest.NamedResource{testutil.HelmReleaseID("default", "acars"), testutil.KustomizationID("flux-system", "acars")}, "default/acars, flux-system/acars"},
-		{"collision hidden by the cap", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "zzz"), testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b"), testutil.KustomizationID("flux-system", "c"), testutil.KustomizationID("flux-system", "d"), testutil.KustomizationID("flux-system", "e"), testutil.KustomizationID("flux-system", "zzz")}, "HelmRelease.helm.toolkit.fluxcd.io flux-system/zzz, flux-system/a, flux-system/b, flux-system/c, flux-system/d, flux-system/e +1 more"},
+		{"collision hidden by the cap", []manifest.NamedResource{testutil.HelmReleaseID("flux-system", "zzz"), testutil.KustomizationID("flux-system", "a"), testutil.KustomizationID("flux-system", "b"), testutil.KustomizationID("flux-system", "c"), testutil.KustomizationID("flux-system", "d"), testutil.KustomizationID("flux-system", "e"), testutil.KustomizationID("flux-system", "zzz")}, "flux-system/zzz, flux-system/a, flux-system/b, flux-system/c, flux-system/d, flux-system/e +1 more"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := summarize(tc.ids); got != tc.want {
+			report := Report{Groups: []ReportGroup{{Models: []Model{{Primary: []Primary{{Blocks: tc.ids}}}}}}}
+			names := report.Prepare(nil)
+			if got := summarize(tc.ids, names[0]); got != tc.want {
 				t.Errorf("summarize = %q, want %q", got, tc.want)
 			}
 		})
@@ -175,7 +174,7 @@ func TestEncoderErrors_NonResourceDiagnostics(t *testing.T) {
 	if err := (Encoder{Writer: errorWriter{writeErr}}).Errors(closeErr); !errors.Is(err, writeErr) {
 		t.Fatalf("writer error = %v, want %v", err, writeErr)
 	}
-	if err := (Encoder{Writer: errorWriter{writeErr}}).Report(Model{Warnings: []manifest.Warning{{Message: "advisory"}}}); !errors.Is(err, writeErr) {
+	if err := writeModel(Encoder{Writer: errorWriter{writeErr}}, Model{}, manifest.Warning{Message: "advisory"}); !errors.Is(err, writeErr) {
 		t.Fatalf("report writer error = %v, want %v", err, writeErr)
 	}
 }
@@ -183,3 +182,12 @@ func TestEncoderErrors_NonResourceDiagnostics(t *testing.T) {
 type errorWriter struct{ err error }
 
 func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func writeModel(e Encoder, m Model, warnings ...manifest.Warning) error {
+	r := Report{Groups: []ReportGroup{{Models: []Model{m}}}}
+	for _, w := range warnings {
+		r.Warnings = append(r.Warnings, Warning{Warning: w})
+	}
+	r.Prepare(nil)
+	return e.Report(r, e)
+}

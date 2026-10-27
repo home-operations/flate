@@ -4,14 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
-	"iter"
-	"strings"
 
 	"github.com/homeport/dyff/pkg/dyff"
 	"github.com/pmezard/go-difflib/difflib"
+	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -28,14 +27,6 @@ const (
 	dyffMinorChangeThreshold = 0.1
 )
 
-// LineChange is a prepared resource difference with its producer and YAML sides.
-type LineChange struct {
-	Resource, Parent manifest.NamedResource
-	ParentPath       string
-	From, To         string
-	Status           string
-}
-
 // DiffGroup holds one cluster's prepared diff and presence on each side.
 type DiffGroup struct {
 	Cluster        string
@@ -43,73 +34,96 @@ type DiffGroup struct {
 	Body           []byte
 }
 
-// DiffGroups writes cluster sections around prepared diff bodies.
+// DiffGroups writes canonical per-cluster JSON changes and suppressions.
 func (e Encoder) DiffGroups(groups []DiffGroup) error {
 	if len(groups) == 1 && !groups[0].Added && !groups[0].Removed {
 		_, err := e.Writer.Write(groups[0].Body)
 		return err
 	}
-	if e.Format == FormatJSON {
-		values := make([]map[string]json.RawMessage, len(groups))
-		for i, g := range groups {
-			value := make(map[string]json.RawMessage)
-			if len(g.Body) > 0 {
-				if err := json.Unmarshal(g.Body, &value); err != nil {
-					return fmt.Errorf("decode cluster diff: %w", err)
-				}
+	values := make([]map[string]json.RawMessage, len(groups))
+	for i, g := range groups {
+		value := make(map[string]json.RawMessage)
+		if len(g.Body) > 0 {
+			if err := json.Unmarshal(g.Body, &value); err != nil {
+				return fmt.Errorf("decode cluster diff: %w", err)
 			}
-			value["cluster"], _ = json.Marshal(g.Cluster)
-			if g.Added {
-				value["added"] = json.RawMessage("true")
-			}
-			if g.Removed {
-				value["removed"] = json.RawMessage("true")
-			}
-			values[i] = value
 		}
-		return e.JSON(values)
+		value["cluster"], _ = json.Marshal(g.Cluster)
+		if g.Added {
+			value["added"] = json.RawMessage("true")
+		}
+		if g.Removed {
+			value["removed"] = json.RawMessage("true")
+		}
+		values[i] = value
 	}
-	var b strings.Builder
-	if e.Format == FormatHTML {
-		b.WriteString("<!doctype html>\n<html lang=\"en\"><meta charset=\"utf-8\"><title>flate diff</title><body>\n")
-	}
-	for _, g := range groups {
-		label := clusterLabel(g.Cluster, g.Added, g.Removed)
-		switch e.Format {
-		case FormatHTML:
-			fmt.Fprintf(&b, "<section><h2>%s</h2>", html.EscapeString(label))
-			if len(g.Body) > 0 {
-				fmt.Fprintf(&b, "<iframe title=\"%s\" style=\"width:100%%;height:75vh;border:0\" srcdoc=\"%s\"></iframe>", html.EscapeString(label), html.EscapeString(string(g.Body)))
+	return e.JSON(values)
+}
+
+// LineChange carries canonical diff values and resolved presentation labels.
+type LineChange struct {
+	Resource, Parent Subject
+	ParentPath       string
+	From, To         string
+	Status, Label    string
+}
+
+// PrepareLines collects serialization errors before any report is written.
+func PrepareLines(prepared diffprep.Prepared) ([]LineChange, error) {
+	var out []LineChange
+	for _, p := range prepared.Pairs {
+		var sides [2]string
+		for i, doc := range [2]map[string]any{p.Old, p.New} {
+			if doc == nil {
+				continue
 			}
-			b.WriteString("</section>\n")
-		case FormatGitHub, FormatGitLab, FormatGitea:
-			fmt.Fprintf(&b, "## %s\n\n", label)
-			b.Write(g.Body)
-			b.WriteByte('\n')
-		default:
-			fmt.Fprintf(&b, "%s\n", label)
-			b.Write(g.Body)
-			b.WriteByte('\n')
+			raw, err := yaml.Marshal(doc)
+			if err != nil {
+				return nil, fmt.Errorf("marshal: %w", err)
+			}
+			sides[i] = string(raw)
+		}
+		if sides[0] == sides[1] {
+			continue
+		}
+		out = append(out, LineChange{
+			Resource: Subject{ID: p.Resource}, Parent: Subject{ID: p.Parent.NamedResource},
+			ParentPath: p.Parent.Path, From: sides[0], To: sides[1], Status: p.Status(),
+		})
+	}
+	return out, nil
+}
+
+// LineSubjects inventories only the resource and producer labels this format prints.
+func LineSubjects(changes []LineChange, format Format) []manifest.NamedResource {
+	ids := make([]manifest.NamedResource, 0, len(changes))
+	for _, c := range changes {
+		ids = append(ids, c.Resource.ID)
+		if format == FormatHTML {
+			ids = append(ids, c.Parent.ID)
 		}
 	}
-	if e.Format == FormatHTML {
-		b.WriteString("</body></html>\n")
+	return ids
+}
+
+// NameLines binds the invocation's resolved subjects to its line changes.
+func NameLines(changes []LineChange, names Names) {
+	for i := range changes {
+		c := &changes[i]
+		c.Resource = names.Subjects[c.Resource.ID]
+		c.Parent = names.Subjects[c.Parent.ID]
+		c.Label = names.Prefix + c.Resource.Kind + " " + c.Resource.ID.NamespacedName()
 	}
-	_, err := io.WriteString(e.Writer, b.String())
-	return err
 }
 
 // Lines consumes prepared resource differences once in unified or HTML format.
-func (e Encoder) Lines(changes iter.Seq2[LineChange, error]) error {
+func (e Encoder) Lines(changes []LineChange) error {
 	if e.Format == FormatHTML {
 		return e.html(changes)
 	}
 	separate := false
-	for p, err := range changes {
-		if err != nil {
-			return err
-		}
-		label := p.Resource.KindLabel() + " " + p.Resource.NamespacedName()
+	for _, p := range changes {
+		label := p.Label
 		if p.ParentPath != "" {
 			label += " (" + p.ParentPath + ")"
 		}

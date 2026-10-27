@@ -586,11 +586,11 @@ func TestRun_UnnamedScope_ErrorBytes(t *testing.T) {
 			args := []string{verb, kind, "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
 			_, stderr, code := runCLI(t, args...)
 			assert.Equal(t, code, 1)
-			expected := "flate error: " + want + "\n"
+			expected := "\n  ✗  Kustomization  flux-system/outside  not found\n         required by flux-system/unrelated\n" + persistenceNotice + "\n  ✗ 1 failed · 1 blocked\n"
 			if verb == "test" {
-				expected = ""
+				expected = persistenceNotice
 			}
-			assert.Equal(t, stderr, persistenceNotice+expected)
+			assert.Equal(t, stderr, expected)
 			cmd := New("test")
 			cmd.SetContext(t.Context())
 			cmd.SetArgs(args)
@@ -642,7 +642,7 @@ func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 				"--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, strings.Contains(out, "warnings") || strings.Contains(out, "unrelated") || strings.Contains(out, "outside"), false)
-			assert.Equal(t, strings.Count(strings.TrimPrefix(stderr, persistenceNotice), "warnings (1)"), 1)
+			assert.Equal(t, strings.Count(stderr, "warnings (2)"), 1)
 			assert.Equal(t, strings.Count(stderr, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/unrelated"), 1)
 			assert.Equal(t, strings.Contains(stderr, "outside"), true)
 			if fatal {
@@ -651,7 +651,7 @@ func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 				assert.Equal(t, strings.Contains(stderr, "warnings"), true)
 				assert.Equal(t, strings.Count(stderr, "flate error:"), 0)
 			} else {
-				assert.Equal(t, strings.HasPrefix(stderr, persistenceNotice), true)
+				assert.Equal(t, strings.Contains(stderr, persistenceMessage), true)
 			}
 		})
 	}
@@ -672,10 +672,8 @@ func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 	assert.Equal(t, code, 0)
 	assert.Equal(t, got, want)
 	for _, label := range []string{"orig snapshot:", "current snapshot:"} {
-		_, block, ok := strings.Cut(stderr, label)
-		block, _, _ = strings.Cut(block, "snapshot:")
-		if !ok || !strings.Contains(block, "warnings") {
-			t.Fatalf("missing %s warning block: %s", label, stderr)
+		if !strings.Contains(stderr, "[UnrelatedFailure] "+label+" Kustomization flux-system/outside: not found; required by") {
+			t.Fatalf("missing attributed warning %s: %s", label, stderr)
 		}
 	}
 }
@@ -695,6 +693,8 @@ func TestRun_NamedScope_DiffFatalWriteError(t *testing.T) {
 }
 
 func TestRun_NamedScope_DiffOwningKustomizationFails(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	for _, tc := range []struct{ name, failingSide, layout string }{
 		{"current/plain/edited", "current", "plain"},
 		{"orig/plain/edited", "orig", "plain"},
@@ -751,14 +751,14 @@ spec:
 			_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
 			_, block, ok := strings.Cut(stderr, tc.failingSide+" snapshot:")
 			if tc.layout == "moved" && tc.failingSide == "current" {
-				if code != 0 || !ok || !strings.Contains(block, "warnings (1)") || !strings.Contains(block, "ConfigMap flux-system/nope: not found") || strings.Contains(stderr, "reconcile completed") {
+				if code != 0 || !ok || !strings.Contains(stderr, "warnings (2)") || !strings.Contains(block, "ConfigMap flux-system/nope: not found") || strings.Contains(stderr, "reconcile completed") {
 					t.Fatalf("former owning Kustomization became fatal: %d %s", code, stderr)
 				}
 				_, stderr, code = runCLI(t, "build", "hr", "selected", "--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2")
 				if code != 0 {
 					t.Fatalf("former owning Kustomization became fatal in build: %d %s", code, stderr)
 				}
-			} else if code != 1 || !ok || !strings.Contains(block, "reconcile completed with 1 failure(s):") || !strings.Contains(block, "ConfigMap/flux-system/nope: not found") {
+			} else if code != 1 || !strings.Contains(stderr, "✗ 1 failed") || !strings.Contains(stderr, "ConfigMap  flux-system/nope  not found") {
 				t.Fatalf("owning Kustomization failure hidden: %d %s", code, stderr)
 			}
 			_, stderr, code = runCLI(t, append([]string{"diff", "ks", "other"}, flags...)...)
@@ -780,6 +780,8 @@ spec:
 }
 
 func TestRun_NamedScope_DiffDeletedReleaseSiblingFails(t *testing.T) {
+	preservePersistenceNoticeState(t)
+	renderPersistenceDisabledReason = persistenceReason
 	root, orig := t.TempDir(), t.TempDir()
 	release := func(name, chart string) string {
 		return fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
@@ -821,10 +823,10 @@ spec:
 				t.Fatalf("diff hr %s: exit %d, want %d; stderr: %s", tc.name, code, tc.code, stderr)
 			}
 			if tc.code == 0 {
-				if !strings.Contains(stderr, "warnings (1)") || strings.Contains(stderr, "reconcile completed") || !strings.Contains(out, "selected-rendered") || strings.Contains(out, "sibling") {
+				if !strings.Contains(stderr, "warnings (2)") || strings.Contains(stderr, "reconcile completed") || !strings.Contains(out, "selected-rendered") || strings.Contains(out, "sibling") {
 					t.Fatalf("deleted release diff includes unrelated failure: stdout: %s; stderr: %s", out, stderr)
 				}
-			} else if !strings.Contains(stderr, "reconcile completed with 1 failure(s):") {
+			} else if !strings.Contains(stderr, "✗ 1 failed") || !strings.Contains(stderr, "HelmRelease  apps/sibling") {
 				t.Fatalf("selected sibling failure hidden: %s", stderr)
 			}
 		})
@@ -931,7 +933,7 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 			testutil.WriteFile(t, root, file, string(body))
 			args := []string{"get", tc.kind, "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "name", "-l", tc.label}
 			stdout, stderr, code := runCLI(t, args...)
-			if code != 0 || (stdout != "") != tc.visible || !strings.HasPrefix(stderr, persistenceNotice) || strings.Count(stderr, "unrelated") != 1 || !strings.Contains(stderr, "outside") {
+			if code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) || strings.Count(stderr, "unrelated") != 1 || !strings.Contains(stderr, "outside") {
 				t.Fatalf("healthy named get: exit=%d stdout=%q stderr=%s", code, stdout, stderr)
 			}
 			appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")
@@ -1036,7 +1038,7 @@ func TestFailureModel(t *testing.T) {
 			}
 			got := failureModel(result)
 			assert.Diff(t, got, tc.want)
-			assert.Equal(t, got.Empty(), tc.want.Empty())
+			assert.Equal(t, len(got.Primary)+len(got.Missing) == 0, len(tc.want.Primary)+len(tc.want.Missing) == 0)
 		})
 	}
 }

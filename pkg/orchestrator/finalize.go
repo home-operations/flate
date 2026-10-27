@@ -13,28 +13,27 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// detectOrphans returns the subset of failed resources that are
-// "orphans" — Kustomizations/HelmReleases whose source files sit
-// under another Kustomization's spec.path but were never emitted by
-// that parent's render output, AND whose covering parent itself
-// succeeded. Such files exist on disk but Flux would never see them,
-// so flate downgrades the failure to a warning rather than gating the
-// test on stale local files. A child under a parent that FAILED is a
-// blocked cascade victim, not an orphan — it stays failed (see below).
+// External sources own decode errors but cannot parent local-tree orphans.
+func (o *Orchestrator) reportOwnership(claims []manifest.KSClaim) []manifest.KSClaim {
+	local := make([]manifest.KSClaim, 0, len(claims))
+	for _, claim := range claims {
+		source, _, _ := o.store.GetObject(claim.ID).SourcePath()
+		if _, _, external := loader.SourceView(o.store, source, o.repoRoot); !external {
+			local = append(local, claim)
+		}
+	}
+	return local
+}
+
+// detectOrphans finds failed resources a successful covering parent never emitted.
+// Flux never sees these local files; failed-parent cascade victims remain failures.
 func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.StatusInfo, prefixes []manifest.KSClaim) map[manifest.NamedResource]string {
 	out := make(map[manifest.NamedResource]string)
-	// External sources own decode errors but cannot parent local-tree orphans.
-	prefixes = slices.DeleteFunc(slices.Clone(prefixes), func(claim manifest.KSClaim) bool {
-		ks, _ := o.store.Get[*manifest.Kustomization](claim.ID)
-		_, _, external := loader.SourceView(o.store, ks.SourceID(), o.repoRoot)
-		return external
-	})
 	for id, info := range failed {
 		if !id.KindInfo().Render {
 			continue
 		}
-		// A resource that any parent's render also emitted is by
-		// definition not orphaned — kustomize-controller saw it.
+		// Any parent's emission proves that Flux saw this resource.
 		if slices.ContainsFunc(o.store.Productions(id, o.index), func(p manifest.Production) bool {
 			return p.Owner != (manifest.NamedResource{}) && p.Authored == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{})
 		}) {
@@ -49,13 +48,8 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 		if !ok {
 			continue
 		}
-		// A covering parent that itself FAILED emitted nothing, so every child
-		// under its spec.path looks unreferenced — but these are blocked
-		// cascade victims, not stale unwired files. Leave them Failed (with the
-		// BlockedBy the dependency gate recorded) so the report folds them under
-		// the root cause instead of demoting each to a quiet "orphaned" warning.
-		// A child under a parent that SUCCEEDED but still didn't emit it is the
-		// genuine orphan this detection exists for.
+		// A failed covering parent emitted nothing. Its children are cascade
+		// victims and MUST retain the failure that attributes their root cause.
 		if _, parentFailed := failed[parent]; parentFailed {
 			continue
 		}
@@ -90,10 +84,11 @@ func (o *Orchestrator) decodeFailures(prefixes []manifest.KSClaim) (map[manifest
 }
 
 func (o *Orchestrator) classifyCompleted() {
-	var prefixes []manifest.KSClaim
-	if o.index != nil && len(o.index.Errors) != 0 {
-		prefixes = loader.Claims(o.store, o.repoRoot)
-		attributed, _ := o.decodeFailures(prefixes)
+	var claims []manifest.KSClaim
+	hasErrors := o.index != nil && len(o.index.Errors) != 0
+	if hasErrors {
+		claims = loader.Claims(o.store, o.repoRoot)
+		attributed, _ := o.decodeFailures(claims)
 		for _, id := range slices.SortedFunc(maps.Keys(attributed), manifest.NamedResource.Compare) {
 			if info, _ := o.store.GetStatus(id); info.Status != store.StatusFailed && info.Outcome() != store.OutcomeSuspended &&
 				(info.Message != orphanedMessage || o.orphans[id] != attributed[id].Error()) {
@@ -110,10 +105,10 @@ func (o *Orchestrator) classifyCompleted() {
 	if len(failed) == 0 {
 		return
 	}
-	if prefixes == nil {
-		prefixes = loader.Claims(o.store, o.repoRoot)
+	if !hasErrors {
+		claims = loader.Claims(o.store, o.repoRoot)
 	}
-	orphans := o.detectOrphans(failed, prefixes)
+	orphans := o.detectOrphans(failed, o.reportOwnership(claims))
 	if len(orphans) != 0 && o.orphans == nil {
 		o.orphans = make(map[manifest.NamedResource]string)
 	}
@@ -152,6 +147,8 @@ func (o *Orchestrator) warnMissingCRDs() {
 		return
 	}
 	missing := make(map[manifest.NamedResource]map[manifest.NamedResource]struct{})
+	var inputBuf, gatedBuf [16]manifest.NamedResource
+	inputs, gated := inputBuf[:0], gatedBuf[:0]
 	for _, obj := range o.store.ListObjects("", "") {
 		id := obj.Named()
 		info, ok := o.store.GetStatus(id)
@@ -161,6 +158,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 		if _, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.Emission); !ok {
 			continue
 		}
+		inputs = inputs[:0]
 		for crd := range o.store.RequiredInputs(id) {
 			if !crd.IsCRD() {
 				continue
@@ -171,16 +169,25 @@ func (o *Orchestrator) warnMissingCRDs() {
 			if _, ok := o.store.GetStatus(crd); ok {
 				continue
 			}
-			for ref := range manifest.References(obj, manifest.ReferenceAll) {
-				if ref.Gate == 0 || ref.NamedResource != crd {
-					continue
-				}
-				if missing[crd] == nil {
-					missing[crd] = make(map[manifest.NamedResource]struct{})
-				}
-				missing[crd][id] = struct{}{}
-				break
+			inputs = append(inputs, crd)
+		}
+		if len(inputs) == 0 {
+			continue
+		}
+		gated = gated[:0]
+		for ref := range manifest.References(obj, manifest.ReferenceAll) {
+			if ref.Gate != 0 && ref.IsCRD() {
+				gated = append(gated, ref.NamedResource)
 			}
+		}
+		for _, crd := range inputs {
+			if !slices.Contains(gated, crd) {
+				continue
+			}
+			if missing[crd] == nil {
+				missing[crd] = make(map[manifest.NamedResource]struct{})
+			}
+			missing[crd][id] = struct{}{}
 		}
 	}
 	for _, crd := range slices.SortedFunc(maps.Keys(missing), manifest.NamedResource.Compare) {

@@ -97,7 +97,7 @@ func TestDetectOrphans(t *testing.T) {
 		root.Named():         {Status: store.StatusFailed, Message: "broken"},
 	}
 
-	orphans := o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot))
+	orphans := o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot)))
 
 	if _, ok := orphans[orphan.Named()]; !ok {
 		t.Errorf("expected orphan to be detected")
@@ -116,7 +116,7 @@ func TestDetectOrphans(t *testing.T) {
 		Name: "external", Namespace: "flux-system", Path: "./",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
 	})
-	assert.Diff(t, o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot)), orphans)
+	assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot))), orphans)
 }
 
 // TestDetectOrphans_NonReconcilableKindsIgnored — ConfigMaps and
@@ -148,7 +148,7 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 		cm.Named():      {Status: store.StatusFailed, Message: "bogus"},
 		foreign.Named(): {Status: store.StatusFailed, Message: "foreign"},
 	}
-	orphans := o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot))
+	orphans := o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot)))
 	if len(orphans) != 0 {
 		t.Errorf("orphan detection should skip non-reconcilable kinds; got %+v", orphans)
 	}
@@ -185,7 +185,7 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 		parent.Named(): {Status: store.StatusFailed, Message: "kustomize build boom"}, // the build that emitted nothing
 		child.Named():  {Status: store.StatusFailed, Message: "dependencies failed: cluster-apps"},
 	}
-	orphans := o.detectOrphans(failed, loader.Claims(o.store, o.repoRoot))
+	orphans := o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot)))
 	if _, ok := orphans[child.Named()]; ok {
 		t.Errorf("child under a FAILED covering parent is a cascade victim, not an orphan: %+v", orphans)
 	}

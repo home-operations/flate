@@ -59,6 +59,8 @@ metadata: {name: podinfo, uid: built-release}
 spec:
   interval: 1h
   chart: {spec: {chart: podinfo, version: 1.0.0, sourceRef: {kind: HelmRepository, name: charts}}}
+  dependsOn: [{name: dependency}]
+  valuesFrom: [{kind: ConfigMap, name: values}, {kind: Secret, name: credentials, optional: true}]
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -240,11 +242,45 @@ spec:
 	spec := document["spec"].(map[string]any)
 	assert.Equal(t, spec["chart"].(map[string]any)["spec"].(map[string]any)["version"], any("2.0.0"))
 	record, _ := l.Index.Lookup(hrID)
-	assert.Diff(t, record.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
+	assert.Diff(t, record.Refs, []manifest.NamedResource{
+		{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"},
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"},
+		{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"},
+	})
 	sources := slices.Collect(l.Sources())
 	if !slices.ContainsFunc(sources, func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil }) {
 		t.Fatal("built source is unavailable to discovery")
 	}
+}
+
+func TestRegisterBuilt_SharedInputs(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [release.yaml]\nconfigMapGenerator: [{name: generated, files: [value.txt]}]\n")
+	release := `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: retained, namespace: apps}
+spec:
+  chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: charts}}}
+`
+	testutil.WriteFile(t, root, "release.yaml", release)
+	testutil.WriteFile(t, root, "value.txt", "input")
+	st := store.New()
+	admitForTest(st, root)
+	l := New(st)
+	l.SourceRoot = root
+	if _, err := l.Load(t.Context(), root); err != nil {
+		t.Fatal(err)
+	}
+	docs := builtObjectsForTest(t, release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n")
+	l.RegisterBuilt(root, docs)
+	hr, _ := l.Index.Lookup(docs[0].Obj.Named())
+	generated, _ := l.Index.Lookup(docs[1].Obj.Named())
+	assert.Equal(t, hr.File, "release.yaml")
+	assert.Diff(t, hr.Inputs, []string{"kustomization.yaml", "value.txt"})
+	assert.Equal(t, generated.File, "kustomization.yaml")
+	assert.Diff(t, generated.Inputs, []string{"kustomization.yaml", "release.yaml", "value.txt"})
+	assert.Diff(t, hr.Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "apps", Name: "charts"}})
 }
 
 func TestRegisterBuilt_RemoteGenerator(t *testing.T) {

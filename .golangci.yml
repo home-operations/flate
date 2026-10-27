@@ -33,6 +33,10 @@ linters:
           list-mode: strict
           files: ["**/pkg/tree/**"]
           allow: ["$gostd"]
+        claimpath-stdlib-only:
+          list-mode: strict
+          files: ["**/internal/claimpath/**"]
+          allow: ["$gostd"]
         leaf:
           files:
             - "**/pkg/manifest/**"

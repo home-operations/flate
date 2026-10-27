@@ -3,11 +3,13 @@ package loader
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
@@ -21,6 +23,77 @@ import (
 
 func cmID(ns string) manifest.NamedResource {
 	return manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: ns, Name: "cluster-settings"}
+}
+
+func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	bootstrap := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"a/kustomization.yaml":             {Data: []byte("resources: [../target, ../missing]\ntransformers: [../configuration]\n")},
+		"b/kustomization.yaml":             {Data: []byte("resources: [../target]\n")},
+		"target/kustomization.yaml":        {Data: []byte("resources: []\n")},
+		"configuration/kustomization.yaml": {Data: []byte("resources: []\n")},
+	}}
+	st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
+	l := New(st)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	l.Admit(root)
+	for _, name := range []string{"target", "missing", "configuration"} {
+		if !l.documents.cache[filepath.Join(root, name)].incoming {
+			t.Fatalf("direct edge to %s was not recorded", name)
+		}
+	}
+	target := filepath.Join(root, "target")
+	doc := l.documents.cache[target]
+	doc.selected, doc.built = true, []store.Child{}
+	l.documents.cache[target] = doc
+	mounted := map[string]*store.SourceArtifact{root: bootstrap}
+	for _, name := range []string{"a", "a", "b"} {
+		mount := filepath.Join(root, name)
+		mounted[mount] = &store.SourceArtifact{LocalPath: mount, FS: fstest.MapFS{}}
+		l.documents.setSources(maps.Clone(mounted))
+		if l.documents.cache[target].incoming {
+			t.Fatal("mount change retained an incoming fact outside its subtree")
+		}
+		roots := l.packageRoots(root, nil)
+		want := name == "a"
+		if l.documents.cache[target].incoming != want {
+			t.Fatalf("target after masking %s: incoming=%t, want %t", name, l.documents.cache[target].incoming, want)
+		}
+		if slices.Contains(roots, "target") == want {
+			t.Fatalf("root selection after masking %s: %v", name, roots)
+		}
+		if l.documents.cache[filepath.Join(root, "missing")].incoming || l.documents.cache[filepath.Join(root, "configuration")].incoming {
+			t.Fatal("masked parent's missing or configuration edge survived")
+		}
+		l.packageRoots(root, nil)
+	}
+	if doc := l.documents.cache[target]; !doc.selected || doc.built == nil {
+		t.Fatal("cold replay discarded selected/built state")
+	}
+	l.documents.setSources(map[string]*store.SourceArtifact{root: bootstrap})
+	l.packageRoots(root, nil)
+	if l.documents.cache[target].incoming {
+		t.Fatal("withdrawal restored an edge from a discarded parent document")
+	}
+	for _, name := range []string{"a", "b"} {
+		parent := filepath.Join(root, name)
+		body, _ := l.documents.read(parent)
+		doc := l.documents.cache[parent]
+		doc.traversed = true
+		l.documents.cache[parent] = doc
+		l.documents.references(parent, body, false, func(kustomizeinput.Reference, string) bool { return false })
+		if l.documents.cache[parent].edgesKnown {
+			t.Fatal("partial traversal marked all direct edges known")
+		}
+		l.documents.references(parent, body, false, nil)
+	}
+	if !l.documents.cache[target].incoming {
+		t.Fatal("new traversal did not restore incoming facts after withdrawal")
+	}
 }
 
 func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
@@ -1070,8 +1143,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 	for _, ks := range s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
 		state := l.sourceState(ks.SourceID(), root)
 		scope := l.scopeSource(state)
-		scope.ready = true
-		l.scopes.sources[state] = scope
+		l.scopes.sources[scope].ready = true
 	}
 	l.Admit(root)
 	projected := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}

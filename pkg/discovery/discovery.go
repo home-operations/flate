@@ -116,7 +116,6 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := l.FinalizeIndex(ctx, repoRoot); err != nil {
 		return nil, err
 	}
-	cfg.Store.SetDiscoveryIndex(l.Index)
 	d.promoteOrphans(ctx, standaloneSecrets)
 	documents := d.documents[:0]
 	for i, doc := range d.documents {

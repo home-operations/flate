@@ -3,10 +3,12 @@ package loader
 import (
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -15,6 +17,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/client"
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -254,9 +258,19 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 			if _, err := loadForTest(t.Context(), t, l, root); err != nil {
 				t.Fatal(err)
 			}
+			admitted := map[manifest.NamedResource]bool{}
+			for id, record := range l.Index.Files() {
+				admitted[id] = l.AdmitsRoot(id, record.Path)
+			}
+			assert.Equal(t, l.terminalInput(filepath.Join(root, tc.terminal)), true)
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
+			for id, before := range admitted {
+				record, _ := l.Index.Lookup(id)
+				assert.Equal(t, l.AdmitsRoot(id, record.Path), before)
+			}
+			assert.Equal(t, l.terminalInput(filepath.Join(root, tc.terminal)), true)
 			if candidateForTest(t, l, testutil.KustomizationID("projected", "dual")) == nil {
 				t.Fatal("generator data role suppressed the declared resource")
 			}
@@ -490,7 +504,14 @@ func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 			testutil.WriteFile(t, root, "apps/patch.yaml", testutil.KustomizationYAML("sibling", "apps", "  path: ./hidden\n"))
 			l := New(s)
 			l.Index.Records[sibling.Named()] = manifest.DiscoveryRecord{File: "apps/patch.yaml", Path: filepath.Join(root, "apps/patch.yaml")}
-			idx := rendererFixture(t, l, root)
+			l.SourceRoot = root
+			admitForTest(s, root)
+			l.Admit(root)
+			admitted := l.AdmitsRoot(sibling.Named(), filepath.Join(root, "apps/patch.yaml"))
+			assert.Equal(t, admitted, false)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			idx := l.Index
+			assert.Equal(t, l.AdmitsRoot(sibling.Named(), filepath.Join(root, "apps/patch.yaml")), admitted)
 			if l.AdmitsRoot(sibling.Named(), filepath.Join(root, "apps/patch.yaml")) {
 				t.Fatal("file-role input counted as a listed structural resource")
 			}
@@ -526,6 +547,88 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 	id := testutil.KustomizationID("authored", "dual")
 	if _, ok := l.Index.Lookup(id); !ok || l.candidates[id].Obj == nil || st.GetObject(id) == nil || len(l.documents.cache[filepath.Join(root, "inputs/dual.yaml")].objects) != 1 {
 		t.Fatal("terminal role suppressed a separately declared resource")
+	}
+	file := filepath.Join(root, "inputs/dual.yaml")
+	admitted := l.AdmitsRoot(id, file)
+	assert.Equal(t, admitted, true)
+	assert.Equal(t, l.terminalInput(file), false)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.Equal(t, l.AdmitsRoot(id, file), admitted)
+	assert.Equal(t, l.terminalInput(file), false)
+}
+
+func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [target]\n")
+	testutil.WriteFile(t, root, "target/kustomization.yaml", "resources: [../declarations, ../missing, broken.yaml]\n")
+	testutil.WriteFile(t, root, "target/broken.yaml", "invalid: [\n")
+	testutil.WriteFile(t, root, "declarations/kustomization.yaml", "resources: [peer.yaml]\n")
+	testutil.WriteFile(t, root, "declarations/peer.yaml", testutil.KustomizationYAML("peer", "apps", "  path: ./target\n"))
+	st := store.New()
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./target"}
+	st.AddObject(parent)
+	admitForTest(st, root)
+	l := New(st)
+	l.SourceRoot = root
+	_, err := loadForTest(t.Context(), t, l, root)
+	assert.NoError(t, err)
+	peer, missing := testutil.KustomizationID("apps", "peer"), testutil.HelmReleaseID("apps", "missing")
+	peerFile, missingFile := filepath.Join(root, "declarations/peer.yaml"), filepath.Join(root, "missing/release.yaml")
+	l.Index.Records[missing] = manifest.DiscoveryRecord{Authored: missing, File: "missing/release.yaml", Path: missingFile}
+	l.Index.Readers = map[string][]manifest.FileReader{"missing": {{Reader: parent.Named(), Source: manifest.BootstrapSourceID}}}
+	before := map[manifest.NamedResource]bool{peer: l.AdmitsRoot(peer, peerFile), missing: l.AdmitsRoot(missing, missingFile)}
+	assert.Equal(t, before[peer], true)
+	assert.Equal(t, before[missing], false)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.Diff(t, l.Index.Claims["target/"], []manifest.NamedResource{parent.Named(), peer})
+	assert.Diff(t, l.Index.Readers["missing"], []manifest.FileReader{{Reader: parent.Named(), Source: manifest.BootstrapSourceID}, {Reader: peer, Source: manifest.BootstrapSourceID}})
+	assert.Equal(t, len(l.Index.Errors), 1)
+	assert.Equal(t, l.scopes == nil, true)
+	frozen := snapshotIndexForTest(l.Index)
+	for id, record := range frozen.Records {
+		record.Inputs = slices.Clone(record.Inputs)
+		record.ContentRoots = maps.Clone(record.ContentRoots)
+		for source, roots := range record.ContentRoots {
+			record.ContentRoots[source] = slices.Clone(roots)
+		}
+		frozen.Records[id] = record
+	}
+	type queryResult struct {
+		admitted          map[manifest.NamedResource]bool
+		owners, ancestors []manifest.NamedResource
+		readers           []manifest.FileReader
+	}
+	ready := make(chan struct{}, 2)
+	start := make(chan struct{})
+	results := make(chan queryResult, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Go(func() {
+			ready <- struct{}{}
+			<-start
+			owners, ancestors := l.Index.OwnersOfFile("target/deleted.yaml")
+			var readers []manifest.FileReader
+			for reader := range l.Index.ReadersOfFile("missing/release.yaml") {
+				readers = append(readers, reader)
+			}
+			results <- queryResult{admitted: map[manifest.NamedResource]bool{peer: l.AdmitsRoot(peer, peerFile), missing: l.AdmitsRoot(missing, missingFile)}, owners: owners, ancestors: ancestors, readers: readers}
+		})
+	}
+	for range 2 {
+		<-ready
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	for result := range results {
+		assert.Diff(t, result.admitted, before)
+		assert.Diff(t, result.owners, []manifest.NamedResource{parent.Named(), peer})
+		assert.Equal(t, len(result.ancestors), 0)
+		assert.Diff(t, result.readers, frozen.Readers["missing"])
+	}
+	if diff := cmp.Diff(frozen, *l.Index, cmpopts.EquateErrors()); diff != "" {
+		t.Fatalf("frozen index changed (-want +got): %s", diff)
 	}
 }
 

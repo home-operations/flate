@@ -44,7 +44,8 @@ type PackageEvidence struct {
 
 // OccurrenceClaims derives claims from mounted source views without admitting document identities.
 func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []Occurrence) []manifest.KSClaim {
-	kss := make([]*manifest.Kustomization, 0, len(occurrences))
+	l.ensureScopes()
+	claims := make([]ownerClaims, 0, len(occurrences))
 	for _, o := range occurrences {
 		if !manifest.KindOf(o.Object).Structural {
 			continue
@@ -55,9 +56,14 @@ func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []Occurrence) []m
 			projected.Name, projected.Namespace = o.Identity.Name, o.Identity.Namespace
 			ks = &projected
 		}
-		kss = append(kss, ks)
+		var claimBuf [1]ownerClaims
+		built := l.documents.buildClaims(repoRoot, []*manifest.Kustomization{ks}, func(id manifest.NamedResource) sourceScope {
+			return l.scopes.sources[l.scopeSource(l.sourceState(id, repoRoot))]
+		}, claimBuf[:0])
+		claims = append(claims, built[0])
 	}
-	return buildClaims(l.Store, repoRoot, l.documents, kss)
+	out, _ := projectClaims(len(claims), func(i int) ownerClaims { return claims[i] })
+	return out
 }
 
 // PathObjects returns live path witnesses, retaining occurrences until construction completes.

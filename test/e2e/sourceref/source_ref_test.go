@@ -112,6 +112,54 @@ data: {value: '${VALUE}'}
 	}
 }
 
+func TestE2E_SourceRef_LastOwnerLocalChart(t *testing.T) {
+	var roots [2]string
+	for i, value := range []string{"before", "after"} {
+		root := t.TempDir()
+		roots[i] = root
+		testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "flux/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: orphan, namespace: apps}
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: charts/demo
+      sourceRef: {kind: GitRepository, name: cluster}
+`)
+		testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+		testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: chart-rendered, namespace: apps}\ndata: {value: "+value+"}\n")
+		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: owned, namespace: apps}\n")
+		if i == 0 {
+			testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+		}
+		out := harness.RunCLIStdout(t, "build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir())
+		if !strings.Contains(out, "name: chart-rendered") || !strings.Contains(out, "value: "+value) {
+			t.Fatalf("full render lost the local chart on %s side:\n%s", value, out)
+		}
+	}
+	for _, tc := range []struct {
+		name, value     string
+		current, before int
+	}{
+		{name: "owner removed", value: "after", current: 1, before: 0},
+		{name: "reversed", value: "before", current: 0, before: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := harness.RunCLIStdout(t, "build", "all", "--path", filepath.Join(roots[tc.current], "flux"), "--path-orig", filepath.Join(roots[tc.before], "flux"), "--concurrency", "2", "--cache-dir", t.TempDir())
+			if !strings.Contains(out, "name: chart-rendered") || !strings.Contains(out, "value: "+tc.value) {
+				t.Fatalf("changed-only render lost the local chart:\n%s", out)
+			}
+			out = harness.RunCLIStdout(t, "diff", "all", "--path", filepath.Join(roots[tc.current], "flux"), "--path-orig", filepath.Join(roots[tc.before], "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "-o", "diff")
+			if !strings.Contains(out, "-  value: "+[]string{"before", "after"}[tc.before]) || !strings.Contains(out, "+  value: "+tc.value) {
+				t.Fatalf("comparison lost one side's local chart:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestE2E_SourceRef_PatchedStubKustomizationKeepsParentPath(t *testing.T) {
 	for _, concurrency := range []string{"2", "8"} {
 		t.Run("concurrency_"+concurrency, func(t *testing.T) {

@@ -28,6 +28,7 @@ type document struct {
 	eligible      fileEligibility
 	rootKnown     bool
 	rootAdmitted  bool
+	terminal      bool
 	lookup        map[manifest.NamedResource]store.Child
 	plugins       *[]pluginInputs
 	loaded        bool
@@ -35,6 +36,8 @@ type document struct {
 	traversed     bool
 	adHoc         bool
 	buildExcluded bool
+	incoming      bool
+	edgesKnown    bool
 	pathState     pathState
 	searched      bool
 }
@@ -57,11 +60,14 @@ const (
 
 // documentReader caches positive and negative results by absolute source-view directory.
 type documentReader struct {
-	cache     map[string]document
-	views     map[string]fs.FS
-	artifacts map[string]*store.SourceArtifact
-	parsed    *ParsedInputs
-	regular   bool
+	cache      map[string]document
+	views      map[string]fs.FS
+	artifacts  map[string]*store.SourceArtifact
+	parsed     *ParsedInputs
+	regular    bool
+	changed    []string
+	bootstrap  string
+	edgesDirty bool
 }
 
 type sourceReader interface {
@@ -91,7 +97,11 @@ func (r *documentReader) mountSources(s sourceReader, candidates ...*manifest.Di
 			}
 		}
 	}
-	mountSource(mounted, s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent))
+	artifact := s.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+	mountSource(mounted, artifact)
+	if bootstrap, ok := artifact.(*store.SourceArtifact); ok {
+		r.bootstrap = bootstrap.LocalPath
+	}
 	return r.setSources(mounted)
 }
 
@@ -120,6 +130,13 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 			}
 		}
 	}
+	if len(changed) != 0 {
+		r.edgesDirty = true
+		for file, doc := range r.cache {
+			doc.incoming, doc.edgesKnown = false, false
+			r.cache[file] = doc
+		}
+	}
 	if len(mounted) != 0 && r.views == nil {
 		r.views = map[string]fs.FS{}
 	}
@@ -137,7 +154,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 	return changed
 }
 
-func (l *Loader) mountSources() {
+func (l *Loader) refreshSources() {
 	l.documents.parsed = nil
 	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets {
 		l.documents.parsed = inputs
@@ -146,21 +163,30 @@ func (l *Loader) mountSources() {
 	if len(changed) == 0 {
 		return
 	}
-	l.resetAdmissions()
-	if l.scopes != nil {
-		sources := l.scopes.sources
-		l.scopes = nil
-		l.ensureScopes()
-		for state, scope := range sources {
-			if state == l.sourceState(state.id, state.repoRoot) {
-				l.scopes.sources[state] = scope
-			}
-		}
-	}
 	for _, root := range changed {
+		if len(l.Index.Records) != 0 {
+			l.documents.changed = appendUniqueProducer(l.documents.changed, root)
+		}
 		if native, ok := l.documents.views[root].(*gittree.FS); ok {
 			l.documents.views[root] = native.OperationView()
 		}
+	}
+	l.resetAdmissions()
+	if l.scopes != nil {
+		previous := l.scopes
+		l.scopes = nil
+		l.ensureScopes()
+		for _, scope := range previous.sources {
+			if scope.sourceState == l.sourceState(scope.id, scope.repoRoot) {
+				l.scopes.sources = append(l.scopes.sources, scope)
+			}
+		}
+	}
+}
+
+func (l *Loader) mountSources() {
+	l.refreshSources()
+	for _, root := range l.documents.changed {
 		for id, r := range l.Index.Files() {
 			if r.Path == root || strings.HasPrefix(r.Path, root+string(filepath.Separator)) {
 				delete(l.Index.Records, id)
@@ -175,6 +201,7 @@ func (l *Loader) mountSources() {
 			}
 		}
 	}
+	l.documents.changed = l.documents.changed[:0]
 }
 
 var errSourceUnavailable = fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)

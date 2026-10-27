@@ -99,6 +99,14 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		d.aliasViews = nil
 	}
 	groups := map[manifest.NamedResource][]manifest.BaseManifest{manifest.BootstrapSourceID: nil}
+	add := func(id manifest.NamedResource, witness manifest.BaseManifest) {
+		if _, seen := groups[id]; !seen {
+			groups[id] = nil
+		}
+		if witness != nil && !slices.Contains(groups[id], witness) {
+			groups[id] = append(groups[id], witness)
+		}
+	}
 	for kind := range manifest.Kinds() {
 		if kind.Group != manifest.SourceDomain {
 			continue
@@ -117,7 +125,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		for _, child := range d.loader.PathObjects() {
 			ref, _, _ := child.Obj.SourcePath()
 			if allowMissing || evidence[ref].Obj != nil || d.cfg.Store.GetObject(ref) != nil {
-				groups[ref] = append(groups[ref], child.Obj)
+				add(ref, child.Obj)
 			}
 		}
 	}
@@ -127,17 +135,26 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 				continue
 			}
 			for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-				_, _, hasPath := obj.SourcePath()
+				var witness manifest.BaseManifest
+				if _, _, hasPath := obj.SourcePath(); hasPath {
+					witness = obj
+				}
 				for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 					if ref.Group != manifest.SourceDomain || ref.Use != "source" && ref.Use != "artifact" {
 						continue
 					}
-					if hasPath {
-						if !slices.Contains(groups[ref.NamedResource], obj) {
-							groups[ref.NamedResource] = append(groups[ref.NamedResource], obj)
-						}
-					} else if _, seen := groups[ref.NamedResource]; !seen {
-						groups[ref.NamedResource] = nil
+					add(ref.NamedResource, witness)
+				}
+			}
+		}
+		if d.loader != nil {
+			for id, record := range d.loader.Index.Files() {
+				if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil || !d.loader.AdmitsRoot(id, record.Path) {
+					continue
+				}
+				for _, ref := range record.Refs {
+					if ref.Group == manifest.SourceDomain {
+						add(ref, nil)
 					}
 				}
 			}

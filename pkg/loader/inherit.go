@@ -10,6 +10,7 @@ import (
 
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
 
+	"github.com/home-operations/flate/internal/claimpath"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -22,7 +23,8 @@ type scopeConstruction struct {
 	records       map[manifest.NamedResource]manifest.DiscoveryRecord
 	candidates    map[manifest.NamedResource]store.Child
 	scanned       map[string]struct{}
-	sources       map[sourceState]sourceScope
+	sources       []sourceScope
+	sourceBuf     [1]sourceScope
 	inputs        []scopeInput
 	complete      bool
 	inactive      bool
@@ -40,9 +42,11 @@ type scopeTraversal struct {
 
 type scopeInput struct {
 	owner     *manifest.Kustomization
-	source    sourceState
+	source    int
 	published bool
 	active    bool
+	ownerClaims
+	derived bool
 }
 
 type scopeContribution struct {
@@ -63,7 +67,9 @@ type sourceState struct {
 }
 
 type sourceScope struct {
+	sourceState
 	root                    string
+	origin                  string
 	pinned, external, ready bool
 }
 
@@ -72,20 +78,100 @@ func (l *Loader) sourceState(id manifest.NamedResource, repoRoot string) sourceS
 	return sourceState{id: id, object: l.Store.GetObject(id), artifact: art, repoRoot: repoRoot}
 }
 
-func (l *Loader) scopeSource(state sourceState) sourceScope {
-	if scope, ok := l.scopes.sources[state]; ok {
-		return scope
+func (l *Loader) scopeSource(state sourceState) int {
+	for i := range l.scopes.sources {
+		if l.scopes.sources[i].sourceState == state {
+			return i
+		}
 	}
 	root, pinned, external := SourceView(l.Store, state.id, state.repoRoot)
-	scope := sourceScope{root: root, pinned: pinned, external: external}
-	l.scopes.sources[state] = scope
-	return scope
+	l.scopes.sources = append(l.scopes.sources, sourceScope{sourceState: state, root: root, pinned: pinned, external: external, origin: l.documents.localBase(root, state.repoRoot)})
+	return len(l.scopes.sources) - 1
 }
 
 func (l *Loader) ensureScopes() {
 	if l.scopes == nil {
-		l.scopes = &scopeConstruction{walks: map[graphContext]scopeTraversal{}, scanned: map[string]struct{}{}, sources: map[sourceState]sourceScope{}, visits: map[string][]graphVisit{}}
+		l.scopes = &scopeConstruction{walks: map[graphContext]scopeTraversal{}, scanned: map[string]struct{}{}, visits: map[string][]graphVisit{}}
+		l.scopes.sources = l.scopes.sourceBuf[:0]
 	}
+}
+
+func (l *Loader) refreshClaims(repoRoot string, kss []store.Child) {
+	l.ensureScopes()
+	if !l.scopesMatch(kss, repoRoot) {
+		l.scopes.complete = false
+		previous := l.scopes.inputs
+		inputs := previous
+		if len(inputs) != len(kss) {
+			inputs = make([]scopeInput, len(kss))
+		} else {
+			for i, child := range kss {
+				if inputs[i].owner.Named() != child.Obj.Named() {
+					inputs = make([]scopeInput, len(kss))
+					break
+				}
+			}
+		}
+		for i, child := range kss {
+			ks := child.Obj.(*manifest.Kustomization)
+			view := l.scopeSource(l.sourceState(ks.SourceID(), repoRoot))
+			published := l.Store.GetObject(ks.Named()) != nil
+			input := scopeInput{owner: ks, source: view, published: published}
+			for len(previous) != 0 && previous[0].owner.Named().Compare(ks.Named()) < 0 {
+				previous = previous[1:]
+			}
+			if len(previous) != 0 && previous[0].owner == ks && previous[0].source == view {
+				input = previous[0]
+				input.published = published
+			}
+			inputs[i] = input
+		}
+		l.scopes.inputs = inputs
+	}
+	for _, input := range l.scopes.inputs {
+		view := &l.scopes.sources[input.source]
+		if !view.external && !view.ready && len(l.scopes.scanned) != 0 {
+			_, view.ready = l.scopes.scanned[filepath.Join(view.root, input.owner.Path)]
+		}
+	}
+	l.scopes.claims, _ = l.claimView(repoRoot, func(input scopeInput) bool {
+		view := l.scopes.sources[input.source]
+		return repoRoot == "" || view.id.Name == "" || view.ready
+	})
+	l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
+	for _, claim := range l.scopes.claims {
+		l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
+	}
+}
+
+func (l *Loader) claimView(repoRoot string, eligible func(scopeInput) bool) ([]manifest.KSClaim, bool) {
+	var pending []*manifest.Kustomization
+	for _, input := range l.scopes.inputs {
+		if !l.scopes.sources[input.source].external && eligible(input) && !input.derived {
+			pending = append(pending, input.owner)
+		}
+	}
+	var claimBuf [16]ownerClaims
+	built := l.documents.buildClaims(repoRoot, pending, func(id manifest.NamedResource) sourceScope {
+		return l.scopes.sources[l.scopeSource(l.sourceState(id, repoRoot))]
+	}, claimBuf[:0])
+	next := 0
+	for i := range l.scopes.inputs {
+		input := &l.scopes.inputs[i]
+		if l.scopes.sources[input.source].external || !eligible(*input) || input.derived {
+			continue
+		}
+		input.ownerClaims = built[next]
+		input.derived = true
+		next++
+	}
+	return projectClaims(len(l.scopes.inputs), func(i int) ownerClaims {
+		input := l.scopes.inputs[i]
+		if l.scopes.sources[input.source].external || !eligible(input) {
+			return ownerClaims{}
+		}
+		return input.ownerClaims
+	})
 }
 
 // Admit resolves scope evidence and publishes independently runnable discovery roots.
@@ -94,58 +180,29 @@ func (l *Loader) Admit(repoRoot string) {
 	l.admit(repoRoot)
 }
 
-func (l *Loader) admit(repoRoot string) []store.Child {
+func (l *Loader) admit(repoRoot string) {
 	l.ensureScopes()
 	kss := l.kustomizations()
 	if l.scopes.complete && l.scopesMatch(kss, repoRoot) {
-		return kss
+		return
 	}
 
 	if repoRoot == "" {
-		var local []*manifest.Kustomization
-		for _, child := range kss {
-			ks := child.Obj.(*manifest.Kustomization)
-			if _, _, external := SourceView(l.Store, ks.SourceID(), repoRoot); !external {
-				local = append(local, ks)
-			}
-		}
-		l.scopes.claims = buildClaims(l.Store, repoRoot, l.documents, local)
+		l.refreshClaims(repoRoot, kss)
 		l.scopes.complete = true
-		return kss
+		return
 	}
 	for {
-		l.scopes.inputs = l.scopes.inputs[:0]
-		var state sourceState
-		for i, child := range kss {
-			ks := child.Obj.(*manifest.Kustomization)
-			ref := ks.SourceID()
-			if i == 0 || ref != state.id {
-				state = l.sourceState(ref, repoRoot)
-			}
-			l.scopes.inputs = append(l.scopes.inputs, scopeInput{owner: ks, source: state, published: l.Store.GetObject(ks.Named()) != nil})
-		}
-		for i, child := range kss {
-			ks := child.Obj.(*manifest.Kustomization)
-			state := l.scopes.inputs[i].source
-			scope := l.scopeSource(state)
-			if !scope.external && !scope.ready && len(l.scopes.scanned) != 0 {
-				target := filepath.Join(scope.root, ks.Path)
-				if _, scanned := l.scopes.scanned[target]; scanned {
-					scope.ready = true
-					l.scopes.sources[state] = scope
-				}
-			}
-		}
+		l.refreshClaims(repoRoot, kss)
 		for file, visits := range l.scopes.visits {
 			clear(visits)
 			l.scopes.visits[file] = visits[:0]
 		}
 		l.scopes.contributions = l.scopes.contributions[:0]
-		var local []*manifest.Kustomization
 		for i, child := range kss {
 			ks := child.Obj.(*manifest.Kustomization)
-			ref := l.scopes.inputs[i].source.id
-			scope := l.scopeSource(l.scopes.inputs[i].source)
+			scope := l.scopes.sources[l.scopes.inputs[i].source]
+			ref := scope.id
 			root, pinned, external := scope.root, scope.pinned, scope.external
 			if ref.Name != "" && !external && !scope.ready {
 				continue
@@ -158,7 +215,6 @@ func (l *Loader) admit(repoRoot string) []store.Child {
 				l.visitScope(v, true)
 				continue
 			}
-			local = append(local, ks)
 			v := graphVisit{root: root, dir: l.documents.claimBase(root, ks.Path),
 				namespace: ks.TargetNamespace, fallback: ks.TargetNamespace, owner: ks.Named(), source: ks.SourceID(), input: i + 1}
 			if v.source.Name == "" || v.source.Kind == "" {
@@ -171,12 +227,11 @@ func (l *Loader) admit(repoRoot string) []store.Child {
 				}
 				v.prefix = filepath.ToSlash(prefix)
 				if !pinned {
-					v.localBase = l.documents.localBase(root, repoRoot)
+					v.localBase = scope.origin
 				}
 			}
 			l.visitScope(v, false)
 		}
-		l.scopes.claims = buildClaims(l.Store, repoRoot, l.documents, local)
 		l.scopes.roots = l.packageRoots(repoRoot, kss)
 		entry := ""
 		if l.entry == entryKustomize {
@@ -194,19 +249,15 @@ func (l *Loader) admit(repoRoot string) []store.Child {
 				l.visitScope(v, false)
 			}
 		}
-		l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
-		for _, claim := range l.scopes.claims {
-			l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
-		}
 		l.resolveEligibility()
 		if !l.projectAuthored(repoRoot) {
 			l.scopes.complete = true
-			return kss
+			return
 		}
 		kss = l.kustomizations()
 		if l.scopesMatch(kss, repoRoot) {
 			l.scopes.complete = true
-			return kss
+			return
 		}
 	}
 }
@@ -255,9 +306,10 @@ func (l *Loader) scopesMatch(kss []store.Child, repoRoot string) bool {
 		if published != input.published {
 			return false
 		}
-		ref := input.source.id
+		view := l.scopes.sources[input.source]
+		ref := view.id
 		if i == 0 || ref != previous {
-			if l.sourceState(ref, repoRoot) != input.source {
+			if l.sourceState(ref, repoRoot) != view.sourceState {
 				return false
 			}
 			previous = ref
@@ -457,12 +509,7 @@ func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[mani
 			if old, ok := l.Index.Lookup(id); ok && old.Path == r.Path && previous.Obj == projected {
 				record.Refs = old.Refs
 			} else {
-				record.Refs = nil
-				for ref := range manifest.References(projected, manifest.ReferenceRelations) {
-					if discoveryReference(ref) {
-						record.Refs = append(record.Refs, ref.NamedResource)
-					}
-				}
+				record.Refs = discoveryReferences(nil, projected)
 			}
 			next[id] = record
 			if manifest.KindOf(projected).Discovery {
@@ -548,19 +595,14 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 
 func (l *Loader) recordNamespaces(r manifest.DiscoveryRecord, forced string) []string {
 	var owners []manifest.NamedResource
-	depth := -1
-	for _, c := range l.scopes.claims {
-		if !strings.HasPrefix(r.File, c.Prefix) {
-			continue
+	for _, group := range claimpath.Groups(l.Index.Claims, r.File) {
+		for _, id := range group {
+			if !l.selfClaim(id, r.Authored) {
+				owners = appendUniqueProducer(owners, id)
+			}
 		}
-		if l.selfClaim(c.ID, r.Authored) {
-			continue
-		}
-		if len(c.Prefix) > depth {
-			owners, depth = nil, len(c.Prefix)
-		}
-		if len(c.Prefix) == depth {
-			owners = appendUniqueProducer(owners, c.ID)
+		if len(owners) != 0 {
+			break
 		}
 	}
 	var namespaces []string
@@ -618,14 +660,15 @@ func (l *Loader) selfClaim(id, authored manifest.NamedResource) bool {
 }
 
 func (l *Loader) terminalInput(file string) bool {
+	if l.scopes == nil {
+		return l.documents.cache[file].terminal
+	}
 	terminal := false
-	if l.scopes != nil {
-		for _, v := range l.scopes.visits[file] {
-			if v.role == kustomizeinput.Resource && v.readable {
-				return false
-			}
-			terminal = terminal || v.role != kustomizeinput.Resource
+	for _, v := range l.scopes.visits[file] {
+		if v.role == kustomizeinput.Resource && v.readable {
+			return false
 		}
+		terminal = terminal || v.role != kustomizeinput.Resource
 	}
 	return terminal
 }
@@ -633,7 +676,7 @@ func (l *Loader) terminalInput(file string) bool {
 func (l *Loader) resetAdmissions() {
 	clear(l.roots)
 	for file, doc := range l.documents.cache {
-		doc.eligible, doc.rootKnown, doc.rootAdmitted = fileUnknown, false, false
+		doc.eligible, doc.rootKnown, doc.rootAdmitted, doc.terminal = fileUnknown, false, false, false
 		l.documents.cache[file] = doc
 	}
 }

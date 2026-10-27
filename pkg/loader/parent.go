@@ -19,31 +19,84 @@ import (
 func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
 	reader := documentReader{cache: map[string]document{}}
 	reader.mountSources(s)
-	return buildClaims(s, repoRoot, reader, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	var claimBuf [16]ownerClaims
+	built := reader.buildClaims(repoRoot, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization), func(id manifest.NamedResource) sourceScope {
+		root, pinned, external := SourceView(s, id, repoRoot)
+		return sourceScope{root: root, pinned: pinned, external: external, origin: reader.localBase(root, repoRoot)}
+	}, claimBuf[:0])
+	claims, _ := projectClaims(len(built), func(i int) ownerClaims { return built[i] })
+	return claims
 }
 
 // Claims reuses discovery's source-view documents while the Loader is mutable.
 func (l *Loader) Claims(repoRoot string) []manifest.KSClaim {
-	l.mountSources()
-	var kss []*manifest.Kustomization
-	for _, child := range l.eligibleKustomizations(l.admit(repoRoot)) {
-		ks := child.Obj.(*manifest.Kustomization)
-		if _, _, external := SourceView(l.Store, ks.SourceID(), repoRoot); !external {
-			kss = append(kss, ks)
-		}
+	l.refreshSources()
+	l.refreshClaims(repoRoot, l.kustomizations())
+	claims, borrowed := l.claimView(repoRoot, func(input scopeInput) bool {
+		r, _ := l.Index.Lookup(input.owner.Named())
+		return l.documents.cache[r.Path].eligible != fileInactive
+	})
+	if borrowed {
+		return slices.Clone(claims)
 	}
-	return buildClaims(l.Store, repoRoot, l.documents, kss)
+	return claims
 }
 
-func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss []*manifest.Kustomization) []manifest.KSClaim {
-	var qualified []*manifest.Kustomization
+type ownerClaims struct {
+	claims, aliases []manifest.KSClaim
+}
+
+// Borrowed projections MUST be cloned before exposing cached input storage.
+func projectClaims(countOwners int, ownerAt func(int) ownerClaims) ([]manifest.KSClaim, bool) {
+	count := 0
+	var first []manifest.KSClaim
+	for i := range countOwners {
+		owner := ownerAt(i)
+		count += len(owner.claims) + len(owner.aliases)
+		if len(first) == 0 {
+			first = owner.claims
+			if len(first) == 0 {
+				first = owner.aliases
+			}
+		}
+	}
+	if count == len(first) {
+		return slices.Clip(first), true
+	}
+	claims := make([]manifest.KSClaim, 0, count)
+	for i := range countOwners {
+		owner := ownerAt(i)
+		claims = append(claims, owner.claims...)
+	}
+	for i := range countOwners {
+		owner := ownerAt(i)
+		claims = append(claims, owner.aliases...)
+	}
+	slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
+	return claims, false
+}
+
+// Owners are distinct and ordered by identity; captured occurrences derive separately.
+func (r documentReader) buildClaims(repoRoot string, kss []*manifest.Kustomization, source func(manifest.NamedResource) sourceScope, out []ownerClaims) []ownerClaims {
+	if cap(out) < len(kss) {
+		out = make([]ownerClaims, len(kss))
+	} else {
+		out = out[:len(kss)]
+		clear(out)
+	}
+	var qualified []struct {
+		ks    *manifest.Kustomization
+		root  string
+		index int
+	}
 	var components map[manifest.NamedResource][]string
 	for i, ks := range kss {
-		root, _, external := SourceView(s, ks.SourceID(), repoRoot)
-		if external {
+		view := source(ks.SourceID())
+		root := view.root
+		if view.external {
 			continue
 		}
-		base := documents.claimBase(root, ks.Path)
+		base := r.claimBase(root, ks.Path)
 		if base != manifest.NormalizeClaimBase(ks.Path) {
 			c := *ks
 			c.Path = base
@@ -54,8 +107,12 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 			kss[i] = ks
 		}
 		if root != "" && root != repoRoot {
-			qualified = append(qualified, ks)
-			if origin := documents.localBase(root, repoRoot); origin != "." {
+			qualified = append(qualified, struct {
+				ks    *manifest.Kustomization
+				root  string
+				index int
+			}{ks, root, i})
+			if origin := view.origin; origin != "." {
 				c := *ks
 				c.Path = filepath.ToSlash(filepath.Join(origin, base))
 				kss[i] = &c
@@ -63,7 +120,7 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 		}
 		if root != "" {
 			var refs []string
-			spec, _ := documents.read(filepath.Join(root, base))
+			spec, _ := r.read(filepath.Join(root, base))
 			for ref := range kustomizeinput.Kustomization(spec) {
 				if ref.Role == kustomizeinput.Component {
 					refs = append(refs, ref.Path)
@@ -78,20 +135,27 @@ func buildClaims(s *store.Store, repoRoot string, documents documentReader, kss 
 		}
 	}
 	claims := manifest.BuildKSClaims(kss, components)
-	for _, ks := range qualified {
-		root, _, _ := SourceView(s, ks.SourceID(), repoRoot)
-		base, err := filepath.Rel(repoRoot, root)
+	slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return a.ID.Compare(b.ID) })
+	next := 0
+	for i, ks := range kss {
+		first := next
+		for next < len(claims) && claims[next].ID == ks.Named() {
+			next++
+		}
+		out[i].claims = claims[first:next:next]
+	}
+	for _, view := range qualified {
+		base, err := filepath.Rel(repoRoot, view.root)
 		if err != nil {
 			continue
 		}
-		for _, c := range manifest.BuildKSClaims([]*manifest.Kustomization{ks}, components) {
-			claims = append(claims, manifest.KSClaim{ID: c.ID, Prefix: filepath.ToSlash(filepath.Join(base, c.Prefix)) + "/"})
+		aliases := manifest.BuildKSClaims([]*manifest.Kustomization{view.ks}, components)
+		for i := range aliases {
+			aliases[i].Prefix = filepath.ToSlash(filepath.Join(base, aliases[i].Prefix)) + "/"
 		}
+		out[view.index].aliases = aliases
 	}
-	if len(qualified) != 0 {
-		slices.SortStableFunc(claims, func(a, b manifest.KSClaim) int { return len(b.Prefix) - len(a.Prefix) })
-	}
-	return claims
+	return out
 }
 
 // Failed resolution retains the lexical claim; reconciliation reports path errors.

@@ -379,6 +379,19 @@ func (tr bucketRoundTrip) RoundTrip(req *http.Request) (*http.Response, error) {
 	return tr(req)
 }
 
+type bucketReadBody struct {
+	io.ReadCloser
+	notify func()
+}
+
+func (b bucketReadBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.notify()
+	}
+	return n, err
+}
+
 func TestWalkBucket_LargeListedSize(t *testing.T) {
 	t.Parallel()
 	const size int64 = (1 << 30) + 1
@@ -544,7 +557,13 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			defer cancelCopy()
 			ctx := t.Context()
 			var cancel context.CancelCauseFunc
+			wantRange := ""
+			wantStatus := http.StatusOK
 			if behavior == "cancel" || behavior == "ignore_cancel" {
+				if behavior == "cancel" {
+					wantRange = fmt.Sprintf("bytes=%d-%d", part, 2*part-1)
+					wantStatus = http.StatusPartialContent
+				}
 				ctx, cancel = context.WithCancelCause(ctx)
 				defer cancel(nil)
 				gate := make(chan struct{})
@@ -554,6 +573,8 @@ func TestWalkBucket_Ranges(t *testing.T) {
 			var gets atomic.Int32
 			later := make(chan struct{})
 			streamed := make(chan struct{})
+			clientRead := make(chan struct{})
+			notifyRead := sync.OnceFunc(func() { close(clientRead) })
 			completeLater := sync.OnceFunc(func() { close(later) })
 			sizes := []int64{0, 2*part + 17, 2*part + 17}
 			fault := 0
@@ -652,10 +673,6 @@ func TestWalkBucket_Ranges(t *testing.T) {
 					return
 				}
 				if i == 1 && (behavior == "ignore_cancel" && r.Header.Get("Range") == "" || behavior == "cancel" && start == part) {
-					wantRange := ""
-					if behavior == "cancel" {
-						wantRange = fmt.Sprintf("bytes=%d-%d", part, 2*part-1)
-					}
 					if got := r.Header.Get("Range"); got != wantRange {
 						t.Errorf("cancel Range=%q, want %q", got, wantRange)
 					}
@@ -665,7 +682,12 @@ func TestWalkBucket_Ranges(t *testing.T) {
 					}
 					w.(http.Flusher).Flush()
 					close(streamed)
-					cancel(context.DeadlineExceeded)
+					select {
+					case <-clientRead:
+						cancel(context.DeadlineExceeded)
+					case <-r.Context().Done():
+						return
+					}
 					<-r.Context().Done()
 					return
 				}
@@ -696,7 +718,18 @@ func TestWalkBucket_Ranges(t *testing.T) {
 				}
 			}))
 			t.Cleanup(srv.Close)
-			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1})
+			opts := &minio.Options{Region: "us-east-1", BucketLookup: minio.BucketLookupPath, MaxRetries: 1}
+			if cancel != nil {
+				transport := srv.Client().Transport
+				opts.Transport = bucketRoundTrip(func(req *http.Request) (*http.Response, error) {
+					resp, err := transport.RoundTrip(req)
+					if err == nil && req.Method == http.MethodGet && req.URL.Path == "/data/prefix/file01" && req.Header.Get("Range") == wantRange && resp.StatusCode == wantStatus {
+						resp.Body = bucketReadBody{ReadCloser: resp.Body, notify: notifyRead}
+					}
+					return resp, err
+				})
+			}
+			client, err := minio.New(strings.TrimPrefix(srv.URL, "http://"), opts)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -780,6 +813,11 @@ func TestWalkBucket_Ranges(t *testing.T) {
 					case <-streamed:
 					default:
 						t.Fatal("canceled before partial stream")
+					}
+					select {
+					case <-clientRead:
+					default:
+						t.Fatal("canceled before client read")
 					}
 				}
 				return

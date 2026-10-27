@@ -226,7 +226,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			tc.edit(&attempt)
 			checkPredecessor := func() {
 				t.Helper()
-				if predecessor.Children[0].Obj != a.Obj || !specValueEqual(predecessor.Manifests[0], a.Doc) || predecessor.Unreadable[0] != a.Obj.Named() {
+				if predecessor.Children[0].Obj != a.Obj || !manifest.ValueEqual(predecessor.Manifests[0], a.Doc) || predecessor.Unreadable[0] != a.Obj.Named() {
 					t.Fatal("captured outer slice changed accepted predecessor")
 				}
 			}
@@ -245,7 +245,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 			if !slices.Equal(accepted.Unreadable, attempt.Unreadable) || accepted.Complete != attempt.Complete || accepted.binding != attempt.binding {
 				t.Fatal("changed emission lost output or completion context")
 			}
-			if !slices.EqualFunc(accepted.Children, attempt.Children, func(a, b Child) bool { return a.Obj == b.Obj }) || !slices.EqualFunc(accepted.Manifests, attempt.Manifests, func(a, b map[string]any) bool { return specValueEqual(a, b) }) {
+			if !slices.EqualFunc(accepted.Children, attempt.Children, func(a, b Child) bool { return a.Obj == b.Obj }) || !slices.EqualFunc(accepted.Manifests, attempt.Manifests, func(a, b map[string]any) bool { return manifest.ValueEqual(a, b) }) {
 				t.Fatal("changed emission lost captured children or documents")
 			}
 			checkPredecessor()
@@ -2363,7 +2363,7 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 		t.Fatalf("equal seed acquired document with %d arrivals", arrivals)
 	}
 	_, _, accepted := s.GetEmission(p)
-	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], foreignDoc) || !specValueEqual(accepted.Manifests[1], doc) {
+	if len(accepted.Manifests) != 2 || !manifest.ValueEqual(accepted.Manifests[0], foreignDoc) || !manifest.ValueEqual(accepted.Manifests[1], doc) {
 		t.Fatal("suppressed arrival lost authoritative document")
 	}
 	if got := s.Productions(obj.Named(), nil); len(got) != 1 || got[0].Owner != p {
@@ -2376,7 +2376,7 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 		t.Fatalf("changed authoritative document arrivals = %d, want 1", arrivals)
 	}
 	_, _, accepted = s.GetEmission(p)
-	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], next) || !specValueEqual(accepted.Manifests[1], foreignDoc) {
+	if len(accepted.Manifests) != 2 || !manifest.ValueEqual(accepted.Manifests[0], next) || !manifest.ValueEqual(accepted.Manifests[1], foreignDoc) {
 		t.Fatalf("partial version update lost cross-group documents: %v", accepted.Manifests)
 	}
 	if got := s.Productions(foreign.Named(), nil); len(got) != 1 || got[0].Owner != p {
@@ -2392,7 +2392,7 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 	}
 	_, retained, attempt := s.GetEmission(obj.Named())
 	defer attempt.Finish()
-	if !specValueEqual(retained, next) {
+	if !manifest.ValueEqual(retained, next) {
 		t.Fatal("suppressed arrival lost updated document metadata")
 	}
 
@@ -3267,7 +3267,7 @@ func TestRecordEmitted_EqualDeclarationRetainsCapture(t *testing.T) {
 	defer stop()
 	equivalent := input.Clone()
 	accept(t, st, parent.Named(), &Emission{Children: []Child{{Obj: equivalent}}, Fingerprint: "parent-B", Complete: true})
-	if !objectEqual(st.GetDeclaration(input.Named()), captured) || arrivals.Load() != 0 {
+	if !manifest.Equal(st.GetDeclaration(input.Named()), captured) || arrivals.Load() != 0 {
 		t.Fatalf("equal publication invalidated capture without arrival: arrivals=%d", arrivals.Load())
 	}
 	inventory.Fingerprint, inventory.Complete = "child-A", true
@@ -3353,7 +3353,7 @@ func TestRecordEmitted_CrossGroupSeedDocumentArrival(t *testing.T) {
 		t.Fatalf("equal seed acquired document with %d arrivals", arrivals)
 	}
 	_, _, accepted := s.GetEmission(p)
-	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], foreignDoc) || !specValueEqual(accepted.Manifests[1], doc) {
+	if len(accepted.Manifests) != 2 || !manifest.ValueEqual(accepted.Manifests[0], foreignDoc) || !manifest.ValueEqual(accepted.Manifests[1], doc) {
 		t.Fatal("suppressed arrival lost authoritative document")
 	}
 	if got := s.Productions(obj.Named(), nil); len(got) != 1 || got[0].Owner != p {
@@ -3366,7 +3366,7 @@ func TestRecordEmitted_CrossGroupSeedDocumentArrival(t *testing.T) {
 		t.Fatalf("changed authoritative document arrivals = %d, want 1", arrivals)
 	}
 	_, _, accepted = s.GetEmission(p)
-	if len(accepted.Manifests) != 2 || !specValueEqual(accepted.Manifests[0], next) || !specValueEqual(accepted.Manifests[1], foreignDoc) {
+	if len(accepted.Manifests) != 2 || !manifest.ValueEqual(accepted.Manifests[0], next) || !manifest.ValueEqual(accepted.Manifests[1], foreignDoc) {
 		t.Fatalf("partial version update lost cross-group documents: %v", accepted.Manifests)
 	}
 	if got := s.Productions(foreign.Named(), nil); len(got) != 1 || got[0].Owner != p {
@@ -3693,7 +3693,7 @@ func TestGetEmission_AuthoritativeDocument(t *testing.T) {
 			}
 			_, retained, attempt := s.GetEmission(raw.Named())
 			attempt.Finish()
-			if !specValueEqual(retained, doc) {
+			if !manifest.ValueEqual(retained, doc) {
 				t.Fatal("equal object-only admission discarded document")
 			}
 			changed := raw.Clone()
@@ -3725,7 +3725,7 @@ func TestGetEmission_AuthoritativeDocument(t *testing.T) {
 			}
 			_, retained, attempt = s.GetEmission(raw.Named())
 			attempt.Finish()
-			if !specValueEqual(retained, replacement) {
+			if !manifest.ValueEqual(retained, replacement) {
 				t.Fatal("explicit document did not replace equal object's authority")
 			}
 			s.AddObject(changed, replacement)
@@ -3768,13 +3768,13 @@ func TestGetEmission_SelectedBinding(t *testing.T) {
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: first, Fingerprint: "changed"}, nil)
 	_, doc, equivalent := s.GetEmission(obj.Named())
 	defer equivalent.Finish()
-	if equivalent.inputHead.binding != first || !specValueEqual(doc, child.Doc) || func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() || s.GetArtifact(obj.Named(), ArtifactContent) != accepted {
+	if equivalent.inputHead.binding != first || !manifest.ValueEqual(doc, child.Doc) || func() bool { output, ok := equivalent.Replay("success"); return !ok || output.Fingerprint != "success" }() || s.GetArtifact(obj.Named(), ArtifactContent) != accepted {
 		t.Fatal("equivalent declaration storage invalidated accepted work")
 	}
 	s.RecordEmitted(parent, &Emission{Children: []Child{child}, Complete: true, binding: second}, nil)
 	_, doc, rebound := s.GetEmission(obj.Named())
 	defer rebound.Finish()
-	if rebound.inputHead.binding != second || !specValueEqual(doc, child.Doc) || rebound.Fingerprint != "" || s.GetArtifact(obj.Named(), ArtifactContent) != nil {
+	if rebound.inputHead.binding != second || !manifest.ValueEqual(doc, child.Doc) || rebound.Fingerprint != "" || s.GetArtifact(obj.Named(), ArtifactContent) != nil {
 		t.Fatal("selected document and binding did not invalidate old replay together")
 	}
 }

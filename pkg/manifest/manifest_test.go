@@ -168,6 +168,11 @@ func TestEqual_Operands(t *testing.T) {
 		{"equal typed content", &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, true},
 		{"changed typed content", &ConfigMap{Name: "app", Data: map[string]any{"key": "value"}}, &ConfigMap{Name: "app", Data: map[string]any{"key": "other"}}, false},
 		{"typed nil and empty", &ConfigMap{Name: "app"}, &ConfigMap{Name: "app", Data: map[string]any{}}, false},
+		{"raw nil interface", nil, (*RawObject)(nil), false},
+		{"raw matching typed nil", (*RawObject)(nil), (*RawObject)(nil), true},
+		{"raw mismatched typed nil", (*RawObject)(nil), (*Kustomization)(nil), false},
+		{"raw nil and present", (*RawObject)(nil), &RawObject{}, false},
+		{"raw mismatched concrete type", &RawObject{Kind: KindConfigMap, Name: "app"}, &ConfigMap{Name: "app"}, false},
 		{"equal raw content", &RawObject{Kind: "Widget", Spec: map[string]any{"items": []any{int64(1)}}}, &RawObject{Kind: "Widget", Spec: map[string]any{"items": []any{int64(1)}}}, true},
 		{"raw nil and empty", &RawObject{Kind: "Widget"}, &RawObject{Kind: "Widget", Spec: map[string]any{}}, false},
 	} {

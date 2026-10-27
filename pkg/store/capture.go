@@ -758,7 +758,7 @@ func (r *ReadSet) Matches(previous *ReadSet) bool {
 		} else if details != nil && details.productions != nil {
 			r.UnsettledProducers(id)
 		}
-		if input.derived&128 != 0 && !slices.EqualFunc(details.objects, r.ListObjects(id.Group, id.Kind), objectEqual) {
+		if input.derived&128 != 0 && !slices.EqualFunc(details.objects, r.ListObjects(id.Group, id.Kind), manifest.Equal) {
 			return false
 		}
 	}

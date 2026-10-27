@@ -92,6 +92,49 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 	assert.Equal(t, objects[0].(*manifest.ResourceSetInputProvider).Labels["selected"], "true")
 }
 
+func TestReadRegistration_RawLabelDocuments(t *testing.T) {
+	t.Parallel()
+	labelDoc := func(value string) map[string]any {
+		return map[string]any{"metadata": map[string]any{"labels": map[string]any{"app": value}}}
+	}
+	for _, tc := range []struct {
+		name         string
+		before, next map[string]any
+		changed      bool
+	}{
+		{"nil to authoritative empty", nil, map[string]any{}, true},
+		{"authoritative empty to nil", map[string]any{}, nil, true},
+		{"nil to matching document", nil, labelDoc("same"), false},
+		{"matching document to nil", labelDoc("same"), nil, false},
+		{"changed document labels", labelDoc("same"), labelDoc("other"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			raw := &manifest.RawObject{Kind: "Widget", APIVersion: "example.test/v1", Name: "app", Namespace: "apps", Spec: labelDoc("same")}
+			s.AddObject(producer)
+			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: raw, Doc: tc.before}}, Complete: true}, nil)
+			id := raw.Named()
+			var reads ReadSet
+			reads.Init(s, ownerID("reader"), nil)
+			defer reads.Retire()
+			assert.Equal(t, len(reads.ListObjects(id.Group, id.Kind)), 1)
+			sh := s.shardFor(id)
+			sh.mu.RLock()
+			before := sh.byName[kindID{id.Group, id.Kind}].generation
+			sh.mu.RUnlock()
+			s.RecordEmitted(producer.Named(), &Emission{Children: []Child{{Obj: raw, Doc: tc.next}}, Complete: true}, nil)
+			sh.mu.RLock()
+			after := sh.byName[kindID{id.Group, id.Kind}].generation
+			sh.mu.RUnlock()
+			assert.Equal(t, after > before, tc.changed)
+			assert.Equal(t, reads.Valid(), !tc.changed)
+			assert.Diff(t, raw.Spec, labelDoc("same"))
+		})
+	}
+}
+
 func TestReadRegistration_CrossShardLostWakeup(t *testing.T) {
 	t.Parallel()
 	for _, payload := range []bool{false, true} {
@@ -836,6 +879,43 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 	replacement.Init(st, ownerID("consumer"), nil)
 	if replacement.Matches(&before) {
 		t.Fatal("a new mutable artifact was inferred equal from its location")
+	}
+}
+
+func TestReadSet_MatchesRawCollection(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		value   string
+		matches bool
+	}{
+		{"equal distinct content", "same", true},
+		{"changed nested content", "changed", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			first := &manifest.RawObject{Kind: "Widget", APIVersion: "example.test/v1", Name: "app", Spec: map[string]any{"items": []any{map[string]any{"value": "same"}}}}
+			second := first.Clone()
+			second.Spec["items"].([]any)[0].(map[string]any)["value"] = tc.value
+			beforeStore, currentStore := New(), New()
+			beforeStore.AddObject(first)
+			currentStore.AddObject(second)
+			var before, current ReadSet
+			before.Init(beforeStore, ownerID("reader"), nil)
+			current.Init(currentStore, ownerID("reader"), nil)
+			defer before.Retire()
+			defer current.Retire()
+			id := first.Named()
+			objects := before.ListObjects(id.Group, id.Kind)
+			assert.Equal(t, len(objects), 1)
+			assert.Equal(t, objects[0], manifest.BaseManifest(first))
+			assert.Equal(t, current.Matches(&before), tc.matches)
+			objects = current.ListObjects(id.Group, id.Kind)
+			assert.Equal(t, len(objects), 1)
+			assert.Equal(t, objects[0], manifest.BaseManifest(second))
+			assert.Equal(t, objects[0] == first, false)
+			assert.Diff(t, first.Spec, map[string]any{"items": []any{map[string]any{"value": "same"}}})
+		})
 	}
 }
 

@@ -12,6 +12,9 @@ type MapLister map[manifest.NamedResource]manifest.BaseManifest
 // GetObject returns the manifest stored under id, or nil if absent.
 func (m MapLister) GetObject(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
 
+// GetDeclaration returns the statically admitted fixture manifest.
+func (m MapLister) GetDeclaration(id manifest.NamedResource) manifest.BaseManifest { return m[id] }
+
 // Objects returns the complete unordered fixture inventory.
 func (m MapLister) Objects() []manifest.BaseManifest {
 	var out []manifest.BaseManifest

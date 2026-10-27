@@ -283,3 +283,58 @@ func TestRefineHistory_PreservesDeclarationEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestRefineHistory_OrderingClosure(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	source := manifest.BootstrapSourceID
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	target := testutil.KustomizationID("apps", "target")
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}}}
+	st.AddObjects([]manifest.BaseManifest{producer, consumer})
+	st.SetArtifact(source, &store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{"app/cm.yaml": {Data: []byte("unchanged")}}})
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		consumer.Named(): {File: "consumer.yaml"},
+		target:           {Productions: []manifest.Production{{Owner: producer.Named()}}},
+	}}
+	f := NewFilter(NewSet([]string{"consumer.yaml"}), index, st, "/repo")
+	historyOwner := testutil.KustomizationID("apps", "history-owner")
+	f.RefineHistory(map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{historyOwner: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+		yield(consumer.Named(), manifest.DiscoveryRecord{Refs: []manifest.NamedResource{source}, ContentRoots: map[manifest.NamedResource][]string{source: {"app"}}})
+	}}, nil)
+	assert.Equal(t, f.index.Records[consumer.Named()].ContentRoots != nil, true)
+	assert.Diff(t, f.index.Records[consumer.Named()].Refs, []manifest.NamedResource{source})
+	assert.Diff(t, f.keep, map[manifest.NamedResource]role{consumer.Named(): primary, target: kept, producer.Named(): kept, source: kept})
+}
+
+func TestAddEmitted_ReplacesHistoricalOrdering(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	emitter := testutil.KustomizationID("apps", "emitter")
+	historyOwner := testutil.KustomizationID("apps", "history-owner")
+	oldTarget := testutil.KustomizationID("apps", "old-target")
+	target := testutil.KustomizationID("apps", "target")
+	oldProducer := testutil.KustomizationID("apps", "old-producer")
+	producer := testutil.KustomizationID("apps", "producer")
+	stale := &manifest.Kustomization{Name: "child", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: oldTarget.Name}}}
+	st.AddObject(stale)
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		emitter:   {File: "emitter.yaml"},
+		target:    {Productions: []manifest.Production{{Owner: producer}}},
+		oldTarget: {Productions: []manifest.Production{{Owner: oldProducer}}},
+	}}
+	f := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	f.RefineHistory(map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{historyOwner: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+		yield(stale.Named(), manifest.DiscoveryRecord{Refs: []manifest.NamedResource{oldTarget}, Productions: []manifest.Production{{Owner: historyOwner}}})
+	}}, nil)
+	assert.Equal(t, f.ShouldReconcile(stale.Named()), false)
+	incoming := stale.Clone()
+	incoming.DependsOn = []kustomizev1.DependencyReference{{Name: target.Name}}
+	var reads store.ReadSet
+	reads.Init(st, emitter, nil)
+	defer reads.Close()
+	f.AddEmitted(emitter, store.Child{Obj: incoming, Productions: []manifest.Production{{Owner: emitter}}}, &reads)
+	assert.Diff(t, f.keep, map[manifest.NamedResource]role{emitter: primary, incoming.Named(): primary, target: kept, producer: kept})
+	assert.Equal(t, st.GetObject(incoming.Named()), manifest.BaseManifest(stale))
+	assert.Equal(t, reads.Valid(), true)
+}

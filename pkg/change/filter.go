@@ -18,6 +18,7 @@ type objectReader interface {
 	Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
 	IncomingProductions(store.Child, *manifest.DiscoveryIndex) []manifest.Production
 	GetObject(manifest.NamedResource) manifest.BaseManifest
+	GetDeclaration(manifest.NamedResource) manifest.BaseManifest
 	GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
 	GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission)
 }
@@ -246,12 +247,26 @@ func (s *selection) productions(id manifest.NamedResource) []manifest.Production
 func (s *selection) deps(obj manifest.BaseManifest, id manifest.NamedResource, reverse bool) iter.Seq[manifest.NamedResource] {
 	return func(yield func(manifest.NamedResource) bool) {
 		r, known := s.filter.index.Lookup(id)
-		if known && r.Refs != nil && (s.child.Obj == nil || s.child.Obj.Named() != id) && (r.ContentRoots != nil || r.File == "" && len(r.Productions) == 0) {
-			slices.Values(r.Refs)(yield)
-		} else if obj != nil {
-			manifest.ContentInputs(obj, reverse)(yield)
+		if known && r.Refs != nil && (s.child.Obj == nil || s.child.Obj.Named() != id) && (r.ContentRoots != nil || r.File == "" && len(r.Productions) == 0) || obj == nil {
+			for _, ref := range r.Refs {
+				if !yield(ref) {
+					return
+				}
+			}
 		} else {
-			slices.Values(r.Refs)(yield)
+			for ref := range manifest.ContentInputs(obj, reverse) {
+				if !yield(ref) {
+					return
+				}
+			}
+		}
+		if reverse {
+			return
+		}
+		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+			if ref.Ordering && (s.read(ref.NamedResource) != absent || !s.filter.index.IsFileIndexed(ref.NamedResource) && s.object(ref.NamedResource) == nil) && !yield(ref.NamedResource) {
+				return
+			}
 		}
 	}
 }
@@ -589,12 +604,14 @@ func (s *selection) walk() {
 		s.states[id] = state
 		record, _ := s.filter.index.Lookup(id)
 		s.add(record.Parent, kept)
-		for dep := range s.deps(s.object(id), id, false) {
+		obj := s.object(id)
+		for dep := range s.deps(obj, id, false) {
 			s.add(dep, kept)
 		}
 		for _, p := range s.productions(id) {
 			owner := p.Materializer(id)
-			if state.role == primary {
+			if state.role == primary || owner == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) && p.Authored != (manifest.NamedResource{}) &&
+				(s.child.Obj == nil || s.child.Obj.Named() != id) && (s.objects == nil || s.objects.GetDeclaration(id) == nil) {
 				owner = p.Owner
 			}
 			s.add(owner, kept)

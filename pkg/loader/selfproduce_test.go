@@ -108,11 +108,17 @@ func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
 		s.AddObject(owner)
 		visit := graphVisit{owner: owner.Named(), namespace: "apps", file: "child.yaml", coordinate: "child.yaml"}
 		visits = append(visits, visit)
-		builder.recordProduced(visit, children, nil)
+		_, err := builder.recordProduced(visit, children, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	if got := testing.AllocsPerRun(100, func() {
 		for _, visit := range visits {
-			builder.recordProduced(visit, children, nil)
+			_, err := builder.recordProduced(visit, children, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	}); got != 0 {
 		t.Fatalf("repeated production capture allocated %v times, want zero", got)
@@ -307,7 +313,7 @@ func TestFinalizeIndex_NonProducerNotAttributed(t *testing.T) {
 	t.Run("nonproducer_allocations", func(t *testing.T) {
 		b := &selfProduceBuilder{}
 		if got := testing.AllocsPerRun(10, func() {
-			b.recordProducer(producerDeclaration{obj: ks}, nil)
+			b.recordProducer(producerDeclaration{obj: ks, identity: ks.Named()}, nil)
 		}); got != 0 {
 			t.Fatalf("nonproducer preparation allocations=%v, want 0", got)
 		}
@@ -695,12 +701,7 @@ func TestFinalizeIndex_RecordsProducers(t *testing.T) {
 	}
 }
 
-// Caveat-as-test: the scan reads the producer's RAW target name; it does not
-// apply a kustomize namePrefix/nameSuffix (the walker ignores those
-// directives), so a prefixed target is recorded — and would be looked up —
-// under the un-prefixed name. Producer-inference then misses the real
-// (prefixed) Secret and the consumer falls back to fail-loud / the flag.
-func TestFinalizeIndex_NamePrefixNotFollowed(t *testing.T) {
+func TestFinalizeIndex_ExplicitProducerTargetName(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
@@ -719,10 +720,9 @@ func TestFinalizeIndex_NamePrefixNotFollowed(t *testing.T) {
 	if declarations := testutil.Declarations(s.Productions(secretID("secure", "app-values"), idx)); len(declarations) == 0 {
 		t.Error("producer not recorded under its raw target name")
 	}
-	// The materialized Secret would be prod-app-values; the scan does NOT
-	// record that — pinning the documented namePrefix coverage gap.
+
 	if declarations := testutil.Declarations(s.Productions(secretID("secure", "prod-app-values"), idx)); len(declarations) > 0 {
-		t.Error("scan unexpectedly followed namePrefix; the caveat test is stale")
+		t.Error("explicit producer target was renamed without a nameReference")
 	}
 }
 
@@ -1198,7 +1198,7 @@ func BenchmarkSelfProduceBuilder_ArtifactJoin(b *testing.B) {
 	for i := range consumers {
 		consumers[i].Obj = &manifest.Kustomization{Namespace: "apps", Name: fmt.Sprintf("consumer-%d", i), SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: fmt.Sprintf("app-%d", i)}}
 	}
-	declaration := producerDeclaration{obj: obj, authored: obj.Named(), visit: graphVisit{source: manifest.BootstrapSourceID, coordinate: "generator.yaml"}}
+	declaration := producerDeclaration{obj: obj, identity: obj.Named(), authored: obj.Named(), visit: graphVisit{source: manifest.BootstrapSourceID, coordinate: "generator.yaml"}}
 	reader := documentReader{cache: map[string]document{"consumers.yaml": {objects: consumers}}}
 	scope := []graphVisit{{file: "consumers.yaml", readable: true}}
 	s := store.New()
@@ -1267,13 +1267,16 @@ func TestFinalizeIndex_ArtifactScopeIsolation(t *testing.T) {
 
 func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"explicit", "deferred", "unadmitted", "projected", "self_owner"} {
+	for _, mode := range []string{"explicit", "deferred", "unadmitted", "projected", "self_owner", "transformed"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			generatorNS, artifactName, namespace := "apps", "app-{app}", ""
-			if mode == "projected" {
+			if mode == "projected" || mode == "transformed" {
 				generatorNS, namespace = "", "namespace: apps\n"
+			}
+			if mode == "transformed" {
+				namespace += "namePrefix: pre-\nnameSuffix: -post\n"
 			}
 			if mode == "self_owner" {
 				generatorNS, artifactName = "authored", "app-api"
@@ -1302,6 +1305,9 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 			generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
 			authored := generator
 			authored.Namespace = generatorNS
+			if mode == "transformed" {
+				generator.Name = "pre-generator-post"
+			}
 			if mode == "projected" || mode == "self_owner" {
 				b.idx.Records[generator] = manifest.DiscoveryRecord{Authored: authored, Path: filepath.Join(root, "generator.yaml"), File: "generator.yaml"}
 			}
@@ -1309,13 +1315,15 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 			var scope []graphVisit
 			var declarations []producerDeclaration
 			if !w.walk(nil, graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID}, func(v graphVisit) bool {
-				v.deferMaterialization = mode != "explicit"
+				v.deferMaterialization = mode != "explicit" && mode != "transformed"
 				if mode == "self_owner" {
 					v.owner = generator
 				}
 				scope = append(scope, v)
 				if v.document == nil && v.readable {
-					declarations = b.recordProduced(v, nil, declarations)
+					var err error
+					declarations, err = b.recordProduced(v, nil, declarations)
+					assert.NoError(t, err)
 				}
 				return true
 			}) {
@@ -1323,7 +1331,7 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 			}
 			b.joinProductions(declarations, scope)
 			want := map[string]int{"app-api": 1, "app-document": 0, "app-hidden": 0}
-			if mode == "explicit" {
+			if mode == "explicit" || mode == "transformed" {
 				want["app-hidden"] = 1
 			}
 			if mode == "unadmitted" {
@@ -1362,5 +1370,34 @@ func TestFinalizeIndex_UntraversedBuilder(t *testing.T) {
 		if indexed != (name == "selected") {
 			t.Fatalf("generator %s indexed = %v", name, indexed)
 		}
+	}
+}
+
+func TestFinalizeIndex_TransformedRunnableIdentity(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "children/kustomization.yaml", "resources: [child.yaml, release.yaml]\nnamePrefix: pre-\nnameSuffix: -post\n")
+	testutil.WriteFile(t, root, "children/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./app\n"))
+	testutil.WriteFile(t, root, "children/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: release, namespace: apps}\nspec: {interval: 1h, chartRef: {kind: OCIRepository, name: chart}}\n")
+	st := store.New()
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./children"}
+	st.AddObject(owner)
+	index := rendererFixture(t, loaderFixture(st, nil), root)
+	for _, authored := range []manifest.NamedResource{testutil.KustomizationID("apps", "child"), testutil.HelmReleaseID("apps", "release")} {
+		id := authored
+		id.Name = "pre-" + authored.Name + "-post"
+		record, known := index.Lookup(id)
+		assert.Equal(t, known, true)
+		assert.Equal(t, record.Authored, authored)
+		assert.Equal(t, record.Path, "")
+		assert.Equal(t, index.IsFileIndexed(id), false)
+		productions := st.Productions(id, index)
+		if len(productions) != 1 {
+			t.Fatalf("productions for %s: %v", id, productions)
+		}
+		assert.Equal(t, productions[0].Owner, owner.Named())
+		assert.Equal(t, productions[0].Authored, authored)
+		assert.Equal(t, productions[0].Materializer(id), owner.Named())
+		assert.Equal(t, st.GetObject(id), nil)
 	}
 }

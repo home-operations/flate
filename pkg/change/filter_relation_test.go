@@ -13,6 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -88,6 +89,7 @@ func TestFilter_ProducedTargetsWithoutObjects(t *testing.T) {
 	for _, tc := range []struct{ kind, edge string }{
 		{manifest.KindConfigMap, "owner"}, {manifest.KindConfigMap, "declaration"},
 		{manifest.KindOCIRepository, "owner"}, {manifest.KindOCIRepository, "declaration"},
+		{manifest.KindOCIRepository, "file"}, {manifest.KindOCIRepository, "file_index_only"}, {manifest.KindOCIRepository, "file_present"}, {manifest.KindOCIRepository, "file_provisional"}, {manifest.KindOCIRepository, "file_external"},
 	} {
 		t.Run(tc.kind+"/"+tc.edge, func(t *testing.T) {
 			t.Parallel()
@@ -103,6 +105,15 @@ func TestFilter_ProducedTargetsWithoutObjects(t *testing.T) {
 			if tc.edge == "declaration" {
 				proof.Owner, proof.Declaration = manifest.NamedResource{}, producer
 			}
+			changes := []string{"generator.env"}
+			if tc.edge == "file" || tc.edge == "file_index_only" || tc.edge == "file_present" || tc.edge == "file_provisional" || tc.edge == "file_external" {
+				proof.File, proof.Path, proof.Authored = "sources/target.yaml", "/repo/sources/target.yaml", target
+				changes = []string{"flux/consumer.yaml"}
+				if tc.edge == "file_external" {
+					proof.Declaration = testutil.KustomizationID("apps", "external-declaration")
+					proof.File = "../external/target.yaml"
+				}
+			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				producer: {File: "flux/producer.yaml"},
 				target:   {Productions: []manifest.Production{proof}},
@@ -110,11 +121,31 @@ func TestFilter_ProducedTargetsWithoutObjects(t *testing.T) {
 			}, Readers: map[string][]manifest.FileReader{"generator.env": {{Reader: producer, Source: manifest.BootstrapSourceID}}}}
 			st := store.New()
 			st.AddObject(obj)
-			f := NewFilter(NewSet([]string{"generator.env"}), index, st, "/repo")
+			if tc.edge == "file_present" || tc.edge == "file_provisional" {
+				st.AddObject(&manifest.OCIRepository{Name: target.Name, Namespace: target.Namespace})
+			}
+			if tc.edge == "file_provisional" {
+				st.SetDiscoveryIndex(index)
+				assert.Equal(t, st.GetDeclaration(target), nil)
+			}
+			var inventory objects = st
+			if tc.edge == "file_index_only" {
+				inventory = nil
+			}
+			f := NewFilter(NewSet(changes), index, inventory, "/repo")
 			want := []string{producer.String(), target.String(), consumer.String()}
+			if tc.edge == "file_present" {
+				want = []string{target.String(), consumer.String()}
+			}
+			if tc.edge == "file_external" {
+				want = []string{target.String(), consumer.String(), proof.Declaration.String()}
+			}
 			slices.Sort(want)
 			assert.Diff(t, f.KeepNames(), want)
-			assert.Equal(t, st.GetObject(target) == nil, true)
+			assert.Equal(t, st.GetObject(target) == nil, tc.edge != "file_present" && tc.edge != "file_provisional")
+			if tc.edge == "file" || tc.edge == "file_provisional" || tc.edge == "file_index_only" {
+				assert.Diff(t, f.keep, map[manifest.NamedResource]role{consumer: primary, target: kept, producer: kept})
+			}
 		})
 	}
 }
@@ -822,4 +853,157 @@ func TestAddEmitted_RetainedInputsRemainUnconsumed(t *testing.T) {
 	st.RecordEmitted(producer.Named(), &next, nil)
 	assert.Equal(t, reads.Valid(), true)
 	assert.Equal(t, reads.GetObject(target.Named()), manifest.BaseManifest(target))
+}
+
+func TestFilter_ProducedOrderingTarget(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"kustomization", "helmrelease", "emitted"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+			ancestor := testutil.KustomizationID("apps", "ancestor")
+			declaration := testutil.KustomizationID("apps", "raw")
+			target := testutil.KustomizationID("apps", "generated-raw")
+			var consumer manifest.BaseManifest = &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}}}
+			if mode == "helmrelease" {
+				target = testutil.HelmReleaseID("apps", "generated-raw")
+				consumer = &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name}}}
+			}
+			sibling := testutil.KustomizationID("apps", "sibling")
+			emitter := testutil.KustomizationID("apps", "emitter")
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				consumer.Named(): {File: "consumer.yaml"},
+				emitter:          {File: "emitter.yaml"},
+				producer.Named(): {File: "producer.yaml", Parent: ancestor},
+				target:           {Productions: []manifest.Production{{Owner: producer.Named(), Declaration: declaration, Authored: declaration}}},
+				sibling:          {Productions: []manifest.Production{{Owner: producer.Named()}}},
+			}}
+			st := store.New()
+			st.AddObject(producer)
+			changed := "consumer.yaml"
+			if mode == "emitted" {
+				changed = "emitter.yaml"
+			} else {
+				st.AddObject(consumer)
+			}
+			f := NewFilter(NewSet([]string{changed}), index, st, "/repo")
+			want := map[manifest.NamedResource]role{consumer.Named(): primary, target: kept, producer.Named(): kept, declaration: kept, ancestor: kept}
+			if mode == "emitted" {
+				assert.Equal(t, f.ShouldReconcile(consumer.Named()), false)
+				var reads store.ReadSet
+				reads.Init(st, emitter, nil)
+				defer reads.Close()
+				added := f.AddEmitted(emitter, store.Child{Obj: consumer}, &reads)
+				assert.Equal(t, slices.IsSortedFunc(added, manifest.NamedResource.Compare), true)
+				assert.Equal(t, len(added), len(want))
+				assert.Equal(t, reads.Valid(), true)
+				want[emitter] = primary
+			}
+			assert.Diff(t, f.keep, want)
+			assert.Equal(t, f.ShouldReconcile(sibling), false)
+			assert.Equal(t, st.GetObject(target), nil)
+		})
+	}
+}
+
+func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
+	t.Parallel()
+	emitter := testutil.KustomizationID("apps", "emitter")
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	target := &manifest.Kustomization{Name: "target", Namespace: "apps"}
+	child := &manifest.Kustomization{Name: "child", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}}}
+	st := store.New()
+	st.AddObject(producer)
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		emitter:        {File: "emitter.yaml"},
+		target.Named(): {Productions: []manifest.Production{{Owner: producer.Named()}}},
+	}}
+	f := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	var reads store.ReadSet
+	reads.Init(st, emitter, nil)
+	defer reads.Close()
+	assert.Equal(t, reads.GetObject(target.Named()), nil)
+	assert.Equal(t, reads.Valid(), true)
+	st.AddObject(target)
+	assert.Equal(t, reads.GetObject(target.Named()), nil)
+	f.AddEmitted(emitter, store.Child{Obj: child}, &reads)
+	assert.Diff(t, f.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary, target.Named(): kept, producer.Named(): kept})
+	assert.Equal(t, reads.Valid(), false)
+
+	fresh := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	var current store.ReadSet
+	current.Init(st, emitter, nil)
+	defer current.Close()
+	fresh.AddEmitted(emitter, store.Child{Obj: child}, &current)
+	assert.Diff(t, fresh.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary})
+	assert.Equal(t, current.Valid(), true)
+}
+
+func TestAddEmitted_CapturedUnpublishedDeclaration(t *testing.T) {
+	t.Parallel()
+	emitter := testutil.KustomizationID("apps", "emitter")
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	target := &manifest.GitRepository{Name: "input", Namespace: "apps"}
+	child := &manifest.Kustomization{Name: "child", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: target.Name}}
+	proof := manifest.Production{Owner: producer.Named(), Authored: target.Named(), Path: "/repo/input.yaml", File: "input.yaml", Source: manifest.BootstrapSourceID}
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		emitter:        {File: "emitter.yaml"},
+		target.Named(): {Productions: []manifest.Production{proof}},
+	}}
+	st := store.New()
+	st.AddObjects([]manifest.BaseManifest{producer, target})
+	st.SetDiscoveryIndex(index)
+	f := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	var reads store.ReadSet
+	reads.Init(st, emitter, nil)
+	defer reads.Close()
+	assert.Equal(t, reads.GetObject(target.Named()), manifest.BaseManifest(target))
+	assert.Equal(t, reads.GetDeclaration(target.Named()), nil)
+	reads.Productions(target.Named(), index)
+	assert.Equal(t, reads.Valid(), true)
+	st.RecordEmitted(producer.Named(), &store.Emission{Children: []store.Child{{Obj: target, Productions: []manifest.Production{proof}}}, Complete: true}, nil)
+	assert.Equal(t, st.GetDeclaration(target.Named()), manifest.BaseManifest(target))
+	f.AddEmitted(emitter, store.Child{Obj: child}, &reads)
+	assert.Diff(t, f.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary, target.Named(): kept, producer.Named(): kept})
+	assert.Equal(t, reads.Valid(), false)
+
+	fresh := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	fresh.AddEmitted(emitter, store.Child{Obj: child}, st)
+	assert.Diff(t, fresh.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary, target.Named(): kept})
+}
+
+func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
+	t.Parallel()
+	target := &manifest.Kustomization{Name: "target", Namespace: "apps"}
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}}}
+	st := store.New()
+	st.AddObject(target)
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target.Named(): {File: "target.yaml"}}}
+	f := NewFilter(NewSet([]string{"target.yaml"}), index, st, "/repo")
+	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), store.Child{Obj: consumer}, st)
+	assert.Diff(t, f.keep, map[manifest.NamedResource]role{target.Named(): primary})
+}
+
+func TestAddEmitted_DoesNotReadIncomingDeclaration(t *testing.T) {
+	t.Parallel()
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps"}
+	target := &manifest.GitRepository{Name: "input", Namespace: "apps"}
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: target.Name}}
+	proof := manifest.Production{Owner: producer.Named(), Authored: target.Named(), Path: "/repo/input.yaml", File: "input.yaml", Source: manifest.BootstrapSourceID}
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		consumer.Named(): {File: "consumer.yaml"},
+		target.Named():   {Productions: []manifest.Production{proof}},
+	}}
+	st := store.New()
+	st.AddObjects([]manifest.BaseManifest{producer, consumer})
+	f := NewFilter(NewSet([]string{"consumer.yaml"}), index, st, "/repo")
+	assert.Equal(t, f.keep[target.Named()], kept)
+	var reads store.ReadSet
+	reads.Init(st, producer.Named(), nil)
+	defer reads.Close()
+	child := store.Child{Obj: target, Productions: []manifest.Production{proof}}
+	f.AddEmitted(producer.Named(), child, &reads)
+	assert.Equal(t, reads.Valid(), true)
+	st.RecordEmitted(producer.Named(), &store.Emission{Children: []store.Child{child}, Complete: true}, nil)
+	assert.Equal(t, reads.Valid(), true)
 }

@@ -229,3 +229,97 @@ func TestE2E_ReadyExpr_EmittedIndexed(t *testing.T) {
 		})
 	}
 }
+
+func TestE2E_DependsOnProducedSource(t *testing.T) {
+	for _, name := range []string{"interval", "substitution"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			consumer := testutil.KustomizationYAML("consumer", "apps", "  interval: 1h\n  path: ./app\n  sourceRef: {kind: GitRepository, name: input}\n  postBuild: {substitute: {VALUE: before}}\n")
+			testutil.WriteFile(t, root, "flux/consumer.yaml", consumer)
+			testutil.WriteFile(t, root, "flux/producer.yaml", testutil.KustomizationYAML("producer", "apps", "  path: ./producer\n"))
+			testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [dependency.yaml]\n")
+			input := t.TempDir()
+			testutil.WriteFile(t, input, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, input, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output}\ndata: {value: '${VALUE}'}\n")
+			inputRepo := testutil.GitInit(t, input)
+			testutil.GitCommitAll(t, inputRepo, "input", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.WriteFile(t, root, "producer/dependency.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: input, namespace: apps}\nspec: {interval: 1h, url: 'file://"+filepath.ToSlash(input)+"'}\n")
+			testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n"))
+			testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-output}\n")
+			verifyProducedDependencyEdit(t, root, name == "interval")
+		})
+	}
+}
+
+func TestE2E_DependsOnProducedTarget(t *testing.T) {
+	for _, name := range []string{"interval", "substitution"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  interval: 1h\n  path: ./app\n  dependsOn: [{name: generated-raw-done}]\n  postBuild: {substitute: {VALUE: before}}\n"))
+			testutil.WriteFile(t, root, "flux/producer.yaml", testutil.KustomizationYAML("producer", "apps", "  path: ./producer\n"))
+			testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [dependency.yaml]\nnamePrefix: generated-\nnameSuffix: -done\n")
+			testutil.WriteFile(t, root, "producer/dependency.yaml", testutil.KustomizationYAML("raw", "apps", "  path: ./dependency\n"))
+			testutil.WriteFile(t, root, "dependency/kustomization.yaml", "resources: []\n")
+			testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output}\ndata: {value: '${VALUE}'}\n")
+			testutil.WriteFile(t, root, "flux/unrelated.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n"))
+			testutil.WriteFile(t, root, "unrelated/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "unrelated/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-output}\n")
+			verifyProducedDependencyEdit(t, root, name == "interval")
+		})
+	}
+}
+
+func verifyProducedDependencyEdit(t *testing.T, root string, intervalOnly bool) {
+	t.Helper()
+	oldValue, newValue := "VALUE: before", "VALUE: after"
+	if intervalOnly {
+		oldValue, newValue = "interval: 1h", "interval: 2h"
+	}
+	repo := testutil.GitInit(t, root)
+	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+	args := []string{"build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress"}
+	before, _ := harness.RequireCLIOK(t, args...)
+	harness.MutateFile(t, filepath.Join(root, "flux/consumer.yaml"), oldValue, newValue)
+	after, _ := harness.RequireCLIOK(t, args...)
+	if !strings.Contains(before, "value: before") || !strings.Contains(before, "unrelated-output") || !strings.Contains(after, "unrelated-output") {
+		t.Fatalf("full-render controls missing output: before=%s after=%s", before, after)
+	}
+	if intervalOnly && before != after || !intervalOnly && !strings.Contains(after, "value: after") {
+		t.Fatalf("full-render edit: before=%s after=%s", before, after)
+	}
+	for _, mode := range []string{"build", "diff"} {
+		t.Run(mode, func(t *testing.T) {
+			changedArgs := append([]string{mode}, args[1:]...)
+			changedArgs = append(changedArgs, "--base", "HEAD")
+			if mode == "diff" {
+				changedArgs = append(changedArgs, "-o", "diff")
+			}
+			var previous string
+			for run := range 2 {
+				stdout, _ := harness.RequireCLIOK(t, changedArgs...)
+				if strings.Contains(stdout, "unrelated-output") {
+					t.Fatalf("unrelated sibling selected: %s", stdout)
+				}
+				if mode == "diff" && intervalOnly {
+					if stdout != "" {
+						t.Fatalf("interval edit changed rendered output: %s", stdout)
+					}
+				} else {
+					value := "before"
+					if !intervalOnly {
+						value = "after"
+					}
+					if !strings.Contains(stdout, "value: "+value) || mode == "diff" && !strings.Contains(stdout, "value: before") {
+						t.Fatalf("selected consumer or diff side missing: %s", stdout)
+					}
+				}
+				if run == 1 && stdout != previous {
+					t.Fatalf("output differs between runs: first=%s second=%s", previous, stdout)
+				}
+				previous = stdout
+			}
+		})
+	}
+}

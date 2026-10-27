@@ -15,6 +15,7 @@ import (
 )
 
 type orchestratorExistence struct {
+	*manifest.DiscoveryIndex
 	o *Orchestrator
 }
 
@@ -53,19 +54,6 @@ func (e *orchestratorExistence) admit(child store.Child, reads *store.ReadSet) b
 	return e.o.ksc.KeepEmitted(manifest.NamedResource{}, child, reads)
 }
 
-func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
-	if r, ok := e.o.index.Lookup(id); ok && r.Path != "" {
-		return true
-	}
-	if id.Namespace == "" {
-		return false
-	}
-	// Discovery retains bare identities until parsing applies the parent namespace.
-	id.Namespace = ""
-	r, ok := e.o.index.Lookup(id)
-	return ok && r.Path != ""
-}
-
 func (o *Orchestrator) run(ctx context.Context) error {
 	o.configureControllers()
 	// Cycle failures MUST publish before scheduler admission of emitted objects.
@@ -86,17 +74,7 @@ func (o *Orchestrator) configureControllers() {
 		Filter:              o.filter,
 		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
 	}, o.cfg.SourceRetry)
-	// existence bundles the file-existence lookups depwait needs:
-	// Promote lazy-loads a file-indexed dep into the Store the
-	// moment a depwait edge asks for it (covering the bjw-s parent-
-	// patches pattern where a KS's substituteFrom CM lives inside
-	// the same KS's spec.path); IsFileIndexed distinguishes
-	// "render-only dep still in flight" (no file record → wait on
-	// the per-dep ctx) from "file-indexed but promote failed" (file
-	// record → fail fast). The orchestrator owns both signals; the
-	// controllers and Waiter consume them via the single
-	// depwait.ExistenceLookup interface.
-	existence := &orchestratorExistence{o: o}
+	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
 		SubstituteFrom:          o.substitutionSources,
 		SkipKinds:               o.cfg.HelmOptions.SkipResourceKinds(),

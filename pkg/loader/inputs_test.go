@@ -640,7 +640,7 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			root := t.TempDir()
 			local := filepath.Join(root, ".artifacts", mode)
 			input := fstest.MapFS{
-				"entry/nested/kustomization.yaml": {Data: []byte("resources: [../../shared]\n")},
+				"entry/nested/kustomization.yaml": {Data: []byte("namePrefix: pre-\nnameSuffix: -post\nresources: [../../shared]\n")},
 				"shared/kustomization.yaml":       {Data: []byte("resources: [resource.yaml]\npatches: [{path: ../inputs/patch}]\n")},
 				"shared/resource.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: mounted}\n")},
 			}
@@ -665,7 +665,7 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			assert.NoError(t, err)
 			occurrences, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
 			assert.NoError(t, err)
-			if len(occurrences) != 1 || occurrences[0].Identity.Name != "mounted" || occurrences[0].Identity.Namespace != "projected" {
+			if len(occurrences) != 1 || occurrences[0].Identity.Name != "pre-mounted-post" || occurrences[0].Identity.Namespace != "projected" {
 				t.Fatalf("source-view occurrence projection: %+v", occurrences)
 			}
 			wantSource, wantFile := local, "shared/resource.yaml"
@@ -674,6 +674,13 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			}
 			assert.Diff(t, occurrences[0].Declaration, OccurrenceID{Source: wantSource, File: wantFile, Document: 0})
 			assert.Equal(t, occurrences[0].Object.Named().Namespace, "")
+			assert.Equal(t, occurrences[0].Object.Named().Name, "mounted")
+			repeated, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
+			assert.NoError(t, err)
+			assert.Equal(t, slices.Equal(repeated, occurrences), true)
+			assert.Equal(t, len(l.scopes.projections), 1)
+			repeated[0].Declaration.File = "caller-owned"
+			assert.Equal(t, occurrences[0].Declaration.File, wantFile)
 		})
 	}
 }

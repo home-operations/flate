@@ -98,35 +98,44 @@ func TestPackageRoots_EdgeFactLifetime(t *testing.T) {
 }
 
 func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
-	s := store.New()
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	builder := selfProduceBuilder{idx: index, store: s, emittedFiles: map[string][]manifest.NamedResource{}}
-	obj := &manifest.Kustomization{Name: "child", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "input"}}
-	children := []parsedObject{{Obj: obj}}
-	var visits []graphVisit
-	for _, name := range []string{"a", "z"} {
-		owner := &manifest.Kustomization{Name: name, Namespace: "apps"}
-		s.AddObject(owner)
-		visit := graphVisit{owner: owner.Named(), namespace: "apps", file: "child.yaml", coordinate: "child.yaml"}
-		visits = append(visits, visit)
-		_, err := builder.recordProduced(visit, children, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := testing.AllocsPerRun(100, func() {
-		for _, visit := range visits {
-			_, err := builder.recordProduced(visit, children, nil)
-			if err != nil {
-				t.Fatal(err)
+	for _, prefix := range []string{"", "pre-"} {
+		t.Run("prefix="+prefix, func(t *testing.T) {
+			s := store.New()
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+			builder := selfProduceBuilder{idx: index, store: s, emittedFiles: map[string][]manifest.NamedResource{}}
+			l := New(s)
+			obj := &manifest.Kustomization{Name: "child", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "input"}}
+			children := []parsedObject{{Obj: obj, version: manifest.FluxKustomizeDomain + "/v1"}}
+			var visits []graphVisit
+			for _, name := range []string{"a", "z"} {
+				owner := &manifest.Kustomization{Name: name, Namespace: "apps"}
+				s.AddObject(owner)
+				visit := graphVisit{namePrefix: prefix, owner: owner.Named(), namespace: "apps", file: "child.yaml", coordinate: "child.yaml"}
+				visits = append(visits, visit)
+				_, err := builder.recordProduced(visit, children, nil, l)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-	}); got != 0 {
-		t.Fatalf("repeated production capture allocated %v times, want zero", got)
+			if got := testing.AllocsPerRun(100, func() {
+				for _, visit := range visits {
+					_, err := builder.recordProduced(visit, children, nil, l)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+			}); got != 0 {
+				t.Fatalf("repeated production capture allocated %v times, want zero", got)
+			}
+			id := manifest.Resolve(obj.Named(), "apps", "")
+			id.Name = prefix + id.Name
+			if prefix != "" {
+				assert.Equal(t, len(l.scopes.projections), 1)
+			}
+			assert.Diff(t, index.Records[id].Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}})
+			assert.Equal(t, len(index.Records[id].Productions), 2)
+		})
 	}
-	id := manifest.Resolve(obj.Named(), "apps", "")
-	assert.Diff(t, index.Records[id].Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}})
-	assert.Equal(t, len(index.Records[id].Productions), 2)
 }
 
 func TestFinalizeIndex_EmptyPathRequiresSource(t *testing.T) {
@@ -1283,6 +1292,7 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 			if mode == "projected" || mode == "self_owner" {
 				b.idx.Records[generator] = manifest.DiscoveryRecord{Authored: authored, Path: filepath.Join(root, "generator.yaml"), File: "generator.yaml"}
 			}
+			l := New(st)
 			w := traversal{documents: reader, visited: map[graphContext]struct{}{}}
 			var scope []graphVisit
 			var declarations []producerDeclaration
@@ -1294,7 +1304,7 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 				scope = append(scope, v)
 				if v.document == nil && v.readable {
 					var err error
-					declarations, err = b.recordProduced(v, nil, declarations)
+					declarations, err = b.recordProduced(v, nil, declarations, l)
 					assert.NoError(t, err)
 				}
 				return true

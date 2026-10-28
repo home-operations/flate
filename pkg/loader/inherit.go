@@ -19,6 +19,7 @@ import (
 // scopeConstruction is confined to sequential discovery. Physical walks are
 // shared by equal contexts; each owner retains its own visits and claims.
 type scopeConstruction struct {
+	projections   map[identityProjection]manifest.NamedResource
 	walks         map[graphContext]scopeTraversal
 	records       map[manifest.NamedResource]manifest.DiscoveryRecord
 	candidates    map[manifest.NamedResource]store.Child

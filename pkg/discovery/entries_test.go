@@ -3,7 +3,9 @@ package discovery
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -210,5 +212,71 @@ func TestPlan_AdmittedSourceViews(t *testing.T) {
 				t.Fatalf("equal coordinate borrowed another admitted view: %+v", independent)
 			}
 		})
+	}
+}
+
+func TestEntryRoots_LiveEligibility(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
+	testutil.WriteFile(t, root, "apps/disabled.yaml", testutil.KustomizationYAML("disabled", "apps", "  path: ./target\n"))
+	for _, dir := range []string{"warm", "target"} {
+		resources := "release.yaml"
+		if dir == "target" {
+			resources += ", source.yaml"
+		}
+		testutil.WriteFile(t, root, dir+"/kustomization.yaml", "namePrefix: pre-\nnameSuffix: -post\nresources: ["+resources+"]\n")
+		testutil.WriteFile(t, root, dir+"/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: release, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: chart}}\n")
+	}
+	testutil.WriteFile(t, root, "target/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: source, namespace: apps}\nspec: {url: https://fixture.invalid/unused}\n")
+	st := store.New()
+	input := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	l := loader.New(st)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	l.Admit(root)
+	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	_, indexed := l.Index.Lookup(source)
+	assert.Equal(t, indexed, true)
+	assert.Equal(t, st.GetObject(source), nil)
+	d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st}, loader: l}
+	before, err := d.entryRoots(t.Context())
+	assert.NoError(t, err)
+	var paths []string
+	for _, r := range before {
+		paths = append(paths, r.Path)
+	}
+	assert.Diff(t, paths, []string{"warm"})
+	owner := reflect.ValueOf(l).Elem().FieldByName("scopes")
+	ownerID := owner.Pointer()
+	memo := owner.Elem().FieldByName("projections")
+	assert.Equal(t, memo.Len(), 1)
+	keys := memo.MapKeys()
+	st.AddObject(&manifest.Kustomization{Name: "disabled", Namespace: "apps", Path: "./target"})
+	l.Admit(root)
+	for range 2 {
+		after, err := d.entryRoots(t.Context())
+		assert.NoError(t, err)
+		paths = nil
+		for _, r := range after {
+			paths = append(paths, r.Path)
+			if r.Path == "target" && !slices.ContainsFunc(r.Occurrences, func(o loader.Occurrence) bool {
+				return o.Authored == source && o.Identity.Name == "pre-source-post" && o.Declaration.File == "target/source.yaml"
+			}) {
+				t.Fatal("late eligibility did not admit the indexed source occurrence")
+			}
+		}
+		assert.Diff(t, paths, []string{"target", "warm"})
+		current := reflect.ValueOf(l).Elem().FieldByName("scopes")
+		assert.Equal(t, current.Pointer(), ownerID)
+		assert.Equal(t, current.Elem().FieldByName("projections").Len(), 2)
+		for _, key := range keys {
+			if !current.Elem().FieldByName("projections").MapIndex(key).IsValid() {
+				t.Fatal("eligibility change discarded a warm projection input")
+			}
+		}
+		assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent), store.Artifact(input))
 	}
 }

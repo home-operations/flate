@@ -319,3 +319,45 @@ func synthDeepComponents(b *testing.B, root string, depth int) {
 			"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cm-%d\n  namespace: flux-system\ndata:\n  k: v\n", i))
 	}
 }
+
+func BenchmarkProjectIdentity(b *testing.B) {
+	for _, tc := range []struct {
+		name     string
+		view     graphVisit
+		object   manifest.RawObject
+		distinct bool
+	}{
+		{name: "untransformed", object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}},
+		{name: "namespace", view: graphVisit{namespace: "apps"}, object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}},
+		{name: "warm transformed", view: graphVisit{namespace: "apps", namePrefix: "pre-", nameSuffix: "-post"}, object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}},
+		{name: "warm Namespace", view: graphVisit{namespace: "apps"}, object: manifest.RawObject{APIVersion: "v1", Kind: "Namespace", Name: "_"}},
+		{name: "distinct transformed", view: graphVisit{namespace: "apps", namePrefix: "pre-", nameSuffix: "-post"}, object: manifest.RawObject{APIVersion: "v1", Kind: "ConfigMap", Name: "values"}, distinct: true},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			objects := []manifest.RawObject{tc.object}
+			if tc.distinct {
+				objects = make([]manifest.RawObject, 16)
+				for i := range objects {
+					objects[i] = tc.object
+					objects[i].Name = fmt.Sprintf("values-%d", i)
+				}
+			}
+			l := &Loader{}
+			if _, err := l.projectIdentity(&objects[0], tc.view, tc.object.APIVersion); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if tc.distinct {
+					l = &Loader{}
+				}
+				for i := range objects {
+					if _, err := l.projectIdentity(&objects[i], tc.view, tc.object.APIVersion); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+			b.ReportMetric(float64(len(objects)), "projections/op")
+		})
+	}
+}

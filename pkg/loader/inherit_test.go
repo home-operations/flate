@@ -1255,3 +1255,43 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 		t.Fatal("inactive declaration lost evidence or became runnable")
 	}
 }
+
+func TestAdmit_ProjectionLifetime(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "namePrefix: pre-\nnameSuffix: -post\nresources: [object.yaml]\n")
+	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: before}\n")
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
+	l := New(st)
+	l.SourceRoot = root
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	before, err := l.Occurrences(t.Context(), root, "")
+	assert.NoError(t, err)
+	assert.Equal(t, len(before), 1)
+	assert.Equal(t, before[0].Identity.Name, "pre-before-post")
+	old := l.scopes
+	assert.Equal(t, len(old.projections), 1)
+	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
+	l.mountSources()
+	if l.scopes == old || l.scopes == nil || l.scopes.projections != nil {
+		t.Fatal("mounted replacement retained the old projection memo")
+	}
+	_, err = l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	after, err := l.Occurrences(t.Context(), root, "")
+	assert.NoError(t, err)
+	assert.Equal(t, len(after), 1)
+	assert.Equal(t, after[0].Identity.Name, "pre-after-post")
+	assert.Equal(t, len(l.scopes.projections), 1)
+	for key := range old.projections {
+		if _, retained := l.scopes.projections[key]; retained {
+			t.Fatal("replacement reused an old projection input")
+		}
+	}
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.Equal(t, l.scopes, nil)
+	assert.Equal(t, before[0].Object.Named().Name, "before")
+}

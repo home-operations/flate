@@ -61,7 +61,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		}
 		if v.readable {
 			var err error
-			declarations, err = b.recordProduced(v, l.documents.cache[v.file].objects, declarations)
+			declarations, err = b.recordProduced(v, l.documents.cache[v.file].objects, declarations, l)
 			return err
 		}
 		return nil
@@ -403,7 +403,7 @@ type selfProduceBuilder struct {
 	err          error
 }
 
-func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject, declarations []producerDeclaration) ([]producerDeclaration, error) {
+func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject, declarations []producerDeclaration, l *Loader) ([]producerDeclaration, error) {
 	coordinate := cmp.Or(v.localCoordinate(), v.coordinate)
 	var projectionErr error
 	record := func(child store.Child, version string) {
@@ -419,7 +419,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 		if owner, _ := b.idx.Lookup(v.owner); v.owner == obj.Named() || owner.Authored == obj.Named() {
 			id = v.owner
 		} else if info.Runnable && (v.namePrefix != "" || v.nameSuffix != "") {
-			id, projectionErr = projectIdentity(obj, v, version)
+			id, projectionErr = l.projectIdentity(obj, v, version)
 			if projectionErr != nil {
 				return
 			}

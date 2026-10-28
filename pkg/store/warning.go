@@ -3,12 +3,11 @@ package store
 import (
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// AddWarning retains each complete advisory payload once.
+// AddWarning retains each complete direct warning payload once, ignoring incoming Count.
 func (s *Store) AddWarning(w manifest.Warning) {
 	detail := ""
 	if len(w.Detail) > 0 {
@@ -38,21 +37,12 @@ func (s *Store) Warnings() []manifest.Warning {
 	s.warnMu.Lock()
 	out := slices.Clone(s.warnOrder)
 	s.warnMu.Unlock()
-	var bundles []*ReadSet
-	for _, sh := range s.shards {
-		sh.mu.RLock()
-		for _, cell := range sh.cells {
-			if cell.links != nil {
-				if reads := cell.links.assessment.Load(); reads != nil {
-					bundles = append(bundles, reads)
-				}
+	for _, reads := range s.assessments() {
+		start := len(out)
+		for _, warning := range reads.warnings {
+			if !slices.ContainsFunc(out[start:], func(w manifest.Warning) bool { return manifest.CompareWarning(w, warning) == 0 }) {
+				out = append(out, warning)
 			}
-		}
-		sh.mu.RUnlock()
-	}
-	for _, reads := range bundles {
-		if reads.Valid() {
-			out = append(out, reads.warnings...)
 		}
 	}
 	type contribution struct {
@@ -106,23 +96,35 @@ func (s *Store) Warnings() []manifest.Warning {
 		warning := out[i]
 		warning.Count = 1
 		warning.Detail = slices.Clone(warning.Detail)
-		messages := []string{warning.Message}
+		if len(warning.Detail) == 0 {
+			warning.Detail = nil
+		}
 		j := i + 1
-		for j < len(out) && out[j].Category == warning.Category && out[j].Resource == warning.Resource {
-			warning.Detail = append(warning.Detail, out[j].Detail...)
-			if message := out[j].Message; message != messages[len(messages)-1] {
-				messages = append(messages, message)
-			}
+		for j < len(out) && manifest.CompareWarning(out[i], out[j]) == 0 {
+			warning.Count++
 			j++
 		}
-		warning.Message = strings.Join(messages, "; ")
-		slices.Sort(warning.Detail)
-		warning.Detail = slices.Compact(warning.Detail)
 		out[n] = warning
 		n++
 		i = j
 	}
 	return out[:n]
+}
+
+func (s *Store) assessments() []*ReadSet {
+	var bundles []*ReadSet
+	for _, sh := range s.shards {
+		sh.mu.RLock()
+		for _, cell := range sh.cells {
+			if cell.links != nil {
+				if reads := cell.links.assessment.Load(); reads != nil {
+					bundles = append(bundles, reads)
+				}
+			}
+		}
+		sh.mu.RUnlock()
+	}
+	return slices.DeleteFunc(bundles, func(reads *ReadSet) bool { return !reads.Valid() })
 }
 
 type warningKey struct {

@@ -55,9 +55,11 @@ func (e Encoder) Errors(err error) error {
 // Warning retains the producer payload and its prepared display context.
 type Warning struct {
 	Warning manifest.Warning
+	// Group is the cluster index; negative values denote invocation-wide notices.
 	Group   int
 	Context string
 	Subject Subject
+	prefix  string
 }
 
 // ReportGroup contains one cluster's diagnostics and optional test roster.
@@ -105,7 +107,7 @@ func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
 		}
 	}
 	for _, w := range r.Warnings {
-		if w.Warning.Resource != (manifest.NamedResource{}) {
+		if w.Group >= 0 && w.Warning.Resource != (manifest.NamedResource{}) {
 			inventory[w.Group] = append(inventory[w.Group], w.Warning.Resource)
 		}
 	}
@@ -114,7 +116,13 @@ func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
 		r.Groups[i].Names = names[i]
 	}
 	for i, w := range r.Warnings {
-		if w.Warning.Resource != (manifest.NamedResource{}) {
+		r.Warnings[i].prefix = ""
+		if w.Group < 0 {
+			continue
+		}
+		if w.Warning.Resource == (manifest.NamedResource{}) {
+			r.Warnings[i].prefix = names[w.Group].Prefix
+		} else {
 			r.Warnings[i].Subject = names[w.Group].Subjects[w.Warning.Resource]
 		}
 	}
@@ -210,7 +218,7 @@ func warningsBlock(warnings []Warning, color bool) string {
 	var information []string
 	for _, w := range warnings {
 		wn := w.Warning
-		head := wn.Message
+		head := w.prefix + wn.Message
 		if wn.Resource != (manifest.NamedResource{}) {
 			head = w.Subject.Kind + " " + w.Subject.Name + ": " + wn.Message
 		}

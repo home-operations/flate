@@ -375,19 +375,11 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 			if got := substitutionValue(t, res, id); got != want {
 				t.Fatalf("repository precedence got %q, want %q", got, want)
 			}
-			var collisions []manifest.Warning
-			for _, warning := range res.Warnings {
-				if warning.Category == manifest.WarnSuppliedPrecedence {
-					collisions = append(collisions, warning)
-				}
-			}
-			wantWarning := manifest.Warning{Resource: input.Object.Named(), Category: manifest.WarnSuppliedPrecedence,
-				Message: "repository data takes precedence over ci-values.yaml", Detail: []string{"VALUE"}, Count: 1}
-			var wantWarnings []manifest.Warning
+			var wantOverrides []store.SuppliedOverride
 			if !strings.HasPrefix(kind, "known Secret producer") {
-				wantWarnings = []manifest.Warning{wantWarning}
+				wantOverrides = []store.SuppliedOverride{{Resource: input.Object.Named(), SupplyPath: "ci-values.yaml", Keys: []string{"VALUE"}}}
 			}
-			assert.Diff(t, collisions, wantWarnings)
+			assert.Diff(t, o.store.AdvisoryEvidence().Overrides, wantOverrides)
 		})
 	}
 }
@@ -400,6 +392,7 @@ func TestSupply_UnreadObjectsHaveNoPrecedenceWarning(t *testing.T) {
 		o.store.AddObject(source.Object)
 	}
 	assert.NoError(t, o.bootstrap(t.Context()))
+	assert.Diff(t, o.store.AdvisoryEvidence(), store.AdvisoryEvidence{})
 	for _, warning := range o.store.Warnings() {
 		if warning.Category == manifest.WarnSuppliedPrecedence {
 			t.Fatal("unconsumed supply emitted precedence warning")
@@ -608,6 +601,16 @@ func TestRenderTrees_SuppliedTransitionsMatchFull(t *testing.T) {
 					}
 					assert.Equal(t, substitutionValue(t, full[0].Result, consumer), want)
 					assert.Equal(t, substitutionValue(t, paired[i].Result, consumer), want)
+					var wantWarnings []manifest.Warning
+					if transition[i] == "real" {
+						wantWarnings = []manifest.Warning{{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"}, Count: 1}}
+					}
+					assert.Diff(t, full[0].Result.ClusterWarnings, wantWarnings)
+					if i == 0 {
+						assert.Equal(t, len(paired[i].Result.ClusterWarnings), 0)
+					} else {
+						assert.Diff(t, paired[i].Result.ClusterWarnings, []manifest.Warning{{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"}, Count: 1}})
+					}
 				}
 			}
 		})

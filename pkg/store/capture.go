@@ -12,6 +12,7 @@ import (
 // Its storage MUST remain owned by that execution until retirement is swept.
 type ReadSet struct {
 	warnings     []manifest.Warning
+	advisories   AdvisoryEvidence
 	produced     []admission
 	invalid      atomic.Bool
 	retired      atomic.Bool
@@ -85,6 +86,7 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	clear(inputs)
 	r.store, r.id, r.capacity = s, id, len(inputs)
 	r.inputs, r.spare, r.warnings, r.produced = nil, nil, nil, nil
+	r.advisories = AdvisoryEvidence{}
 	r.spareDetails, r.byID = nil, nil
 	for i := range inputs {
 		inputs[i].next, r.spare = r.spare, &inputs[i]

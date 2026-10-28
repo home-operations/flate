@@ -656,8 +656,8 @@ spec:
 			if artifact, ok := st.GetArtifact(pinned.Named(), store.ArtifactContent).(*store.SourceArtifact); !ok || artifact.InputAlias || artifact.Key == "" || st.GetObject(pinned.Named()) != pinned {
 				t.Fatalf("committed source artifact = %+v", artifact)
 			}
-			want = append(want, dir)
 			slices.Sort(want)
+			want = append(want, dir)
 			warnings := st.Warnings()
 			if len(warnings) != 1 || warnings[0].Category != manifest.WarnBootstrapAliases || warnings[0].Count != 1 || !slices.Equal(warnings[0].Detail, want) {
 				t.Fatalf("combined alias warning = %+v, want %v", warnings, want)

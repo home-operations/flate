@@ -638,58 +638,41 @@ func TestRunSelected_WarningIdentity(t *testing.T) {
 
 func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 	t.Parallel()
-	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
-	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
 	ordinary := manifest.Warning{Resource: testutil.HelmReleaseID("apps", "demo"), Category: manifest.WarnStaleValues, Message: "ordinary", Detail: []string{"kept"}, Count: 3}
+	other := ordinary
+	other.Message, other.Detail = "another ordinary", []string{"another", "kept"}
 	inv := &selectedInvocation{}
-	var inputs []*selection.Selection
-	var before [][]manifest.Warning
 	for _, cluster := range []string{"alpha", "omega"} {
-		group := selectedGroup{cluster: cluster}
-		for _, detail := range [][]string{{"last", "common", cluster}, {"common", "first"}} {
-			warnings := store.New()
-			warnings.AddWarning(manifest.Warning{Resource: settings, Category: manifest.WarnSuppliedPrecedence, Message: "repository wins", Detail: detail, Count: 7})
-			warnings.AddWarning(manifest.Warning{Resource: source, Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Count: 5})
-			warnings.AddWarning(ordinary)
-			other := ordinary
-			other.Message, other.Detail = "another ordinary", []string{"another", "kept"}
-			warnings.AddWarning(other)
-			side := &selection.Selection{Warnings: warnings.Warnings()}
-			group.sides = append(group.sides, side)
-			inputs = append(inputs, side)
-			snapshot := slices.Clone(side.Warnings)
-			for i := range snapshot {
-				snapshot[i].Detail = slices.Clone(snapshot[i].Detail)
-			}
-			before = append(before, snapshot)
+		advisories := []manifest.Warning{
+			{Category: manifest.WarnSuppliedPrecedence, Message: "repository wins", Detail: []string{cluster, "common", "first", "last"}, Count: 1},
+			{Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Detail: []string{"GitRepository.source.toolkit.fluxcd.io/apps/source"}, Count: 1},
 		}
-		inv.groups = append(inv.groups, group)
+		inv.groups = append(inv.groups, selectedGroup{cluster: cluster, sides: []*selection.Selection{
+			{Warnings: []manifest.Warning{ordinary, other}},
+			{Warnings: []manifest.Warning{ordinary, other}, ClusterWarnings: advisories},
+		}})
 	}
 	var first string
 	for run := range 2 {
 		var stderr bytes.Buffer
 		assert.NoError(t, finishSelected(selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr}, inv, selectedPayload{}))
 		text := stderr.String()
-		for _, token := range []string{"warnings (8)", "information (4)"} {
+		for _, token := range []string{"warnings (10)", "information (2)"} {
 			assert.Equal(t, strings.Count(text, token), 1)
 		}
-		assert.Equal(t, strings.Count(text, "[SuppliedPrecedence]"), 4)
-		assert.Equal(t, strings.Count(text, "[LocalSSHAgent]"), 4)
-		assert.Equal(t, strings.Count(text, "[StaleValues]"), 4)
+		assert.Equal(t, strings.Count(text, "[SuppliedPrecedence]"), 2)
+		assert.Equal(t, strings.Count(text, "[LocalSSHAgent]"), 2)
+		assert.Equal(t, strings.Count(text, "[StaleValues]"), 8)
 		for _, cluster := range []string{"alpha", "omega"} {
-			for _, side := range []struct{ context, keys string }{
-				{"orig snapshot", cluster + ", common, last"},
-				{"current snapshot", "common, first"},
+			for _, row := range []string{
+				"[SuppliedPrecedence] " + cluster + ": repository wins\n      " + cluster + ", common, first, last\n",
+				"[LocalSSHAgent] " + cluster + ": authenticated with the local SSH agent\n",
 			} {
-				keys := side.keys
-				if cluster == "omega" && side.context == "orig snapshot" {
-					keys = "common, last, omega"
-				}
-				for _, row := range []string{
-					"[SuppliedPrecedence] " + side.context + ": ConfigMap " + cluster + ": apps/settings: repository wins\n      " + keys + "\n",
-					"[LocalSSHAgent] " + side.context + ": GitRepository " + cluster + ": apps/source: authenticated with the local SSH agent\n",
-					"[StaleValues] " + side.context + ": HelmRelease " + cluster + ": apps/demo: another ordinary; ordinary\n      another, kept\n",
-				} {
+				assert.Equal(t, strings.Count(text, row), 1)
+			}
+			for _, context := range []string{"orig snapshot", "current snapshot"} {
+				for _, warning := range []manifest.Warning{ordinary, other} {
+					row := "[StaleValues] " + context + ": HelmRelease " + cluster + ": apps/demo: " + warning.Message + " (×3)\n      " + strings.Join(warning.Detail, ", ") + "\n"
 					assert.Equal(t, strings.Count(text, row), 1)
 				}
 			}
@@ -697,19 +680,20 @@ func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 		if strings.Contains(text, "Cluster:") || strings.Contains(text, output.GlyphFail) {
 			t.Fatalf("advisories changed report framing or verdict: %s", text)
 		}
-		if run == 0 {
-			first = text
-		} else {
+		if run == 1 {
 			assert.Equal(t, text, first)
 		}
-		for i, side := range inputs {
-			assert.Diff(t, side.Warnings, before[i])
+		first = text
+		for _, group := range inv.groups {
+			for _, side := range group.sides {
+				assert.Diff(t, side.Warnings, []manifest.Warning{ordinary, other})
+			}
 		}
 	}
 	fatal := errors.New("fatal render failure")
 	var stderr bytes.Buffer
 	err := finishSelected(selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr}, inv, selectedPayload{err: fatal})
-	if !errors.Is(err, fatal) || !strings.Contains(stderr.String(), "another ordinary; ordinary") {
+	if !errors.Is(err, fatal) || !strings.Contains(stderr.String(), "another ordinary (×3)") {
 		t.Fatalf("warnings changed fatal result or lost messages: %v\n%s", err, stderr.String())
 	}
 }

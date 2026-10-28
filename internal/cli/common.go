@@ -434,6 +434,7 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 						result = *selected[0].Result
 					}
 					result.Warnings = append(slices.Clone(base.Result.Warnings), result.Warnings...)
+					result.ClusterWarnings = append(slices.Clone(base.Result.ClusterWarnings), result.ClusterWarnings...)
 					selected[0].Result = &result
 				}
 			}
@@ -482,7 +483,7 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 	diagnostic := errors.Join(payload.err, inv.remainder)
 	report := output.Report{Groups: make([]output.ReportGroup, len(inv.groups)), Test: payload.rosters != nil, Elapsed: inv.elapsed}
 	if req.notice.Category != "" {
-		report.Warnings = append(report.Warnings, output.Warning{Warning: req.notice})
+		report.Warnings = append(report.Warnings, output.Warning{Warning: req.notice, Group: -1})
 	}
 	named := len(req.roots) > 0 && req.roots[0].Name != ""
 	for i, group := range inv.groups {
@@ -517,6 +518,9 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 			}
 			model.Context = context
 			g.Models = append(g.Models, model)
+			for _, warning := range side.ClusterWarnings {
+				report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i})
+			}
 			for _, warning := range selectedWarnings(side) {
 				report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i, Context: context})
 			}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -165,7 +164,7 @@ func TestFetcher_LocalAgentSSH(t *testing.T) {
 			}
 			if shape == "accepted" {
 				assert.NoError(t, err)
-				if artifact == nil || authenticated.Load() == 0 || !slices.ContainsFunc(artifact.Warnings, func(w manifest.Warning) bool { return w.Category == manifest.WarnLocalSSHAgent }) {
+				if artifact == nil || authenticated.Load() == 0 || !artifact.UsedLocalSSHAgent {
 					t.Fatalf("native acquisition = %+v; authenticated=%d", artifact, authenticated.Load())
 				}
 			} else if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) || !errors.Is(err, manifest.ErrFlux) || authenticated.Load() != 0 {

@@ -492,6 +492,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			first.Reads.GetObject(obj.Named())
 			warning := manifest.Warning{Resource: obj.Named(), Category: manifest.WarnStaleValues, Message: "unused value"}
 			first.Reads.AddWarning(warning)
+			first.Reads.RecordSuppliedOverride(store.SuppliedOverride{Resource: obj.Named(), Keys: []string{"previous"}})
 			_, _, next := first.Reads.GetEmission(obj.Named())
 			next.Children = []store.Child{{Obj: child}}
 			next.Fingerprint, next.Complete = manifest.Fingerprint("equal projection"), true
@@ -506,6 +507,8 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			}
 			assert.Equal(t, first.Valid(), !invalidate)
 			second := newExecution(c, obj.Named())
+			current := store.SuppliedOverride{Resource: obj.Named(), Keys: []string{"current"}}
+			second.Reads.RecordSuppliedOverride(current)
 			if _, handled, err := second.FingerprintDedup(obj.Named(), "equal projection", &store.Emission{}); !handled || err != nil {
 				t.Fatalf("projection replay: handled=%t error=%v", handled, err)
 			}
@@ -513,6 +516,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			defer second.Close()
 			warning.Count = 1
 			assert.Diff(t, s.Warnings(), []manifest.Warning{warning})
+			assert.Diff(t, s.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{current}})
 			assert.Equal(t, second.Valid(), true)
 			s.SetIncluded(child.Named(), false)
 			if !second.Valid() {

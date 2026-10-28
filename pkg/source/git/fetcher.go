@@ -226,10 +226,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 	}
 
 	warnings := gitWarnings(input, repo.Named(), repo.URL, refLabel)
-	if usedAgent {
-		warnings = append(warnings, manifest.Warning{Resource: repo.Named(), Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Count: 1})
-	}
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Content: identity, Warnings: warnings}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Content: identity, Warnings: warnings, UsedLocalSSHAgent: usedAgent}, nil
 }
 
 func gitWarningArtifact(input *gittree.FS, id manifest.NamedResource, repository, ref string) *store.SourceArtifact {

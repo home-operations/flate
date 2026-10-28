@@ -185,16 +185,11 @@ type Result struct {
 	// derived failures under their root cause by walking these edges to a primary
 	// failure or a missing id, instead of surfacing every cascaded failure.
 	Blocked map[manifest.NamedResource][]manifest.NamedResource
-	// Warnings are non-fatal render advisories — the render succeeded, but the
-	// operator probably wants to look at these (e.g. a HelmRelease pinning
-	// values the chart's schema no longer defines, an empty --path scan). Each
-	// carries a stable Category code a consumer filters on rather than parsing
-	// the message, an optional Resource (zero = render-global), and optional
-	// structured Detail. Sorted deterministically; nil (not empty) when none.
-	// Distinct from Failed (which blocks a resource) and from operational logs
-	// (submodule skips, cache resets) which stay on stderr. A consumer like
-	// konflate surfaces these alongside the diff.
+	// Warnings contains ordinary side-specific diagnostics in deterministic order.
 	Warnings []manifest.Warning
+	// ClusterWarnings contains finalized cluster advisories on one RenderTrees result:
+	// the non-absent head, otherwise the non-absent base, without snapshot attribution.
+	ClusterWarnings []manifest.Warning
 }
 
 type treeConfig struct {

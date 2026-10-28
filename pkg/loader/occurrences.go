@@ -210,7 +210,7 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 			if child.Obj == nil || child.outcome.Err != nil {
 				continue
 			}
-			id, err := projectIdentity(child.Obj, v, child.version)
+			id, err := l.projectIdentity(child.Obj, v, child.version)
 			if err != nil {
 				return nil, err
 			}
@@ -220,7 +220,12 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 	return out, nil
 }
 
-func projectIdentity(obj manifest.BaseManifest, v graphVisit, version string) (manifest.NamedResource, error) {
+type identityProjection struct {
+	identity                           manifest.NamedResource
+	version, namespace, prefix, suffix string
+}
+
+func (l *Loader) projectIdentity(obj manifest.BaseManifest, v graphVisit, version string) (manifest.NamedResource, error) {
 	id := obj.Named()
 	namespaced := manifest.KindOf(obj).Namespaced()
 	if namespaced {
@@ -228,6 +233,11 @@ func projectIdentity(obj manifest.BaseManifest, v graphVisit, version string) (m
 	}
 	if v.namePrefix == "" && v.nameSuffix == "" && (v.namespace == "" || namespaced) {
 		return id, nil
+	}
+	l.ensureScopes()
+	key := identityProjection{identity: id, version: version, namespace: v.namespace, prefix: v.namePrefix, suffix: v.nameSuffix}
+	if projected, ok := l.scopes.projections[key]; ok {
+		return projected, nil
 	}
 	doc := map[string]any{"apiVersion": version, "kind": id.Kind, "metadata": map[string]any{"name": id.Name}}
 	r, err := resource.NewFactory(nil).FromMap(doc)
@@ -254,6 +264,10 @@ func projectIdentity(obj manifest.BaseManifest, v graphVisit, version string) (m
 		return id, fmt.Errorf("%w: project suffix: %w", manifest.ErrFlux, err)
 	}
 	id.Name = r.GetName()
+	if l.scopes.projections == nil {
+		l.scopes.projections = make(map[identityProjection]manifest.NamedResource)
+	}
+	l.scopes.projections[key] = id
 	return id, nil
 }
 

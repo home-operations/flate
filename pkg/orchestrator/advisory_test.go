@@ -20,7 +20,6 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 	t.Parallel()
 	settings := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
-	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
 	newStore := func(overrides []store.SuppliedOverride) *store.Store {
 		t.Helper()
 		st := store.New()
@@ -32,7 +31,6 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 		for _, override := range overrides {
 			reads.RecordSuppliedOverride(override)
 		}
-		reads.RecordLocalSSHAgent(source)
 		reads.Accept()
 		reads.Close()
 		for range st.Sweep() {
@@ -54,7 +52,6 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 		{ID: manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead}, Absent: true, Result: &Result{}},
 	}
 	want := []manifest.Warning{
-		{Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Detail: []string{source.String()}, Count: 1},
 		{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{
 			settings.String() + ": A (first.yaml)", settings.String() + ": Z (first.yaml)", secret.String() + ": TOKEN (second.yaml)",
 		}, Count: 1},
@@ -65,10 +62,10 @@ func TestClusterAdvisories_ContributorsAndCarrier(t *testing.T) {
 		assert.Equal(t, len(runs[0].Result.ClusterWarnings)+len(runs[3].Result.ClusterWarnings), 0)
 		assert.Equal(t, runs[1].Orchestrator == nil && errors.Is(runs[1].Err, failure), true)
 		omega := runs[2].Result.ClusterWarnings
-		if len(omega) != 2 {
+		if len(omega) != 1 {
 			t.Fatalf("base-only cluster lost advisories: %v", omega)
 		}
-		assert.Diff(t, omega[1].Detail, []string{settings.String() + ": OMEGA (omega.yaml)"})
+		assert.Diff(t, omega[0].Detail, []string{settings.String() + ": OMEGA (omega.yaml)"})
 		for _, run := range runs {
 			assert.Equal(t, len(run.Result.Warnings), 0)
 		}
@@ -113,7 +110,7 @@ func TestRenderTrees_ClusterAdvisories(t *testing.T) {
 					continue
 				}
 				for _, warning := range run.Result.Warnings {
-					if warning.Category == manifest.WarnSuppliedPrecedence || warning.Category == manifest.WarnLocalSSHAgent {
+					if warning.Category == manifest.WarnSuppliedPrecedence {
 						t.Fatal("cluster advisory escaped through side warnings")
 					}
 				}
@@ -192,8 +189,6 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 				assert.Diff(t, outputByParent(result.Manifests), before)
 				runs[i].Result = result
 				assert.Equal(t, fetchers[i].calls.Load(), int64(1))
-				artifact := o.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-				assert.Equal(t, artifact.UsedLocalSSHAgent, true)
 			}
 		}
 		clusterAdvisories(runs, stores)
@@ -204,7 +199,6 @@ func TestRenderTrees_ClusterAdvisoriesWarmAcquisition(t *testing.T) {
 				continue
 			}
 			assert.Diff(t, run.Result.ClusterWarnings, []manifest.Warning{
-				{Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Detail: []string{source.String()}, Count: 1},
 				{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{"ConfigMap/apps/settings: VALUE (ci-values.yaml)"}, Count: 1},
 			})
 		}
@@ -218,7 +212,7 @@ type advisorySourceFetcher struct {
 
 func (f *advisorySourceFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, Key: "advisory-source", FS: os.DirFS(f.root), LocalPath: f.root, UsedLocalSSHAgent: true}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, Key: "advisory-source", FS: os.DirFS(f.root), LocalPath: f.root}, nil
 }
 
 func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
@@ -234,10 +228,8 @@ func TestRenderTrees_ClusterAdvisoriesDiscoveryFailure(t *testing.T) {
 
 func TestSelect_ClusterAdvisories(t *testing.T) {
 	t.Parallel()
-	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "flux-system", Name: "settings"}
 	warnings := []manifest.Warning{
-		{Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Detail: []string{source.String()}, Count: 1},
 		{Category: manifest.WarnSuppliedPrecedence, Message: "repository data takes precedence over supplied data", Detail: []string{fmt.Sprintf("%s: token (/supply/settings.yaml)", secret)}, Count: 1},
 	}
 	ordinary := manifest.Warning{Resource: manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "reader"}, Category: manifest.WarnStaleValues, Message: "ordinary", Detail: []string{"kept"}, Count: 4}

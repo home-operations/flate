@@ -15,8 +15,7 @@ type SuppliedOverride struct {
 
 // AdvisoryEvidence retains accepted facts for cluster advisory publication.
 type AdvisoryEvidence struct {
-	Overrides    []SuppliedOverride
-	AgentSources []manifest.NamedResource
+	Overrides []SuppliedOverride
 }
 
 // RecordSuppliedOverride retains a copied precedence fact in this execution.
@@ -25,23 +24,13 @@ func (r *ReadSet) RecordSuppliedOverride(override SuppliedOverride) {
 	r.advisories.Overrides = append(r.advisories.Overrides, override)
 }
 
-// RecordLocalSSHAgent retains successful acquisition through the local SSH agent.
-func (r *ReadSet) RecordLocalSSHAgent(source manifest.NamedResource) {
-	if !slices.Contains(r.advisories.AgentSources, source) {
-		r.advisories.AgentSources = append(r.advisories.AgentSources, source)
-	}
-}
-
-// CarryAdvisories copies source acquisition facts after the caller proves equal consumed inputs.
+// CarryAdvisories copies precedence facts after the caller proves equal consumed inputs.
 func (r *ReadSet) CarryAdvisories(previous *ReadSet) {
 	if previous == nil {
 		return
 	}
 	for _, override := range previous.advisories.Overrides {
 		r.RecordSuppliedOverride(override)
-	}
-	for _, source := range previous.advisories.AgentSources {
-		r.RecordLocalSSHAgent(source)
 	}
 }
 
@@ -53,7 +42,6 @@ func (s *Store) AdvisoryEvidence() AdvisoryEvidence {
 			override.Keys = slices.Clone(override.Keys)
 			out.Overrides = append(out.Overrides, override)
 		}
-		out.AgentSources = append(out.AgentSources, reads.advisories.AgentSources...)
 	}
 	return out
 }

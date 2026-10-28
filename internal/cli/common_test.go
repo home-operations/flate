@@ -621,7 +621,6 @@ func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 	for _, cluster := range []string{"alpha", "omega"} {
 		advisories := []manifest.Warning{
 			{Category: manifest.WarnSuppliedPrecedence, Message: "repository wins", Detail: []string{cluster, "common", "first", "last"}, Count: 1},
-			{Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Detail: []string{"GitRepository.source.toolkit.fluxcd.io/apps/source"}, Count: 1},
 		}
 		inv.groups = append(inv.groups, selectedGroup{cluster: cluster, sides: []*selection.Selection{
 			{Warnings: []manifest.Warning{ordinary, other}},
@@ -633,16 +632,14 @@ func TestFinishSelected_SuppliedAdvisoryUnion(t *testing.T) {
 		var stderr bytes.Buffer
 		assert.NoError(t, finishSelected(selectedRequest{pair: true, stdout: io.Discard, stderr: &stderr}, inv, selectedPayload{}))
 		text := stderr.String()
-		for _, token := range []string{"warnings (10)", "information (2)"} {
+		for _, token := range []string{"warnings (10)"} {
 			assert.Equal(t, strings.Count(text, token), 1)
 		}
 		assert.Equal(t, strings.Count(text, "[SuppliedPrecedence]"), 2)
-		assert.Equal(t, strings.Count(text, "[LocalSSHAgent]"), 2)
 		assert.Equal(t, strings.Count(text, "[StaleValues]"), 8)
 		for _, cluster := range []string{"alpha", "omega"} {
 			for _, row := range []string{
 				"[SuppliedPrecedence] " + cluster + ": repository wins\n      " + cluster + ", common, first, last\n",
-				"[LocalSSHAgent] " + cluster + ": authenticated with the local SSH agent\n",
 			} {
 				assert.Equal(t, strings.Count(text, row), 1)
 			}

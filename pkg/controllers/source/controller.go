@@ -133,9 +133,6 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	if art, ok := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
 		if art.FS != nil && art.Reads.Valid() {
 			c.run.Reads.CarryAdvisories(art.Reads)
-			if art.UsedLocalSSHAgent {
-				c.run.Reads.RecordLocalSSHAgent(id)
-			}
 			for _, warning := range art.Warnings {
 				c.run.Reads.AddWarning(warning)
 			}
@@ -144,9 +141,6 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 		}
 		if art.FS != nil && c.run.Reads.Matches(art.Reads) {
 			c.run.Reads.CarryAdvisories(art.Reads)
-			if art.UsedLocalSSHAgent {
-				c.run.Reads.RecordLocalSSHAgent(id)
-			}
 			captured := *art
 			captured.Reads = &c.run.Reads
 			c.Store.SetArtifact(id, &captured)
@@ -246,9 +240,6 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 		return err
 	}
 	if artifact != nil {
-		if artifact.UsedLocalSSHAgent {
-			c.run.Reads.RecordLocalSSHAgent(obj.Named())
-		}
 		if !c.run.Reads.Valid() {
 			c.acquired = artifact
 			return nil

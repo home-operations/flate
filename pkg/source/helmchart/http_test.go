@@ -272,7 +272,6 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 			case "malformed wiped":
 				secret = &manifest.Secret{Data: map[string]any{"username": "credential-payload!"}, StringData: map[string]any{"password": "..PLACEHOLDER_password.."}}
 			}
-			// Secret failures must precede index or chart acquisition.
 			f.cache = nil
 			var artifact *store.SourceArtifact
 			var err error
@@ -297,8 +296,8 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 			}
 			if tc.missing && tc.state != "unwired" && !tc.cert {
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
-				if !ok || missing.Owner != r.Named() || missing.Secret.Name != "creds" || missing.Secret.Namespace != r.Namespace {
-					t.Errorf("missing error lost source or Secret identity: %v", err)
+				if !ok || missing.Owner != r.Named() || missing.Secret.Name != "creds" || missing.Secret.Namespace != r.Namespace || missing.RetryAmbient == nil {
+					t.Fatalf("missing error lost source identity or ambient continuation: %v", err)
 				}
 			}
 		})

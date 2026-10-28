@@ -215,7 +215,7 @@ func TestWarnings_AcceptedOrigins(t *testing.T) {
 	defer a.Close()
 	defer b.Close()
 	want := []manifest.Warning{
-		{Resource: resource, Category: manifest.WarnLocalSSHAgent, Message: "same", Count: 2},
+		{Resource: resource, Category: manifest.WarnSkippedSubmodule, Message: "same", Count: 2},
 		{Resource: resource, Category: manifest.WarnSuppliedPrecedence, Message: "same", Count: 2},
 		{Resource: resource, Category: manifest.WarnUnresolvedSubstitution, Message: "same", Count: 2},
 	}
@@ -255,7 +255,6 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	s.AddObject(second)
 	resource := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"}
 	s.AddObject(&manifest.Secret{Name: resource.Name, Namespace: resource.Namespace, StringData: map[string]any{"VALUE": "before"}})
-	agent := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
 	var a, b, unaccepted ReadSet
 	a.Init(s, first.Named(), nil)
 	b.Init(s, second.Named(), nil)
@@ -268,7 +267,6 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 		reads.GetObject(resource)
 		keys := []string{reads.ID().Name, "z"}
 		reads.RecordSuppliedOverride(SuppliedOverride{Resource: resource, SupplyPath: "last.yaml", Keys: keys})
-		reads.RecordLocalSSHAgent(agent)
 		keys[0] = "mutated"
 	}
 	a.Accept()
@@ -276,12 +274,11 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	want := AdvisoryEvidence{Overrides: []SuppliedOverride{
 		{Resource: resource, SupplyPath: "last.yaml", Keys: []string{"first", "z"}},
 		{Resource: resource, SupplyPath: "last.yaml", Keys: []string{"second", "z"}},
-	}, AgentSources: []manifest.NamedResource{agent, agent}}
+	}}
 	evidence := s.AdvisoryEvidence()
 	slices.SortFunc(evidence.Overrides, func(a, b SuppliedOverride) int { return slices.Compare(a.Keys, b.Keys) })
 	assert.Diff(t, evidence, want)
 	evidence.Overrides[0].Keys[0] = "mutated"
-	evidence.AgentSources[0].Name = "mutated"
 	a.Close()
 	b.Close()
 	for range s.Sweep() {
@@ -294,7 +291,7 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	defer replacement.Close()
 	replacement.GetObject(first.Named())
 	replacement.Accept()
-	assert.Diff(t, s.AdvisoryEvidence(), AdvisoryEvidence{Overrides: want.Overrides[1:], AgentSources: []manifest.NamedResource{agent}})
+	assert.Diff(t, s.AdvisoryEvidence(), AdvisoryEvidence{Overrides: want.Overrides[1:]})
 	s.AddObject(&manifest.Secret{Name: resource.Name, Namespace: resource.Namespace, StringData: map[string]any{"VALUE": "after"}})
 	assert.Equal(t, b.Valid(), false)
 	assert.Diff(t, s.AdvisoryEvidence(), AdvisoryEvidence{})
@@ -302,7 +299,7 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	carried.Init(s, first.Named(), nil)
 	carried.CarryAdvisories(nil)
 	carried.CarryAdvisories(&a)
-	assert.Diff(t, carried.advisories, AdvisoryEvidence{Overrides: want.Overrides[:1], AgentSources: []manifest.NamedResource{agent}})
+	assert.Diff(t, carried.advisories, AdvisoryEvidence{Overrides: want.Overrides[:1]})
 	carried.advisories.Overrides[0].Keys[0] = "mutated"
 	assert.Equal(t, a.advisories.Overrides[0].Keys[0], "first")
 	carried.Retire()

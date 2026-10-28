@@ -15,7 +15,7 @@ func clusterAdvisories(results []Rendered, stores []*store.Store) {
 			j++
 		}
 		var carrier *Rendered
-		var overrides, agents []string
+		var overrides []string
 		for k := i; k < j; k++ {
 			if !results[k].Absent && (carrier == nil || results[k].ID.Side == manifest.TreeHead) {
 				carrier = &results[k]
@@ -29,20 +29,12 @@ func clusterAdvisories(results []Rendered, stores []*store.Store) {
 					overrides = append(overrides, fmt.Sprintf("%s: %s (%s)", override.Resource, key, override.SupplyPath))
 				}
 			}
-			for _, source := range evidence.AgentSources {
-				agents = append(agents, source.String())
-			}
 		}
 		var warnings []manifest.Warning
 		if len(overrides) > 0 {
 			slices.Sort(overrides)
 			warnings = append(warnings, manifest.Warning{Category: manifest.WarnSuppliedPrecedence,
 				Message: "repository data takes precedence over supplied data", Detail: slices.Compact(overrides), Count: 1})
-		}
-		if len(agents) > 0 {
-			slices.Sort(agents)
-			warnings = append(warnings, manifest.Warning{Category: manifest.WarnLocalSSHAgent,
-				Message: "authenticated with the local SSH agent", Detail: slices.Compact(agents), Count: 1})
 		}
 		if carrier != nil && len(warnings) > 0 {
 			if carrier.Result == nil {

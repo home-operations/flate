@@ -1,36 +1,46 @@
 package helmchart
 
 import (
+	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+
+	"helm.sh/helm/v4/pkg/helmpath"
+	repo "helm.sh/helm/v4/pkg/repo/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// httpRepository fixes auth and transport inputs for a chart and its nested index.
 type httpRepository struct {
 	*manifest.HelmRepository
 	username, password string
 	client             *http.Client
 	material           any
+	ambient            bool
 }
 
 func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
 	secrets := f.secrets
 	prepared := &httpRepository{HelmRepository: r}
+	var authErr error
 	if r.SecretRef != nil {
 		if secrets == nil {
 			return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired", manifest.ErrMissingSecret, source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name))
 		}
 		sec := secrets(r.Namespace, r.SecretRef.Name)
 		if sec == nil {
-			return nil, source.MissingSecretErr(r.Named(), r.SecretRef.Name, "not found")
+			authErr = source.MissingSecretErr(r.Named(), r.SecretRef.Name, "not found")
+		} else {
+			prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(sec, r.Named(), r.SecretRef.Name)
 		}
-		var err error
-		prepared.username, prepared.password, err = source.BasicAuthFromSecret(sec, r.Named(), r.SecretRef.Name)
-		if err != nil {
-			return nil, err
+		if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
+			return nil, authErr
 		}
 	}
 	owner := r.Named()
@@ -49,5 +59,48 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 		return nil, err
 	}
 	prepared.client = &http.Client{Transport: tr}
-	return prepared, nil
+	prepared.ambient = authErr != nil
+	return prepared, authErr
+}
+
+func (r *httpRepository) localCredentials(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	config, err := repo.LoadFile(cmp.Or(os.Getenv("HELM_REPOSITORY_CONFIG"), helmpath.ConfigPath("repositories.yaml")))
+	if errors.Is(err, os.ErrNotExist) {
+		return source.MissingSecretErr(r.Named(), "", "no local Helm repository login")
+	}
+	if err != nil {
+		return fmt.Errorf("%w: load Helm repository login: %w", manifest.ErrInput, err)
+	}
+	for _, entry := range config.Repositories {
+		if entry == nil || entry.Username == "" || entry.Password == "" || manifest.HasValuePlaceholder(entry.Username) || manifest.HasValuePlaceholder(entry.Password) {
+			continue
+		}
+		if repositoryURLEqual(r.URL, entry.URL) {
+			r.username, r.password = entry.Username, entry.Password
+			return nil
+		}
+	}
+	return source.MissingSecretErr(r.Named(), "", "no local Helm repository login")
+}
+
+// repositoryURLEqual follows Helm v4.3.1 internal/urlutil.Equal, target first.
+func repositoryURLEqual(target, entry string) bool {
+	a, err := url.Parse(target)
+	if err != nil {
+		return filepath.Clean(target) == filepath.Clean(entry)
+	}
+	b, err := url.Parse(entry)
+	if err != nil {
+		return false
+	}
+	for _, u := range []*url.URL{a, b} {
+		if u.Path == "" {
+			u.Path = "/"
+		}
+		u.Path = filepath.Clean(u.Path)
+	}
+	return a.String() == b.String()
 }

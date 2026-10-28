@@ -159,12 +159,15 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 	}
 	ca := testutil.SelfSignedCA(t)
 	otherCA := testutil.SelfSignedCA(t)
-	for _, settings := range []string{"anonymous", "credentials", "cert", "proxy"} {
+	for _, settings := range []string{"anonymous", "credentials", "ambient", "cert", "proxy"} {
 		t.Run(settings, func(t *testing.T) {
 			r := httpRepo("http://charts.invalid")
 			secret := &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "first", "ca.crt": ca}}
-			if settings == "credentials" {
+			if settings == "credentials" || settings == "ambient" {
 				r.SecretRef = &manifest.LocalObjectReference{Name: "first"}
+			}
+			if settings == "ambient" {
+				secret = nil
 			}
 			if settings == "cert" {
 				r.CertSecretRef = &manifest.LocalObjectReference{Name: "first"}
@@ -193,8 +196,12 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			}
 			close(start)
 			wg.Wait()
-			for _, err := range errs {
-				if err != nil {
+			for i, err := range errs {
+				if settings == "ambient" {
+					if !errors.Is(err, manifest.ErrMissingSecret) || prepared[i] == nil || !prepared[i].ambient {
+						t.Fatalf("missing auth lost its prepared transport: %v", err)
+					}
+				} else if err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -202,16 +209,20 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			if manifest.Fingerprint(first.material) != manifest.Fingerprint(second.material) || first.client.Transport != second.client.Transport {
 				t.Fatal("equal captured identities did not share a transport")
 			}
-			if settings == "anonymous" && first.material != nil {
-				t.Fatal("anonymous identity must be empty")
+			if (settings == "anonymous" || settings == "ambient") && first.material != nil {
+				t.Fatal("credential-free identity must be empty")
 			}
-			if warm := preparedHTTP(t, f, fInputs, r); warm.client.Transport != first.client.Transport {
+			warm, err := (&operation{Fetcher: f, secrets: fInputs.lookup(r)}).prepareHTTP(r)
+			if settings != "ambient" && err != nil || settings == "ambient" && !errors.Is(err, manifest.ErrMissingSecret) {
+				t.Fatalf("warm preparation lost auth state: %v", err)
+			}
+			if warm.client.Transport != first.client.Transport {
 				t.Fatal("warm preparation replaced the transport")
 			}
 			switch settings {
 			case "anonymous":
 				r = httpRepo("http://other.invalid")
-			case "credentials":
+			case "credentials", "ambient":
 				secret = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "second", "ca.crt": ca}}
 			case "cert":
 				secret = &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "first", "ca.crt": otherCA}}

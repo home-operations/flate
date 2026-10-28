@@ -162,7 +162,7 @@ func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
 	tr.onAuth = nil
 	before = tr.authenticated.Load()
 	stdout, stderr, code = harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--allow-missing-kinds=Secret,ConfigMap")...)
-	if code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") || !strings.Contains(stderr, "ursa-major-ssh") || strings.Contains(stderr, "ExternalSource") || strings.Contains(stderr, "LocalSSHAgent") || tr.authenticated.Load() != before {
+	if code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") || !strings.Contains(stderr, "ursa-major-ssh") || strings.Contains(stderr, "ExternalSource") || tr.authenticated.Load() != before {
 		t.Fatalf("absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
@@ -361,7 +361,7 @@ func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
 		if code != 0 || tr.authenticated.Load()-before < 2 || strings.Count(stdout, "-  value: before") != 1 || strings.Count(stdout, "+  value: after") != 1 {
 			t.Fatalf("base diff: exit=%d authentications=%d stdout=%s stderr=%s", code, tr.authenticated.Load()-before, stdout, stderr)
 		}
-		if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Count(stderr, "[LocalSSHAgent]") != 1 || !strings.Contains(stderr, "ConfigMap/flux-system/settings: OVERRIDE") || !strings.Contains(stderr, "GitRepository.source.toolkit.fluxcd.io/flux-system/private") {
+		if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Contains(stderr, "authenticated with") || !strings.Contains(stderr, "ConfigMap/flux-system/settings: OVERRIDE") {
 			t.Fatalf("cluster advisories lost or duplicated: %s", stderr)
 		}
 		if strings.Contains(stdout+stderr, "PRIVATE KEY") || strings.Contains(stdout, "supplied") || !strings.Contains(stdout, "override: repository") {

@@ -163,9 +163,8 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 	policy.Timeout = &timeout
 	var input *gittree.FS
 	var identity string
-	usedAgent := false
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
-		input, usedAgent = nil, false
+		input = nil
 		attempt := request
 		if request.ambientUser != "" {
 			if err := ctx.Err(); err != nil {
@@ -235,7 +234,6 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		if err != nil {
 			return plumbing.ZeroHash, fmt.Errorf("%w: validate git view: %w", manifest.ErrInput, err)
 		}
-		usedAgent = request.ambientUser != ""
 		return hash, nil
 	})
 	if err != nil {
@@ -251,7 +249,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 	}
 
 	warnings := gitWarnings(input, repo.Named(), repo.URL, refLabel)
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Content: identity, Warnings: warnings, UsedLocalSSHAgent: usedAgent}, nil
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Content: identity, Warnings: warnings}, nil
 }
 
 func gitWarningArtifact(input *gittree.FS, id manifest.NamedResource, repository, ref string) *store.SourceArtifact {

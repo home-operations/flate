@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
+	"net/url"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -35,6 +36,15 @@ func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCI
 		return nil, err
 	}
 	artifact, err := f.fetch(ctx, repo, request, policy)
+	if repo.Insecure && ctx.Err() == nil && errors.Is(err, http.ErrSchemeMismatch) {
+		if requestErr, ok := errors.AsType[*url.Error](err); ok {
+			target, parseErr := url.Parse(requestErr.URL)
+			if parseErr == nil && target.Host == request.client.Reference.Host() {
+				request.client.PlainHTTP = true
+				artifact, err = f.fetch(ctx, repo, request, policy)
+			}
+		}
+	}
 	if err != nil && !request.hasCredentials {
 		response, _ := errors.AsType[*errcode.ErrorResponse](err)
 		if errors.Is(err, auth.ErrBasicCredentialNotFound) || response != nil && response.StatusCode == http.StatusUnauthorized {

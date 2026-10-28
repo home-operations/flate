@@ -6,6 +6,8 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -51,6 +53,408 @@ func newTestNetwork(tb testing.TB) *source.Network {
 	network := new(source.Network)
 	tb.Cleanup(network.Close)
 	return network
+}
+
+func TestFetcher_InsecureRegistry(t *testing.T) {
+	t.Parallel()
+	for _, chart := range []bool{false, true} {
+		name := "OCIRepository"
+		if chart {
+			name = "HelmChart"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			const body = "apiVersion: v2\nname: app\nversion: 1.0.0\n"
+			art := newFakeOCIArtifact(t, map[string]string{"Chart.yaml": body})
+			art.manifest = mustManifestJSON(t, manifestBlob{data: art.config, mediaType: registry.ConfigMediaType}, manifestBlob{data: art.layer, mediaType: registry.ChartLayerMediaType})
+			art.manifestDigest = sha256Digest(art.manifest)
+			srv, _ := newMutableFakeRegistry(t, art)
+			var tags, heads, manifests, layers atomic.Int32
+			handler := srv.Config.Handler
+			srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/tags/list"):
+					tags.Add(1)
+					_, _ = io.WriteString(w, `{"name":"charts/app","tags":["1.0.0"]}`)
+					return
+				case strings.Contains(r.URL.Path, "/manifests/"):
+					if tags.Load() == 0 {
+						t.Error("content requested before semver tags")
+					}
+					if r.Method == http.MethodHead {
+						heads.Add(1)
+					} else {
+						manifests.Add(1)
+					}
+				case strings.Contains(r.URL.Path, "/blobs/"):
+					layers.Add(1)
+				}
+				handler.ServeHTTP(w, r)
+			})
+			srv.Start()
+			fetch := func(f *Fetcher, insecure bool) (*store.SourceArtifact, error) {
+				if !chart {
+					repo := &manifest.OCIRepository{Name: "app", Namespace: "ns", URL: "oci://" + mustURL(t, srv.URL).Host + "/charts/app", Insecure: insecure, Reference: &sourcev1.OCIRepositoryRef{SemVer: "1.x"}}
+					return f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+				}
+				repo := &manifest.HelmRepository{Name: "charts", Namespace: "ns", URL: "oci://" + mustURL(t, srv.URL).Host + "/charts", Type: sourcev1.HelmRepositoryTypeOCI, Insecure: insecure, Interval: metav1.Duration{Duration: time.Hour}}
+				hc := manifest.NewHelmChartSource(sourcev1.HelmChart{Name: "app", Namespace: "ns", Spec: sourcev1.HelmChartSpec{Chart: "app", Version: "1.x", Interval: repo.Interval, SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: repo.Name}}})
+				reads := (testInputs{repos: func(string, string) *manifest.HelmRepository { return repo }}).readSet(hc)
+				return helmchart.New(f, helmchart.Config{Cache: f.Cache, Network: f.Network}).Fetch(t.Context(), hc, reads, sourcecache.Policy{MaxAge: time.Hour})
+			}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
+			failed, err := fetch(f, false)
+			if failed != nil || !errors.Is(err, http.ErrSchemeMismatch) || !strings.Contains(err.Error(), "http: server gave HTTP response to HTTPS client") || tags.Load() != 0 {
+				t.Fatalf("secure default: artifact=%v error=%v tags=%d", failed, err, tags.Load())
+			}
+			var first *store.SourceArtifact
+			for range 2 {
+				f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
+				beforeTags, beforeHeads, beforeManifests, beforeLayers := tags.Load(), heads.Load(), manifests.Load(), layers.Load()
+				got, err := fetch(f, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got == nil || mustReadFile(t, got.FS, "Chart.yaml") != body {
+					t.Fatalf("artifact content=%v", got)
+				}
+				wantKind := manifest.KindOCIRepository
+				if chart {
+					wantKind = manifest.KindHelmChart
+				}
+				if got.Kind != wantKind || tags.Load()-beforeTags != 1 || heads.Load()-beforeHeads != 1 || manifests.Load()-beforeManifests != 1 || layers.Load()-beforeLayers != 1 {
+					t.Fatalf("kind=%s; tags/HEAD/manifest/layer=%d/%d/%d/%d", got.Kind, tags.Load()-beforeTags, heads.Load()-beforeHeads, manifests.Load()-beforeManifests, layers.Load()-beforeLayers)
+				}
+				if first != nil && (got.Key != first.Key || got.Content != first.Content || got.Digest != first.Digest || got.Revision != first.Revision) {
+					t.Fatalf("independent acquisition identity changed: first=%+v second=%+v", first, got)
+				}
+				first = got
+				warm, err := fetch(f, true)
+				if err != nil || warm.Key != got.Key || tags.Load()-beforeTags != 1 || heads.Load()-beforeHeads != 1 || manifests.Load()-beforeManifests != 1 || layers.Load()-beforeLayers != 1 {
+					t.Fatalf("warm acquisition requested content: artifact=%v error=%v", warm, err)
+				}
+			}
+		})
+	}
+}
+
+type registryListener struct {
+	net.Listener
+	firstRead func([]byte)
+}
+
+func (l registryListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &registryConnection{Conn: c, firstRead: l.firstRead}, nil
+}
+
+type registryConnection struct {
+	net.Conn
+	firstRead func([]byte)
+}
+
+func (c *registryConnection) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n != 0 && c.firstRead != nil {
+		observe := c.firstRead
+		c.firstRead = nil
+		observe(p[:n])
+	}
+	return n, err
+}
+
+func TestFetcher_InsecureRegistryForeignMismatch(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"redirect", "token realm"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			foreign := httptest.NewServer(http.NotFoundHandler())
+			t.Cleanup(foreign.Close)
+			target := "https://" + mustURL(t, foreign.URL).Host + "/token"
+			var plain atomic.Int32
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if mode == "redirect" {
+					http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+					return
+				}
+				w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm=%q,service="registry"`, target))
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+			srv.Listener = registryListener{Listener: srv.Listener, firstRead: func(p []byte) {
+				if p[0] != 0x16 {
+					plain.Add(1)
+				}
+			}}
+			srv.StartTLS()
+			t.Cleanup(srv.Close)
+			repo := &manifest.OCIRepository{Name: "foreign", Namespace: "ns", URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+			requestErr, ok := errors.AsType[*url.Error](err)
+			if got != nil || !errors.Is(err, http.ErrSchemeMismatch) || !ok || mustURL(t, requestErr.URL).Host != mustURL(t, foreign.URL).Host || plain.Load() != 0 {
+				t.Fatalf("foreign mismatch: artifact=%v error=%v HTTP attempts=%d", got, err, plain.Load())
+			}
+		})
+	}
+}
+
+func TestFetcher_InsecureRegistryErrors(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"response", "TLS", "reset", "cancel mismatch", "stalled HTTPS"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var connections, plain atomic.Int32
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			var unblock sync.Once
+			defer unblock.Do(func() { close(release) })
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+			}))
+			srv.Listener = registryListener{Listener: srv.Listener, firstRead: func(p []byte) {
+				if p[0] != 0x16 {
+					plain.Add(1)
+				}
+				if mode == "cancel mismatch" || mode == "stalled HTTPS" {
+					close(entered)
+					<-release
+				}
+			}}
+			srv.Config.ConnState = func(c net.Conn, state http.ConnState) {
+				if state == http.StateNew {
+					connections.Add(1)
+					if mode == "reset" {
+						_ = c.Close()
+					}
+				}
+			}
+			if mode == "TLS" {
+				srv.TLS = &tls.Config{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+					return nil, errors.New("TLS handshake refused")
+				}}
+			}
+			if mode == "cancel mismatch" {
+				srv.Start()
+			} else {
+				srv.StartTLS()
+			}
+			t.Cleanup(srv.Close)
+			repo := &manifest.OCIRepository{Name: "failure", Namespace: "ns", URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
+			result := make(chan error, 1)
+			go func() {
+				got, err := f.Fetch(ctx, repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+				if got != nil {
+					t.Error("failed acquisition returned an artifact")
+				}
+				result <- err
+			}()
+			if mode == "cancel mismatch" || mode == "stalled HTTPS" {
+				<-entered
+				cancel()
+				unblock.Do(func() { close(release) })
+			}
+			err := <-result
+			if err == nil || plain.Load() != 0 || connections.Load() != 1 {
+				t.Fatalf("error=%v HTTP attempts=%d connections=%d", err, plain.Load(), connections.Load())
+			}
+			switch mode {
+			case "response":
+				response, ok := errors.AsType[*errcode.ErrorResponse](err)
+				if !ok || response.StatusCode != http.StatusBadRequest {
+					t.Fatalf("lost response error: %v", err)
+				}
+			case "cancel mismatch", "stalled HTTPS":
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("lost cancellation: %v", err)
+				}
+			case "TLS":
+				if _, ok := errors.AsType[*net.OpError](err); !ok || errors.Is(err, http.ErrSchemeMismatch) {
+					t.Fatalf("lost TLS failure: %v", err)
+				}
+			case "reset":
+				if _, ok := errors.AsType[*url.Error](err); !ok || errors.Is(err, http.ErrSchemeMismatch) {
+					t.Fatalf("lost reset failure: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestFetcher_InsecureRegistryCanceledMismatch(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	var connections, plain atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		plain.Add(1)
+	}))
+	srv.Listener = registryListener{Listener: srv.Listener, firstRead: func(p []byte) {
+		if connections.Add(1) == 2 {
+			close(entered)
+			<-release
+		}
+		if p[0] != 0x16 {
+			plain.Add(1)
+		}
+	}}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	endpoint := "https://" + mustURL(t, srv.URL).Host + "/v2/app/manifests/latest"
+	r, err := http.NewRequestWithContext(t.Context(), http.MethodHead, endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, mismatch := srv.Client().Do(r)
+	if !errors.Is(mismatch, http.ErrSchemeMismatch) {
+		t.Fatalf("initial registry mismatch: %v", mismatch)
+	}
+	repo := &manifest.OCIRepository{Name: "canceled", Namespace: "ns", URL: "oci://" + mustURL(t, srv.URL).Host + "/app", Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}, LayerSelector: &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}}
+	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
+	result := make(chan error, 1)
+	go func() {
+		got, err := f.Fetch(ctx, repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+		if got != nil {
+			t.Error("canceled acquisition returned an artifact")
+		}
+		result <- err
+	}()
+	<-entered
+	cancel(mismatch)
+	unblock()
+	if err := <-result; !errors.Is(err, mismatch) || !errors.Is(err, http.ErrSchemeMismatch) || ctx.Err() != context.Canceled || plain.Load() != 0 || connections.Load() != 2 {
+		t.Fatalf("canceled mismatch: error=%v context=%v HTTP attempts=%d connections=%d", err, ctx.Err(), plain.Load(), connections.Load())
+	}
+}
+
+func TestFetcher_InsecureRegistryAmbient(t *testing.T) {
+	t.Parallel()
+	art := newFakeOCIArtifact(t, map[string]string{"app.yaml": "ambient\n"})
+	srv, _ := newMutableFakeRegistry(t, art)
+	handler := srv.Config.Handler
+	var requests atomic.Int32
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if user, pass, ok := r.BasicAuth(); !ok || user != "alice" || pass != "password" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="registry"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+	srv.Start()
+	host := mustURL(t, srv.URL).Host
+	config := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, base64.StdEncoding.EncodeToString([]byte("alice:password")))
+	path := filepath.Join(t.TempDir(), "config.json")
+	testutil.WriteFileAt(t, path, config)
+	repo := &manifest.OCIRepository{Name: "ambient", Namespace: "ns", URL: "oci://" + host + "/app", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "missing"}, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t), RegistryConfig: path}
+	_, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	if !ok || missing.RetryAmbient == nil || requests.Load() != 0 {
+		t.Fatalf("ambient admission: error=%v requests=%d", err, requests.Load())
+	}
+	got, err := missing.RetryAmbient(t.Context())
+	if err != nil || got == nil || mustReadFile(t, got.FS, "app.yaml") != "ambient\n" {
+		t.Fatalf("ambient HTTP acquisition: artifact=%v error=%v", got, err)
+	}
+	before := requests.Load()
+	warm, err := missing.RetryAmbient(t.Context())
+	if err != nil || warm.Key != got.Key || requests.Load() != before {
+		t.Fatalf("ambient warm acquisition: artifact=%v error=%v requests=%d", warm, err, requests.Load()-before)
+	}
+}
+
+func TestFetcher_InsecureRegistryConcurrent(t *testing.T) {
+	t.Parallel()
+	art := newFakeOCIArtifact(t, map[string]string{"app.yaml": "concurrent\n"})
+	srv, _ := newMutableFakeRegistry(t, art)
+	handler := srv.Config.Handler
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var unblock sync.Once
+	defer unblock.Do(func() { close(release) })
+	var initial, fail atomic.Bool
+	initial.Store(true)
+	fail.Store(true)
+	var requests, tlsConnections atomic.Int32
+	srv.Listener = registryListener{Listener: srv.Listener, firstRead: func(p []byte) {
+		if p[0] == 0x16 {
+			tlsConnections.Add(1)
+		}
+	}}
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method == http.MethodHead && initial.Load() {
+			arrived <- struct{}{}
+			<-release
+		}
+		if strings.HasPrefix(r.URL.Path, "/v2/bad/") && fail.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+	srv.Start()
+	f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
+	type result struct {
+		name     string
+		artifact *store.SourceArtifact
+		err      error
+	}
+	done := make(chan result, 2)
+	repos := make(map[string]*manifest.OCIRepository)
+	for _, name := range []string{"good", "bad"} {
+		repo := &manifest.OCIRepository{Name: name, Namespace: "ns", URL: "oci://" + mustURL(t, srv.URL).Host + "/" + name, Insecure: true, Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"}}
+		repos[name] = repo
+		go func() {
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{MaxAge: time.Hour})
+			done <- result{name: name, artifact: got, err: err}
+		}()
+	}
+	for range 2 {
+		select {
+		case <-arrived:
+		case result := <-done:
+			t.Fatalf("acquisition returned before concurrent producers: %s: %v", result.name, result.err)
+		}
+	}
+	unblock.Do(func() { close(release) })
+	for range 2 {
+		result := <-done
+		if result.name == "bad" {
+			response, ok := errors.AsType[*errcode.ErrorResponse](result.err)
+			if result.artifact != nil || !ok || response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("failed producer: artifact=%v error=%v", result.artifact, result.err)
+			}
+		} else if result.err != nil || result.artifact == nil || mustReadFile(t, result.artifact.FS, "app.yaml") != "concurrent\n" {
+			t.Fatalf("successful producer: artifact=%v error=%v", result.artifact, result.err)
+		}
+	}
+	if tlsConnections.Load() != 2 {
+		t.Fatalf("initial HTTPS acquisitions=%d, want 2", tlsConnections.Load())
+	}
+	initial.Store(false)
+	fail.Store(false)
+	recovered, err := f.Fetch(t.Context(), repos["bad"], (testInputs{}).readSet(repos["bad"]), sourcecache.Policy{MaxAge: time.Hour})
+	if err != nil || recovered == nil || mustReadFile(t, recovered.FS, "app.yaml") != "concurrent\n" || tlsConnections.Load() != 3 {
+		t.Fatalf("failed producer recovery: artifact=%v error=%v HTTPS attempts=%d", recovered, err, tlsConnections.Load())
+	}
+	before := requests.Load()
+	secure := *repos["good"]
+	secure.Insecure = false
+	got, err := f.Fetch(t.Context(), &secure, (testInputs{}).readSet(&secure), sourcecache.Policy{})
+	if got != nil || !errors.Is(err, http.ErrSchemeMismatch) || requests.Load() != before || tlsConnections.Load() != 4 {
+		t.Fatalf("protocol selection leaked: artifact=%v error=%v HTTP requests=%d HTTPS attempts=%d", got, err, requests.Load()-before, tlsConnections.Load())
+	}
 }
 
 func TestFetcher_ExtractsLayerWithoutTitleAnnotation(t *testing.T) {

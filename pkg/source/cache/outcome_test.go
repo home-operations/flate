@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
@@ -52,13 +53,23 @@ func outcomeFailure(err error) error {
 
 func TestOutcome_TypedRoundTrip(t *testing.T) {
 	t.Parallel()
+	transport := outcomeCause{Kind: "wrap", Children: []outcomeCause{{Kind: "url", Op: "Head", Children: []outcomeCause{{Kind: "net", Op: "read", Network: "tcp", Children: []outcomeCause{{Kind: "syscall", Op: "read", Children: []outcomeCause{{Kind: "reset"}}}}}}}}}
+	transport = outcomeCause{Kind: "wrap", Children: []outcomeCause{transport}}
+	machine := outcomeCause{Kind: "machine", Children: []outcomeCause{transport}}
+	cause := connReset()
+	u, _ := errors.AsType[*url.Error](cause)
+	u.URL = "https://fixture-secret:machine-canary@reg.example/private?token=credential-canary"
+	cause = fmt.Errorf("cause diagnostic canary: %w", cause)
 	cases := []struct {
-		name     string
-		cause    error
-		sentinel error
-		check    func(*testing.T, error)
+		name        string
+		cause       error
+		sentinel    error
+		check       func(*testing.T, error)
+		shape       outcomeCause
+		machinePath []int
+		diagnostic  string
 	}{
-		{"real nested fmt transport", connReset(), syscall.ECONNRESET, func(t *testing.T, err error) {
+		{name: "real nested fmt transport", cause: connReset(), sentinel: syscall.ECONNRESET, check: func(t *testing.T, err error) {
 			t.Helper()
 			if u, ok := errors.AsType[*url.Error](err); !ok || u.Op != "Head" || u.URL != "" {
 				t.Fatalf("URL wrapper: %+v", u)
@@ -70,29 +81,29 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 				t.Fatalf("syscall wrapper: %+v", s)
 			}
 		}},
-		{"refused", syscall.ECONNREFUSED, syscall.ECONNREFUSED, nil},
-		{"timeout", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ETIMEDOUT}, syscall.ETIMEDOUT, nil},
-		{"IO deadline", &url.Error{Op: "Get", Err: os.ErrDeadlineExceeded}, os.ErrDeadlineExceeded, nil},
-		{"transport EOF", &url.Error{Op: "Get", Err: fmt.Errorf("read: %w", io.ErrUnexpectedEOF)}, io.ErrUnexpectedEOF, nil},
-		{"net EOF", &net.OpError{Op: "read", Err: io.ErrUnexpectedEOF}, io.ErrUnexpectedEOF, nil},
-		{"DNS", &net.DNSError{Err: "fixture-secret", Name: "fixture-secret", Server: "fixture-secret", IsTimeout: true, IsTemporary: true, IsNotFound: true, UnwrapErr: os.ErrDeadlineExceeded}, os.ErrDeadlineExceeded, func(t *testing.T, err error) {
+		{name: "refused", cause: syscall.ECONNREFUSED, sentinel: syscall.ECONNREFUSED},
+		{name: "timeout", cause: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ETIMEDOUT}, sentinel: syscall.ETIMEDOUT},
+		{name: "IO deadline", cause: &url.Error{Op: "Get", Err: os.ErrDeadlineExceeded}, sentinel: os.ErrDeadlineExceeded},
+		{name: "transport EOF", cause: &url.Error{Op: "Get", Err: fmt.Errorf("read: %w", io.ErrUnexpectedEOF)}, sentinel: io.ErrUnexpectedEOF},
+		{name: "net EOF", cause: &net.OpError{Op: "read", Err: io.ErrUnexpectedEOF}, sentinel: io.ErrUnexpectedEOF},
+		{name: "DNS", cause: &net.DNSError{Err: "fixture-secret", Name: "fixture-secret", Server: "fixture-secret", IsTimeout: true, IsTemporary: true, IsNotFound: true, UnwrapErr: os.ErrDeadlineExceeded}, sentinel: os.ErrDeadlineExceeded, check: func(t *testing.T, err error) {
 			t.Helper()
 			if d, ok := errors.AsType[*net.DNSError](err); !ok || !d.Timeout() || !d.IsTemporary || !d.IsNotFound || d.Name != "" || d.Server != "" {
 				t.Fatalf("DNS wrapper: %+v", d)
 			}
 		}},
-		{"DNS without inner cause", &net.DNSError{IsTimeout: true}, nil, nil},
-		{"ORAS response", &fetcherr.ResponseError{StatusCode: 503, Op: http.MethodGet, Message: "fixture-secret", Err: &errcode.ErrorResponse{Method: http.MethodGet, URL: &url.URL{Host: "fixture-secret"}, StatusCode: 503, Errors: errcode.Errors{{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}, {Code: errcode.ErrorCodeManifestUnknown}}}}, nil, func(t *testing.T, err error) {
+		{name: "DNS without inner cause", cause: &net.DNSError{IsTimeout: true}},
+		{name: "ORAS response", cause: &fetcherr.ResponseError{StatusCode: 503, Op: http.MethodGet, Message: "fixture-secret", Err: &errcode.ErrorResponse{Method: http.MethodGet, URL: &url.URL{Host: "fixture-secret"}, StatusCode: 503, Errors: errcode.Errors{{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}, {Code: errcode.ErrorCodeManifestUnknown}}}}, check: func(t *testing.T, err error) {
 			t.Helper()
 			r, ok := errors.AsType[*errcode.ErrorResponse](err)
 			if !ok || r.StatusCode != http.StatusServiceUnavailable || r.URL != nil || r.Method != http.MethodGet || len(r.Errors) != 2 || r.Errors[0].Code != errcode.ErrorCodeBlobUnknown || r.Errors[0].Message != "" || r.Errors[0].Detail != nil {
 				t.Fatalf("response wrapper: %+v", r)
 			}
 		}},
-		{"ORAS rate limit", &fetcherr.ResponseError{StatusCode: 429, Err: &errcode.ErrorResponse{StatusCode: 429}}, nil, nil},
-		{"neutral response", &fetcherr.ResponseError{StatusCode: 599, Op: http.MethodHead, Message: "fixture-secret"}, nil, nil},
-		{"neutral redacted operation", &fetcherr.ResponseError{StatusCode: 500, Op: "fixture-secret", Message: "fixture-secret"}, nil, nil},
-		{"ORAS code value", &fetcherr.ResponseError{StatusCode: 503, Err: errcode.Error{Code: errcode.ErrorCodeManifestUnknown, Message: "fixture-secret"}}, nil, func(t *testing.T, err error) {
+		{name: "ORAS rate limit", cause: &fetcherr.ResponseError{StatusCode: 429, Err: &errcode.ErrorResponse{StatusCode: 429}}},
+		{name: "neutral response", cause: &fetcherr.ResponseError{StatusCode: 599, Op: http.MethodHead, Message: "fixture-secret"}},
+		{name: "neutral redacted operation", cause: &fetcherr.ResponseError{StatusCode: 500, Op: "fixture-secret", Message: "fixture-secret"}},
+		{name: "ORAS code value", cause: &fetcherr.ResponseError{StatusCode: 503, Err: errcode.Error{Code: errcode.ErrorCodeManifestUnknown, Message: "fixture-secret"}}, check: func(t *testing.T, err error) {
 			t.Helper()
 			if _, ok := errors.AsType[errcode.Error](err); !ok {
 				t.Fatal("value code identity lost")
@@ -101,7 +112,7 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 				t.Fatal("value code became pointer")
 			}
 		}},
-		{"ORAS code pointer", &fetcherr.ResponseError{StatusCode: 503, Err: &errcode.Error{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}}, nil, func(t *testing.T, err error) {
+		{name: "ORAS code pointer", cause: &fetcherr.ResponseError{StatusCode: 503, Err: &errcode.Error{Code: errcode.ErrorCodeBlobUnknown, Message: "fixture-secret", Detail: "fixture-secret"}}, check: func(t *testing.T, err error) {
 			t.Helper()
 			if code, ok := errors.AsType[*errcode.Error](err); !ok || code.Code != errcode.ErrorCodeBlobUnknown || code.Message != "" || code.Detail != nil {
 				t.Fatalf("pointer code identity: %+v", code)
@@ -110,15 +121,34 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 				t.Fatal("pointer code became value")
 			}
 		}},
-		{"join", errors.Join(connReset(), syscall.ECONNREFUSED), syscall.ECONNREFUSED, nil},
-		{"fmt multiple", fmt.Errorf("fixture-secret: %w %w", connReset(), syscall.ETIMEDOUT), syscall.ETIMEDOUT, nil},
+		{name: "join", cause: errors.Join(connReset(), syscall.ECONNREFUSED), sentinel: syscall.ECONNREFUSED},
+		{name: "fmt multiple", cause: fmt.Errorf("fixture-secret: %w %w", connReset(), syscall.ETIMEDOUT), sentinel: syscall.ETIMEDOUT},
+		{
+			name: "machine", cause: MachineCredentialErr(cause), sentinel: syscall.ECONNRESET,
+			shape: machine, diagnostic: "machine credential acquisition failed",
+		},
+		{
+			name: "format outside machine", cause: fmt.Errorf("fixture-secret: %w", MachineCredentialErr(cause)), sentinel: syscall.ECONNRESET,
+			shape: outcomeCause{Kind: "wrap", Children: []outcomeCause{machine}}, machinePath: []int{0},
+			diagnostic: "remote acquisition: machine credential acquisition failed",
+		},
+		{
+			name: "machine inside join", cause: errors.Join(syscall.ECONNREFUSED, MachineCredentialErr(cause)), sentinel: syscall.ECONNRESET,
+			shape: outcomeCause{Kind: "join", Children: []outcomeCause{{Kind: "refused"}, machine}}, machinePath: []int{1},
+			diagnostic: syscall.ECONNREFUSED.Error() + "\nmachine credential acquisition failed",
+		},
+		{
+			name: "machine around nested terminal", cause: MachineCredentialErr(outcomeFailure(cause)), sentinel: syscall.ECONNRESET,
+			shape:      outcomeCause{Kind: "machine", Children: []outcomeCause{{Kind: "terminal", Children: []outcomeCause{{Kind: "producer", Children: []outcomeCause{transport}}}}}},
+			diagnostic: "machine credential acquisition failed",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := cachetest.New(t, t.TempDir(), New)
 			live := outcomeFailure(tc.cause)
-			o := newOutcome(live, time.Now().UTC(), 1, ocispec.Descriptor{})
+			o := newOutcome(live, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), 1, ocispec.Descriptor{})
 			if o == nil {
 				t.Fatal("supported live failure rejected")
 			}
@@ -147,12 +177,80 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 			if tc.sentinel != nil && !errors.Is(replay, tc.sentinel) {
 				t.Fatalf("lost sentinel: %v", replay)
 			}
+			if tc.shape.Kind != "" {
+				want := outcomeCause{Kind: "terminal", Children: []outcomeCause{{Kind: "producer", Children: []outcomeCause{tc.shape}}}}
+				if diff := cmp.Diff(want, got.record.Cause); diff != "" {
+					t.Fatalf("persisted cause (-want +got):\n%s", diff)
+				}
+				terminal, ok := replay.(*TerminalError) //nolint:errorlint // Replay MUST preserve direct node positions.
+				if !ok {
+					t.Fatalf("replay root: %T", replay)
+				}
+				producer, ok := terminal.Err.(*producerError) //nolint:errorlint // Replay MUST preserve direct node positions.
+				if !ok {
+					t.Fatalf("terminal child: %T", terminal.Err)
+				}
+				node, shape := producer.error, tc.shape
+				for _, index := range tc.machinePath {
+					if shape.Kind == "wrap" && reflect.TypeOf(node) != fmtWrapType || shape.Kind == "join" && reflect.TypeOf(node) != joinType {
+						t.Fatalf("machine parent identity: %T", node)
+					}
+					switch parent := node.(type) { //nolint:errorlint // Replay MUST preserve direct node positions.
+					case interface{ Unwrap() error }:
+						node = parent.Unwrap()
+					case interface{ Unwrap() []error }:
+						node = parent.Unwrap()[index]
+					default:
+						t.Fatalf("machine parent: %T", node)
+					}
+					shape = shape.Children[index]
+				}
+				machine, ok := node.(*machineError) //nolint:errorlint // Replay MUST preserve direct node positions.
+				if !ok || machine.Error() != "machine credential acquisition failed" || replay.Error() != tc.diagnostic {
+					t.Fatalf("machine masking or position: %T, %v", node, replay)
+				}
+				child := machine.Unwrap()
+				if shape.Children[0].Kind == "terminal" {
+					terminal, ok := child.(*TerminalError) //nolint:errorlint // Replay MUST preserve direct node positions.
+					if !ok || terminal.Attempted {
+						t.Fatalf("machine terminal child: %T, %v", child, child)
+					}
+					producer, ok := terminal.Err.(*producerError) //nolint:errorlint // Replay MUST preserve direct node positions.
+					if !ok {
+						t.Fatalf("nested terminal child: %T", terminal.Err)
+					}
+					child = producer.error
+				}
+				if reflect.TypeOf(child) != fmtWrapType {
+					t.Fatalf("machine transport child: %T", child)
+				}
+				if u, ok := errors.AsType[*url.Error](machine); !ok || u.Op != "Head" || u.URL != "" {
+					t.Fatalf("machine URL: %+v", u)
+				}
+				if n, ok := errors.AsType[*net.OpError](machine); !ok || n.Op != "read" || n.Net != "tcp" || n.Source != nil || n.Addr != nil {
+					t.Fatalf("machine network: %+v", n)
+				}
+				if s, ok := errors.AsType[*os.SyscallError](machine); !ok || s.Syscall != "read" {
+					t.Fatalf("machine syscall: %+v", s)
+				}
+			}
 			if tc.check != nil {
 				tc.check(t, replay)
 			}
 			config, data, ok := o.encode()
 			if !ok || bytes.Contains(config, []byte("fixture-secret")) || bytes.Contains(data, []byte("fixture-secret")) || strings.Contains(replay.Error(), "fixture-secret") {
 				t.Fatal("persisted diagnostics contain fixture secret")
+			}
+			if tc.shape.Kind != "" {
+				for _, forbidden := range []string{"fixture-secret", "machine-canary", "credential-canary", u.URL, "https://", "cause diagnostic canary", "OCIRepository", syscall.ECONNRESET.Error()} {
+					if bytes.Contains(config, []byte(forbidden)) || bytes.Contains(data, []byte(forbidden)) || strings.Contains(replay.Error(), forbidden) {
+						t.Fatalf("machine diagnostics leaked %q", forbidden)
+					}
+				}
+				again, manifestAgain, ok := o.encode()
+				if !ok || !bytes.Equal(config, again) || !bytes.Equal(data, manifestAgain) {
+					t.Fatal("failure encoding is nondeterministic")
+				}
 			}
 			terminal, _ := errors.AsType[*TerminalError](live)
 			producer, ok := errors.AsType[*producerError](terminal.Err)
@@ -196,6 +294,10 @@ func TestOutcome_Exclusions(t *testing.T) {
 		{"DNS cancellation", &net.DNSError{IsTimeout: true, UnwrapErr: context.DeadlineExceeded}},
 		{"custom timeout", timeoutErr{}},
 		{"custom wrapper", outcomeCustomWrapper{connReset()}},
+		{"machine unsupported child", MachineCredentialErr(outcomeCustomWrapper{connReset()})},
+		{"machine rejected credentials", MachineCredentialErr(&fetcherr.ResponseError{StatusCode: http.StatusForbidden})},
+		{"machine canceled child", MachineCredentialErr(context.Canceled)},
+		{"machine cached child", MachineCredentialErr(&TerminalError{Err: connReset(), Attempted: false})},
 		{"custom join", outcomeCustomJoin{[]error{connReset(), syscall.ECONNREFUSED}}},
 		{"custom neutral wrapper", outcomeCustomWrapper{&fetcherr.ResponseError{StatusCode: 503}}},
 		{"cached child", &TerminalError{Err: connReset(), Attempted: false}},
@@ -275,6 +377,48 @@ func TestOutcome_CanceledCallerIsNotRecorded(t *testing.T) {
 	if _, err := c.store.Resolve(t.Context(), manifest.Fingerprint(struct{ Archive, Blob, Git any }{Blob: struct{ Content any }{"cancel-record"}})); !errors.Is(err, errdef.ErrNotFound) {
 		t.Fatalf("outcome recorded for canceled caller: %v", err)
 	}
+}
+
+func TestOutcome_MachineCooldown(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		root := t.TempDir()
+		c := cachetest.New(t, root, New)
+		key := BlobKey{Content: "machine-cooldown"}
+		policy := Policy{Retry: fastRetry(2)}
+		calls := 0
+		produce := func(context.Context, ProducerInput) (ProducerResult, error) {
+			calls++
+			return ProducerResult{}, MachineCredentialErr(connReset())
+		}
+		_, _, _, err := c.Blob(t.Context(), key, policy, produce)
+		if terminal, ok := errors.AsType[*TerminalError](err); !ok || !terminal.Attempted || calls != 2 {
+			t.Fatalf("initial attempt: calls=%d, error=%v", calls, err)
+		}
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+		c = cachetest.New(t, root, New)
+		_, _, _, err = c.Blob(t.Context(), key, policy, produce)
+		if terminal, ok := errors.AsType[*TerminalError](err); !ok || terminal.Attempted || calls != 2 {
+			t.Fatalf("cooldown replay: calls=%d, error=%v", calls, err)
+		}
+		if !errors.Is(err, syscall.ECONNRESET) || !errors.Is(err, manifest.ErrFlux) {
+			t.Fatalf("cooldown cause: %v", err)
+		}
+		if _, ok := errors.AsType[*url.Error](err); !ok {
+			t.Fatal("cooldown lost URL cause")
+		}
+		if _, ok := errors.AsType[*net.OpError](err); !ok {
+			t.Fatal("cooldown lost network cause")
+		}
+		if _, ok := errors.AsType[*os.SyscallError](err); !ok {
+			t.Fatal("cooldown lost syscall cause")
+		}
+		if machine, ok := errors.AsType[*machineError](err); !ok || machine.Error() != "machine credential acquisition failed" || err.Error() != machine.Error() {
+			t.Fatalf("cooldown masking: %v", err)
+		}
+	})
 }
 
 func TestOutcome_Time(t *testing.T) {
@@ -451,6 +595,14 @@ func TestOutcome_InvalidRecords(t *testing.T) {
 		"leaf code":                {Kind: "reset", Code: errcode.ErrorCodeBlobUnknown},
 		"leaf temporary":           {Kind: "reset", Temporary: true},
 		"leaf not found":           {Kind: "reset", NotFound: true},
+		"machine missing child":    {Kind: "machine"},
+		"machine extra child":      {Kind: "machine", Children: []outcomeCause{{Kind: "reset"}, {Kind: "refused"}}},
+		"machine operation":        {Kind: "machine", Op: "read", Children: []outcomeCause{{Kind: "reset"}}},
+		"machine network":          {Kind: "machine", Network: "tcp", Children: []outcomeCause{{Kind: "reset"}}},
+		"machine status":           {Kind: "machine", Status: 503, Children: []outcomeCause{{Kind: "reset"}}},
+		"machine code":             {Kind: "machine", Code: errcode.ErrorCodeBlobUnknown, Children: []outcomeCause{{Kind: "reset"}}},
+		"machine temporary":        {Kind: "machine", Temporary: true, Children: []outcomeCause{{Kind: "reset"}}},
+		"machine not found":        {Kind: "machine", NotFound: true, Children: []outcomeCause{{Kind: "reset"}}},
 		"empty join":               {Kind: "join"},
 		"wrap children":            {Kind: "wrap", Children: []outcomeCause{{Kind: "reset"}, {Kind: "refused"}}},
 		"DNS children":             {Kind: "dns", Children: []outcomeCause{{Kind: "reset"}, {Kind: "refused"}}},

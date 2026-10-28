@@ -150,6 +150,7 @@ var outcomeCodecs = map[string]outcomeCodec{
 		return &TerminalError{Err: children[0], Attempted: false}, true
 	}},
 	"producer": {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) { return &producerError{children[0]}, true }},
+	"machine":  {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) { return MachineCredentialErr(children[0]), true }},
 	"url": {minChildren: 1, maxChildren: 1, enter: outcomeTransport, build: func(n outcomeCause, children []error) (error, bool) {
 		return &url.Error{Op: n.Op, Err: children[0]}, true
 	}},
@@ -274,6 +275,8 @@ func outcomeNode(err error) (outcomeCause, []error, bool) {
 		n.Kind, children = "terminal", []error{e.Err}
 	case *producerError:
 		n.Kind, children = "producer", []error{e.error}
+	case *machineError:
+		n.Kind, children = "machine", []error{e.cause}
 	case *url.Error:
 		n.Kind, n.Op, children = "url", outcomeOp(e.Op), []error{e.Err}
 	case *net.OpError:

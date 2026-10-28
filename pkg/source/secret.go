@@ -45,14 +45,6 @@ func MissingSecretErr(owner manifest.NamedResource, secretRef, reason string) er
 	return missing
 }
 
-type machineError struct{ cause error }
-
-func (e *machineError) Error() string { return "machine credential acquisition failed" }
-func (e *machineError) Unwrap() error { return e.cause }
-
-// MachineCredentialErr masks credential material while preserving the acquisition cause.
-func MachineCredentialErr(cause error) error { return &machineError{cause} }
-
 // An unwired getter is configuration failure; missing material retains the
 // source and Secret identities for the existing whole-source skip policy.
 func resolveSecretRef(secrets SecretGetter, owner manifest.NamedResource, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {

@@ -36,7 +36,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		attempt := r
 		defer func() {
 			if attempt.ambient && err != nil {
-				err = source.MachineCredentialErr(err)
+				err = cache.MachineCredentialErr(err)
 			}
 		}()
 		if attempt.ambient {

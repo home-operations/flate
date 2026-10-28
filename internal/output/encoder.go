@@ -55,21 +55,13 @@ type ImageGroup struct {
 
 // DocumentGroups writes cluster framing around multiple document groups.
 func (e Encoder) DocumentGroups(groups []DocumentGroup) error {
-	if len(groups) == 1 {
-		return e.Documents(groups[0].Documents)
-	}
 	if e.Format == FormatJSON {
+		if len(groups) == 1 {
+			return e.JSON(groups[0].Documents)
+		}
 		return e.JSON(groups)
 	}
-	for _, g := range groups {
-		if _, err := fmt.Fprintln(e.Writer, "# Cluster:", g.Cluster); err != nil {
-			return err
-		}
-		if err := e.Documents(g.Documents); err != nil {
-			return err
-		}
-	}
-	return nil
+	return e.documentGroups(groups)
 }
 
 // ImageGroups writes cluster framing around multiple image groups.
@@ -101,7 +93,7 @@ func (e Encoder) Documents(docs []map[string]any) error {
 	if e.Format == FormatJSON {
 		return e.JSON(docs)
 	}
-	return e.yamlMulti(docs)
+	return e.documentGroups([]DocumentGroup{{Documents: docs}})
 }
 
 // Images writes the prepared image list in its supplied order.
@@ -195,23 +187,6 @@ func writeCol(b *bytes.Buffer, value string, width int, last bool) {
 	for range pad {
 		b.WriteByte(' ')
 	}
-}
-
-// yamlMulti emits a multi-document YAML stream.
-func (e Encoder) yamlMulti(docs []map[string]any) error {
-	for _, d := range docs {
-		out, err := yaml.Marshal(d)
-		if err != nil {
-			return err
-		}
-		if _, err := io.WriteString(e.Writer, "---\n"); err != nil {
-			return err
-		}
-		if _, err := e.Writer.Write(out); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // YAML emits a single document.

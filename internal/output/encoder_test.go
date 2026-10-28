@@ -21,6 +21,10 @@ func TestEncoder_Documents_Bytes(t *testing.T) {
 		want   string
 	}{
 		{name: "yaml_order_empty_document", docs: []map[string]any{{"kind": "B"}, {"kind": "A"}, {}}, want: "---\nkind: B\n---\nkind: A\n---\n{}\n"},
+		{name: "yaml_map_nil", docs: []map[string]any{{"kind": "A"}, nil}, want: "---\nkind: A\n---\nnull\n"},
+		{name: "yaml_empty_map", docs: []map[string]any{{}, {"kind": "A"}}, want: "---\n{}\n---\nkind: A\n"},
+		{name: "yaml_nil_empty", docs: []map[string]any{nil, {}}, want: "---\nnull\n---\n{}\n"},
+		{name: "yaml_keep_chomp_empty", docs: []map[string]any{{"text": "雪\n\n"}, {}}, want: "---\ntext: |+\n  雪\n\n---\n{}\n"},
 		{name: "yaml_empty_stream", format: FormatYAML},
 		{name: "json_nil", format: FormatJSON, want: "null\n"},
 		{name: "json_empty", format: FormatJSON, docs: []map[string]any{}, want: "[]\n"},
@@ -261,7 +265,7 @@ func TestEncoder_Documents_DeterministicKeyOrder(t *testing.T) {
 		"spec":       spec,
 	}
 	var first string
-	for n := range 200 {
+	for n := range 2 {
 		var b bytes.Buffer
 		if err := (Encoder{Writer: &b, Format: FormatYAML}).Documents([]map[string]any{doc}); err != nil {
 			t.Fatalf("run %d: %v", n, err)

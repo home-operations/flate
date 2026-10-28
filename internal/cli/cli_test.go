@@ -1172,36 +1172,40 @@ func TestRun_Build_PartialRenderAndDocumentWriteFailure(t *testing.T) {
 	root := writeMultiNamespaceFixture(t)
 	testutil.WriteFile(t, root, "apps-a/stray.yaml", testutil.KustomizationYAML("stray", "alpha", "  path: ./missing-stray\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, root, "apps-b/kustomization.yaml", "resources: [missing.yaml]\n")
-	args := []string{"build", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "json"}
-	full, stderr, code := runCLI(t, args...)
-	assert.Equal(t, code, 1)
-	if !strings.Contains(stderr, "apps-b") || !strings.Contains(full, "apps-a") {
-		t.Fatalf("fixture did not preserve the healthy render: stdout=%s stderr=%s", full, stderr)
+	for _, format := range []string{"yaml", "json"} {
+		t.Run(format, func(t *testing.T) {
+			args := []string{"build", "ks", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", format}
+			full, stderr, code := runCLI(t, args...)
+			assert.Equal(t, code, 1)
+			if !strings.Contains(stderr, "apps-b") || !strings.Contains(full, "apps-a") {
+				t.Fatalf("fixture did not preserve the healthy render: stdout=%s stderr=%s", full, stderr)
+			}
+			limit := len(full) - 1
+			writeErr := errors.New("document write failed")
+			writer := &outputFailWriter{remaining: limit, err: writeErr}
+			var errOut bytes.Buffer
+			cmd := New("test")
+			cmd.SetArgs(args)
+			cmd.SetOut(writer)
+			cmd.SetErr(&errOut)
+			got := cmd.ExecuteContext(t.Context())
+			if _, ok := errors.AsType[*orchestrator.FailuresError](got); !ok || !errors.Is(got, writeErr) {
+				t.Fatalf("render or writer error lost: %v", got)
+			}
+			if _, ok := errors.AsType[reportedError](got); !ok {
+				t.Fatalf("completed diagnostic was not marked reported: %v", got)
+			}
+			assert.Equal(t, writer.buf.String(), full[:limit])
+			assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
+			assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)
+			writer = &outputFailWriter{remaining: limit, err: writeErr}
+			errOut.Reset()
+			assert.Equal(t, Run(args, writer, &errOut), 1)
+			assert.Equal(t, writer.buf.String(), full[:limit])
+			assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
+			assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)
+		})
 	}
-	limit := len(full) - 1
-	writeErr := errors.New("document write failed")
-	writer := &outputFailWriter{remaining: limit, err: writeErr}
-	var errOut bytes.Buffer
-	cmd := New("test")
-	cmd.SetArgs(args)
-	cmd.SetOut(writer)
-	cmd.SetErr(&errOut)
-	got := cmd.ExecuteContext(t.Context())
-	if _, ok := errors.AsType[*orchestrator.FailuresError](got); !ok || !errors.Is(got, writeErr) {
-		t.Fatalf("render or writer error lost: %v", got)
-	}
-	if _, ok := errors.AsType[reportedError](got); !ok {
-		t.Fatalf("completed diagnostic was not marked reported: %v", got)
-	}
-	assert.Equal(t, writer.buf.String(), full[:limit])
-	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
-	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)
-	writer = &outputFailWriter{remaining: limit, err: writeErr}
-	errOut.Reset()
-	assert.Equal(t, Run(args, writer, &errOut), 1)
-	assert.Equal(t, writer.buf.String(), full[:limit])
-	assert.Equal(t, strings.Count(errOut.String(), writeErr.Error()), 1)
-	assert.Equal(t, strings.Count(errOut.String(), "[OrphanedResource]"), 0)
 }
 
 type outputFailWriter struct {

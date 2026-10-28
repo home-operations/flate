@@ -831,6 +831,43 @@ func TestRun_Get_Formats(t *testing.T) {
 							}
 							all := command == "get" || command == "get all"
 							if format == "yaml" || format == "json" {
+								var expected []string
+								for _, cluster := range scope.clusters {
+									var documents []string
+									for _, kind := range kinds {
+										if format == "yaml" {
+											body := "chart: flux-system-flux-system/./charts/app\nkind: HelmRelease\nname: shared\nnamespace: apps\nreleaseName: installed\nsource: flux-system\nsourceRef:\n  kind: GitRepository\n  name: flux-system\n  namespace: flux-system\ntargetNamespace: workloads\nversion: 0.1.0\n"
+											if kind == "Kustomization" {
+												body = "kind: Kustomization\nname: shared\nnamespace: flux-system\npath: ./" + cluster + "/app\nprune: false\nsourceRef:\n  kind: GitRepository\n  name: flux-system\n  namespace: flux-system\nwait: false\n"
+											}
+											documents = append(documents, "---\n"+body)
+										} else {
+											body := "  {\n    \"chart\": \"flux-system-flux-system/./charts/app\",\n    \"kind\": \"HelmRelease\",\n    \"name\": \"shared\",\n    \"namespace\": \"apps\",\n    \"releaseName\": \"installed\",\n    \"source\": \"flux-system\",\n    \"sourceRef\": {\n      \"kind\": \"GitRepository\",\n      \"name\": \"flux-system\",\n      \"namespace\": \"flux-system\"\n    },\n    \"targetNamespace\": \"workloads\",\n    \"version\": \"0.1.0\"\n  }"
+											if kind == "Kustomization" {
+												body = "  {\n    \"kind\": \"Kustomization\",\n    \"name\": \"shared\",\n    \"namespace\": \"flux-system\",\n    \"path\": \"./" + cluster + "/app\",\n    \"prune\": false,\n    \"sourceRef\": {\n      \"kind\": \"GitRepository\",\n      \"name\": \"flux-system\",\n      \"namespace\": \"flux-system\"\n    },\n    \"wait\": false\n  }"
+											}
+											documents = append(documents, body)
+										}
+									}
+									if format == "yaml" {
+										prefix := ""
+										if len(scope.clusters) > 1 {
+											prefix = "# Cluster: " + cluster + "\n"
+										}
+										expected = append(expected, prefix+strings.Join(documents, ""))
+									} else {
+										body := strings.Join(documents, ",\n")
+										if len(scope.clusters) > 1 {
+											body = "  {\n    \"cluster\": \"" + cluster + "\",\n    \"documents\": [\n    " + strings.ReplaceAll(body, "\n", "\n    ") + "\n    ]\n  }"
+										}
+										expected = append(expected, body)
+									}
+								}
+								want := strings.Join(expected, "")
+								if format == "json" {
+									want = "[\n" + strings.Join(expected, ",\n") + "\n]\n"
+								}
+								assert.Equal(t, out, want)
 								groups := decodeGetDocuments(t, out, format, scope.clusters)
 								for i, group := range groups {
 									assert.Equal(t, len(group.Documents), len(kinds))

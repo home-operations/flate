@@ -1,6 +1,7 @@
 package oci
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -17,14 +18,17 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"oras.land/oras-go/v2/errdef"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -46,6 +50,7 @@ func ociRepo(name string, set func(s *sourcev1.OCIRepositorySpec)) *manifest.OCI
 
 func TestFetcher_SecretReferences(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
 	tests := []struct {
 		name, secret, wantText string
 		material               map[string]any
@@ -90,11 +95,11 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			var err error
 			switch {
 			case tt.proxy:
-				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 			case tt.cert:
-				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 			default:
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(t.Context(), repo, sourcecache.Policy{})
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(t.Context(), repo, "ghcr.io", sourcecache.Policy{})
 			}
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing || !strings.Contains(err.Error(), tt.wantText) {
 				t.Fatalf("error = %v, want missing=%t containing %q", err, tt.wantMissing, tt.wantText)
@@ -117,7 +122,7 @@ func TestFetcher_ResolveTLS_NoCertSecret(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", nil)
 	repo.URL = "oci://registry.example/test"
-	client, _, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +130,7 @@ func TestFetcher_ResolveTLS_NoCertSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Client.(*auth.Client).Client.Transport != expected {
+	if request.client.Client.(*auth.Client).Client.Transport != expected {
 		t.Fatal("transport applied customization without a certificate reference")
 	}
 }
@@ -135,7 +140,7 @@ func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) { s.Insecure = true })
 	repo.URL = "oci://registry.example/test"
-	client, _, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +148,7 @@ func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Client.(*auth.Client).Client.Transport != expected {
+	if request.client.Client.(*auth.Client).Client.Transport != expected {
 		t.Fatal("transport did not apply insecure policy")
 	}
 }
@@ -165,7 +170,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	})
 	repo.URL = "oci://registry.example/test"
-	client, _, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +182,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Client.(*auth.Client).Client.Transport != expected {
+	if request.client.Client.(*auth.Client).Client.Transport != expected {
 		t.Fatal("transport did not apply the certificate reference")
 	}
 }
@@ -215,6 +220,7 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dockerDir := t.TempDir()
 			t.Setenv("DOCKER_CONFIG", dockerDir)
+			t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
 			testutil.WriteFile(t, dockerDir, "config.json", `{"auths":{"ghcr.io":{"username":"default","password":"default"}}}`)
 			fInputs := testInputs{}
 			f := &Fetcher{Network: newTestNetwork(t)}
@@ -232,32 +238,30 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 					s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				}
 			})
-			credStore, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(t.Context(), repo, sourcecache.Policy{})
+			op := &operation{Fetcher: f, secrets: fInputs.lookup(repo)}
+			request, err := op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, identity, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, credStore, sourcecache.Policy{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := client.Client.(*auth.Client).Credential(t.Context(), client.Reference.Host())
+			got, err := request.client.Client.(*auth.Client).Credential(t.Context(), request.client.Reference.Host())
 			want := auth.Credential{Username: tt.user, Password: tt.pass}
 			if err != nil || got != want {
 				t.Fatalf("credentials = %+v, %v; want %+v", got, err, want)
 			}
-			if identity == nil {
+			if request.material == nil {
 				t.Fatal("authenticated acquisition has anonymous identity")
 			}
 			if tt.secret != "" {
-				if err := credStore.Put(t.Context(), credentials.ServerAddressFromHostname(client.Reference.Host()), auth.Credential{Username: "rotated", Password: "rotated"}); err != nil {
-					t.Fatal(err)
+				op.secrets = func(_, _ string) *manifest.Secret {
+					config := fmt.Sprintf(`{"auths":{%q:{"username":"rotated","password":"rotated"}}}`, credentials.ServerAddressFromRegistry(tt.registry))
+					return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": config}}
 				}
-				captured, err := client.Client.(*auth.Client).Credential(t.Context(), client.Reference.Host())
+				captured, err := request.client.Client.(*auth.Client).Credential(t.Context(), request.client.Reference.Host())
 				if err != nil || captured != want {
 					t.Fatal("producer reread mutable credentials")
 				}
-				_, rotated, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, credStore, sourcecache.Policy{})
-				if err != nil || cmp.Equal(identity, rotated) {
+				rotated, err := op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+				if err != nil || cmp.Equal(request.material, rotated.material) {
 					t.Fatal("credential rotation reused identity")
 				}
 			}
@@ -268,6 +272,7 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 func TestFetcher_AnonymousWithCorruptDockerConfig(t *testing.T) {
 	dockerDir := t.TempDir()
 	t.Setenv("DOCKER_CONFIG", dockerDir)
+	t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
 	testutil.WriteFile(t, dockerDir, "config.json", `{"auths":`)
 	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap\n"})
 	registry := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
@@ -283,8 +288,366 @@ func TestFetcher_AnonymousWithCorruptDockerConfig(t *testing.T) {
 	assert.Equal(t, mustReadFile(t, got.FS, "app.yaml"), "kind: ConfigMap\n")
 }
 
+func TestFetcher_MachineCredentials(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "helper-ran")
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("FLATE_HELPER_MARKER", marker)
+	for _, helper := range []string{"global", "target", "later", "unrelated"} {
+		path := filepath.Join(bin, "docker-credential-"+helper)
+		testutil.WriteFileAt(t, path, "#!/bin/sh\necho invoked >> \"$FLATE_HELPER_MARKER\"\nexit 1\n")
+		assert.NoError(t, os.Chmod(path, 0o755))
+	}
+	const docker = `{"auths":{"ghcr.io":{"username":"docker","password":"docker"}}}`
+	const helm = `{"auths":{"ghcr.io":{"username":"helm","password":"helm"}}}`
+	const helper = `{"credsStore":"global","credHelpers":{"ghcr.io":"target","quay.io":"unrelated"}}`
+	for _, tc := range []struct {
+		name, docker, helm, explicit, secret, user, helper string
+		wantInput                                          bool
+	}{
+		{name: "Helm only", helm: helm, user: "helm"},
+		{name: "Docker wins", docker: docker, helm: helm, user: "docker"},
+		{name: "unrelated Docker falls through", docker: `{"auths":{"quay.io":{"username":"other","password":"other"}}}`, helm: helm, user: "helm"},
+		{name: "corrupt Docker falls through", docker: `{`, helm: helm, user: "helm"},
+		{name: "Docker avoids malformed Helm", docker: docker, helm: `{`, user: "docker"},
+		{name: "consulted malformed Helm", helm: `{`, wantInput: true},
+		{name: "Docker target decode fails", docker: `{"auths":{"ghcr.io":{"auth":"!!!"}}}`, helm: helm, wantInput: true},
+		{name: "Helm target decode fails", helm: `{"auths":{"ghcr.io":{"auth":"!!!"}}}`, wantInput: true},
+		{name: "explicit target excludes ambient", docker: `{`, helm: `{`, explicit: docker, user: "docker"},
+		{name: "explicit miss excludes ambient", docker: docker, helm: helm, explicit: `{}`},
+		{name: "explicit malformed excludes ambient", docker: docker, helm: helm, explicit: `{`, wantInput: true},
+		{name: "Secret excludes malformed files", docker: `{`, helm: `{`, explicit: `{`, secret: helm, user: "helm"},
+		{name: "malformed Secret is authoritative", docker: docker, helm: helm, secret: `{`, wantInput: true},
+		{name: "Docker host helper overrides global", docker: helper, helper: "target"},
+		{name: "Helm host helper overrides global", helm: helper, helper: "target"},
+		{name: "explicit host helper excludes ambient", docker: helm, helm: helm, explicit: helper, helper: "target"},
+		{name: "unrelated helper has no advice", docker: `{"credHelpers":{"quay.io":"unrelated"}}`},
+		{name: "global helper applies", helm: `{"credsStore":"global"}`, helper: "global"},
+		{name: "empty host helper uses global", docker: `{"credsStore":"global","credHelpers":{"ghcr.io":""}}`, helper: "global"},
+		{name: "first helper survives", docker: helper, helm: `{"credsStore":"later"}`, helper: "target"},
+		{name: "later plain credential clears helper", docker: helper, helm: helm, user: "helm"},
+		{name: "Docker plain plus helper", docker: `{"credsStore":"global","auths":{"ghcr.io":{"username":"docker","password":"docker"}}}`, user: "docker"},
+		{name: "Helm plain plus helper", helm: `{"credsStore":"global","auths":{"ghcr.io":{"username":"helm","password":"helm"}}}`, user: "helm"},
+		{name: "explicit plain plus helper", explicit: `{"credsStore":"global","auths":{"ghcr.io":{"username":"docker","password":"docker"}}}`, user: "docker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dockerDir, helmDir := t.TempDir(), t.TempDir()
+			t.Setenv("DOCKER_CONFIG", dockerDir)
+			t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(helmDir, "config.json"))
+			if tc.docker != "" {
+				testutil.WriteFile(t, dockerDir, "config.json", tc.docker)
+			}
+			if tc.helm != "" {
+				testutil.WriteFile(t, helmDir, "config.json", tc.helm)
+			}
+			f := &Fetcher{Network: newTestNetwork(t)}
+			if tc.explicit != "" {
+				f.RegistryConfig = filepath.Join(t.TempDir(), "config.json")
+				testutil.WriteFileAt(t, f.RegistryConfig, tc.explicit)
+			}
+			repo := ociRepo("config", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://ghcr.io/app" })
+			op := &operation{Fetcher: f}
+			if tc.secret != "" {
+				repo.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
+				op.secrets = func(_, _ string) *manifest.Secret {
+					return &manifest.Secret{StringData: map[string]any{dockerConfigJSONKey: tc.secret}}
+				}
+			}
+			request, err := op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+			if tc.wantInput {
+				if !errors.Is(err, manifest.ErrInput) || request.client != nil {
+					t.Fatalf("lookup = %v, want authoritative input failure", err)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			got, err := request.client.Client.(*auth.Client).Credential(t.Context(), request.client.Reference.Host())
+			assert.NoError(t, err)
+			assert.Equal(t, got, auth.Credential{Username: tc.user, Password: tc.user})
+			assert.Equal(t, request.helper, tc.helper)
+		})
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("credential helper ran: %v", err)
+	}
+}
+
+func TestFetcher_HelmConfigAvailability(t *testing.T) {
+	for _, mode := range []string{"absent", "open failure", "read failure", "malformed", "default", "override"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv("DOCKER_CONFIG", t.TempDir())
+			home := t.TempDir()
+			t.Setenv("HELM_CONFIG_HOME", home)
+			t.Setenv("HELM_REGISTRY_CONFIG", "")
+			path := filepath.Join(home, "registry", "config.json")
+			wantUser := ""
+			switch mode {
+			case "open failure":
+				testutil.WriteFile(t, home, "registry", "regular file")
+			case "read failure":
+				assert.NoError(t, os.MkdirAll(path, 0o755))
+			case "malformed":
+				testutil.WriteFileAt(t, path, `{`)
+			case "default", "override":
+				wantUser = "default"
+				testutil.WriteFileAt(t, path, `{"auths":{"https://index.docker.io/v1/":{"username":"default","password":"default"}}}`)
+				if mode == "override" {
+					wantUser = "override"
+					path = filepath.Join(t.TempDir(), "config.json")
+					t.Setenv("HELM_REGISTRY_CONFIG", path)
+					testutil.WriteFileAt(t, path, `{"auths":{"https://index.docker.io/v1/":{"username":"override","password":"override"}}}`)
+				}
+			}
+			selected, err := loadCredentials(t.Context(), "", "registry-1.docker.io")
+			if mode == "malformed" {
+				if !errors.Is(err, manifest.ErrInput) {
+					t.Fatalf("readable malformed Helm config = %v", err)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, selected.credential, auth.Credential{Username: wantUser, Password: wantUser})
+		})
+	}
+}
+
+func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
+	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap\n"})
+	upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
+	for _, name := range []string{"Helm only", "Docker wins", "unrelated Docker", "wrong Docker is authoritative", "explicit miss", "anonymous helper success", "unreadable Helm public success"} {
+		t.Run(name, func(t *testing.T) {
+			var accepted atomic.Int32
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if name != "anonymous helper success" && name != "unreadable Helm public success" {
+					user, password, ok := r.BasicAuth()
+					want := "helm"
+					if name == "Docker wins" {
+						want = "docker"
+					}
+					if !ok || user != want || password != want {
+						w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+						w.WriteHeader(http.StatusUnauthorized)
+						return
+					}
+				}
+				accepted.Add(1)
+				upstream.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			host := mustURL(t, srv.URL).Host
+			dockerDir := t.TempDir()
+			t.Setenv("DOCKER_CONFIG", dockerDir)
+			helmPath := filepath.Join(t.TempDir(), "config.json")
+			t.Setenv("HELM_REGISTRY_CONFIG", helmPath)
+			config := func(host, user string) string {
+				return fmt.Sprintf(`{"auths":{%q:{"username":%q,"password":%q}}}`, host, user, user)
+			}
+			testutil.WriteFileAt(t, helmPath, config(host, "helm"))
+			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New)}
+			switch name {
+			case "Docker wins", "wrong Docker is authoritative":
+				testutil.WriteFile(t, dockerDir, "config.json", config(host, "docker"))
+			case "unrelated Docker":
+				testutil.WriteFile(t, dockerDir, "config.json", config("unrelated.example", "docker"))
+			case "explicit miss":
+				f.RegistryConfig = filepath.Join(t.TempDir(), "missing.json")
+			case "anonymous helper success":
+				testutil.WriteFileAt(t, helmPath, `{"credsStore":"unused"}`)
+			case "unreadable Helm public success":
+				assert.NoError(t, os.Remove(helmPath))
+				assert.NoError(t, os.Mkdir(helmPath, 0o755))
+			}
+			repo := ociRepo("machine", func(s *sourcev1.OCIRepositorySpec) {
+				s.URL = "oci://" + host + "/app"
+				s.Insecure = true
+			})
+			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+			if name == "wrong Docker is authoritative" || name == "explicit miss" {
+				if err == nil || got != nil || accepted.Load() != 0 || strings.Contains(err.Error(), "credential helper") {
+					t.Fatalf("unexpected fallback: artifact=%v error=%v accepted=%d", got, err, accepted.Load())
+				}
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, mustReadFile(t, got.FS, "app.yaml"), "kind: ConfigMap\n")
+			if accepted.Load() == 0 {
+				t.Fatal("acquisition did not reach registry")
+			}
+		})
+	}
+}
+
+func TestFetcher_HelperFailureAdvice(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"Basic absence", "bearer absence", "rejected credential", "forbidden", "missing content", "malformed content", "transport", "canceled"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch name {
+				case "Basic absence", "rejected credential":
+					w.Header().Set("WWW-Authenticate", `Basic realm="fixture"`)
+					w.WriteHeader(http.StatusUnauthorized)
+				case "bearer absence":
+					if r.URL.Path != "/token" {
+						w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm=%q,service="registry",scope="repository:app:pull"`, "https://"+r.Host+"/token"))
+					}
+					w.WriteHeader(http.StatusUnauthorized)
+				case "forbidden":
+					http.Error(w, "denied", http.StatusForbidden)
+				case "missing content":
+					http.NotFound(w, r)
+				case "malformed content":
+					w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+					_, _ = io.WriteString(w, "malformed manifest")
+				case "transport":
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					_ = conn.Close()
+				}
+			}))
+			t.Cleanup(srv.Close)
+			path := filepath.Join(t.TempDir(), "config.json")
+			config := `{"credsStore":"fixture-helper"}`
+			if name == "rejected credential" {
+				config = fmt.Sprintf(`{"credsStore":"fixture-helper","auths":{%q:{"username":"fixture-user","password":"private-password"}}}`, mustURL(t, srv.URL).Host)
+			}
+			testutil.WriteFileAt(t, path, config)
+			repo := ociRepo("advice", func(s *sourcev1.OCIRepositorySpec) {
+				s.URL = "oci://" + mustURL(t, srv.URL).Host + "/app"
+				s.Insecure = true
+			})
+			op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New), RegistryConfig: path}}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if name == "canceled" {
+				cancel()
+			}
+			artifact, err := op.fetchWithCredentials(ctx, repo, nil, sourcecache.Policy{})
+			if err == nil || artifact != nil || !errors.Is(err, manifest.ErrFlux) {
+				t.Fatalf("failure lost source classification: %v", err)
+			}
+			wantAdvice := name == "Basic absence" || name == "bearer absence"
+			for _, text := range []string{`credential helper "fixture-helper"`, "--registry-config", "plain auths entry", "supplied Secret"} {
+				if strings.Contains(err.Error(), text) != wantAdvice {
+					t.Errorf("advice %q: %v", text, err)
+				}
+			}
+			if !strings.Contains(err.Error(), "OCIRepository ns/advice") || !strings.Contains(err.Error(), "resolve latest") && name != "canceled" {
+				t.Errorf("original source/operation detail lost: %v", err)
+			}
+			if name == "Basic absence" && !errors.Is(err, auth.ErrBasicCredentialNotFound) {
+				t.Errorf("Basic absence sentinel lost: %v", err)
+			}
+			if name == "bearer absence" || name == "rejected credential" || name == "forbidden" {
+				response, ok := errors.AsType[*errcode.ErrorResponse](err)
+				if !ok || response.StatusCode == 0 {
+					t.Errorf("ORAS response chain lost: %v", err)
+				}
+				if _, ok := errors.AsType[*fetcherr.ResponseError](err); !ok {
+					t.Errorf("neutral response chain lost: %v", err)
+				}
+			}
+			if name == "missing content" && !errors.Is(err, errdef.ErrNotFound) {
+				t.Errorf("missing content sentinel lost: %v", err)
+			}
+			if name == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Errorf("cancellation lost: %v", err)
+			}
+			for _, secret := range []string{"fixture-user", "private-password", base64.StdEncoding.EncodeToString([]byte("fixture-user:private-password"))} {
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("credential leaked in error")
+				}
+			}
+		})
+	}
+}
+
+func TestFetcher_SharedFailureHelperAdvice(t *testing.T) {
+	previous := http.DefaultTransport
+	transport := previous.(*http.Transport).Clone()
+	http.DefaultTransport = transport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	synctest.Test(t, func(t *testing.T) {
+		var requests atomic.Int32
+		entered, release := make(chan struct{}), make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		defer unblock()
+		transport.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+			client, server := net.Pipe()
+			go func() {
+				defer func() { _ = server.Close() }()
+				r, err := http.ReadRequest(bufio.NewReader(server))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_ = r.Body.Close()
+				if requests.Add(1) == 1 {
+					_, _ = io.WriteString(server, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+					return
+				}
+				close(entered)
+				<-release
+				_, _ = io.WriteString(server, "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"fixture\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+			}()
+			return client, nil
+		}
+		path := filepath.Join(t.TempDir(), "config.json")
+		write := func(helper string) {
+			t.Helper()
+			testutil.WriteFileAt(t, path, fmt.Sprintf(`{"credsStore":%q}`, helper))
+		}
+		write("first")
+		op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, t.TempDir(), sourcecache.New), RegistryConfig: path}}
+		repo := ociRepo("shared", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://registry.invalid/app" })
+		for range 2 {
+			_, err := op.fetchWithCredentials(t.Context(), repo, nil, sourcecache.Policy{})
+			response, ok := errors.AsType[*fetcherr.ResponseError](err)
+			if !ok || response.StatusCode != http.StatusServiceUnavailable || strings.Contains(err.Error(), "credential helper") || requests.Load() != 1 {
+				t.Fatalf("transient replay gained advice or retried: %v, requests=%d", err, requests.Load())
+			}
+		}
+		time.Sleep(time.Second)
+		done := make(chan error, 2)
+		go func() {
+			_, err := op.fetchWithCredentials(t.Context(), repo, nil, sourcecache.Policy{})
+			done <- err
+		}()
+		<-entered
+		write("second")
+		go func() {
+			_, err := op.fetchWithCredentials(t.Context(), repo, nil, sourcecache.Policy{})
+			done <- err
+		}()
+		synctest.Wait()
+		unblock()
+		seen := map[string]bool{}
+		for range 2 {
+			err := <-done
+			if !errors.Is(err, auth.ErrBasicCredentialNotFound) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "--registry-config") || !strings.Contains(err.Error(), "supplied Secret") {
+				t.Fatalf("shared error lost chain or remedies: %v", err)
+			}
+			if strings.Contains(err.Error(), `credential helper "first"`) == strings.Contains(err.Error(), `credential helper "second"`) {
+				t.Fatalf("caller advice mixed helpers: %v", err)
+			}
+			for _, helper := range []string{"first", "second"} {
+				if strings.Contains(err.Error(), fmt.Sprintf("credential helper %q", helper)) {
+					seen[helper] = true
+				}
+			}
+		}
+		if len(seen) != 2 || requests.Load() != 2 {
+			t.Fatalf("shared acquisition mixed advice or duplicated work: helpers=%v requests=%d", seen, requests.Load())
+		}
+	})
+}
+
 func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
 	tests := []struct {
 		name                             string
 		cert, proxy, encoded             bool
@@ -375,13 +738,20 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 	tests := []struct {
 		name      string
 		secret    *manifest.Secret
-		config    string // registry config content; "" leaves --registry-config unset
-		docker    string // docker default config content
+		config    string
+		docker    string
+		helm      string
 		wantRetry bool
 		wantErr   error // nil with wantRetry false means any non-sentinel error
 	}{
 		{name: "not found, fallback", config: covering, wantRetry: true},
 		{name: "not found, docker default fallback", docker: covering, wantRetry: true},
+		{name: "not found, Helm fallback", helm: covering, wantRetry: true},
+		{name: "wiped, Helm fallback", secret: &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."}}, helm: covering, wantRetry: true},
+		{name: "Helm unrelated host", helm: `{"auths":{"quay.io":{"username":"other","password":"other"}}}`, wantErr: manifest.ErrMissingSecret},
+		{name: "Helm helper only", helm: `{"credsStore":"unused"}`, wantErr: manifest.ErrMissingSecret},
+		{name: "Docker helper only", docker: `{"credsStore":"unused"}`, wantErr: manifest.ErrMissingSecret},
+		{name: "malformed Helm deferred", helm: `{`},
 		{
 			name:   "placeholder-wiped, fallback",
 			secret: &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "..PLACEHOLDER_.dockerconfigjson.."}},
@@ -393,11 +763,15 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dockerDir := t.TempDir() // keeps the host's docker config out
+			dockerDir := t.TempDir()
 			if tt.docker != "" {
 				testutil.WriteFile(t, dockerDir, "config.json", tt.docker)
 			}
 			t.Setenv("DOCKER_CONFIG", dockerDir)
+			t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
+			if tt.helm != "" {
+				testutil.WriteFileAt(t, os.Getenv("HELM_REGISTRY_CONFIG"), tt.helm)
+			}
 			fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return tt.secret }}
 			f := &Fetcher{Network: newTestNetwork(t)}
 			if tt.config != "" {
@@ -408,7 +782,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 				s.URL = "oci://ghcr.io/x/y"
 				s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 			})
-			credStore, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(t.Context(), repo, sourcecache.Policy{})
+			credStore, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(t.Context(), repo, "ghcr.io", sourcecache.Policy{})
 			switch {
 			case tt.wantRetry:
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
@@ -505,6 +879,18 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	if b := mustReadFile(t, got.FS, "Chart.yaml"); b != chart {
 		t.Errorf("Chart.yaml = %q, want %q", b, chart)
 	}
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	helmPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("HELM_REGISTRY_CONFIG", helmPath)
+	testutil.WriteFileAt(t, helmPath, configJSON)
+	helmRepo := *repo
+	helmRepo.SecretRef = nil
+	helmInputs := testInputs{repos: func(_, _ string) *manifest.HelmRepository { return &helmRepo }}
+	helmCharts := helmchart.New(&Fetcher{Cache: cache, Network: &network}, helmchart.Config{Cache: cache, Network: &network})
+	helmArtifact, err := helmCharts.Fetch(t.Context(), chartInput, helmInputs.readSet(chartInput), sourcecache.Policy{})
+	assert.NoError(t, err)
+	assert.Equal(t, helmArtifact.Kind, manifest.KindHelmChart)
+	assert.Equal(t, mustReadFile(t, helmArtifact.FS, "Chart.yaml"), chart)
 	initialKey := got.Key
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, configPath, configJSON)
@@ -567,43 +953,39 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	}
 }
 
-type countedCredentials struct {
-	credentials.Store
-	calls   int
-	failure error
-}
-
-func (s *countedCredentials) Get(context.Context, string) (auth.Credential, error) {
-	s.calls++
-	if s.failure != nil {
-		return auth.EmptyCredential, s.failure
+func TestFetcher_ResolveConfig_CredentialSnapshot(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "config.json")
+	write := func(password string) {
+		t.Helper()
+		testutil.WriteFileAt(t, path, fmt.Sprintf(`{"auths":{"https://index.docker.io/v1/":{"username":"fixture","password":%q}}}`, password))
 	}
-	return auth.Credential{Username: "helper", Password: fmt.Sprint(s.calls)}, nil
-}
-
-func TestFetcher_ResolveConfig_HelperSnapshot(t *testing.T) {
-	t.Setenv("NO_PROXY", "*")
-	t.Setenv("no_proxy", "*")
-	store := &countedCredentials{}
-	repo := ociRepo("helper", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://docker.io/library/test" })
-	client, first, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store, sourcecache.Policy{})
-	if err != nil {
-		t.Fatal(err)
+	write("first")
+	op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), RegistryConfig: path}}
+	repo := ociRepo("snapshot", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://docker.io/library/test" })
+	request, err := op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+	assert.NoError(t, err)
+	write("second")
+	cred, err := request.client.Client.(*auth.Client).Credential(t.Context(), "registry-1.docker.io")
+	if err != nil || cred.Password != "first" {
+		t.Fatalf("credential was not frozen: %v", err)
 	}
-	for range 3 {
-		cred, err := client.Client.(*auth.Client).Credential(t.Context(), "registry-1.docker.io")
-		if err != nil || cred.Password != "1" || store.calls != 1 {
-			t.Fatalf("helper was not frozen: calls=%d error=%v", store.calls, err)
-		}
+	next, err := op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+	if err != nil || cmp.Equal(request.material, next.material) {
+		t.Fatalf("next acquisition did not resolve rotated credential: %v", err)
 	}
-	_, second, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store, sourcecache.Policy{})
-	if err != nil || cmp.Equal(first, second) || store.calls != 2 {
-		t.Fatalf("next acquisition did not resolve rotated helper: calls=%d error=%v", store.calls, err)
+	testutil.WriteFileAt(t, path, `{"auths":{"https://index.docker.io/v1/":{"auth":"!!!"}}}`)
+	failed, err := op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+	if failed.client != nil || failed.material != nil || !errors.Is(err, manifest.ErrInput) {
+		t.Fatalf("failed lookup admitted acquisition: %v", err)
 	}
-	store.failure = os.ErrPermission
-	failed, identity, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store, sourcecache.Policy{})
-	if failed != nil || identity != nil || !errors.Is(err, os.ErrPermission) || !errors.Is(err, manifest.ErrInput) {
-		t.Fatalf("failed helper admitted acquisition: %v", err)
+	if !strings.Contains(err.Error(), "failed to decode auth field") {
+		t.Fatalf("credential decode detail lost: %v", err)
+	}
+	op.RegistryConfig = filepath.Join(path, "config.json")
+	failed, err = op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+	if _, ok := errors.AsType[*os.PathError](err); !ok || failed.client != nil || !errors.Is(err, manifest.ErrInput) {
+		t.Fatalf("file lookup error chain lost: %v", err)
 	}
 }
 

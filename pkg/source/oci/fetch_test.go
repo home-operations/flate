@@ -666,7 +666,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		if body != "first" {
 			continue
 		}
-		client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+		request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -700,7 +700,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 				current := *repo
 				fetcher := &Fetcher{Network: newTestNetwork(t), Cache: c}
 				tc.change(&current, fetcher)
-				got, err := (&operation{Fetcher: fetcher}).fetch(t.Context(), &current, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: current.SourceInterval()})
+				got, err := (&operation{Fetcher: fetcher}).fetch(t.Context(), &current, request, sourcecache.Policy{MaxAge: current.SourceInterval()})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -887,7 +887,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 						t.Error(err)
 					}
 				})
-				client, material, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo, nil, sourcecache.Policy{})
+				request, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo, nil, sourcecache.Policy{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -901,7 +901,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 					if stage == "canceled body" {
 						original = context.Canceled
 					}
-					client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
+					request.client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
 						resp, err := srv.Client().Transport.RoundTrip(req)
 						if err != nil || req.Method != http.MethodGet {
 							return resp, err
@@ -924,7 +924,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 					})}
 				}
 				retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
-				_, err = (&operation{Fetcher: f}).fetch(ctx, repo, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
+				_, err = (&operation{Fetcher: f}).fetch(ctx, repo, request, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 				if failures.Load() != tc.attempts {
 					t.Fatalf("producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
 				}
@@ -995,7 +995,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				if f.Cache == c {
 					t.Fatal("reopen reused the closed owner")
 				}
-				_, err = (&operation{Fetcher: f}).fetch(ctx, repo, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
+				_, err = (&operation{Fetcher: f}).fetch(ctx, repo, request, sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry})
 				if requests.Load() != before || failures.Load() != tc.attempts {
 					t.Fatalf("replay fetched: requests=%d, want %d; failures=%d, want %d", requests.Load(), before, failures.Load(), tc.attempts)
 				}
@@ -1478,13 +1478,13 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 				r.Timeout = &metav1.Duration{Duration: tc.timeout}
 			}
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New)}
-			client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
+			request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			stop := errors.New("controlled registry request")
 			var calls atomic.Int32
-			client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
+			request.client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
 				calls.Add(1)
 				deadline, ok := req.Context().Deadline()
 				remaining := time.Until(deadline)
@@ -1493,7 +1493,7 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 				}
 				return nil, stop
 			})}
-			_, err = (&operation{Fetcher: f}).fetch(t.Context(), r, registryAcquisition{client, material}, sourcecache.Policy{})
+			_, err = (&operation{Fetcher: f}).fetch(t.Context(), r, request, sourcecache.Policy{})
 			if calls.Load() == 0 || !errors.Is(err, stop) {
 				t.Fatalf("controlled registry request not reached: calls=%d error=%v", calls.Load(), err)
 			}
@@ -1523,7 +1523,7 @@ func TestFetcher_PullTimeout(t *testing.T) {
 				root := t.TempDir()
 				f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 				r := &manifest.OCIRepository{URL: "oci://registry.invalid/repository", Reference: &sourcev1.OCIRepositoryRef{SemVer: "*"}, Timeout: &metav1.Duration{Duration: 5 * time.Second}}
-				client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
+				request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1531,7 +1531,7 @@ func TestFetcher_PullTimeout(t *testing.T) {
 				start := time.Now()
 				deadline := start.Add(5 * time.Second)
 				calls := 0
-				client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
+				request.client.Client = &http.Client{Transport: registryRoundTripper(func(req *http.Request) (*http.Response, error) {
 					calls++
 					if got, ok := req.Context().Deadline(); !ok || !got.Equal(deadline) {
 						t.Errorf("pull deadline=%v present=%t, want %v", got, ok, deadline)
@@ -1565,7 +1565,7 @@ func TestFetcher_PullTimeout(t *testing.T) {
 					}
 					return &http.Response{StatusCode: http.StatusOK, Header: header, ContentLength: int64(len(data)), Body: body, Request: req}, nil
 				})}
-				_, err = (&operation{Fetcher: f}).fetch(t.Context(), r, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: time.Hour})
+				_, err = (&operation{Fetcher: f}).fetch(t.Context(), r, request, sourcecache.Policy{MaxAge: time.Hour})
 				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Second {
 					t.Fatalf("%s timeout: elapsed=%v error=%v", tc.stage, time.Since(start), err)
 				}
@@ -1580,7 +1580,7 @@ func TestFetcher_PullTimeout(t *testing.T) {
 				longer.Timeout = &metav1.Duration{Duration: 10 * time.Second}
 				start = time.Now()
 				deadline = start.Add(10 * time.Second)
-				acquired, err := (&operation{Fetcher: f}).fetch(t.Context(), &longer, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: time.Hour})
+				acquired, err := (&operation{Fetcher: f}).fetch(t.Context(), &longer, request, sourcecache.Policy{MaxAge: time.Hour})
 				if err != nil || time.Since(start) != 6*time.Second {
 					t.Fatalf("longer pull: elapsed=%v error=%v", time.Since(start), err)
 				}
@@ -1594,7 +1594,7 @@ func TestFetcher_PullTimeout(t *testing.T) {
 				shorter := longer
 				shorter.Timeout = &metav1.Duration{Duration: time.Nanosecond}
 				before := calls
-				warm, err := (&operation{Fetcher: f}).fetch(t.Context(), &shorter, registryAcquisition{client, material}, sourcecache.Policy{MaxAge: time.Hour})
+				warm, err := (&operation{Fetcher: f}).fetch(t.Context(), &shorter, request, sourcecache.Policy{MaxAge: time.Hour})
 				if err != nil || calls != before || warm.Key != acquired.Key {
 					t.Fatalf("timeout changed persistent content identity: calls=%d->%d error=%v", before, calls, err)
 				}

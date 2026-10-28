@@ -258,12 +258,12 @@ func TestResolveRef_SemverPrecedence(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			repo := &manifest.OCIRepository{URL: "oci://" + strings.TrimPrefix(srv.URL, "http://") + "/chart"}
-			client, _, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+			request, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			client.PlainHTTP = true
-			got, err := resolveRef(t.Context(), client, repo, tc.ref)
+			request.client.PlainHTTP = true
+			got, err := resolveRef(t.Context(), request.client, repo, tc.ref)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -12,7 +12,7 @@ import (
 
 func bindOutput(fs *pflag.FlagSet, target *string, formats ...output.Format) {
 	*target = string(formats[0])
-	fs.VarP(&outputValue{target: target, allowed: formats}, "output", "o", "output format: "+joinOutputs(formats))
+	fs.VarP(&outputValue{target: target, allowed: formats}, "output", "o", "Set output format: "+joinOutputs(formats))
 }
 
 func joinOutputs(formats []output.Format) string {

@@ -40,7 +40,7 @@ func newTestNetwork(tb testing.TB) *source.Network {
 	return network
 }
 
-func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
+func TestFetcher_ProviderUnavailable(t *testing.T) {
 	t.Parallel()
 	f := &bucket.Fetcher{Network: newTestNetwork(t)}
 	b := &manifest.Bucket{
@@ -52,18 +52,15 @@ func TestFetcher_NonGenericProviderFailsLoud(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("error should say 'not implemented'; got %v", err)
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("expected missing provider credentials; got %v", err)
 	}
 }
 
-func TestFetcher_ForceGenericProvider(t *testing.T) {
+func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
-	// Gate bypassed: the generic path runs and fails on the absent secret.
 	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
-	f := &bucket.Fetcher{Network: newTestNetwork(t),
-		ForceGeneric: true,
-	}
+	f := &bucket.Fetcher{Network: newTestNetwork(t)}
 	b := &manifest.Bucket{
 		Name: "b", Namespace: "ns",
 		Provider:   sourcev1.BucketProviderAmazon,
@@ -73,9 +70,6 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 	_, err := f.Fetch(context.Background(), b, fInputs.readSet(b), cache.Policy{MaxAge: b.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
-	}
-	if strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("provider gate should be bypassed with ForceGeneric; got %v", err)
 	}
 	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)
@@ -162,7 +156,7 @@ func TestFetcher_ArchiveIsolationAndWarmHits(t *testing.T) {
 				var wg sync.WaitGroup
 				for _, namespace := range []string{"first", "second"} {
 					wg.Go(func() {
-						b := &manifest.Bucket{Name: "source", Namespace: namespace, BucketName: "data", Prefix: "prefix/",
+						b := &manifest.Bucket{Name: "source", Namespace: namespace, BucketName: "data", Prefix: "prefix/", Provider: sourcev1.BucketProviderAmazon,
 							Endpoint: srv.URL, Insecure: true, Region: "us-east-1", Interval: metav1.Duration{Duration: time.Hour},
 							SecretRef: &manifest.LocalObjectReference{Name: "creds"}}
 						var family string

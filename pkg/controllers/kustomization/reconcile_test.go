@@ -516,6 +516,10 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 			t.Parallel()
 			c, s, _ := newControllerWithFixture(t)
 			freezeSourceForTest(t, s)
+			declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "cluster-secrets", Namespace: "flux-system", Spec: map[string]any{"target": map[string]any{"name": "cluster-secrets"}}}
+			s.AddObject(declaration)
+			input := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "flux-system", Name: "cluster-secrets"}
+			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{input: {Productions: []manifest.Production{{Declaration: declaration.Named()}}}}})
 			consumers := make([]*manifest.Kustomization, 2)
 			for i := range consumers {
 				obj, _, _, err := manifest.ParseDoc(map[string]any{
@@ -1267,7 +1271,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			}
 			t.Logf("persisted renderer hit enabled: %t", persistent)
 			before := guard.opened.Load()
-			prepared, err := kustomize.Prepare(ks, nil, nil)
+			prepared, err := kustomize.Prepare(ks, nil)
 			assert.NoError(t, err)
 			rendered, _, err := testutil.RenderMaps(kustomize.Render(t.Context(), trees, kustomize.RenderRequest{Source: &initial, SubPath: ks.Path, Spec: prepared}, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
@@ -1480,5 +1484,62 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 			wantValue = "fresh"
 		}
 		assert.Equal(t, current.Manifests[0].Document["data"].(map[string]any)["value"], any(wantValue))
+	}
+}
+
+func TestReconcile_RequiredPostBuildNotWaived(t *testing.T) {
+	t.Parallel()
+	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+		for _, allowed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/allowed=%t", kind, allowed), func(t *testing.T) {
+				t.Parallel()
+				original, st, _ := newControllerWithFixture(t)
+				freezeSourceForTest(t, st)
+				trees := kustomize.NewTreeCache(cachetest.New(t, t.TempDir(), sourcecache.New), nil, original.Tasks)
+				t.Cleanup(trees.Close)
+				opts := Options{}
+				if allowed {
+					opts.AllowMissingKinds = []string{manifest.KindSecret, manifest.KindConfigMap, manifest.KindCustomResourceDefinition}
+				}
+				c := New(st, original.Tasks, trees, true)
+				c.Configure(opts, sourcecache.RetryConfig{})
+				c.StartLifecycle()
+				ks := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system", Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: kind, Name: "missing"}}}}
+				st.AddObject(ks)
+				dispatch := controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: ks.Named(), ReconcileNode: c.ReconcileNode}
+				info := controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
+				if info.Status != store.StatusFailed || st.GetArtifact(ks.Named(), store.ArtifactContent) != nil {
+					t.Fatalf("required absent postBuild input admitted: %+v", info)
+				}
+				input := manifest.NamedResource{Kind: kind, Namespace: ks.Namespace, Name: "missing"}
+				if kind == manifest.KindSecret {
+					st.AddObject(&manifest.Secret{Name: input.Name, Namespace: input.Namespace})
+				} else {
+					st.AddObject(&manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace})
+				}
+				info = controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
+				assert.Equal(t, info.Status, store.StatusReady)
+				historyAvailable := func() bool {
+					t.Helper()
+					reads := &store.ReadSet{}
+					reads.Init(st, ks.Named(), nil)
+					defer reads.Retire()
+					records, _ := c.PreviousRender(t.Context(), reads)
+					return records != nil
+				}
+				if !historyAvailable() {
+					t.Fatal("present required postBuild input did not admit accepted history")
+				}
+				assert.Equal(t, st.DeleteObject(input), true)
+				if historyAvailable() {
+					t.Fatal("required absent postBuild input admitted history")
+				}
+				info = controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
+				assert.Equal(t, info.Status, store.StatusFailed)
+			})
+		}
 	}
 }

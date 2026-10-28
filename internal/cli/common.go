@@ -41,25 +41,21 @@ type commonFlags struct {
 	path      string
 	pathOrig  string
 	// Synthetic baseline labels need explicit source coordinates and identity.
-	pathRoot             string
-	pathOrigRoot         string
-	pathOrigSelfURLs     []string
-	selfURLs             []string
-	base                 string
-	namespace            string
-	supply               []string
-	substitute           []string
-	strictSubstitutions  bool
-	suppliedObjects      []store.SuppliedObject
-	substitutionValues   map[string]string
-	allowMissingSecrets  bool
-	allowMissingCRDs     bool
-	forceGenericProvider bool
-	restrictEgress       bool
-	skipKinds            []string
-	output               string
-	registryConfig       string
-	concurrency          int
+	pathRoot            string
+	pathOrigRoot        string
+	pathOrigSelfURLs    []string
+	selfURLs            []string
+	base                string
+	namespace           string
+	supply              []string
+	strictSubstitutions bool
+	suppliedObjects     []store.SuppliedObject
+	allowMissingKinds   []string
+	restrictEgress      bool
+	skipKinds           []string
+	output              string
+	registryConfig      string
+	concurrency         int
 	// gitDepth caps the shallow-clone history depth for GitRepository
 	// sources. Default 1 (opt-out shallow); 0 = full clone. Refs pinned
 	// to an explicit commit always full-clone. Plumbed into
@@ -71,62 +67,28 @@ type commonFlags struct {
 }
 
 func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
-	fs.StringVarP(&f.path, "path", "p", ".", "path to the Flux cluster directory")
-	fs.StringVarP(&f.pathOrig, "path-orig", "P", "",
-		"baseline path; when set, every command runs in changed-only mode")
+	fs.StringVarP(&f.path, "path", "p", ".", "Read Flux manifests from this directory")
+	fs.StringVarP(&f.pathOrig, "path-orig", "P", "", "Compare with a baseline directory (exclusive with --base)")
 	bindBase(fs, f)
-	fs.StringVarP(&f.namespace, "namespace", "n", "",
-		"limit to this namespace (default: every namespace, or just the changed ones when --path-orig is set)")
-	fs.BoolVar(&f.allowMissingCRDs, "allow-missing-crds", false,
-		"accept CRD dependencies absent from the offline inputs because the cluster installs them at runtime")
-	fs.StringArrayVar(&f.supply, "supply", nil,
-		"Secret/ConfigMap YAML file for supported data and credential references (repeatable; later identities replace earlier ones)")
-	fs.StringArrayVar(&f.substitute, "substitute", nil,
-		"postBuild KEY=VALUE override (repeatable; applied after references and inline values)")
-	fs.BoolVar(&f.strictSubstitutions, "strict-substitutions", false,
-		"fail postBuild expansion on undefined variables without defaults")
-	fs.BoolVar(&f.allowMissingSecrets, "allow-missing-secrets", false,
-		"soft-skip sources with absent or wiped auth/cert/proxy Secrets and HelmRelease valuesFrom Secret/ConfigMap refs "+
-			"that only materialize in the live cluster. Usually unnecessary: a missing Secret "+
-			"declared by an in-repo ExternalSecret/SealedSecret (with a static target name) is "+
-			"auto-skipped without this flag. Malformed real material still fails.")
-	fs.BoolVar(&f.forceGenericProvider, "force-generic-provider", false,
-		"route non-generic spec.provider sources (GitRepository/OCIRepository/Bucket) "+
-			"through the generic credential path instead of failing. With a secretRef, "+
-			"static credentials render offline and a missing one is soft-skipped by "+
-			"--allow-missing-secrets; with no secretRef, Git/Bucket go anonymous and OCI "+
-			"falls back to --registry-config, so a private source fails on auth.")
-	fs.BoolVar(&f.restrictEgress, "restrict-egress", false,
-		"untrusted-render guard: block source fetches (kustomize remote resources/bases, "+
-			"Git/OCI/Helm/Bucket sources) to loopback, RFC1918, link-local, and cloud-metadata "+
-			"(169.254.169.254) addresses, AND reject file:// / non-https-ssh GitRepository sources "+
-			"(no reading arbitrary in-pod repos). Off by default — only enable when rendering "+
-			"UNTRUSTED input; trusted repos legitimately reach private/LAN hosts and use local "+
-			"file:// self-sources. A configured proxy and ssh:// git egress are not covered (operator-owned).")
+	fs.StringVarP(&f.namespace, "namespace", "n", "", "Select resources in this namespace")
+	fs.StringArrayVar(&f.supply, "supply", nil, "Read missing Secret and ConfigMap data from YAML (repeatable)")
+	fs.BoolVar(&f.strictSubstitutions, "strict-substitutions", false, "Match kustomize-controller StrictPostBuildSubstitutions")
+	fs.StringSliceVar(&f.allowMissingKinds, "allow-missing-kinds", nil, "Tolerate missing cluster inputs: Secret,ConfigMap,CustomResourceDefinition")
+	fs.BoolVar(&f.restrictEgress, "restrict-egress", false, "Block private-address fetches and local Git transports")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds",
-		[]string{manifest.KindSecret, manifest.KindCustomResourceDefinition}, "kinds to exclude from rendered output (empty includes all kinds)")
-	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
-	bindCacheDir(fs, &f.cacheDir,
-		"opt-in on-disk cache root for source artifacts, helm charts, and render output (default: memory)")
-	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4,
-		"max parallel reconcile bodies (0 = unbounded)")
+		[]string{manifest.KindSecret, manifest.KindCustomResourceDefinition}, "Exclude these output kinds (empty includes all)")
+	fs.StringVar(&f.registryConfig, "registry-config", "", "Read ambient OCI credentials from Docker config.json")
+	bindCacheDir(fs, &f.cacheDir, "Store fetched sources and renders in this directory")
+	fs.IntVar(&f.concurrency, "concurrency", runtime.NumCPU()*4, "Limit parallel reconciles (0 means unbounded)")
 	// Shallow clone is the dominant speedup for GitRepository sources that
 	// pull a subdir out of a deep-history monorepo: depth=1 fetches only
 	// the tip commit, which is all the worktree materialization needs.
 	// Commit-pinned refs always full-clone (the pinned commit may be deep).
-	fs.IntVar(&f.gitDepth, "git-depth", 1,
-		"shallow-clone depth for GitRepository sources; 0 = full clone "+
-			"(refs pinned to an explicit commit always full-clone)")
-	fs.StringVar(&f.helm.KubeVersion, "kube-version", helm.BundledKubeVersion(),
-		"Kubernetes version for .Capabilities.KubeVersion (default: version bundled with flate)")
-	fs.StringVarP(&f.helm.APIVersions, "api-versions", "a", "", "comma-separated API versions for .Capabilities.APIVersions")
-	fs.BoolVar(&f.helm.IsUpgrade, "is-upgrade", false, "set .Release.IsUpgrade instead of .Release.IsInstall")
-	fs.BoolVar(&f.helm.NoHooks, "no-hooks", false, "exclude hook-annotated templates")
-	fs.StringSliceVarP(&f.helm.ShowOnly, "show-only", "s", nil, "only show specific template paths (repeatable)")
-	fs.BoolVar(&f.helm.EnableDNS, "enable-dns", false, "enable DNS lookups during helm template")
-	fs.BoolVar(&f.helm.DisableChartDigestTracking, "disable-chart-digest-tracking", false,
-		"set when the cluster runs helm-controller with --feature-gates=DisableChartDigestTracking=true; "+
-			"=true preserves original OCI chart versions, =false enables tracking (default); CLI overrides the environment")
+	fs.IntVar(&f.gitDepth, "git-depth", 1, "Set Git fetch depth (0 means full history)")
+	fs.StringVar(&f.helm.KubeVersion, "kube-version", helm.BundledKubeVersion(), "Set the cluster Kubernetes version for Helm")
+	fs.StringVarP(&f.helm.APIVersions, "api-versions", "a", "", "Set cluster APIs available to Helm (comma-separated)")
+	fs.BoolVar(&f.helm.EnableDNS, "enable-dns", false, "Match helm-controller AllowDNSLookups")
+	fs.BoolVar(&f.helm.DisableChartDigestTracking, "disable-chart-digest-tracking", false, "Match helm-controller DisableChartDigestTracking")
 }
 
 // listFlags holds flags that are only meaningful for list/get commands.
@@ -141,7 +103,7 @@ type listFlags struct {
 // commands that ignore it (build/diff/test) would silently accept
 // `-l foo=bar` and do nothing.
 func bindSelector(fs *pflag.FlagSet, f *listFlags) {
-	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "label selector (key=value, repeatable)")
+	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "Select labels by key=value (comma-separated)")
 }
 
 // bindBase selects a baseline revision for changed-only mode.
@@ -157,12 +119,7 @@ func bindSelector(fs *pflag.FlagSet, f *listFlags) {
 // Mutually exclusive with --path-orig (the absolute-path escape
 // hatch); the check fires at runtime in resolveBaseline.
 func bindBase(fs *pflag.FlagSet, f *commonFlags) {
-	fs.StringVar(&f.base, "base", "",
-		"baseline git rev (e.g. main, origin/main, HEAD~3, SHA) for changed-only mode. "+
-			"A rev the checkout doesn't hold is fetched from its origin remote. "+
-			"On `diff`, omitting --base auto-detects via merge-base with @{u} / origin/HEAD. "+
-			"On `build`/`get`/`test`, omitting --base keeps the default full-tree behavior. "+
-			"Mutually exclusive with --path-orig.")
+	fs.StringVar(&f.base, "base", "", "Compare with a Git revision (exclusive with --path-orig)")
 }
 
 func (c *commonFlags) roots(name string, kinds ...string) []manifest.NamedResource {
@@ -250,15 +207,12 @@ func buildOrchCfg(c commonFlags) orchestrator.Config {
 			MaxWait:  sourceRetryMaxWait,
 			Jitter:   sourceRetryJitter,
 		},
-		GitDepth:             c.gitDepth,
-		Supply:               c.suppliedObjects,
-		Substitute:           c.substitutionValues,
-		StrictSubstitutions:  c.strictSubstitutions,
-		AllowMissingSecrets:  c.allowMissingSecrets,
-		AllowMissingCRDs:     c.allowMissingCRDs,
-		ForceGenericProvider: c.forceGenericProvider,
-		RestrictEgress:       c.restrictEgress,
-		CacheDir:             c.cacheDir,
+		GitDepth:            c.gitDepth,
+		Supply:              c.suppliedObjects,
+		StrictSubstitutions: c.strictSubstitutions,
+		AllowMissingKinds:   c.allowMissingKinds,
+		RestrictEgress:      c.restrictEgress,
+		CacheDir:            c.cacheDir,
 	}
 }
 
@@ -357,6 +311,9 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 		return finishSelected(req, &selectedInvocation{err: err, remainder: err}, selectedPayload{})
 	}
 	c := &req.flags
+	if err := c.loadInputs(ctx); err != nil {
+		return early(err)
+	}
 	if !req.pair {
 		if c.path == "" {
 			return early(errors.New("path is required"))
@@ -370,9 +327,7 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 			}
 		}
 	}
-	if err := c.loadInputs(ctx); err != nil {
-		return early(err)
-	}
+
 	ssrfguard.Restrict(c.restrictEgress)
 	owner, err := sourcecache.New(ctx, c.cacheDir)
 	if err != nil {

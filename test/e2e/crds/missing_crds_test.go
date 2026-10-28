@@ -137,9 +137,9 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 				testutil.WriteFile(t, dir, "apps/dependency.yaml", tc.supplied)
 				testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n- dependency.yaml\n")
 			}
-			args := []string{"--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2", "--allow-missing-secrets=false"}
+			args := []string{"--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2", "--allow-missing-kinds="}
 			if tc.enabled {
-				args = append(args, "--allow-missing-crds")
+				args = append(args, "--allow-missing-kinds=CustomResourceDefinition")
 			}
 			out, errOut, code := harness.RunCLIBuffers(append([]string{"test", "all"}, args...)...)
 			wantCode := 1
@@ -210,15 +210,15 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 
 func TestE2E_MissingCRDs_Environment(t *testing.T) {
 	dir := missingCRDRepo(t, suspendedIssueResourceSet())
-	t.Setenv("FLATE_ALLOW_MISSING_CRDS", "true")
+	t.Setenv("FLATE_ALLOW_MISSING_KINDS", "CustomResourceDefinition")
 	args := []string{"test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 	out, errOut, code := harness.RunCLIBuffers(args...)
 	if code != 0 || strings.Count(out+errOut, "absent from offline inputs; accepted for") != 1 {
 		t.Fatalf("environment enable: exit=%d stdout=%s stderr=%s", code, out, errOut)
 	}
-	out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-crds=false")...)
+	out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-kinds=")...)
 	if code != 1 || strings.Contains(out+errOut, "absent from offline inputs; accepted for") {
-		t.Fatalf("explicit false must win: exit=%d stdout=%s stderr=%s", code, out, errOut)
+		t.Fatalf("explicit empty must win: exit=%d stdout=%s stderr=%s", code, out, errOut)
 	}
 }
 
@@ -230,7 +230,7 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 		rs = strings.Replace(rs, ref, ref+ref+strings.Replace(ref, "helmreleases.helm.toolkit.fluxcd.io", "widgets.example.com", 1), 1)
 		rs += "---\n" + strings.Replace(rs, "  name: flux-operator\n", "  name: z-dependent\n", 1)
 		dir := missingCRDRepo(t, rs)
-		out, errOut := harness.RequireCLIOK(t, "test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
+		out, errOut := harness.RequireCLIOK(t, "test", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-kinds=CustomResourceDefinition")
 		lines := []string{}
 		for line := range strings.SplitSeq(out+errOut, "\n") {
 			if strings.Contains(line, "absent from offline inputs; accepted for") {
@@ -248,8 +248,8 @@ func TestE2E_MissingCRDs_DeterministicWarnings(t *testing.T) {
 		if !strings.Contains(lines[0], "helmreleases.helm.toolkit.fluxcd.io") || !strings.Contains(lines[1], "widgets.example.com") {
 			t.Fatalf("warnings out of order: %v", lines)
 		}
-		built, _ := harness.RequireCLIOK(t, "build", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
-		hr, _ := harness.RequireCLIOK(t, "get", "hr", "-o", "yaml", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-crds")
+		built, _ := harness.RequireCLIOK(t, "build", "all", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-kinds=CustomResourceDefinition")
+		hr, _ := harness.RequireCLIOK(t, "get", "hr", "-o", "yaml", "--path", dir, "--cache-dir", t.TempDir(), "--concurrency", fmt.Sprint(workers), "--allow-missing-kinds=CustomResourceDefinition")
 		if firstBuild == "" {
 			firstBuild = built
 			firstHR = hr
@@ -275,7 +275,7 @@ func TestE2E_MissingCRDs_DiffSides(t *testing.T) {
 			if code != 1 || strings.Count(errOut, "CustomResourceDefinition  helmreleases.helm.toolkit.fluxcd.io  not found") != 2 || !strings.Contains(errOut, "2 failed · 2 blocked") {
 				t.Fatalf("strict diff exit=%d stdout=%s stderr=%s", code, out, errOut)
 			}
-			out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-crds")...)
+			out, errOut, code = harness.RunCLIBuffers(append(args, "--allow-missing-kinds=CustomResourceDefinition")...)
 			if code != 0 || !strings.Contains(out+errOut, "10m") || !strings.Contains(out+errOut, "5m") {
 				t.Fatalf("opt-in diff exit=%d stdout=%s stderr=%s", code, out, errOut)
 			}

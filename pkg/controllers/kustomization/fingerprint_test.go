@@ -102,23 +102,24 @@ func TestKustomizationFingerprint_SourceRootInputs(t *testing.T) {
 	}
 }
 
-func TestKustomizationFingerprint_PreparedOverlay(t *testing.T) {
+func TestKustomizationFingerprint_PreparedInline(t *testing.T) {
 	t.Parallel()
-	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
-	ks.PostBuild = &kustomizev1.PostBuild{}
-	first, err := kustomize.Prepare(ks, nil, map[string]string{"VALUE": "first"})
+	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "first"}}}
+	first, err := kustomize.Prepare(ks, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := kustomize.Prepare(ks, nil, map[string]string{"VALUE": "second"})
+	other := ks.Clone()
+	other.PostBuild.Substitute["VALUE"] = "second"
+	second, err := kustomize.Prepare(other, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if replayKey(first.Content("/repo")) == replayKey(second.Content("/repo")) {
-		t.Fatal("effective overlay missing from dedup fingerprint")
+		t.Fatal("authored substitution missing from fingerprint")
 	}
-	if len(ks.PostBuild.Substitute) != 0 {
-		t.Fatal("fingerprinting preparation mutated canonical manifest")
+	if ks.PostBuild.Substitute["VALUE"] != "first" {
+		t.Fatal("preparation mutated canonical manifest")
 	}
 }
 
@@ -144,7 +145,7 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 				}
 				st.SetSupplied(snapshot)
 				provider := values.NewStoreProvider(st, true)
-				prepared, err := kustomize.Prepare(ks, provider, nil)
+				prepared, err := kustomize.Prepare(ks, provider)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -170,7 +171,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	ks.PostBuild = &kustomizev1.PostBuild{}
 	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}}}
-	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st, true), nil)
+	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st, true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,13 +181,12 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 		opts Options
 	}{
 		{name: "nil"},
-		{name: "empty", opts: Options{Substitute: map[string]string{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := New(st, task.NewBounded(2), nil, false)
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
-			prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, c.WipeSecrets), c.substitute)
+			prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, c.WipeSecrets))
 			if err != nil {
 				t.Fatal(err)
 			}

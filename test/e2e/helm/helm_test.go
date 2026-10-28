@@ -520,6 +520,8 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 	parent, err := os.ReadFile(parentPath)
 	assert.NoError(t, err)
 	testutil.WriteFileAt(t, parentPath, string(parent)+"  postBuild: {substituteFrom: [{kind: Secret, name: unreadable}]}\n")
+	testutil.WriteFile(t, dir, "apps/demo/app/producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: unreadable, namespace: apps}\nspec: {target: {name: unreadable}}\n")
+	testutil.WriteFile(t, dir, "apps/demo/app/kustomization.yaml", "resources: [release.yaml, producer.yaml]\n")
 	releasePath := filepath.Join(dir, "apps/demo/app/release.yaml")
 	release, err := os.ReadFile(releasePath)
 	assert.NoError(t, err)
@@ -535,7 +537,7 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 	for _, mode := range []string{"full", "changed-only"} {
 		t.Run(mode, func(t *testing.T) {
 			args := []string{"build", "all", "--path", filepath.Join(dir, "cluster"),
-				"--allow-missing-secrets", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+				"--allow-missing-kinds=Secret,ConfigMap", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
 			if mode == "changed-only" {
 				args = append(args, "--base", "HEAD")
 			}
@@ -560,7 +562,7 @@ data: {greeting: {{ required "missing required value" .Values.greeting | quote }
 	} {
 		t.Run("diff/"+tc.side, func(t *testing.T) {
 			stdout, stderr, code := harness.RunCLIBuffers("diff", "all", "--path", filepath.Join(tc.current, "cluster"),
-				"--path-orig", filepath.Join(tc.original, "cluster"), "-o", "json", "--allow-missing-secrets",
+				"--path-orig", filepath.Join(tc.original, "cluster"), "-o", "json", "--allow-missing-kinds=Secret,ConfigMap",
 				"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 			if code != 1 || !strings.Contains(stderr, "missing required value") || !strings.Contains(stderr, "diff suppressed") {
 				t.Fatalf("failed-side chart diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)

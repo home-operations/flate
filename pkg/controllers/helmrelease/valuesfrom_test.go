@@ -120,7 +120,7 @@ data:
 
 func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	t.Parallel()
-	c, s := newTestControllerWithOptions(t, base.Options{AllowMissingSecrets: true})
+	c, s := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)
 	s.UpdateStatus(chart.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "chart unavailable"})
@@ -183,7 +183,7 @@ func TestController_PrepareRequiresDeclaration(t *testing.T) {
 	for _, state := range []string{"failed", "withdrawn", "suspended"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
-			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingSecrets: true})
+			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			input := &manifest.HelmRelease{Name: "input", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Name: "absent"}}}
 			st.AddObjects([]manifest.BaseManifest{parent, input})
@@ -268,4 +268,79 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	assert.Equal(t, after, status)
 	assert.Equal(t, len(st.Warnings()), 0)
 	assert.Equal(t, st.GetArtifact(hr.Named(), store.ArtifactContent) == nil, true)
+}
+
+func TestController_AllowMissingKindsAdmission(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kind, allowed string
+		want          bool
+	}{
+		{manifest.KindSecret, manifest.KindSecret, true},
+		{manifest.KindSecret, manifest.KindConfigMap, false},
+		{manifest.KindConfigMap, manifest.KindConfigMap, true},
+		{manifest.KindConfigMap, manifest.KindSecret, false},
+	} {
+		t.Run(tc.kind+"/"+tc.allowed, func(t *testing.T) {
+			t.Parallel()
+			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{tc.allowed}})
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
+			src := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+			st.AddObject(src)
+			st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady})
+			hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: src.Named()}, ValuesFrom: []manifest.ValuesReference{{Kind: tc.kind, Name: "missing"}}}
+			st.AddObject(hr)
+			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode})
+			if (info.Status == store.StatusReady) != tc.want {
+				t.Fatalf("kind selection: %+v", info)
+			}
+			if tc.want && len(st.Warnings()) != 1 {
+				t.Fatalf("omitted input lost warning: %+v", st.Warnings())
+			}
+		})
+	}
+}
+
+func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
+	t.Parallel()
+	if reason := sourcecache.RenderPersistenceDisabledReason(); reason != "" {
+		t.Skip(reason)
+	}
+	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{kind}})
+			c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child}\n")
+			src := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+			st.AddObject(src)
+			st.SetArtifact(src.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(dir), LocalPath: dir})
+			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady})
+			hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: src.Named()}, ValuesFrom: []manifest.ValuesReference{{Kind: kind, Name: "missing"}}}
+			st.AddObject(hr)
+			seed, _, err := helm.Prepare(omitValues(hr, []manifest.NamedResource{{Kind: kind, Namespace: "apps", Name: "missing"}}), helm.NewSources(st).HelmChart, values.NewStoreProvider(st, false), c.Helm.ValuesCache())
+			assert.NoError(t, err)
+			_, receipt, err := c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)})
+			assert.NoError(t, err)
+			assert.NoError(t, c.Helm.RecordRender(t.Context(), hr.Named(), receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
+			for _, selected := range []bool{true, false} {
+				c.AllowMissingKinds = nil
+				if selected {
+					c.AllowMissingKinds = []string{kind}
+				}
+				reads := &store.ReadSet{}
+				reads.Init(st, hr.Named(), nil)
+				records, _ := c.PreviousRender(t.Context(), reads)
+				reads.Retire()
+				if (records != nil) != selected {
+					t.Fatalf("history admitted=%t selected=%t", records != nil, selected)
+				}
+			}
+		})
+	}
 }

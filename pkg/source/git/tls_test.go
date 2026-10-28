@@ -726,7 +726,7 @@ func TestFetcher_ResolveTransport_MalformedProxy(t *testing.T) {
 		return &manifest.Secret{StringData: map[string]any{"username": "alice", "password": "p", "ca.crt": ca}}
 	}}
 	f := &Fetcher{}
-	repo := gitRepoWithSecret("tls", "https://example.com/x.git", "tls")
+	repo := &manifest.GitRepository{Name: "tls", Namespace: "ns", URL: "https://example.com/x.git", Provider: sourcev1.GitProviderGitHub}
 	repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "proxy"}
 	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if !errors.Is(err, manifest.ErrInput) {

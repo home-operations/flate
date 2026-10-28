@@ -89,7 +89,7 @@ func TestE2E_SourceWarnings(t *testing.T) {
 				t.Run(verb, func(t *testing.T) {
 					var wantErr, wantOut string
 					for run := range 2 {
-						stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", filepath.Join(root, "flux"), "--allow-missing-secrets", "--concurrency=2", "--no-progress")
+						stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", filepath.Join(root, "flux"), "--allow-missing-kinds=Secret,ConfigMap", "--concurrency=2", "--no-progress")
 						count := 1
 						if condition == "unavailable-ref" {
 							count = 2

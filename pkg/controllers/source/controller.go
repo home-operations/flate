@@ -44,7 +44,7 @@ type Controller struct {
 
 	// allowMissingSecrets converts ErrMissingSecret fetch errors into a
 	// skip (StatusReady with ReasonSkipped). Wired from
-	// Config.AllowMissingSecrets via Configure.
+	// FetchOptions.AllowMissingSecrets via Configure.
 	allowMissingSecrets bool
 }
 
@@ -206,9 +206,7 @@ func (p *pendingSource) Settle(ctx context.Context, _ manifest.DrainLevel) error
 	var err error = p.missing
 	if p.missing.RetryAmbient != nil && !c.producerBacked(p.missing) {
 		c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryAmbient(ctx) })
-		if err != nil && c.allowMissingSecrets {
-			err = p.missing
-		} else if err != nil {
+		if err != nil {
 			err = fmt.Errorf("%s: %w", manifest.TrimSentinelPrefix(p.missing.Error()), err)
 		}
 	}
@@ -222,7 +220,7 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 		}
 	}
 	if err != nil {
-		if errors.Is(err, manifest.ErrMissingSecret) && (c.allowMissingSecrets || c.producerBacked(err)) {
+		if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (c.allowMissingSecrets || c.producerBacked(err)) {
 			if c.run.Reads.Valid() {
 				slog.Info("source: skipped (missing secret)", "id", obj.Named().String(), "err", err)
 			}

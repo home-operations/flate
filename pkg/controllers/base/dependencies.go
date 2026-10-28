@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -94,10 +95,9 @@ func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, p
 		}
 		e.PromoteData(ctx, ref.NamedResource)
 		input := provider.Lookup(ref.NamedResource)
-		allowMissing := e.AllowMissingSecrets
+		allowMissing := ref.Use == "valuesFrom" && slices.Contains(e.AllowMissingKinds, ref.Kind)
 		if ref.Use == "substituteFrom" {
-			allowMissing = ref.Kind == manifest.KindSecret
-			if allowMissing && !ref.Optional && (input.Data == nil || !input.Data.HasKeys()) {
+			if ref.Kind == manifest.KindSecret && !ref.Optional && (input.Data == nil || !input.Data.HasKeys()) {
 				e.Unreadable = append(e.Unreadable, ref.NamedResource)
 				e.unresolved = append(e.unresolved, ref.NamedResource)
 			}

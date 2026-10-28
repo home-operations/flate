@@ -666,7 +666,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		if body != "first" {
 			continue
 		}
-		client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil)
+		client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -887,7 +887,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 						t.Error(err)
 					}
 				})
-				client, material, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo, nil)
+				client, material, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo, nil, sourcecache.Policy{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1478,7 +1478,7 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 				r.Timeout = &metav1.Duration{Duration: tc.timeout}
 			}
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New)}
-			client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil)
+			client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1523,7 +1523,7 @@ func TestFetcher_PullTimeout(t *testing.T) {
 				root := t.TempDir()
 				f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 				r := &manifest.OCIRepository{URL: "oci://registry.invalid/repository", Reference: &sourcev1.OCIRepositoryRef{SemVer: "*"}, Timeout: &metav1.Duration{Duration: 5 * time.Second}}
-				client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil)
+				client, material, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
 				if err != nil {
 					t.Fatal(err)
 				}

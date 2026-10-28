@@ -72,7 +72,7 @@ func (o *Orchestrator) run(ctx context.Context) error {
 func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Filter:              o.filter,
-		AllowMissingSecrets: o.cfg.AllowMissingSecrets,
+		AllowMissingSecrets: slices.Contains(o.cfg.AllowMissingKinds, manifest.KindSecret),
 	}, o.cfg.SourceRetry)
 	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
@@ -82,12 +82,10 @@ func (o *Orchestrator) configureControllers() {
 		Index:                   o.index,
 		Existence:               existence,
 		PreflightFailure:        o.preflightFailure,
-		AllowMissingCRDs:        o.cfg.AllowMissingCRDs,
-		AllowMissingSecrets:     o.cfg.AllowMissingSecrets,
+		AllowMissingKinds:       o.cfg.AllowMissingKinds,
 	}
 	o.ksc.Configure(kustomization.Options{
 		Options:             common,
-		Substitute:          o.cfg.Substitute,
 		StrictSubstitutions: o.cfg.StrictSubstitutions,
 	}, o.cfg.SourceRetry)
 	o.hrc.Configure(common)

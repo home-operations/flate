@@ -248,8 +248,8 @@ spec:
 			tree := Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/repo"}}
 
 			cfg := Config{CacheDir: t.TempDir(), Concurrency: 2,
-				Supply:     []store.SuppliedObject{{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ROOT": "apps/red"}}}},
-				Substitute: map[string]string{"ROOT": "apps/red"}, StrictSubstitutions: true,
+				Supply:              []store.SuppliedObject{{Object: &manifest.ConfigMap{Name: "supplied", Namespace: "apps", Data: map[string]any{"ROOT": "apps/red"}}}},
+				StrictSubstitutions: true,
 			}
 			warm, err := newTestOrchestrator(t, tree, cfg)
 			assert.NoError(t, err)
@@ -274,10 +274,10 @@ spec:
 				assert.NoError(t, warm.hrc.Helm.RecordRender(t.Context(), owner, receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
 			} else {
 				ks := reads.GetDeclaration(owner).(*manifest.Kustomization)
-				prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(reads, cfg.WipeSecrets), cfg.Substitute)
+				prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(reads, cfg.WipeSecrets))
 				assert.NoError(t, err)
 				source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-				_, receipt, err := testutil.RenderMaps(kustomize.Render(t.Context(), warm.ksc.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: true, SubPath: prepared.Path, Spec: prepared, DependencySubstitutions: warm.dependencySubstitutions, Substitute: cfg.Substitute, StrictSubstitutions: cfg.StrictSubstitutions}, cfg.SourceRetry))
+				_, receipt, err := testutil.RenderMaps(kustomize.Render(t.Context(), warm.ksc.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: true, SubPath: prepared.Path, Spec: prepared, DependencySubstitutions: warm.dependencySubstitutions, StrictSubstitutions: cfg.StrictSubstitutions}, cfg.SourceRetry))
 				assert.NoError(t, err)
 				assert.NoError(t, warm.ksc.Trees.RecordRender(t.Context(), owner, receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
 			}

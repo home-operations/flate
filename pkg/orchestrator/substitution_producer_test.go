@@ -100,16 +100,9 @@ func TestRender_SubstitutionProducerFailureRejectsPredictions(t *testing.T) {
 			if err == nil || res.Failed[producer].Status != store.StatusFailed {
 				t.Fatalf("materializer failure missing: error=%v failures=%v", err, res.Failed)
 			}
-			if kind == manifest.KindConfigMap {
-				target := manifest.NamedResource{Kind: kind, Namespace: consumer.Namespace, Name: "settings"}
-				if res.Failed[consumer].Status != store.StatusFailed || !slices.Equal(res.Blocked[consumer], []manifest.NamedResource{target}) || len(outputByParent(res.Manifests)[consumer]) != 0 {
-					t.Fatalf("unaccepted prediction supplied required content: failures=%v blocked=%v manifests=%v", res.Failed, res.Blocked, outputByParent(res.Manifests)[consumer])
-				}
-			} else {
-				if len(outputByParent(res.Manifests)[consumer]) != 1 || len(res.Blocked[consumer]) != 0 {
-					t.Fatalf("declared Secret absence blocked rendering: %+v", res)
-				}
-				assert.Diff(t, outputByParent(res.Manifests)[consumer][0]["data"], map[string]any{"version": "${VERSION:=empty}"})
+			target := manifest.NamedResource{Kind: kind, Namespace: consumer.Namespace, Name: "settings"}
+			if res.Failed[consumer].Status != store.StatusFailed || !slices.Equal(res.Blocked[consumer], []manifest.NamedResource{target}) || len(outputByParent(res.Manifests)[consumer]) != 0 {
+				t.Fatalf("unaccepted prediction supplied required content: failures=%v blocked=%v manifests=%v", res.Failed, res.Blocked, outputByParent(res.Manifests)[consumer])
 			}
 		})
 	}

@@ -131,7 +131,7 @@ func TestRender_UnstampedMetadata(t *testing.T) {
 				obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{DefaultNamespace: ""})
 				assert.NoError(t, err)
 				projected := obj.WithNamespace(tc.effectiveNamespace).(*manifest.Kustomization)
-				prepared, err := Prepare(projected, nil, nil)
+				prepared, err := Prepare(projected, nil)
 				assert.NoError(t, err)
 				ks = prepared
 			}

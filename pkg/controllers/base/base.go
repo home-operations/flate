@@ -2,6 +2,7 @@
 package base
 
 import (
+	"slices"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -26,10 +27,10 @@ type Controller struct {
 	// DependencySubstitutions binds emitted dependency projection to accepted history.
 	DependencySubstitutions values.DependencySubstitutions
 	existence               depwait.ExistenceLookup
-	// AllowMissingSecrets permits unresolved required Helm values at the fixpoint.
-	AllowMissingSecrets bool
-	allowMissingCRDs    bool
-	preflight           func(manifest.NamedResource) (string, bool)
+	// AllowMissingKinds permits unavailable Helm valuesFrom kinds and absent CRDs.
+	AllowMissingKinds []string
+	allowMissingCRDs  bool
+	preflight         func(manifest.NamedResource) (string, bool)
 }
 
 // New constructs a controller with the shared store and task service.
@@ -68,11 +69,8 @@ type Options struct {
 	// file-indexed deps and to distinguish a render-only dep still in flight
 	// from a typo'd one. See depwait.ExistenceLookup.
 	Existence depwait.ExistenceLookup
-	// AllowMissingCRDs accepts CRD dependencies absent from the offline inputs
-	// because the cluster installs them at runtime.
-	AllowMissingCRDs bool
-	// AllowMissingSecrets permits unresolved required Helm values at the fixpoint.
-	AllowMissingSecrets bool
+	// AllowMissingKinds permits unavailable Helm valuesFrom kinds and absent CRDs.
+	AllowMissingKinds []string
 	// PreflightFailure reports dependency-graph errors discovered before
 	// reconcile; when set for an id the controller marks it Failed and renders
 	// nothing.
@@ -88,8 +86,8 @@ func (c *Controller) Configure(opts Options) {
 	c.existence = opts.Existence
 	c.preflight = opts.PreflightFailure
 	c.Store.SetDiscoveryIndex(opts.Index)
-	c.allowMissingCRDs = opts.AllowMissingCRDs
-	c.AllowMissingSecrets = opts.AllowMissingSecrets
+	c.allowMissingCRDs = slices.Contains(opts.AllowMissingKinds, manifest.KindCustomResourceDefinition)
+	c.AllowMissingKinds = opts.AllowMissingKinds
 }
 
 // KeepEmitted admits the incoming child and reports whether it is selected.

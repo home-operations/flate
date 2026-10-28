@@ -4,7 +4,6 @@ package oci
 import (
 	"context"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"helm.sh/helm/v4/pkg/registry"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -23,10 +22,6 @@ type Fetcher struct {
 
 	// Network is the required non-nil invocation owner, borrowed by this fetcher.
 	Network *source.Network
-
-	// ForceGeneric skips the provider gate; the generic path then needs
-	// static credentials (SecretRef or --registry-config) or it fails.
-	ForceGeneric bool
 }
 
 type operation struct {
@@ -54,9 +49,8 @@ func (f *Fetcher) FetchChart(ctx context.Context, repo *manifest.OCIRepository, 
 }
 
 func (f *operation) fetchSource(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
-	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
-		return nil, source.ErrUnsupportedProvider(repo.Named(), repo.Provider, sourcev1.GenericOCIProvider,
-			"SecretRef or --registry-config credentials")
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if f.secrets != nil {
 		for _, ref := range []*manifest.LocalObjectReference{repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef} {
@@ -66,9 +60,5 @@ func (f *operation) fetchSource(ctx context.Context, repo *manifest.OCIRepositor
 		}
 	}
 
-	credStore, err := f.resolveRegistryConfig(ctx, repo, policy)
-	if err != nil {
-		return nil, err
-	}
-	return f.fetchWithCredentials(ctx, repo, credStore, policy)
+	return f.fetchWithCredentials(ctx, repo, nil, policy)
 }

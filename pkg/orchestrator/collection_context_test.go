@@ -127,13 +127,8 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 	if len(outputByParent(runs[0].Result.Manifests)[waitReady]) != 0 {
 		t.Fatalf("missing dependency emitted %s", waitReady)
 	}
-	alphaDocs := outputByParent(runs[0].Result.Manifests)[readSecret]
-	if len(alphaDocs) != 1 || alphaDocs[0]["data"].(map[string]any)["value"] != "${TOKEN}" {
-		t.Fatalf("another cluster supplied secret data: %v", alphaDocs)
-	}
-	unresolved := slices.DeleteFunc(slices.Clone(runs[0].Result.Warnings), func(w manifest.Warning) bool { return w.Category != manifest.WarnUnresolvedSubstitution })
-	if len(unresolved) != 1 || unresolved[0].Count != 1 {
-		t.Fatalf("missing secret lost warning: %+v", runs[0].Result.Warnings)
+	if docs := outputByParent(runs[0].Result.Manifests)[readSecret]; len(docs) != 0 || !slices.Contains(runs[0].Result.Blocked[readSecret], secret) {
+		t.Fatalf("another cluster satisfied the required Secret: docs=%v blocked=%v", docs, runs[0].Result.Blocked)
 	}
 	for _, w := range runs[1].Result.Warnings {
 		if w.Category == manifest.WarnUnresolvedSubstitution {

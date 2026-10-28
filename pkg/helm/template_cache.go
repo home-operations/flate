@@ -64,20 +64,19 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 		DisableOpenAPIValidation bool
 		InstallDisableHooks      bool
 		InstallReplace           bool
-		UpgradeDisableHooks      bool
 		TestEnable               bool
 		ChartVersion             string
 		ChartValuesFiles         []string
 		IgnoreMissingValuesFiles bool
 		PostRenderers            []helmv2.PostRenderer
 	}
-	crds, disableOpenAPI := selectedActionPolicy(hr, opts.IsUpgrade)
+	policy := (&helmv2.HelmRelease{Spec: hr.HelmReleaseSpec}).GetInstall()
 	khr := keyHR{
 		ReleaseName:              hr.ReleaseName(),
 		ReleaseNamespace:         hr.ReleaseNamespace(),
-		CRDsPolicy:               crds,
-		DisableSchemaValidation:  schemaValidationSkipped(opts, hr, nil),
-		DisableOpenAPIValidation: disableOpenAPI,
+		CRDsPolicy:               cmp.Or(policy.CRDs, helmv2.Create),
+		DisableSchemaValidation:  schemaValidationSkipped(hr, nil),
+		DisableOpenAPIValidation: policy.DisableOpenAPIValidation,
 		ChartVersion:             hr.Chart.Version,
 		ChartValuesFiles:         hr.ChartValuesFiles,
 		IgnoreMissingValuesFiles: hr.IgnoreMissingValuesFiles,
@@ -87,9 +86,6 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 		khr.InstallDisableHooks = hr.Install.DisableHooks
 		khr.InstallReplace = hr.Install.Replace
 	}
-	if hr.Upgrade != nil {
-		khr.UpgradeDisableHooks = hr.Upgrade.DisableHooks
-	}
 	if hr.Test != nil {
 		khr.TestEnable = hr.Test.Enable
 	}
@@ -98,8 +94,6 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 	type keyOptions struct {
 		SkipCRDs, SkipTests      bool
 		KubeVersion, APIVersions string
-		IsUpgrade, NoHooks       bool
-		ShowOnly                 []string
 		EnableDNS                bool
 	}
 	return manifest.Fingerprint(struct {
@@ -111,7 +105,7 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 		Release keyHR
 	}{
 		Chart: loaded.fingerprint, OCI: loaded.oci, Inputs: inputs, Values: releaseValues,
-		Options: keyOptions{opts.SkipCRDs, opts.SkipTests, opts.KubeVersion, opts.APIVersions, opts.IsUpgrade, opts.NoHooks, opts.ShowOnly, opts.EnableDNS},
+		Options: keyOptions{opts.SkipCRDs, opts.SkipTests, opts.KubeVersion, opts.APIVersions, opts.EnableDNS},
 		Release: khr,
 	})
 }
@@ -143,7 +137,7 @@ func (a templateBinding) same(b templateBinding) bool {
 		return false
 	}
 	x, y := a.Options, b.Options
-	return x.DisableChartDigestTracking == y.DisableChartDigestTracking && x.SkipCRDs == y.SkipCRDs && x.SkipTests == y.SkipTests && x.KubeVersion == y.KubeVersion && x.APIVersions == y.APIVersions && x.IsUpgrade == y.IsUpgrade && x.NoHooks == y.NoHooks && x.EnableDNS == y.EnableDNS && slices.Equal(x.SkipKinds, y.SkipKinds) && slices.Equal(x.ShowOnly, y.ShowOnly)
+	return x.DisableChartDigestTracking == y.DisableChartDigestTracking && x.SkipCRDs == y.SkipCRDs && x.SkipTests == y.SkipTests && x.KubeVersion == y.KubeVersion && x.APIVersions == y.APIVersions && x.EnableDNS == y.EnableDNS && slices.Equal(x.SkipKinds, y.SkipKinds)
 }
 
 type renderFrame struct {

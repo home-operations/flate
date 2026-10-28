@@ -1208,8 +1208,8 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 	s.AddObject(&manifest.Secret{Name: secret.Name, Namespace: secret.Namespace, StringData: map[string]any{"VALUE": "repository", "tag": ""}})
 	provider := NewStoreProvider(s, true)
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "absent", Optional: true}, {Kind: manifest.KindSecret, Name: secret.Name}}, Substitute: map[string]string{"VALUE": "inline"}}}
-	assert.NoError(t, ExpandPostBuildSubstituteReferenceWithSubstitutions(ks, provider, map[string]string{"VALUE": "explicit"}))
-	assert.Equal(t, ks.PostBuild.Substitute["VALUE"], "explicit")
+	assert.NoError(t, ExpandPostBuildSubstituteReference(ks, provider))
+	assert.Equal(t, ks.PostBuild.Substitute["VALUE"], "inline")
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "absent", Optional: true}, {Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "VALUES"}, {Kind: manifest.KindSecret, Name: secret.Name, ValuesKey: "tag", TargetPath: "image.tag"}}, Values: map[string]any{"greeting": "inline"}}
 	omitted, err := ExpandValueReferences(hr, provider, nil)
 	assert.NoError(t, err)

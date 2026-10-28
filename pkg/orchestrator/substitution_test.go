@@ -75,12 +75,12 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 	cm.Data["BINARY"] = raw
 	secretData, secretStringData := []byte("b3duZWQ="), []byte("owned")
 	secret := &manifest.Secret{Name: "secret", Namespace: "apps", Data: map[string]any{"ENCODED": secretData}, StringData: map[string]any{"VALUE": secretStringData}}
-	overlay := map[string]string{"VALUE": "owned"}
+	allowed := []string{manifest.KindSecret}
 	sources := []store.SuppliedObject{source, {Object: secret, Path: "secret-values.yaml"}}
-	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, Substitute: overlay, Path: t.TempDir()})
+	o := newSubstitutionOrchestrator(t, treeConfig{Supply: sources, AllowMissingKinds: allowed, Path: t.TempDir()})
 	cm.Name, cm.Data["VALUE"] = "changed", "changed"
 	raw[0], secretData[0], secretStringData[0] = 'x', 'x', 'x'
-	sources[0].Path, overlay["VALUE"] = "changed", "changed"
+	sources[0].Path, allowed[0] = "changed", manifest.KindConfigMap
 	facts := o.store.ReferenceFacts(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"}, nil)
 	assert.Equal(t, facts.SupplyPath, "ci-values.yaml")
 	for key, want := range map[string]string{"VALUE": "supplied", "BINARY": "owned"} {
@@ -94,9 +94,9 @@ func TestSnapshotSubstitutions_OwnsInputs(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, got, "owned")
 	}
-	assert.Equal(t, o.cfg.Substitute["VALUE"], "owned")
+	assert.Diff(t, o.cfg.AllowMissingKinds, []string{manifest.KindSecret})
 	plain := newSubstitutionOrchestrator(t, treeConfig{Config: Config{}, Path: t.TempDir()})
-	if plain.cfg.Substitute != nil || plain.cfg.supplied != nil || plain.cfg.Supply != nil {
+	if plain.cfg.AllowMissingKinds != nil || plain.cfg.supplied != nil || plain.cfg.Supply != nil {
 		t.Fatal("zero-input path allocated state")
 	}
 }
@@ -123,7 +123,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 		t.Run(fmt.Sprintf("cache/injected=%t", injected), func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			cfg := treeConfig{CacheDir: root, Substitute: map[string]string{"bad-name": "private-fixture-value"}, Path: t.TempDir()}
+			cfg := treeConfig{CacheDir: root, Supply: []store.SuppliedObject{{Object: &manifest.ConfigMap{Namespace: "apps"}}}, Path: t.TempDir()}
 			if injected {
 				owner := cachetest.New(t, root, sourcecache.New)
 				cfg.Cache = owner
@@ -131,7 +131,7 @@ func TestRenderTrees_SubstitutionValidation(t *testing.T) {
 			cfg.ID = manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}
 			_, err := RenderTrees(t.Context(), []Tree{cfg.Tree}, cfg.Config)
 			if !errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "private-fixture-value") {
-				t.Fatalf("invalid or unredacted SDK overlay error: %v", err)
+				t.Fatalf("invalid or unredacted SDK supply error: %v", err)
 			}
 			if cfg.Cache != nil {
 				_, _, _, err := cfg.Cache.Blob(t.Context(), sourcecache.BlobKey{Content: "after-constructor-failure"}, sourcecache.Policy{MaxAge: sourcecache.Forever},
@@ -156,10 +156,9 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "external", "${VALUE}")
 	source := suppliedSubstitution("external")
-	cfg := treeConfig{Supply: []store.SuppliedObject{source}, Substitute: map[string]string{"VALUE": "overlay"}, StrictSubstitutions: true, Path: root}
+	cfg := treeConfig{Supply: []store.SuppliedObject{source}, StrictSubstitutions: true, Path: root}
 	first := newSubstitutionOrchestrator(t, cfg)
 	second := newSubstitutionOrchestrator(t, cfg)
-	cfg.Substitute["VALUE"] = "caller-change"
 	source.Object.(*manifest.ConfigMap).Data["VALUE"] = "caller-change"
 	for _, o := range []*Orchestrator{first, second} {
 		res, err := o.render(t.Context())
@@ -167,7 +166,7 @@ func TestRender_SubstitutionOwnershipAndIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 		id := testutil.KustomizationID("apps", "consumer")
-		if got := substitutionValue(t, res, id); got != "overlay" {
+		if got := substitutionValue(t, res, id); got != "supplied" {
 			t.Fatalf("owned values changed: %q", got)
 		}
 		external := source.Object.Named()
@@ -283,24 +282,26 @@ spec:
 				t.Fatal("missing render result")
 			}
 			demo := testutil.HelmReleaseID("apps", "demo")
-			if info, failed := res.Failed[demo]; !failed || !strings.Contains(info.Message, "greeting is required") {
-				t.Errorf("required chart value did not retain its original failure: %+v", info)
+			if tt.missingSecret == "" {
+				if info, failed := res.Failed[demo]; !failed || !strings.Contains(info.Message, "greeting is required") {
+					t.Errorf("required chart value failure lost: %+v", info)
+				}
+			} else {
+				consumer := testutil.KustomizationID("flux-system", "apps")
+				target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: consumer.Namespace, Name: tt.missingSecret}
+				if !slices.Contains(res.Blocked[consumer], target) {
+					t.Errorf("missing required reference admitted: %+v", res)
+				}
 			}
 			if docs := outputByParent(res.Manifests)[demo]; len(docs) != 0 {
-				t.Errorf("failed chart published output: %v", docs)
+				t.Errorf("failed input published chart output: %v", docs)
 			}
-			missingWarning := false
 			for _, warning := range res.Warnings {
-				if warning.Resource == demo && warning.Category == manifest.WarnUnresolvedSubstitution {
-					t.Errorf("failed chart reported successful placeholder substitution: %+v", warning)
-				}
-				if warning.Category == manifest.WarnUnresolvedSubstitution && strings.Contains(warning.Message, fmt.Sprintf("Secret %q", tt.missingSecret)) {
-					missingWarning = true
+				if warning.Category == manifest.WarnUnresolvedSubstitution {
+					t.Errorf("failed input reported successful substitution: %+v", warning)
 				}
 			}
-			if want := tt.missingSecret != ""; missingWarning != want {
-				t.Errorf("missing Secret warning = %v, want %v", missingWarning, want)
-			}
+
 		})
 	}
 }
@@ -518,7 +519,7 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		testutil.WriteFile(t, root, "stable/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: stable, namespace: apps}\ndata: {value: '${VALUE}'}\n")
 	}
 	source := suppliedSubstitution("external")
-	cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 4, WipeSecrets: true, Supply: []store.SuppliedObject{source}, Substitute: map[string]string{"VALUE": "overlay"}, StrictSubstitutions: true, Tree: Tree{}}
+	cfg := treeConfig{CacheDir: t.TempDir(), Concurrency: 4, WipeSecrets: true, Supply: []store.SuppliedObject{source}, StrictSubstitutions: true, Tree: Tree{}}
 	renderedTrees1, err := RenderTrees(t.Context(), []Tree{{RepoRoot: baseRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: headRoot, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 	base, head := renderedTrees1[0], renderedTrees1[1]
 	if err != nil {
@@ -527,9 +528,9 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 	consumer := testutil.KustomizationID("apps", "consumer")
 	stable := testutil.KustomizationID("apps", "stable")
 	for i, side := range []Rendered{base, head} {
-		want := "overlay-base"
+		want := "supplied-base"
 		if i == 1 {
-			want = "overlay-head"
+			want = "supplied-head"
 		}
 		if got := substitutionValue(t, side.Result, consumer); got != want {
 			t.Fatalf("changed consumer got %q, want %q", got, want)
@@ -559,14 +560,14 @@ func TestRender_SubstitutionChangesDoNotSelectConsumers(t *testing.T) {
 	for _, value := range []string{"first", "second"} {
 		source := suppliedSubstitution("external")
 		source.Object.(*manifest.ConfigMap).Data["VALUE"] = value
-		o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{source}, Substitute: map[string]string{"VALUE": value}, Path: headRoot, BaseInput: testDirectoryInput(t, baseRoot)})
+		o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{source}, Path: headRoot, BaseInput: testDirectoryInput(t, baseRoot)})
 		res, err := o.render(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		id := testutil.KustomizationID("apps", "consumer")
 		if o.filter.ShouldReconcile(id) || len(res.Manifests) != 0 {
-			t.Fatal("external input/overlay selected unchanged consumer")
+			t.Fatal("external input selected unchanged consumer")
 		}
 	}
 }
@@ -669,4 +670,37 @@ func canonicalBatches(res *Result) []struct {
 		}{Parent: id, Documents: outputByParent(res.Manifests)[id]})
 	}
 	return batches
+}
+
+func TestRenderTrees_RequiredPostBuildNotWaived(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
+		for _, allowed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/allowed=%t", kind, allowed), func(t *testing.T) {
+				t.Parallel()
+				roots := []string{t.TempDir(), t.TempDir()}
+				trees := make([]Tree, 2)
+				for i, root := range roots {
+					testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  postBuild: {substituteFrom: [{kind: "+kind+", name: absent}]}\n"))
+					testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+					testutil.WriteFile(t, root, "app/cm.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\ndata: {value: '${VALUE}-%d'}\n", i))
+					trees[i] = Tree{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(i)}}
+				}
+				cfg := Config{Concurrency: 2, WipeSecrets: true}
+				if allowed {
+					cfg.AllowMissingKinds = []string{manifest.KindSecret, manifest.KindConfigMap, manifest.KindCustomResourceDefinition}
+				}
+				runs, err := RenderTrees(t.Context(), trees, cfg)
+				if err == nil || len(runs) != 2 {
+					t.Fatalf("paired required input admitted: %+v %v", runs, err)
+				}
+				for _, run := range runs {
+					id := testutil.KustomizationID("apps", "consumer")
+					if run.Result == nil || run.Result.Failed[id].Status != store.StatusFailed || len(outputByParent(run.Result.Manifests)[id]) != 0 {
+						t.Fatalf("required input admitted on side %v: %+v", run.ID, run.Result)
+					}
+				}
+			})
+		}
+	}
 }

@@ -3,70 +3,35 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	yaml "go.yaml.in/yaml/v4"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/values"
 )
 
-func substitutionPair(pair, origin string, position int) (string, string, error) {
-	key, value, ok := strings.Cut(pair, "=")
-	if !ok || !values.ValidSubstitutionName(key) {
-		return "", "", fmt.Errorf("%w: %s pair %d: expected a valid variable name followed by =VALUE",
-			manifest.ErrInput, origin, position)
-	}
-	return key, value, nil
-}
-
-func substitutionEnv(flag, input string) ([]string, error) {
+func supplyEnv(input string) ([]string, error) {
 	if input == "" {
 		return nil, nil
 	}
-	key := envKey(flag)
-	if flag == "supply" {
-		paths := filepath.SplitList(input)
-		for i, path := range paths {
-			if path == "" {
-				return nil, fmt.Errorf("%w: %s path %d is empty", manifest.ErrInput, key, i+1)
-			}
-		}
-		return paths, nil
-	}
-	r := csv.NewReader(strings.NewReader(input))
-	r.FieldsPerRecord = -1
-	pairs, err := r.Read()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s pair %d: invalid CSV", manifest.ErrInput, key, len(pairs)+1)
-	}
-	if _, err := r.Read(); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%w: %s pair %d: expected one CSV record", manifest.ErrInput, key, len(pairs)+1)
-	}
-	for i, pair := range pairs {
-		if _, _, err := substitutionPair(pair, key, i+1); err != nil {
-			return nil, err
+	paths := filepath.SplitList(input)
+	for i, path := range paths {
+		if path == "" {
+			return nil, fmt.Errorf("%w: %s path %d is empty", manifest.ErrInput, envKey("supply"), i+1)
 		}
 	}
-	return pairs, nil
+	return paths, nil
 }
 
 func (c *commonFlags) loadInputs(ctx context.Context) error {
-	if len(c.substitute) > 0 {
-		c.substitutionValues = make(map[string]string, len(c.substitute))
-		for i, pair := range c.substitute {
-			key, value, err := substitutionPair(pair, "--substitute", i+1)
-			if err != nil {
-				return err
-			}
-			c.substitutionValues[key] = value
+	for _, kind := range c.allowMissingKinds {
+		if kind != manifest.KindSecret && kind != manifest.KindConfigMap && kind != manifest.KindCustomResourceDefinition {
+			return fmt.Errorf("%w: --allow-missing-kinds: unsupported kind %q", manifest.ErrInput, kind)
 		}
 	}
 	for _, path := range c.supply {

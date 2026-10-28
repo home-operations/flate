@@ -29,7 +29,7 @@ func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCI
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
 	}
-	client, material, err := f.newRepoClient(ctx, repo, credStore)
+	client, material, err := f.newRepoClient(ctx, repo, credStore, policy)
 	if err != nil {
 		return nil, err
 	}

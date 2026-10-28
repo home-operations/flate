@@ -24,7 +24,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 				testutil.WriteFile(t, root, "kube/deploy/app/kustomization.yaml", "resources: []\n# - ks.yaml\n")
 			}
 			for _, entry := range []string{".", "kube/clusters/main/flux"} {
-				args := []string{"build", "all", "--path", filepath.Join(root, entry), "--allow-missing-secrets", "--log-level", "info", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+				args := []string{"build", "all", "--path", filepath.Join(root, entry), "--allow-missing-kinds=Secret,ConfigMap", "--log-level", "info", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
 				out, stderr, code := harness.RunCLIBuffers(args...)
 				if code != 0 || strings.Contains(stderr, "dial tcp") {
 					t.Fatalf("nested build exit=%d output=%s stderr=%s", code, out, stderr)
@@ -55,7 +55,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 			}
 			if enabled {
 				testutil.WriteFile(t, root, "payload/kustomization.yaml", "resources: [cm.yaml]\nconfigMapGenerator: [{name: broken, files: [missing.txt]}]\n")
-				out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--allow-missing-secrets", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+				out, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--allow-missing-kinds=Secret,ConfigMap", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 				if code != 1 || !strings.Contains(stderr, "missing.txt") || strings.Contains(out, "reachable-cm") {
 					t.Fatalf("reachable input failure hidden: exit=%d output=%s stderr=%s", code, out, stderr)
 				}
@@ -235,7 +235,7 @@ func TestE2E_DisabledAppDiffSides(t *testing.T) {
 			slices.SortFunc(identities, manifest.NamedResource.Compare)
 			assert.Diff(t, identities, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "reachable-cm"}, testutil.KustomizationID(namespace, "app")})
 		}
-		flags := []string{"--allow-missing-secrets", "--log-level", "info", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+		flags := []string{"--allow-missing-kinds=Secret,ConfigMap", "--log-level", "info", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
 		fullArgs := append([]string{"build", "all", "--path", before}, flags...)
 		full, stderr := harness.RequireCLIOK(t, fullArgs...)
 		checkDiagnostic(t, stderr, true)
@@ -302,7 +302,7 @@ func TestE2E_DisabledAppDiffSides(t *testing.T) {
 				testutil.WriteFile(t, current, "payload/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: reachable-cm, namespace: apps}\ndata: {value: changed}\n")
 			}
 			for _, command := range []string{"build", "diff"} {
-				args := []string{command, "all", "--path", current, "--path-orig", original, "--allow-missing-secrets", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+				args := []string{command, "all", "--path", current, "--path-orig", original, "--allow-missing-kinds=Secret,ConfigMap", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
 				if command == "diff" {
 					args = append(args, "-o", "json")
 				}

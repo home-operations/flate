@@ -149,7 +149,7 @@ func TestFetcher_LocalAgentSSH(t *testing.T) {
 			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New)}
 			artifact, err := f.Fetch(t.Context(), repo, reads, sourcecache.Policy{})
 			if shape == "explicit rejected" {
-				if err == nil || errors.Is(err, manifest.ErrMissingSecret) || artifact != nil || opened.Load() != 0 {
+				if err == nil || errors.Is(err, manifest.ErrMissingSecret) != (shape == "absent") || artifact != nil || opened.Load() != 0 {
 					t.Fatalf("explicit rejection used ambient: artifact=%v error=%v opened=%d", artifact, err, opened.Load())
 				}
 				return
@@ -167,7 +167,7 @@ func TestFetcher_LocalAgentSSH(t *testing.T) {
 				if artifact == nil || authenticated.Load() == 0 || !artifact.UsedLocalSSHAgent {
 					t.Fatalf("native acquisition = %+v; authenticated=%d", artifact, authenticated.Load())
 				}
-			} else if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) || !errors.Is(err, manifest.ErrFlux) || authenticated.Load() != 0 {
+			} else if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != (shape == "absent") || !errors.Is(err, manifest.ErrFlux) || authenticated.Load() != 0 {
 				t.Fatalf("failed native acquisition = %+v, %v; authenticated=%d", artifact, err, authenticated.Load())
 			}
 		})

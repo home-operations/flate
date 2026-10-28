@@ -157,7 +157,7 @@ func TestRun_RenderPersistenceNoticeErrors(t *testing.T) {
 		{name: "invalid environment", env: "invalid", wantErr: "invalid FLATE_CONCURRENCY"},
 		{name: "cache initialization", args: []string{"--cache-dir", filepath.Join(path, "flux/cluster.yaml")}, wantErr: "cache", notice: persistenceNotice},
 		{name: "baseline setup", args: []string{"--path-orig", path, "--base", "HEAD"}, wantErr: "mutually exclusive", notice: persistenceNotice},
-		{name: "invalid substitution", args: []string{"--substitute", "BAD"}, wantErr: "--substitute pair 1", notice: persistenceNotice},
+		{name: "invalid kind", args: []string{"--allow-missing-kinds=invalid"}, wantErr: "--allow-missing-kinds", notice: persistenceNotice},
 		{name: "profile startup", profile: "invalid", wantErr: "invalid FLATE_PROFILE", notice: persistenceNotice},
 		{name: "missing path", args: []string{"--path", filepath.Join(t.TempDir(), "missing")}, wantErr: "missing", notice: persistenceNotice},
 	} {

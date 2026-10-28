@@ -210,7 +210,7 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 		op := &operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}
 		credentials, err := op.resolveRegistryConfig(t.Context(), repo, sourcecache.Policy{})
 		assert.NoError(t, err)
-		_, identity, err := op.newRepoClient(t.Context(), repo, credentials)
+		_, identity, err := op.newRepoClient(t.Context(), repo, credentials, sourcecache.Policy{})
 		assert.NoError(t, err)
 		identities = append(identities, identity)
 		reads.Close()

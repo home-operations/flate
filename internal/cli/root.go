@@ -39,13 +39,13 @@ func New(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "flate",
 		Short:         "Validate a local Flux GitOps repo without a live cluster.",
-		Long:          "flate renders and diffs Flux manifests using the upstream helm, kustomize, and source SDKs — no `helm`, `kustomize`, or `flux` binaries needed.",
+		Long:          "flate renders and diffs Flux manifests using the upstream helm, kustomize, and source SDKs; no `helm`, `kustomize`, or `flux` binaries needed.\n\nDiff auto-detects a Git baseline when neither --base nor --path-orig is set; build, get and test render the full tree by default. Git commit references can require full history regardless of --git-depth. Egress restriction covers source fetches; configured proxies and SSH egress remain operator-controlled. Helm renders fresh installs without live release history.",
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().String("log-level", "error", "log level (debug, info, warn, error)")
-	root.PersistentFlags().Bool("no-progress", false, "disable the live per-resource progress lines on stderr")
+	root.PersistentFlags().String("log-level", "error", "Set log level: debug,info,warn,error")
+	root.PersistentFlags().Bool("no-progress", false, "Hide live progress on stderr")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		if err := applyEnvVars(cmd); err != nil {
 			return err

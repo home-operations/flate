@@ -19,17 +19,17 @@ func TestBindOutput_Usage(t *testing.T) {
 		{
 			name:    "diff help order",
 			outputs: output.DiffFormats,
-			want:    "output format: human, github, diff, html, brief, gitlab, gitea, json",
+			want:    "Set output format: human, github, diff, html, brief, gitlab, gitea, json",
 		},
 		{
 			name:    "build set",
 			outputs: []output.Format{output.FormatYAML, output.FormatJSON},
-			want:    "output format: yaml, json",
+			want:    "Set output format: yaml, json",
 		},
 		{
 			name:    "listed verbatim in order, default first",
 			outputs: []output.Format{output.FormatTable, output.FormatYAML, output.FormatJSON, output.FormatName},
-			want:    "output format: table, yaml, json, name",
+			want:    "Set output format: table, yaml, json, name",
 		},
 	}
 	for _, tc := range cases {
@@ -90,7 +90,7 @@ func TestOutputFlags_CommandFormats(t *testing.T) {
 			}
 			formats := strings.Split(tc.formats, ", ")
 			usage, _, _ := strings.Cut(flag.Usage, " [env: ")
-			if usage != "output format: "+tc.formats || !strings.Contains(flag.Usage, envKey("output")) || flag.DefValue != formats[0] || flag.Shorthand != "o" {
+			if usage != "Set output format: "+tc.formats || !strings.Contains(flag.Usage, envKey("output")) || flag.DefValue != formats[0] || flag.Shorthand != "o" {
 				t.Fatalf("incorrect output binding: %#v", flag)
 			}
 			for _, format := range formats {

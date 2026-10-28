@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -28,6 +29,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
 	// HTTPS operations must retain flate's egress guard.
@@ -44,9 +46,7 @@ type Fetcher struct {
 	Depth int
 	// RestrictSchemes permits only HTTPS and SSH for untrusted inputs.
 	RestrictSchemes bool
-	// ForceGeneric uses supplied static credentials for non-generic providers.
-	ForceGeneric bool
-	fallback     sync.Map
+	fallback        sync.Map
 }
 
 // Fetch publishes an immutable source view only after acquisition succeeds.
@@ -63,9 +63,8 @@ func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.GitRepository, reads
 }
 
 func (f *operation) fetchSource(ctx context.Context, repo *manifest.GitRepository, policy sourcecache.Policy) (*store.SourceArtifact, error) {
-	if !f.ForceGeneric && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
-		return nil, source.ErrUnsupportedProvider(repo.Named(), repo.Provider, sourcev1.GitProviderGeneric,
-			"SecretRef-based credentials")
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	request, err := f.resolveTransport(repo)
 	if err != nil {
@@ -133,6 +132,9 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisiti
 		}
 		material = [2]any{secretMaterial, opts.ProxyOptions}
 	}
+	if authErr == nil && auth == nil && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
+		authErr = source.MissingSecretErr(repo.Named(), "", "provider authentication unavailable offline")
+	}
 	request := gitAcquisition{spec: repo, options: opts, material: material}
 	if authErr != nil && skipTLS {
 		request.ambientUser = cmp.Or(endpoint.User, "git")
@@ -166,9 +168,22 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		input, usedAgent = nil, false
 		attempt := request
 		if request.ambientUser != "" {
+			if err := ctx.Err(); err != nil {
+				return plumbing.ZeroHash, err
+			}
+			socket := os.Getenv("SSH_AUTH_SOCK")
+			if socket == "" {
+				return plumbing.ZeroHash, source.MissingSecretErr(repo.Named(), "", "SSH agent unavailable")
+			}
 			var dialer net.Dialer
-			conn, err := dialer.DialContext(ctx, "unix", os.Getenv("SSH_AUTH_SOCK"))
+			conn, err := dialer.DialContext(ctx, "unix", socket)
 			if err != nil {
+				if ctx.Err() != nil {
+					return plumbing.ZeroHash, ctx.Err()
+				}
+				if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+					return plumbing.ZeroHash, source.MissingSecretErr(repo.Named(), "", "SSH agent unavailable")
+				}
 				return plumbing.ZeroHash, err
 			}
 			stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
@@ -176,6 +191,16 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 				stop()
 				_ = conn.Close()
 			}()
+			signers, err := agent.NewClient(conn).Signers()
+			if err != nil {
+				return plumbing.ZeroHash, errors.Join(ctx.Err(), err)
+			}
+			if err := ctx.Err(); err != nil {
+				return plumbing.ZeroHash, err
+			}
+			if len(signers) == 0 {
+				return plumbing.ZeroHash, source.MissingSecretErr(repo.Named(), "", "SSH agent has no identities")
+			}
 			homeDir, err := os.UserHomeDir()
 			if err != nil {
 				return plumbing.ZeroHash, err
@@ -184,7 +209,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 			if err != nil {
 				return plumbing.ZeroHash, err
 			}
-			auth := &gitssh.PublicKeysCallback{User: request.ambientUser, Callback: agent.NewClient(conn).Signers}
+			auth := &gitssh.PublicKeysCallback{User: request.ambientUser, Callback: func() ([]ssh.Signer, error) { return signers, nil }}
 			auth.HostKeyCallback = callback
 			attempt.options.Auth = auth
 		}

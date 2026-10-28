@@ -38,7 +38,6 @@ type Controller struct {
 	// parsing rendered manifests.
 	WipeSecrets bool
 
-	substitute          map[string]string
 	strictSubstitutions bool
 }
 
@@ -46,8 +45,6 @@ type Controller struct {
 // controller before StartLifecycle. base.Options holds the common reconcile config.
 type Options struct {
 	base.Options
-	// Substitute layers over referenced and inline postBuild values.
-	Substitute map[string]string
 	// StrictSubstitutions rejects undefined variables without defaults.
 	StrictSubstitutions bool
 }
@@ -80,7 +77,6 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
 	c.retry = retry
-	c.substitute = opts.Substitute
 	c.strictSubstitutions = opts.StrictSubstitutions
 
 }
@@ -120,7 +116,7 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 
 func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, source *store.SourceArtifact, applyIgnore bool) error {
 	id := ks.Named()
-	ks, err := kustomize.Prepare(ks, c.data, c.substitute)
+	ks, err := kustomize.Prepare(ks, c.data)
 	if err != nil {
 		return err
 	}
@@ -148,7 +144,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	_, _, attempt = c.run.Reads.GetEmission(id)
 	docs, receipt, err := kustomize.Render(ctx, c.Trees, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
-		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, Substitute: c.substitute, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
+		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
 	}, c.retry)
 	if err != nil {
 		return err
@@ -232,12 +228,12 @@ func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (
 		if ref.Use != "substituteFrom" {
 			continue
 		}
-		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional, AllowMissing: ref.Kind == manifest.KindSecret}, manifest.DrainNone)
+		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional}, manifest.DrainNone)
 		if availability.Kind != schedule.Terminal {
 			return nil, false
 		}
 	}
-	prepared, err := kustomize.Prepare(ks, data, c.substitute)
+	prepared, err := kustomize.Prepare(ks, data)
 	if err != nil {
 		return nil, false
 	}
@@ -247,7 +243,7 @@ func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (
 	}
 	records, found := c.Trees.PreviousRender(ctx, kustomize.RenderRequest{
 		Source: source, ApplyIgnore: ignore, SubPath: prepared.Path, Spec: prepared,
-		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, Substitute: c.substitute, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
+		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
 	}, ks.Named())
 	if !found {
 		return nil, false

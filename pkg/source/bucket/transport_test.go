@@ -17,6 +17,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -328,5 +329,70 @@ func TestFetcher_ResolveTransport_SnapshotRotation(t *testing.T) {
 	}
 	if lookups.Load() != 15 {
 		t.Fatalf("credentials and cert reread Secrets: %d", lookups.Load())
+	}
+}
+
+func TestFetcher_ProviderTransportValidation(t *testing.T) {
+	t.Parallel()
+	for _, use := range []string{"cert", "proxy"} {
+		t.Run(use, func(t *testing.T) {
+			t.Parallel()
+			repo := &manifest.Bucket{Name: "provider", Namespace: "apps", Endpoint: "s3.amazonaws.com", BucketName: "fixture", Provider: "aws"}
+			if use == "cert" {
+				repo.CertSecretRef = &manifest.LocalObjectReference{Name: "transport"}
+			} else {
+				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
+			}
+			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+				return &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"}}
+			}}
+			fetcher := &Fetcher{Network: newTestNetwork(t)}
+			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), cache.Policy{})
+			if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret) {
+				t.Fatalf("provider hid malformed transport: %v", err)
+			}
+		})
+	}
+}
+
+func TestFetcher_ProviderCredentials(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, provider          string
+		sts, malformed, missing bool
+	}{
+		{name: "AWS static", provider: "aws"},
+		{name: "GCP is not S3", provider: "gcp", missing: true},
+		{name: "Azure is not S3", provider: "azure", missing: true},
+		{name: "STS unavailable", provider: "aws", sts: true, missing: true},
+		{name: "generic STS unavailable", provider: "generic", sts: true, missing: true},
+		{name: "malformed static", provider: "aws", malformed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &manifest.Bucket{Name: "provider", Namespace: "apps", Endpoint: "s3.amazonaws.com", BucketName: "fixture", Provider: tc.provider, SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+			if tc.sts {
+				repo.STS = &sourcev1.BucketSTSSpec{Provider: "aws", Endpoint: "https://sts.fixture.invalid"}
+			}
+			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+				if tc.malformed {
+					return &manifest.Secret{Data: map[string]any{"accesskey": "%%%fixture"}}
+				}
+				return &manifest.Secret{StringData: map[string]any{"accesskey": "fixture", "secretkey": "fixture"}}
+			}}
+			fetcher := &Fetcher{Network: newTestNetwork(t)}
+			client, _, err := (&operation{Fetcher: fetcher, secrets: inputs.lookup(repo)}).newMinioClient(repo)
+			if tc.missing {
+				if !errors.Is(err, manifest.ErrMissingSecret) || client != nil {
+					t.Fatalf("unavailable provider: %v", err)
+				}
+			} else if tc.malformed {
+				if !errors.Is(err, manifest.ErrInput) || client != nil {
+					t.Fatalf("malformed credential: %v", err)
+				}
+			} else if err != nil || client == nil {
+				t.Fatalf("static AWS credentials rejected: %v", err)
+			}
+		})
 	}
 }

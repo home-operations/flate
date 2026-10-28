@@ -475,7 +475,7 @@ data:
   fallback: {{ .Values.missing | default "fallback" | quote }}
 `)
 
-	c, st := newTestControllerWithOptions(t, base.Options{AllowMissingSecrets: true})
+	c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -565,7 +565,7 @@ data:
 
 func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 	t.Parallel()
-	c, st := newTestControllerWithOptions(t, base.Options{AllowMissingSecrets: true})
+	c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	st.AddObject(chart)
 	st.UpdateStatus(chart.Named(), store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "chart failed"})
@@ -589,7 +589,7 @@ func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 	}
 }
 
-// Without --allow-missing-secrets, a valuesFrom Secret whose only declaration
+// Without --allow-missing-kinds Secret, a valuesFrom Secret whose only declaration
 // is an in-repo ExternalSecret (a producer) is omitted so the render proceeds —
 // the producer is positive evidence the Secret materializes live. This is the
 // flag-decoupled path: producer-backed refs are dropped regardless of the flag.

@@ -90,9 +90,9 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			var err error
 			switch {
 			case tt.proxy:
-				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil)
+				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 			case tt.cert:
-				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil)
+				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 			default:
 				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(t.Context(), repo, sourcecache.Policy{})
 			}
@@ -117,7 +117,7 @@ func TestFetcher_ResolveTLS_NoCertSecret(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", nil)
 	repo.URL = "oci://registry.example/test"
-	client, _, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil)
+	client, _, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) { s.Insecure = true })
 	repo.URL = "oci://registry.example/test"
-	client, _, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil)
+	client, _, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 		s.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
 	})
 	repo.URL = "oci://registry.example/test"
-	client, _, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil)
+	client, _, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	}
 }
 
-func TestFetcher_NonGenericProvider(t *testing.T) {
+func TestFetcher_ProviderUnavailable(t *testing.T) {
 	t.Parallel()
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
@@ -193,8 +193,8 @@ func TestFetcher_NonGenericProvider(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for unimplemented provider")
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("error should say 'not implemented'; got %v", err)
+	if !errors.Is(err, manifest.ErrMissingSecret) {
+		t.Errorf("expected missing provider credentials; got %v", err)
 	}
 }
 
@@ -227,6 +227,7 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 			}
 			repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 				s.URL = "oci://" + tt.registry + "/x/y"
+				s.Provider = sourcev1.AmazonOCIProvider
 				if tt.secret != "" {
 					s.SecretRef = &manifest.LocalObjectReference{Name: "creds"}
 				}
@@ -235,7 +236,7 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			client, identity, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, credStore)
+			client, identity, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, credStore, sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -255,13 +256,31 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 				if err != nil || captured != want {
 					t.Fatal("producer reread mutable credentials")
 				}
-				_, rotated, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, credStore)
+				_, rotated, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(t.Context(), repo, credStore, sourcecache.Policy{})
 				if err != nil || cmp.Equal(identity, rotated) {
 					t.Fatal("credential rotation reused identity")
 				}
 			}
 		})
 	}
+}
+
+func TestFetcher_AnonymousWithCorruptDockerConfig(t *testing.T) {
+	dockerDir := t.TempDir()
+	t.Setenv("DOCKER_CONFIG", dockerDir)
+	testutil.WriteFile(t, dockerDir, "config.json", `{"auths":`)
+	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap\n"})
+	registry := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
+	repo := ociRepo("anonymous", func(s *sourcev1.OCIRepositorySpec) {
+		s.URL = "oci://" + mustURL(t, registry.URL).Host + "/app"
+		s.Provider = sourcev1.GenericOCIProvider
+		s.Insecure = true
+		s.Reference = &sourcev1.OCIRepositoryRef{Tag: "v1"}
+	})
+	f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
+	got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
+	assert.NoError(t, err)
+	assert.Equal(t, mustReadFile(t, got.FS, "app.yaml"), "kind: ConfigMap\n")
 }
 
 func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
@@ -333,13 +352,10 @@ func TestFetcher_SecretCredentialsAcquisitionPolicy(t *testing.T) {
 	}
 }
 
-func TestFetcher_ForceGenericProvider(t *testing.T) {
+func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
-	// Gate bypassed: the generic path runs and fails on the absent secret.
 	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
-	f := &Fetcher{Network: newTestNetwork(t),
-		ForceGeneric: true,
-	}
+	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) {
 		s.URL = "oci://ghcr.io/x/y"
 		s.Provider = sourcev1.AmazonOCIProvider
@@ -348,9 +364,6 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 	_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 	if err == nil {
 		t.Fatalf("expected missing-secret error")
-	}
-	if strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("provider gate should be bypassed with ForceGeneric; got %v", err)
 	}
 	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)
@@ -570,7 +583,7 @@ func TestFetcher_ResolveConfig_HelperSnapshot(t *testing.T) {
 	t.Setenv("no_proxy", "*")
 	store := &countedCredentials{}
 	repo := ociRepo("helper", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://docker.io/library/test" })
-	client, first, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store)
+	client, first, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,12 +593,12 @@ func TestFetcher_ResolveConfig_HelperSnapshot(t *testing.T) {
 			t.Fatalf("helper was not frozen: calls=%d error=%v", store.calls, err)
 		}
 	}
-	_, second, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store)
+	_, second, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store, sourcecache.Policy{})
 	if err != nil || cmp.Equal(first, second) || store.calls != 2 {
 		t.Fatalf("next acquisition did not resolve rotated helper: calls=%d error=%v", store.calls, err)
 	}
 	store.failure = os.ErrPermission
-	failed, identity, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store)
+	failed, identity, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, store, sourcecache.Policy{})
 	if failed != nil || identity != nil || !errors.Is(err, os.ErrPermission) || !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("failed helper admitted acquisition: %v", err)
 	}
@@ -901,6 +914,61 @@ func TestFetcher_BearerTokenReuse(t *testing.T) {
 			assert.Equal(t, exchanges.Load(), int32(7))
 			assert.Equal(t, wrongContext.Load(), int32(0))
 			t.Logf("initial, warm, concurrent, invocation, credential, scope, registry and rejection stages: challenges=%d exchanges=%d wrong_context=%d", challenges.Load(), exchanges.Load(), wrongContext.Load())
+		})
+	}
+}
+
+func TestFetcher_ProviderTransportValidation(t *testing.T) {
+	t.Parallel()
+	for _, use := range []string{"cert", "proxy"} {
+		t.Run(use, func(t *testing.T) {
+			t.Parallel()
+			repo := ociRepo("provider", func(s *sourcev1.OCIRepositorySpec) {
+				s.URL = "oci://fixture.invalid/image"
+				s.Provider = sourcev1.AmazonOCIProvider
+				if use == "cert" {
+					s.CertSecretRef = &manifest.LocalObjectReference{Name: "transport"}
+				} else {
+					s.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
+				}
+			})
+			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+				return &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid", "address": "http://proxy.invalid/%"}}
+			}}
+			fetcher := &Fetcher{Network: newTestNetwork(t)}
+			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
+			if !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret) {
+				t.Fatalf("provider hid malformed transport: %v", err)
+			}
+		})
+	}
+}
+
+func TestFetcher_ProviderRegistryMatching(t *testing.T) {
+	t.Parallel()
+	for _, matching := range []bool{false, true} {
+		t.Run(fmt.Sprint(matching), func(t *testing.T) {
+			t.Parallel()
+			registry := "other.invalid"
+			if matching {
+				registry = "fixture.invalid"
+			}
+			config := filepath.Join(t.TempDir(), "config.json")
+			testutil.WriteFileAt(t, config, fmt.Sprintf(`{"auths":{%q:{"username":"ambient","password":"fixture"}}}`, registry))
+			repo := ociRepo("provider", func(s *sourcev1.OCIRepositorySpec) {
+				s.URL = "oci://fixture.invalid/image"
+				s.Provider = sourcev1.AmazonOCIProvider
+				s.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
+			})
+			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret {
+				return &manifest.Secret{StringData: map[string]any{".dockerconfigjson": `{"auths":{"unrelated.invalid":{"username":"repository","password":"fixture"}}}`}}
+			}}
+			fetcher := &Fetcher{Network: newTestNetwork(t), RegistryConfig: config}
+			_, err := fetcher.Fetch(t.Context(), repo, inputs.readSet(repo), sourcecache.Policy{})
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			if !ok || missing.Secret.Name != "auth" || (missing.RetryAmbient != nil) != matching {
+				t.Fatalf("actual-registry continuation: %v", err)
+			}
 		})
 	}
 }

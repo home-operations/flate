@@ -197,7 +197,7 @@ func TestEnvKey(t *testing.T) {
 
 func TestRun_RemovedFlagsRejected(t *testing.T) {
 	for _, verb := range []string{"build", "test", "diff", "get"} {
-		flags := []string{"stream", "skip-crds", "skip-secrets", "only-crds", "krmignore", "profile", "profile-out", "skip-schema-validation", "source-retry-attempts", "source-retry-min-wait", "source-retry-max-wait", "source-retry-jitter", "helm-template-cache-mb", "helm-render-cache-mb", "kustomize-render-cache-mb"}
+		flags := []string{"substitute", "no-hooks", "show-only", "force-generic-provider", "is-upgrade", "allow-missing-secrets", "allow-missing-crds", "stream", "skip-crds", "skip-secrets", "only-crds", "krmignore", "profile", "profile-out", "skip-schema-validation", "source-retry-attempts", "source-retry-min-wait", "source-retry-max-wait", "source-retry-jitter", "helm-template-cache-mb", "helm-render-cache-mb", "kustomize-render-cache-mb"}
 		if verb != "build" {
 			flags = append(flags, "only-kinds")
 		}
@@ -216,9 +216,16 @@ func TestRun_RemovedFlagsRejected(t *testing.T) {
 	}
 }
 
+func TestRun_RemovedShorthandRejected(t *testing.T) {
+	_, stderr, code := runCLI(t, "build", "all", "-s", "templates/main.yaml")
+	if code != 1 || !strings.Contains(stderr, "unknown shorthand flag") {
+		t.Fatalf("removed shorthand: exit=%d stderr=%s", code, stderr)
+	}
+}
+
 func TestEnv_RemovedOptionsIgnored(t *testing.T) {
 	path := writeFixture(t)
-	for _, key := range []string{"STREAM", "SKIP_CRDS", "SKIP_SECRETS", "ONLY_CRDS", "KRMIGNORE", "SKIP_SCHEMA_VALIDATION", "SOURCE_RETRY_ATTEMPTS", "SOURCE_RETRY_MIN_WAIT", "SOURCE_RETRY_MAX_WAIT", "SOURCE_RETRY_JITTER", "HELM_TEMPLATE_CACHE_MB", "HELM_RENDER_CACHE_MB", "KUSTOMIZE_RENDER_CACHE_MB"} {
+	for _, key := range []string{"SUBSTITUTE", "NO_HOOKS", "SHOW_ONLY", "FORCE_GENERIC_PROVIDER", "IS_UPGRADE", "ALLOW_MISSING_SECRETS", "ALLOW_MISSING_CRDS", "STREAM", "SKIP_CRDS", "SKIP_SECRETS", "ONLY_CRDS", "KRMIGNORE", "SKIP_SCHEMA_VALIDATION", "SOURCE_RETRY_ATTEMPTS", "SOURCE_RETRY_MIN_WAIT", "SOURCE_RETRY_MAX_WAIT", "SOURCE_RETRY_JITTER", "HELM_TEMPLATE_CACHE_MB", "HELM_RENDER_CACHE_MB", "KUSTOMIZE_RENDER_CACHE_MB"} {
 		t.Setenv("FLATE_"+key, "invalid-value")
 	}
 	stdout, stderr, code := runCLI(t, "build", "all", "--path", path)

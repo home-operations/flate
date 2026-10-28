@@ -293,7 +293,7 @@ func TestFetcher_MachineCredentials(t *testing.T) {
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
 	t.Setenv("FLATE_HELPER_MARKER", marker)
-	for _, helper := range []string{"global", "target", "later", "unrelated"} {
+	for _, helper := range []string{"global", "target", "unrelated"} {
 		path := filepath.Join(bin, "docker-credential-"+helper)
 		testutil.WriteFileAt(t, path, "#!/bin/sh\necho invoked >> \"$FLATE_HELPER_MARKER\"\nexit 1\n")
 		assert.NoError(t, os.Chmod(path, 0o755))
@@ -302,8 +302,8 @@ func TestFetcher_MachineCredentials(t *testing.T) {
 	const helm = `{"auths":{"ghcr.io":{"username":"helm","password":"helm"}}}`
 	const helper = `{"credsStore":"global","credHelpers":{"ghcr.io":"target","quay.io":"unrelated"}}`
 	for _, tc := range []struct {
-		name, docker, helm, explicit, secret, user, helper string
-		wantInput                                          bool
+		name, docker, helm, explicit, secret, user string
+		wantInput                                  bool
 	}{
 		{name: "Helm only", helm: helm, user: "helm"},
 		{name: "Docker wins", docker: docker, helm: helm, user: "docker"},
@@ -318,14 +318,10 @@ func TestFetcher_MachineCredentials(t *testing.T) {
 		{name: "explicit malformed excludes ambient", docker: docker, helm: helm, explicit: `{`, wantInput: true},
 		{name: "Secret excludes malformed files", docker: `{`, helm: `{`, explicit: `{`, secret: helm, user: "helm"},
 		{name: "malformed Secret is authoritative", docker: docker, helm: helm, secret: `{`, wantInput: true},
-		{name: "Docker host helper overrides global", docker: helper, helper: "target"},
-		{name: "Helm host helper overrides global", helm: helper, helper: "target"},
-		{name: "explicit host helper excludes ambient", docker: helm, helm: helm, explicit: helper, helper: "target"},
-		{name: "unrelated helper has no advice", docker: `{"credHelpers":{"quay.io":"unrelated"}}`},
-		{name: "global helper applies", helm: `{"credsStore":"global"}`, helper: "global"},
-		{name: "empty host helper uses global", docker: `{"credsStore":"global","credHelpers":{"ghcr.io":""}}`, helper: "global"},
-		{name: "first helper survives", docker: helper, helm: `{"credsStore":"later"}`, helper: "target"},
-		{name: "later plain credential clears helper", docker: helper, helm: helm, user: "helm"},
+		{name: "Docker helper only", docker: helper},
+		{name: "Helm helper only", helm: helper},
+		{name: "explicit helper excludes ambient", docker: helm, helm: helm, explicit: helper},
+		{name: "Helm plain follows Docker helper", docker: helper, helm: helm, user: "helm"},
 		{name: "Docker plain plus helper", docker: `{"credsStore":"global","auths":{"ghcr.io":{"username":"docker","password":"docker"}}}`, user: "docker"},
 		{name: "Helm plain plus helper", helm: `{"credsStore":"global","auths":{"ghcr.io":{"username":"helm","password":"helm"}}}`, user: "helm"},
 		{name: "explicit plain plus helper", explicit: `{"credsStore":"global","auths":{"ghcr.io":{"username":"docker","password":"docker"}}}`, user: "docker"},
@@ -364,7 +360,6 @@ func TestFetcher_MachineCredentials(t *testing.T) {
 			got, err := request.client.Client.(*auth.Client).Credential(t.Context(), request.client.Reference.Host())
 			assert.NoError(t, err)
 			assert.Equal(t, got, auth.Credential{Username: tc.user, Password: tc.user})
-			assert.Equal(t, request.helper, tc.helper)
 		})
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
@@ -406,7 +401,7 @@ func TestFetcher_HelmConfigAvailability(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
-			assert.Equal(t, selected.credential, auth.Credential{Username: wantUser, Password: wantUser})
+			assert.Equal(t, *selected, auth.Credential{Username: wantUser, Password: wantUser})
 		})
 	}
 }
@@ -463,8 +458,11 @@ func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
 			})
 			got, err := f.Fetch(t.Context(), repo, (testInputs{}).readSet(repo), sourcecache.Policy{})
 			if name == "wrong Docker is authoritative" || name == "explicit miss" {
-				if err == nil || got != nil || accepted.Load() != 0 || strings.Contains(err.Error(), "credential helper") {
+				if err == nil || got != nil || accepted.Load() != 0 {
 					t.Fatalf("unexpected fallback: artifact=%v error=%v accepted=%d", got, err, accepted.Load())
+				}
+				if strings.Contains(err.Error(), "no login entry for "+host) != (name == "explicit miss") {
+					t.Fatalf("unexpected missing-login advice: %v", err)
 				}
 				return
 			}
@@ -477,14 +475,14 @@ func TestFetcher_MachineCredentialsAcquisition(t *testing.T) {
 	}
 }
 
-func TestFetcher_HelperFailureAdvice(t *testing.T) {
+func TestFetcher_MissingLoginAdvice(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"Basic absence", "bearer absence", "rejected credential", "forbidden", "missing content", "malformed content", "transport", "canceled"} {
+	for _, name := range []string{"Basic absence", "bearer absence", "helper absence", "rejected credential", "forbidden", "missing content", "malformed content", "transport", "canceled"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch name {
-				case "Basic absence", "rejected credential":
+				case "Basic absence", "helper absence", "rejected credential":
 					w.Header().Set("WWW-Authenticate", `Basic realm="fixture"`)
 					w.WriteHeader(http.StatusUnauthorized)
 				case "bearer absence":
@@ -510,7 +508,10 @@ func TestFetcher_HelperFailureAdvice(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			path := filepath.Join(t.TempDir(), "config.json")
-			config := `{"credsStore":"fixture-helper"}`
+			config := `{}`
+			if name == "helper absence" {
+				config = `{"credsStore":"fixture-helper"}`
+			}
 			if name == "rejected credential" {
 				config = fmt.Sprintf(`{"credsStore":"fixture-helper","auths":{%q:{"username":"fixture-user","password":"private-password"}}}`, mustURL(t, srv.URL).Host)
 			}
@@ -529,8 +530,8 @@ func TestFetcher_HelperFailureAdvice(t *testing.T) {
 			if err == nil || artifact != nil || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("failure lost source classification: %v", err)
 			}
-			wantAdvice := name == "Basic absence" || name == "bearer absence"
-			for _, text := range []string{`credential helper "fixture-helper"`, "--registry-config", "plain auths entry", "supplied Secret"} {
+			wantAdvice := name == "Basic absence" || name == "bearer absence" || name == "helper absence"
+			for _, text := range []string{"no login entry for " + mustURL(t, srv.URL).Host, "Docker config", "Helm's registry file", "credential helpers are not run", "--registry-config", "plain auths entry", "supplied Secret"} {
 				if strings.Contains(err.Error(), text) != wantAdvice {
 					t.Errorf("advice %q: %v", text, err)
 				}
@@ -538,7 +539,7 @@ func TestFetcher_HelperFailureAdvice(t *testing.T) {
 			if !strings.Contains(err.Error(), "OCIRepository ns/advice") || !strings.Contains(err.Error(), "resolve latest") && name != "canceled" {
 				t.Errorf("original source/operation detail lost: %v", err)
 			}
-			if name == "Basic absence" && !errors.Is(err, auth.ErrBasicCredentialNotFound) {
+			if (name == "Basic absence" || name == "helper absence") && !errors.Is(err, auth.ErrBasicCredentialNotFound) {
 				t.Errorf("Basic absence sentinel lost: %v", err)
 			}
 			if name == "bearer absence" || name == "rejected credential" || name == "forbidden" {
@@ -556,7 +557,7 @@ func TestFetcher_HelperFailureAdvice(t *testing.T) {
 			if name == "canceled" && !errors.Is(err, context.Canceled) {
 				t.Errorf("cancellation lost: %v", err)
 			}
-			for _, secret := range []string{"fixture-user", "private-password", base64.StdEncoding.EncodeToString([]byte("fixture-user:private-password"))} {
+			for _, secret := range []string{"fixture-helper", "fixture-user", "private-password", base64.StdEncoding.EncodeToString([]byte("fixture-user:private-password"))} {
 				if strings.Contains(err.Error(), secret) {
 					t.Errorf("credential leaked in error")
 				}
@@ -565,7 +566,7 @@ func TestFetcher_HelperFailureAdvice(t *testing.T) {
 	}
 }
 
-func TestFetcher_SharedFailureHelperAdvice(t *testing.T) {
+func TestFetcher_SharedFailureMissingLoginAdvice(t *testing.T) {
 	previous := http.DefaultTransport
 	transport := previous.(*http.Transport).Clone()
 	http.DefaultTransport = transport
@@ -624,23 +625,24 @@ func TestFetcher_SharedFailureHelperAdvice(t *testing.T) {
 		}()
 		synctest.Wait()
 		unblock()
-		seen := map[string]bool{}
 		for range 2 {
 			err := <-done
 			if !errors.Is(err, auth.ErrBasicCredentialNotFound) || !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "--registry-config") || !strings.Contains(err.Error(), "supplied Secret") {
 				t.Fatalf("shared error lost chain or remedies: %v", err)
 			}
-			if strings.Contains(err.Error(), `credential helper "first"`) == strings.Contains(err.Error(), `credential helper "second"`) {
-				t.Fatalf("caller advice mixed helpers: %v", err)
+			for _, text := range []string{"no login entry for registry.invalid", "Docker config", "Helm's registry file", "credential helpers are not run", "plain auths entry"} {
+				if !strings.Contains(err.Error(), text) {
+					t.Errorf("shared error lost advice %q: %v", text, err)
+				}
 			}
 			for _, helper := range []string{"first", "second"} {
-				if strings.Contains(err.Error(), fmt.Sprintf("credential helper %q", helper)) {
-					seen[helper] = true
+				if strings.Contains(err.Error(), helper) {
+					t.Errorf("shared error named helper %q: %v", helper, err)
 				}
 			}
 		}
-		if len(seen) != 2 || requests.Load() != 2 {
-			t.Fatalf("shared acquisition mixed advice or duplicated work: helpers=%v requests=%d", seen, requests.Load())
+		if requests.Load() != 2 {
+			t.Fatalf("shared acquisition duplicated work: requests=%d", requests.Load())
 		}
 	})
 }

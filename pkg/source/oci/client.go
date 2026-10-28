@@ -3,7 +3,6 @@ package oci
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,13 +26,7 @@ import (
 
 const dockerConfigJSONKey = ".dockerconfigjson"
 
-type resolvedCredential struct {
-	credential auth.Credential
-	helper     string
-}
-
-// newRepoClient binds one credential and transport snapshot before cache admission.
-func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, selected *resolvedCredential, policy cache.Policy) (registryAcquisition, error) {
+func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, selected *auth.Credential, policy cache.Policy) (registryAcquisition, error) {
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return registryAcquisition{}, err
@@ -60,7 +53,7 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 			return registryAcquisition{}, err
 		}
 	}
-	cred := selected.credential
+	cred := *selected
 	if cred == auth.EmptyCredential && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
 		if repo.SecretRef != nil {
 			missing := source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "no credentials for the source registry")
@@ -79,11 +72,11 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 		return registryAcquisition{}, err
 	}
 	client.Client = &auth.Client{Client: &http.Client{Transport: tr}, Cache: tr.(auth.Cache), Credential: auth.StaticCredential(client.Reference.Registry, cred)}
-	return registryAcquisition{client: client, material: material, helper: selected.helper}, nil
+	return registryAcquisition{client: client, material: material, hasCredentials: cred != auth.EmptyCredential}, nil
 }
 
 // Machine credentials MUST wait for the source controller to exhaust rendered Secrets.
-func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, hostname string, policy cache.Policy) (*resolvedCredential, error) {
+func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, hostname string, policy cache.Policy) (*auth.Credential, error) {
 	if repo.SecretRef == nil {
 		return loadCredentials(ctx, f.RegistryConfig, hostname)
 	}
@@ -114,11 +107,11 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OC
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
 	}
-	return &resolvedCredential{credential: cred}, nil
+	return &cred, nil
 }
 
 // Unrelated registry credentials MUST NOT enable an ambient retry.
-func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, policy cache.Policy) (*resolvedCredential, error) {
+func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, policy cache.Policy) (*auth.Credential, error) {
 	parsed, err := parseOCIRef(repo.URL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
@@ -130,7 +123,7 @@ func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepo
 	}
 	mse, _ := errors.AsType[*source.MissingSecretError](missing)
 	selected, configErr := loadCredentials(ctx, f.RegistryConfig, ref.Host())
-	if configErr == nil && selected.credential == auth.EmptyCredential {
+	if configErr == nil && *selected == auth.EmptyCredential {
 		return nil, missing
 	}
 	mse.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
@@ -148,7 +141,7 @@ func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepo
 	return nil, mse
 }
 
-func loadCredentials(ctx context.Context, configPath, hostname string) (*resolvedCredential, error) {
+func loadCredentials(ctx context.Context, configPath, hostname string) (*auth.Credential, error) {
 	paths := []string{configPath}
 	if configPath == "" {
 		dockerDir := os.Getenv("DOCKER_CONFIG")
@@ -165,7 +158,6 @@ func loadCredentials(ctx context.Context, configPath, hostname string) (*resolve
 			paths[0] = filepath.Join(dockerDir, "config.json")
 		}
 	}
-	selected := &resolvedCredential{}
 	for i, path := range paths {
 		if path == "" {
 			continue
@@ -192,21 +184,8 @@ func loadCredentials(ctx context.Context, configPath, hostname string) (*resolve
 			return nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
 		}
 		if cred != auth.EmptyCredential {
-			return &resolvedCredential{credential: cred}, nil
-		}
-		if selected.helper == "" {
-			data, err := os.ReadFile(path) //nolint:gosec // Machine credential paths come from caller configuration or the local environment.
-			if err != nil {
-				continue
-			}
-			var metadata struct {
-				Store   string            `json:"credsStore"`
-				Helpers map[string]string `json:"credHelpers"`
-			}
-			if json.Unmarshal(data, &metadata) == nil {
-				selected.helper = cmp.Or(metadata.Helpers[credentials.ServerAddressFromHostname(hostname)], metadata.Store)
-			}
+			return &cred, nil
 		}
 	}
-	return selected, nil
+	return &auth.Credential{}, nil
 }

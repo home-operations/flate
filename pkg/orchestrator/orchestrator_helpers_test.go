@@ -12,6 +12,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/helmchart"
+	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -70,6 +72,8 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 		cfg.HelmClient = helm.NewClient(cfg.Cache)
 	}
 	ssrfguard.Restrict(cfg.RestrictEgress)
+	cfg.chartFetcher = helmchart.New(&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig}, helmchart.Config{
+		Cache: cfg.Cache, Network: cfg.Network, Concurrency: cfg.Concurrency, DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking})
 	o := newOrchestrator(cfg, tree, task.NewBounded(cfg.Concurrency))
 	tb.Cleanup(func() {
 		o.stop()

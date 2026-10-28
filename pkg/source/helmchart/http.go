@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"net/url"
 	"slices"
@@ -32,6 +31,22 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 	key := cache.BlobKey{Content: struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material}, Required: []string{"chart-version", "chart-url"}}
 	timeout := r.OperationTimeout()
 	policy.Timeout = &timeout
+	var releaseIndex func()
+	policy.Admit = func(ctx context.Context) (func(), error) {
+		select {
+		case f.indexDecodes <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		held := true
+		releaseIndex = func() {
+			if held {
+				<-f.indexDecodes
+				held = false
+			}
+		}
+		return releaseIndex, nil
+	}
 	generation, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (result cache.ProducerResult, err error) {
 		attempt := r
 		defer func() {
@@ -47,6 +62,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 			}
 		}
 		idx, err := f.fetchIndex(ctx, attempt, policy.Retry)
+		releaseIndex()
 		if err != nil {
 			return cache.ProducerResult{}, err
 		}
@@ -83,65 +99,57 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 
 func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, retry cache.RetryConfig) (*repo.IndexFile, error) {
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	var candidate *repo.IndexFile
-	var candidateDigest digest.Digest
 	generation, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		candidate = nil
-		var buf bytes.Buffer
-		desc, err := r.get(ctx, indexURL, io.MultiWriter(w, &buf))
-		if err != nil {
-			return cache.ProducerResult{Descriptor: desc}, err
-		}
-		candidateDigest = desc.Digest
-		if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
-			candidate = v.(*repo.IndexFile)
-			return cache.ProducerResult{Descriptor: desc}, nil
-		}
-		candidate, err = indexFromBytes(buf.Bytes())
-		if err != nil {
-			return cache.ProducerResult{Descriptor: desc}, fmt.Errorf("parse %s: %w", indexURL, err)
-		}
-		return cache.ProducerResult{Descriptor: desc}, nil
+		_, descriptor, err := f.loadIndex(ctx, indexURL, func(input io.Writer) (ocispec.Descriptor, error) {
+			return r.get(ctx, indexURL, io.MultiWriter(w, input))
+		})
+		return cache.ProducerResult{Descriptor: descriptor}, err
 	})
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", indexURL, err)
-	}
-	release, err := f.indexLocks.Acquire(ctx, desc.Digest.String())
 	if err != nil {
 		return nil, err
 	}
-	defer release()
 	if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
 		return v.(*repo.IndexFile), nil
 	}
-	if candidateDigest != desc.Digest || candidate == nil {
-		data, err := fs.ReadFile(generation, "content")
+	candidate, _, err := f.loadIndex(ctx, indexURL, func(w io.Writer) (ocispec.Descriptor, error) {
+		input, err := generation.Open("content")
 		if err != nil {
-			return nil, err
+			return desc, err
 		}
-		candidate, err = indexFromBytes(data)
-		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", indexURL, err)
-		}
-	}
-	f.indexCache.Store(desc.Digest.String(), candidate)
-	return candidate, nil
+		_, err = io.Copy(w, input)
+		return desc, errors.Join(err, input.Close())
+	})
+	return candidate, err
 }
 
-// indexFromBytes follows Flux's IndexFromBytes policy, including skippable chart validation.
-func indexFromBytes(data []byte) (*repo.IndexFile, error) {
-	idx := &repo.IndexFile{}
-	if len(data) == 0 {
-		return idx, repo.ErrEmptyIndexYaml
+func (f *Fetcher) loadIndex(ctx context.Context, indexURL string, produce func(io.Writer) (ocispec.Descriptor, error)) (*repo.IndexFile, ocispec.Descriptor, error) {
+	var data bytes.Buffer
+	desc, err := produce(&data)
+	if err != nil {
+		return nil, desc, fmt.Errorf("fetch %s: %w", indexURL, err)
 	}
-	var err error
-	if json.Valid(data) {
-		err = json.Unmarshal(data, idx)
-	} else {
-		err = yaml.UnmarshalStrict(data, idx)
+	release, err := f.indexLocks.Acquire(ctx, desc.Digest.String())
+	if err != nil {
+		return nil, desc, err
+	}
+	defer release()
+	if v, ok := f.indexCache.Load(desc.Digest.String()); ok {
+		return v.(*repo.IndexFile), desc, nil
+	}
+	idx := &repo.IndexFile{}
+	switch {
+	case data.Len() == 0:
+		err = repo.ErrEmptyIndexYaml
+	case json.Valid(data.Bytes()):
+		err = json.Unmarshal(data.Bytes(), idx)
+	default:
+		err = yaml.UnmarshalStrict(data.Bytes(), idx)
+	}
+	if err == nil && idx.APIVersion == "" {
+		err = repo.ErrNoAPIVersion
 	}
 	if err != nil {
-		return idx, err
+		return nil, desc, fmt.Errorf("%w: parse %s: %w", manifest.ErrFlux, indexURL, err)
 	}
 	for name, entries := range idx.Entries {
 		idx.Entries[name] = slices.DeleteFunc(entries, func(v *repo.ChartVersion) bool {
@@ -160,10 +168,8 @@ func indexFromBytes(data []byte) (*repo.IndexFile, error) {
 		})
 	}
 	idx.SortEntries()
-	if idx.APIVersion == "" {
-		return idx, repo.ErrNoAPIVersion
-	}
-	return idx, nil
+	f.indexCache.Store(desc.Digest.String(), idx)
+	return idx, desc, nil
 }
 
 func absChartURL(base, target string) (string, error) {

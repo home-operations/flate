@@ -49,7 +49,7 @@ func TestWrap_DispatchesTypedPayload(t *testing.T) {
 	if inner.reads != reads {
 		t.Fatal("ReadSet was not forwarded")
 	}
-	if inner.policy != policy {
+	if inner.policy.MaxAge != policy.MaxAge || inner.policy.Retry != policy.Retry || inner.policy.Timeout != policy.Timeout || inner.policy.Admit != nil {
 		t.Fatalf("policy=%+v, want %+v", inner.policy, policy)
 	}
 	if err != nil {

@@ -48,8 +48,9 @@ konflate embeds.
   discard old cache directories; upgrade notes go in the PR body.
 - **Call upstream.** Use helm, Flux, kustomize, go-git, oras and the stdlib instead of
   re-implementing them; if upstream lacks a hook, post-process its output. No compatibility shims
-  or aliases past their last caller. `internal/kustomize.Build` is the one approved replacement
-  (it keeps the builtin schema loaded across builds).
+  or aliases past their last caller. Approved replacements are `internal/kustomize.Build`
+  (it keeps the builtin schema loaded across builds) and `helmchart.Fetcher.loadIndex`
+  (it follows Flux source-controller's internal `IndexFromBytes` without temporary files).
 - **The SDK.** List every exported `pkg/` API or `Warning.Category` change in the PR; remove unused
   or test-only exports when the result is leaner. konflate is not a constraint: never keep an
   export, option or cache for it; it migrates.

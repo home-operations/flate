@@ -26,7 +26,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, selected *resolvedCredential, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, selected *auth.Credential, policy cache.Policy) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
 	}
@@ -35,19 +35,19 @@ func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCI
 		return nil, err
 	}
 	artifact, err := f.fetch(ctx, repo, request, policy)
-	if err != nil && request.helper != "" {
+	if err != nil && !request.hasCredentials {
 		response, _ := errors.AsType[*errcode.ErrorResponse](err)
 		if errors.Is(err, auth.ErrBasicCredentialNotFound) || response != nil && response.StatusCode == http.StatusUnauthorized {
-			err = fmt.Errorf("%w; credential helper %q cannot run offline: use --registry-config with a plain auths entry or a supplied Secret", err, request.helper)
+			err = fmt.Errorf("%w; no login entry for %s in Docker config or Helm's registry file; credential helpers are not run; use --registry-config with a plain auths entry or a supplied Secret", err, request.client.Reference.Host())
 		}
 	}
 	return artifact, err
 }
 
 type registryAcquisition struct {
-	client   *remote.Repository
-	material any
-	helper   string
+	client         *remote.Repository
+	material       any
+	hasCredentials bool
 }
 
 func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {

@@ -291,7 +291,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 
 func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) error {
 	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	docs, _, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: root}, d.cfg.RemoteRetry)
+	docs, receipt, err := kustomize.Render(ctx, d.cfg.Trees, kustomize.RenderRequest{Source: input, SubPath: root}, d.cfg.RemoteRetry)
 	if err != nil {
 		return fmt.Errorf("discovery package %q build: %w", root, err)
 	}
@@ -318,6 +318,16 @@ func (d *discoverer) buildPackage(ctx context.Context, repoRoot, root string) er
 		record, _ := d.loader.Index.Lookup(obj.Named())
 		d.documentOrigins = append(d.documentOrigins, documentOrigin{builder: record.Builder, object: obj})
 		d.documents = append(d.documents, child.Doc)
+	}
+	if err := d.cfg.Trees.RecordRender(ctx, manifest.BootstrapSourceID, receipt, func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+		for _, child := range built {
+			id := child.Obj.Named()
+			if !yield(id, d.loader.Index.Records[id]) {
+				return
+			}
+		}
+	}); err != nil {
+		return fmt.Errorf("discovery package %q publish: %w", root, err)
 	}
 	return nil
 }

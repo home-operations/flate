@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -493,6 +494,33 @@ func testTrees(t *testing.T) *kustomize.TreeCache {
 	return trees
 }
 
+func testReceiptTrees(t *testing.T, cacheDir string) (*kustomize.TreeCache, func()) {
+	t.Helper()
+	owner, err := cache.New(t.Context(), cacheDir)
+	assert.NoError(t, err)
+	trees := kustomize.NewTreeCache(owner, nil, task.NewBounded(2))
+	closeCache := func() {
+		t.Helper()
+		trees.Close()
+		assert.NoError(t, owner.Close())
+	}
+	t.Cleanup(closeCache)
+	if cacheDir != "" && !owner.CanPersistRenders() {
+		t.Skipf("persistent receipt proof requires an eligible build: %s", cache.RenderPersistenceDisabledReason())
+	}
+	return trees, closeCache
+}
+
+func packageHistory(t *testing.T, trees *kustomize.TreeCache, req kustomize.RenderRequest) map[manifest.NamedResource]manifest.DiscoveryRecord {
+	t.Helper()
+	records, ok := trees.PreviousRender(t.Context(), req, manifest.BootstrapSourceID)
+	if !ok || records == nil {
+		t.Fatalf("package %q has no complete accepted history", req.SubPath)
+	}
+	history := maps.Collect(records)
+	return history
+}
+
 func TestRun_BuiltEntryFixedPoint(t *testing.T) {
 	t.Parallel()
 	const root = "/virtual/built-fixed-point"
@@ -658,9 +686,15 @@ spec:
 				input["app/kustomization.yaml"].Data = []byte("resources: [good.yaml, selected.yaml]\n")
 				input["app/good.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: first}\n")}
 			}
+			for name, file := range input {
+				testutil.WriteFile(t, root, name, string(file.Data))
+			}
+			cacheDir := t.TempDir()
+			trees, closeCache := testReceiptTrees(t, cacheDir)
+			source := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
 			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: input})
-			d := discoverer{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
+			st.SetArtifact(manifest.BootstrapSourceID, source)
+			d := discoverer{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 			d.loader.SourceRoot = root
 			if _, err := d.loader.Load(t.Context(), d.cfg.Path); err != nil {
 				t.Fatal(err)
@@ -682,8 +716,60 @@ spec:
 			if d.loader.BuiltDocuments(first) != nil || st.GetObject(first) != nil {
 				t.Fatal("failed package published a partial batch")
 			}
+			closeCache()
+			trees, closeCache = testReceiptTrees(t, cacheDir)
+			req := kustomize.RenderRequest{Source: source, SubPath: "app"}
+			if _, ok := trees.PreviousRender(t.Context(), req, manifest.BootstrapSourceID); ok {
+				t.Fatal("failed package persisted a partial accepted batch")
+			}
+			testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [selected.yaml]\n")
+			const selectedFile = "app/selected.yaml"
+			testutil.WriteFile(t, root, selectedFile, strings.ReplaceAll(string(input[selectedFile].Data), "bad/group/version", "v1"))
+			st = store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, source)
+			d = discoverer{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+			d.loader.SourceRoot = root
+			_, err := d.loader.Load(t.Context(), d.cfg.Path)
+			assert.NoError(t, err)
+			assert.NoError(t, d.buildPackage(t.Context(), root, "app"))
+			assert.Equal(t, len(packageHistory(t, trees, req)), 1)
+			closeCache()
+			trees, closeCache = testReceiptTrees(t, cacheDir)
+			assert.Equal(t, len(packageHistory(t, trees, req)), 1)
+			closeCache()
+
 		})
 	}
+}
+
+func TestBuildPackage_PublicationFailure(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: accepted}\n")
+	cacheDir := t.TempDir()
+	trees, closeCache := testReceiptTrees(t, cacheDir)
+	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, source)
+	d := discoverer{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+	d.loader.SourceRoot = root
+	_, err := d.loader.Load(t.Context(), d.cfg.Path)
+	assert.NoError(t, err)
+	assert.NoError(t, os.RemoveAll(cacheDir))
+	err = d.buildPackage(t.Context(), root, "app")
+	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), `discovery package "app"`) {
+		t.Fatalf("publication failure lost classification, cause or package context: %v", err)
+	}
+	if len(d.loader.BuiltDocuments(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "accepted"})) != 1 {
+		t.Fatal("publication fault preceded successful rendering and registration")
+	}
+	closeCache()
+	trees, closeCache = testReceiptTrees(t, cacheDir)
+	if _, ok := trees.PreviousRender(t.Context(), kustomize.RenderRequest{Source: source, SubPath: "app"}, manifest.BootstrapSourceID); ok {
+		t.Fatal("failed publication left durable accepted history")
+	}
+	closeCache()
 }
 
 func TestRun_IndependentPackageRounds(t *testing.T) {
@@ -735,7 +821,9 @@ func TestRun_BuiltPackages(t *testing.T) {
 			input := fstest.MapFS{
 				"consumer.yaml":                 {Data: []byte(testutil.KustomizationYAML("consumer", "apps", "  path: ./output\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings-dev}]}\n"))},
 				"a/kustomization.yaml":          {Data: []byte("namespace: apps\nnameSuffix: -dev\nresources: [child, deleted.yaml]\n" + patch + "\n")},
-				"a/child/kustomization.yaml":    {Data: []byte("resources: [cm.yaml]\n")},
+				"a/child/kustomization.yaml":    {Data: []byte("resources: [cm.yaml, driver.yaml, source.yaml]\n")},
+				"a/child/driver.yaml":           {Data: []byte(testutil.KustomizationYAML("driver", "apps", "  path: ./output\n  sourceRef: {kind: GitRepository, name: cluster-dev}\n"))},
+				"a/child/source.yaml":           {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://fixture.invalid/self}\n")},
 				"a/child/cm.yaml":               {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {A: base}\n")},
 				"a/deleted.yaml":                {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")},
 				"a/patch.yaml":                  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {B: patched}\n---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n$patch: delete\n")},
@@ -745,57 +833,124 @@ func TestRun_BuiltPackages(t *testing.T) {
 				"empty/patch.yaml":              {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: empty}\n$patch: delete\n")},
 				"empty/cm.yaml":                 {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: empty}\n")},
 			}
-			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
-			d := discoverer{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
-			if err := d.loadManifests(t.Context(), root, true); err != nil {
-				t.Fatal(err)
-			}
-			if roots := d.loader.StandaloneRoots(root); len(roots) != 0 {
-				t.Fatalf("completed or accumulated packages selected again: %v", roots)
-			}
-			if err := d.loader.FinalizeIndex(t.Context(), root); err != nil {
-				t.Fatal(err)
-			}
-			d.promoteOrphans(t.Context(), nil)
-			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings-dev"}
-			cm, ok := st.GetObject(id).(*manifest.ConfigMap)
-			if !ok || cm.Data["A"] != "base" || cm.Data["B"] != "patched" {
-				t.Fatalf("nested package did not promote built data: %+v", cm)
-			}
-			if len(d.documents) != 2 {
-				t.Fatalf("package output = %v, want one transformed and one generated document", d.documents)
-			}
-			for _, id := range []manifest.NamedResource{
-				{Kind: manifest.KindConfigMap, Name: "settings"},
-				{Kind: manifest.KindConfigMap, Name: "removed"},
-				{Kind: manifest.KindConfigMap, Name: "empty"},
-				{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "removed-dev"},
-			} {
-				if _, ok := d.loader.Index.Lookup(id); ok || st.GetObject(id) != nil {
-					t.Errorf("raw, deleted or accumulated output survived: %s", id)
+			cacheDir := t.TempDir()
+			var previousDocs []map[string]any
+			var previousIndex *manifest.DiscoveryIndex
+			var previousWarnings []manifest.Warning
+			var previousSourcePath string
+			wantValue := "base"
+			for _, lifetime := range []string{"uncached", "cold", "warm-1", "warm-2", "changed", "changed-uncached"} {
+				t.Logf("cache lifetime: %s", lifetime)
+				if lifetime == "changed" {
+					wantValue = "edited"
+					input["a/child/cm.yaml"].Data = []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {A: edited}\n")
 				}
-			}
-			for _, file := range []string{"a/kustomization.yaml", "a/child/kustomization.yaml", "a/child/cm.yaml", "a/patch.yaml", "a/deleted.yaml"} {
-				record, _ := d.loader.Index.Lookup(cm.Named())
-				if !slices.Contains(record.Inputs, file) || slices.ContainsFunc(d.loader.Index.Readers[file], func(r manifest.FileReader) bool { return r.Reader == cm.Named() }) {
-					t.Errorf("%s lost built declaration evidence or acquired render ownership", file)
+				dir := cacheDir
+				if lifetime == "uncached" || lifetime == "changed-uncached" {
+					dir = ""
 				}
-				filter := change.NewFilter(change.NewSet([]string{file}), d.loader.Index, st, root)
-				if !filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
-					t.Errorf("%s does not reach substitution consumer", file)
+				trees, closeCache := testReceiptTrees(t, dir)
+				st := store.New()
+				source := &store.SourceArtifact{LocalPath: root, FS: input}
+				st.SetArtifact(manifest.BootstrapSourceID, source)
+				d := discoverer{cfg: Config{Path: root, Store: st, Trees: trees, SelfURLs: []string{"https://fixture.invalid/self"}}, loader: loader.New(st)}
+				if lifetime == "changed" {
+					if _, ok := trees.PreviousRender(t.Context(), kustomize.RenderRequest{Source: source, SubPath: "a"}, manifest.BootstrapSourceID); ok {
+						t.Fatal("changed consumed resource retained stale accepted history")
+					}
 				}
-			}
-			if change.NewFilter(change.NewSet([]string{"a/unlisted/other.yaml"}), d.loader.Index, st, root).ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
-				t.Fatal("unlisted sibling selected substitution consumer")
-			}
-			if docs := d.loader.BuiltDocuments(id); len(docs) != 1 || docs[0].Obj != cm {
-				t.Fatalf("package batch = %v", docs)
-			}
-			for id, r := range d.loader.Index.Files() {
-				if id.Kind == manifest.KindConfigMap && (r.Path != "" || r.Authored != (manifest.NamedResource{})) {
-					t.Errorf("built %s retained raw evidence: %+v", id, r)
+				if strings.HasPrefix(lifetime, "warm-") {
+					for _, subpath := range []string{"a", "b", "empty"} {
+						packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath})
+					}
 				}
+				if err := d.loadManifests(t.Context(), root, true); err != nil {
+					t.Fatal(err)
+				}
+				if roots := d.loader.StandaloneRoots(root); len(roots) != 0 {
+					t.Fatalf("completed or accumulated packages selected again: %v", roots)
+				}
+				if dir != "" {
+					for _, subpath := range []string{"a", "b", "empty"} {
+						want := map[manifest.NamedResource]manifest.DiscoveryRecord{}
+						for id, record := range d.loader.Index.Records {
+							if record.Builder == subpath+"/kustomization.yaml" {
+								want[id] = record
+							}
+						}
+						assert.Diff(t, packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath}), want)
+					}
+				}
+				if err := d.loader.FinalizeIndex(t.Context(), root); err != nil {
+					t.Fatal(err)
+				}
+				d.promoteOrphans(t.Context(), nil)
+				id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings-dev"}
+				cm, ok := st.GetObject(id).(*manifest.ConfigMap)
+				if !ok || cm.Data["A"] != wantValue || cm.Data["B"] != "patched" {
+					t.Fatalf("nested package did not promote built data: %+v", cm)
+				}
+				if len(d.documents) != 2 {
+					t.Fatalf("package output = %v, want one transformed and one generated document", d.documents)
+				}
+				for _, id := range []manifest.NamedResource{
+					{Kind: manifest.KindConfigMap, Name: "settings"},
+					{Kind: manifest.KindConfigMap, Name: "removed"},
+					{Kind: manifest.KindConfigMap, Name: "empty"},
+					{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "removed-dev"},
+				} {
+					if _, ok := d.loader.Index.Lookup(id); ok || st.GetObject(id) != nil {
+						t.Errorf("raw, deleted or accumulated output survived: %s", id)
+					}
+				}
+				for _, file := range []string{"a/kustomization.yaml", "a/child/kustomization.yaml", "a/child/cm.yaml", "a/child/driver.yaml", "a/child/source.yaml", "a/patch.yaml", "a/deleted.yaml"} {
+					record, _ := d.loader.Index.Lookup(cm.Named())
+					if !slices.Contains(record.Inputs, file) || slices.ContainsFunc(d.loader.Index.Readers[file], func(r manifest.FileReader) bool { return r.Reader == cm.Named() }) {
+						t.Errorf("%s lost built declaration evidence or acquired render ownership", file)
+					}
+					filter := change.NewFilter(change.NewSet([]string{file}), d.loader.Index, st, root)
+					if !filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
+						t.Errorf("%s does not reach substitution consumer", file)
+					}
+				}
+				if change.NewFilter(change.NewSet([]string{"a/unlisted/other.yaml"}), d.loader.Index, st, root).ShouldReconcile(testutil.KustomizationID("apps", "consumer")) {
+					t.Fatal("unlisted sibling selected substitution consumer")
+				}
+				if docs := d.loader.BuiltDocuments(id); len(docs) != 3 || !slices.ContainsFunc(docs, func(child store.Child) bool { return child.Obj == cm }) {
+					t.Fatalf("package batch = %v", docs)
+				}
+				for id, r := range d.loader.Index.Files() {
+					if id.Kind == manifest.KindConfigMap && (r.Path != "" || r.Authored != (manifest.NamedResource{})) {
+						t.Errorf("built %s retained raw evidence: %+v", id, r)
+					}
+				}
+				driver := testutil.KustomizationID("apps", "driver-dev")
+				sourceID := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster-dev"}
+				if st.GetObject(driver) == nil || st.GetObject(sourceID) == nil {
+					t.Fatal("filtered discovery declarations were not promoted")
+				}
+				artifact, ok := st.GetArtifact(sourceID, store.ArtifactContent).(*store.SourceArtifact)
+				if !ok || !artifact.InputAlias || artifact.LocalRoot != root {
+					t.Fatalf("filtered source did not resolve to the bootstrap tree: %+v", artifact)
+				}
+				if previousSourcePath != "" {
+					assert.Equal(t, artifact.LocalPath, previousSourcePath)
+				}
+				previousSourcePath = artifact.LocalPath
+				assert.Diff(t, d.loader.Index.Records[driver].Refs, []manifest.NamedResource{sourceID})
+				for _, id := range []manifest.NamedResource{cm.Named(), driver, sourceID, {Kind: manifest.KindConfigMap, Name: "generated"}} {
+					assert.Equal(t, st.EmissionOwner(id), manifest.NamedResource{})
+				}
+				if lifetime == "uncached" || lifetime == "changed" {
+					previousDocs, previousIndex, previousWarnings = d.documents, d.loader.Index, st.Warnings()
+				} else {
+					assert.Diff(t, d.documents, previousDocs)
+					assert.Diff(t, d.loader.Index.Records, previousIndex.Records)
+					assert.Diff(t, d.loader.Index.Readers, previousIndex.Readers)
+					assert.Diff(t, d.loader.Index.Claims, previousIndex.Claims)
+					assert.Diff(t, st.Warnings(), previousWarnings)
+				}
+				closeCache()
 			}
 		})
 	}
@@ -812,38 +967,88 @@ func TestRun_BuiltPackageCollisions(t *testing.T) {
 		"b/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\ndata: {VALUE: last}\n")},
 		"b/secret.yaml":        {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: shared}\nstringData: {VALUE: last}\n")},
 	}
-	for range 2 {
-		st := store.New()
-		result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(result.Documents) != 2 {
-			t.Fatalf("colliding packages published duplicate output: %v", result.Documents)
-		}
-		for _, doc := range result.Documents {
-			id := manifest.DocIdentity(doc)
-			record, _ := result.Index.Lookup(id)
-			key := "data"
-			if id.Kind == manifest.KindSecret {
-				key = "stringData"
-			}
-			if record.File != "b/kustomization.yaml" || doc[key].(map[string]any)["VALUE"] != "last" {
-				t.Errorf("output winner disagrees with record: %v %+v", doc, record)
-			}
-			switch obj := st.GetObject(id).(type) {
-			case *manifest.ConfigMap:
-				if obj.Data["VALUE"] != "last" {
-					t.Errorf("ConfigMap admission retained losing package: %+v", obj)
+	for _, preexisting := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preexisting=%t", preexisting), func(t *testing.T) {
+			t.Parallel()
+			cacheDir := t.TempDir()
+			var previous *Result
+			var previousWarnings []manifest.Warning
+			for _, lifetime := range []string{"uncached", "cold", "warm-1", "warm-2"} {
+				t.Logf("cache lifetime: %s", lifetime)
+				dir := cacheDir
+				if lifetime == "uncached" {
+					dir = ""
 				}
-			case *manifest.Secret:
-				if obj.StringData["VALUE"] != "last" {
-					t.Errorf("Secret admission retained losing package: %+v", obj)
+				trees, closeCache := testReceiptTrees(t, dir)
+				st := store.New()
+				wantValue := "last"
+				if preexisting {
+					wantValue = "preexisting"
+					st.AddObject(&manifest.ConfigMap{Name: "shared", Data: map[string]any{"VALUE": wantValue}})
+					st.AddObject(&manifest.Secret{Name: "shared", StringData: map[string]any{"VALUE": wantValue}})
 				}
-			default:
-				t.Fatalf("missing admitted output: %s", id)
+				source := &store.SourceArtifact{LocalPath: root, FS: input}
+				if strings.HasPrefix(lifetime, "warm-") {
+					for _, subpath := range []string{"a", "b"} {
+						packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath})
+					}
+				}
+				result, err := Run(t.Context(), Config{Input: source, Path: root, Store: st, Trees: trees})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(result.Documents) != 2 {
+					t.Fatalf("colliding packages published duplicate output: %v", result.Documents)
+				}
+				for _, doc := range result.Documents {
+					id := manifest.DocIdentity(doc)
+					record, _ := result.Index.Lookup(id)
+					key := "data"
+					if id.Kind == manifest.KindSecret {
+						key = "stringData"
+					}
+					wantDocument := "last"
+					if preexisting && id.Kind == manifest.KindSecret {
+						wantDocument = wantValue
+					}
+					if record.File != "b/kustomization.yaml" || doc[key].(map[string]any)["VALUE"] != wantDocument {
+						t.Errorf("output winner disagrees with record: %v %+v", doc, record)
+					}
+					switch obj := st.GetObject(id).(type) {
+					case *manifest.ConfigMap:
+						if obj.Data["VALUE"] != wantValue {
+							t.Errorf("ConfigMap admission retained losing package: %+v", obj)
+						}
+					case *manifest.Secret:
+						if obj.StringData["VALUE"] != wantValue {
+							t.Errorf("Secret admission retained losing package: %+v", obj)
+						}
+					default:
+						t.Fatalf("missing admitted output: %s", id)
+					}
+				}
+				if dir != "" {
+					for _, subpath := range []string{"a", "b"} {
+						history := packageHistory(t, trees, kustomize.RenderRequest{Source: source, SubPath: subpath})
+						assert.Equal(t, len(history), 2)
+						for id, record := range history {
+							assert.Equal(t, record.File, subpath+"/kustomization.yaml")
+							assert.Equal(t, record.Builder, subpath+"/kustomization.yaml")
+							assert.Equal(t, st.EmissionOwner(id), manifest.NamedResource{})
+						}
+					}
+				}
+				if previous != nil {
+					assert.Diff(t, result.Documents, previous.Documents)
+					assert.Diff(t, result.Index.Records, previous.Index.Records)
+					assert.Diff(t, result.Index.Readers, previous.Index.Readers)
+					assert.Diff(t, result.Index.Claims, previous.Index.Claims)
+					assert.Diff(t, st.Warnings(), previousWarnings)
+				}
+				previous, previousWarnings = result, st.Warnings()
+				closeCache()
 			}
-		}
+		})
 	}
 }
 

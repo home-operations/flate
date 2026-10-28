@@ -423,11 +423,22 @@ func (h *HelmRelease) Content(source any, omitted []NamedResource) any {
 }
 
 func (*HelmRelease) outputFields() string {
-	return `interval timeout maxHistory persistentClient
- dependsOn.name dependsOn.namespace dependsOn.readyExpr
- driftDetection.mode driftDetection.ignore.paths.* driftDetection.ignore.target.group driftDetection.ignore.target.version driftDetection.ignore.target.kind driftDetection.ignore.target.namespace driftDetection.ignore.target.name driftDetection.ignore.target.annotationSelector driftDetection.ignore.target.labelSelector
-install.timeout install.strategy.name install.strategy.retryInterval install.remediation.retries install.remediation.ignoreTestFailures install.remediation.remediateLastFailure install.disableWait install.disableWaitForJobs
-upgrade.timeout upgrade.strategy.name upgrade.strategy.retryInterval upgrade.remediation.retries upgrade.remediation.ignoreTestFailures upgrade.remediation.remediateLastFailure upgrade.remediation.strategy upgrade.disableWait upgrade.disableWaitForJobs upgrade.cleanupOnFail
-rollback.timeout rollback.disableWait rollback.disableWaitForJobs rollback.disableHooks rollback.recreate rollback.force rollback.cleanupOnFail rollback.serverSideApply
-uninstall.timeout uninstall.disableHooks uninstall.keepHistory uninstall.disableWait uninstall.deletionPropagation`
+	return "metadata.annotations metadata.labels\n" +
+		" spec.interval spec.timeout spec.maxHistory spec.persistentClient\n" +
+		" spec.dependsOn.name spec.dependsOn.namespace spec.dependsOn.readyExpr\n" +
+		" spec.driftDetection.mode spec.driftDetection.ignore.paths.* spec.driftDetection.ignore.target.group " +
+		"spec.driftDetection.ignore.target.version spec.driftDetection.ignore.target.kind " +
+		"spec.driftDetection.ignore.target.namespace spec.driftDetection.ignore.target.name " +
+		"spec.driftDetection.ignore.target.annotationSelector spec.driftDetection.ignore.target.labelSelector\n" +
+		"spec.install.timeout spec.install.strategy.name spec.install.strategy.retryInterval " +
+		"spec.install.remediation.retries spec.install.remediation.ignoreTestFailures " +
+		"spec.install.remediation.remediateLastFailure spec.install.disableWait spec.install.disableWaitForJobs\n" +
+		"spec.upgrade.timeout spec.upgrade.strategy.name spec.upgrade.strategy.retryInterval " +
+		"spec.upgrade.remediation.retries spec.upgrade.remediation.ignoreTestFailures " +
+		"spec.upgrade.remediation.remediateLastFailure spec.upgrade.remediation.strategy spec.upgrade.disableWait " +
+		"spec.upgrade.disableWaitForJobs spec.upgrade.cleanupOnFail\n" +
+		"spec.rollback.timeout spec.rollback.disableWait spec.rollback.disableWaitForJobs spec.rollback.disableHooks " +
+		"spec.rollback.recreate spec.rollback.force spec.rollback.cleanupOnFail spec.rollback.serverSideApply\n" +
+		"spec.uninstall.timeout spec.uninstall.disableHooks spec.uninstall.keepHistory spec.uninstall.disableWait " +
+		"spec.uninstall.deletionPropagation"
 }

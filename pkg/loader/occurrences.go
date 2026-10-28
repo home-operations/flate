@@ -546,6 +546,9 @@ func (l *Loader) IsFileIndexed(id manifest.NamedResource) bool {
 
 // CatalogObject returns immutable reporting facts without hydrating or admitting the declaration.
 func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
+	if record, ok := l.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
+		return manifest.CatalogObject(record.Declaration, id)
+	}
 	if occurrence, ok := l.occurrence(id); ok && occurrence.facts.catalog != nil {
 		obj := occurrence.object
 		if obj == nil {

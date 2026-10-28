@@ -32,9 +32,21 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 	evidence.Inputs = []EntryInput{{Resource: chart, Artifact: artifact}}
 	entry, err := cache.ApplicationReceipt(t.Context(), request.Source, evidence, []string{"generator.yaml", "optional.yaml"})
 	assert.NoError(t, err)
-	_, receipt, err := Render(t.Context(), cache, request, sourcecache.RetryConfig{})
+	docs, receipt, err := Render(t.Context(), cache, request, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: spec.Named(), Receipt: receipt, Entry: entry, Records: emptyRenderInventory}))
+	assert.NoError(
+		t,
+		cache.RecordRender(
+			t.Context(),
+			RenderAcceptance{
+				Owner:   spec.Named(),
+				Receipt: receipt,
+				Entry:   entry,
+				Records: emptyRenderInventory,
+				Content: request.Content(docs),
+			},
+		),
+	)
 	testutil.WriteFile(t, root, "cm.yaml", cmYAML("changed"))
 	accepted := cache.PreviousEntry(t.Context(), request)
 	assert.Diff(t, accepted.Application, application)

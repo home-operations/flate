@@ -68,6 +68,12 @@ linters:
           list-mode: strict
           files: ["**/internal/claimpath/**", "!$test"]
           allow: ["$gostd"]
+        inputprojection:
+          list-mode: strict
+          files: ["**/internal/inputprojection/**"]
+          allow:
+            - $gostd
+            - github.com/home-operations/flate/pkg/manifest
         leaf:
           files:
             - "**/pkg/manifest/**"

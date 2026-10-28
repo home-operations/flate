@@ -208,13 +208,39 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 
 func (k *Kustomization) kind() KindInfo { return kindTable[kindKustomization].KindInfo }
 
-// Content returns prepared render inputs without emission labels or annotations.
-func (k *Kustomization) Content(source any) any {
+// Content returns raw inputs for nil names, or final inputs projected to effective substitutions.
+//
+//nolint:ireturn // Fingerprint accepts type-specific render identities.
+func (k *Kustomization) Content(source any, names map[string]struct{}, active bool) any {
+	spec := k.KustomizationSpec
+	spec.PostBuild, spec.DependsOn = nil, nil
+	var substitution any
+	if names != nil {
+		type entry struct {
+			Present bool
+			Value   string
+		}
+		entries := make(map[string]entry, len(names))
+		for name := range names {
+			var value string
+			var present bool
+			if k.PostBuild != nil {
+				value, present = k.PostBuild.Substitute[name]
+			}
+			entries[name] = entry{present, value}
+		}
+		substitution = struct {
+			Active    bool
+			Strategy  kustomizev1.SubstituteStrategy
+			Variables map[string]entry
+		}{active, k.SubstituteStrategy(), entries}
+	}
 	return struct {
 		Source          any
 		Name, Namespace string
-		Spec            *kustomizev1.KustomizationSpec
-	}{source, k.Name, k.Namespace, &k.KustomizationSpec}
+		Spec            kustomizev1.KustomizationSpec
+		Substitution    any
+	}{source, k.Name, k.Namespace, spec, substitution}
 }
 
 type kustomizationProjection struct {
@@ -269,8 +295,9 @@ func (k *Kustomization) RenderDocument() (map[string]any, error) {
 }
 
 func (*Kustomization) outputFields() string {
-	return `interval retryInterval timeout wait prune deletionPolicy force
-healthChecks.apiVersion healthChecks.kind healthChecks.name healthChecks.namespace
-healthCheckExprs.apiVersion healthCheckExprs.kind healthCheckExprs.current healthCheckExprs.failed healthCheckExprs.inProgress
- dependsOn.name dependsOn.namespace dependsOn.readyExpr`
+	return "spec.interval spec.retryInterval spec.timeout spec.wait spec.prune spec.deletionPolicy spec.force\n" +
+		"spec.healthChecks.apiVersion spec.healthChecks.kind spec.healthChecks.name spec.healthChecks.namespace\n" +
+		"spec.healthCheckExprs.apiVersion spec.healthCheckExprs.kind spec.healthCheckExprs.current " +
+		"spec.healthCheckExprs.failed spec.healthCheckExprs.inProgress\n" +
+		" spec.dependsOn.name spec.dependsOn.namespace spec.dependsOn.readyExpr"
 }

@@ -740,6 +740,14 @@ func TestRenderKey_ContentInputs(t *testing.T) {
 		{name: "substitution", same: true, change: func(r *RenderRequest) {
 			r.Spec.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"VALUE": "typed"}}
 		}},
+		{name: "substitution strategy", same: true, change: func(r *RenderRequest) {
+			r.Spec.PostBuild = &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}
+		}},
+		{name: "substitution references", same: true, change: func(r *RenderRequest) {
+			r.Spec.PostBuild = &kustomizev1.PostBuild{
+				SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "provider"}},
+			}
+		}},
 		{name: "spec", change: func(r *RenderRequest) { r.Spec.NamePrefix = "other-" }},
 		{name: "owner name", change: func(r *RenderRequest) { r.Spec.Name = "other" }},
 		{name: "owner namespace", change: func(r *RenderRequest) { r.Spec.Namespace = "other" }},
@@ -2068,7 +2076,13 @@ func TestRender_SubstitutionRetainsRawBuild(t *testing.T) {
 		value *kustomizev1.PostBuild
 	}{
 		{"inline", &kustomizev1.PostBuild{Substitute: map[string]string{"CLUSTER_NAME": "home"}}},
-		{"reference", &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: "ConfigMap", Name: "settings"}}}},
+		{
+			"reference",
+			&kustomizev1.PostBuild{
+				SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: "ConfigMap", Name: "settings"}},
+				Substitute:     map[string]string{"CLUSTER_NAME": "home"},
+			},
+		},
 		{"strategy", &kustomizev1.PostBuild{SubstituteStrategy: "Always"}},
 	} {
 		t.Run(postBuild.name, func(t *testing.T) {
@@ -2080,19 +2094,40 @@ func TestRender_SubstitutionRetainsRawBuild(t *testing.T) {
 			source.FS = &pausedRenderFS{FS: source.FS, builds: &builds}
 			spec := demoSpec.Clone()
 			req := RenderRequest{Source: source, Spec: spec, SubPath: "."}
+			content := func(request RenderRequest, docs []manifest.DocOccurrence) any {
+				private := slices.Clone(docs)
+				for i := range private {
+					private[i].Document = manifest.DeepCopyMap(private[i].Document)
+				}
+				return request.Content(private)
+			}
 			docs, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
 			assert.NoError(t, err)
 			assert.Equal(t, builds.Load(), int64(1))
-			assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: spec.Named(), Receipt: receipt, Records: emptyRenderInventory}))
+			assert.NoError(
+				t,
+				cache.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: spec.Named(), Receipt: receipt, Records: emptyRenderInventory, Content: content(req, docs)},
+				),
+			)
+			history := func(request RenderRequest) bool {
+				raw, pending, found := cache.PreviousRender(t.Context(), request)
+				if !found {
+					return false
+				}
+				_, known := cache.RenderHistory(spec.Named(), pending, content(request, raw))
+				return known
+			}
 			if cache.owner.CanPersistRenders() {
-				_, known := cache.PreviousRender(t.Context(), req, spec.Named())
+				known := history(req)
 				assert.Equal(t, known, true)
 			}
 			changed := req
 			changed.Spec = spec.Clone()
 			changed.Spec.PostBuild = postBuild.value
 			if cache.owner.CanPersistRenders() {
-				_, known := cache.PreviousRender(t.Context(), changed, spec.Named())
+				known := history(changed)
 				assert.Equal(t, known, false)
 			}
 			again, next, err := Render(t.Context(), cache, changed, sourcecache.RetryConfig{})
@@ -2102,14 +2137,21 @@ func TestRender_SubstitutionRetainsRawBuild(t *testing.T) {
 			beforeFrame := receipt.Value().(renderFrame)
 			afterFrame := next.Value().(renderFrame)
 			assert.Equal(t, beforeFrame.header.Key, afterFrame.header.Key)
-			assert.Equal(t, beforeFrame.binding.equal(afterFrame.binding), false)
-			assert.Equal(t, afterFrame.accepted == nil, true)
+			assert.Equal(t, manifest.ValueEqual(content(req, docs), content(changed, again)), false)
+			_, accepted := cache.RenderHistory(spec.Named(), next, content(changed, again))
+			assert.Equal(t, accepted, false)
 			assert.Equal(t, spec.PostBuild == nil, true)
-			assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: spec.Named(), Receipt: next, Records: emptyRenderInventory}))
+			assert.NoError(
+				t,
+				cache.RecordRender(
+					t.Context(),
+					RenderAcceptance{Owner: spec.Named(), Receipt: next, Records: emptyRenderInventory, Content: content(changed, again)},
+				),
+			)
 			if cache.owner.CanPersistRenders() {
-				_, known := cache.PreviousRender(t.Context(), changed, spec.Named())
+				known := history(changed)
 				assert.Equal(t, known, true)
-				_, known = cache.PreviousRender(t.Context(), req, spec.Named())
+				known = history(req)
 				assert.Equal(t, known, false)
 			}
 		})

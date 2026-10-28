@@ -11,12 +11,11 @@ import (
 	"io"
 	"io/fs"
 	"iter"
-	"maps"
 	"slices"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
 
@@ -47,13 +46,9 @@ type renderBinding struct {
 	Wipe, Strict                                 bool
 	Skip                                         []string `json:",omitempty"`
 	Dependencies                                 values.DependencySubstitutions
-	PostBuild                                    *kustomizev1.PostBuild `json:",omitempty"`
 }
 
 func (a renderBinding) equal(b renderBinding) bool {
-	if a.PostBuild != b.PostBuild && (a.PostBuild == nil || b.PostBuild == nil || a.PostBuild.SubstituteStrategy != b.PostBuild.SubstituteStrategy || !maps.Equal(a.PostBuild.Substitute, b.PostBuild.Substitute) || !slices.Equal(a.PostBuild.SubstituteFrom, b.PostBuild.SubstituteFrom)) {
-		return false
-	}
 	return a.Render == b.Render && a.Source == b.Source && a.Kind == b.Kind && a.URL == b.URL && a.Path == b.Path && a.Root == b.Root && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest && a.Alias == b.Alias && a.Wipe == b.Wipe && a.Strict == b.Strict && slices.Equal(a.Skip, b.Skip) && a.Dependencies.Equal(b.Dependencies)
 }
 
@@ -94,6 +89,7 @@ type acceptedRender struct {
 	Complete bool
 	Owner    manifest.NamedResource
 	Raw      string
+	Final    string
 	Records  []acceptedRecord
 }
 
@@ -101,7 +97,7 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw {
+	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw || a.Final != b.Final {
 		return false
 	}
 	if (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
@@ -172,7 +168,10 @@ func decodeFrame(data []byte) (renderFrame, error) {
 		return frame, nil
 	}
 	var accepted acceptedRender
-	if err := json.Unmarshal(tail, &accepted); err != nil || accepted.Version != 1 || !accepted.Complete || accepted.Raw != frame.raw {
+	if err := json.Unmarshal(tail, &accepted); err != nil {
+		return frame, nil
+	}
+	if accepted.Version != 2 || accepted.Final == "" || !accepted.Complete || accepted.Raw != frame.raw {
 		return frame, nil
 	}
 	for i, item := range accepted.Records {
@@ -193,8 +192,13 @@ func decodeFrame(data []byte) (renderFrame, error) {
 	return frame, nil
 }
 
-func prepareAccepted(owner manifest.NamedResource, frame renderFrame, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]) (acceptedRender, error) {
-	accepted := acceptedRender{Version: 1, Complete: true, Owner: owner, Raw: frame.raw}
+func prepareAccepted(
+	owner manifest.NamedResource,
+	frame renderFrame,
+	fingerprint string,
+	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+) (acceptedRender, error) {
+	accepted := acceptedRender{Version: 2, Complete: true, Owner: owner, Raw: frame.raw, Final: fingerprint}
 	for id, record := range records {
 		item := acceptedRecord{ID: id, Record: record}
 		item.Record.ContentRoots = nil
@@ -247,35 +251,59 @@ func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.N
 	}, true
 }
 
-// PreviousRender returns accepted entry inventory without rendering or acquiring remote inputs.
-func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner manifest.NamedResource) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+// PreviousRender returns validated raw output without rendering or acquiring remote inputs.
+func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest) ([]manifest.DocOccurrence, *manifest.RenderReceipt, bool) {
 	if c == nil || ctx.Err() != nil || !c.owner.CanPersistRenders() {
-		return nil, false
+		return nil, nil, false
 	}
 	prepared, err := c.prepareRender(ctx, req)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
-	reader, _, _, err := c.owner.Blob(ctx, sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{MaxAge: sourcecache.Forever}, nil)
+	reader, _, lookup, err := c.owner.Blob(
+		ctx,
+		sourcecache.BlobKey{Content: prepared.key, Render: sourcecache.RenderAccepted},
+		sourcecache.Policy{MaxAge: sourcecache.Forever},
+		nil,
+	)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	data, err := fs.ReadFile(reader, "content")
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	frame, err := decodeFrame(data)
-	if err != nil || frame.accepted == nil || frame.header.Key != prepared.key || frame.header.Binding != manifest.Fingerprint(prepared.binding) || len(frame.header.Reads.Remotes) != 0 {
-		return nil, false
+	validBinding := err == nil && frame.header.Key == prepared.key && frame.header.Binding == manifest.Fingerprint(prepared.binding)
+	if !validBinding || len(frame.header.Reads.Remotes) != 0 {
+		return nil, nil, false
 	}
 	valid, err := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
 	if err != nil || !valid {
-		return nil, false
+		return nil, nil, false
 	}
-	if _, err := manifest.DecodeRender(frame.output); err != nil {
-		return nil, false
+	docs, err := manifest.DecodeRender(frame.output)
+	if err != nil {
+		return nil, nil, false
 	}
 	if ctx.Err() != nil {
+		return nil, nil, false
+	}
+	frame.binding, frame.lookup = prepared.binding, lookup
+	return docs, manifest.NewRenderReceipt(frame, equalRenderFrame), true
+}
+
+// RenderHistory returns complete accepted inventory matching the current final inputs.
+func (*TreeCache) RenderHistory(
+	owner manifest.NamedResource,
+	receipt *manifest.RenderReceipt,
+	content any,
+) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	if receipt == nil || content == nil {
+		return nil, false
+	}
+	frame, ok := receipt.Value().(renderFrame)
+	if !ok || frame.accepted == nil || frame.accepted.Final == "" || frame.accepted.Final != manifest.Fingerprint(content) {
 		return nil, false
 	}
 	return frame.history(owner)
@@ -324,6 +352,8 @@ type RenderAcceptance struct {
 	// Records is supplied for opaque output or the entry applier receipt.
 	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 	DependencySubstitutions values.DependencySubstitutions
+	Content                 any
+	Reads, OutputReads      *store.ReadSet
 }
 
 // RecordRender persists accepted output and optional entry applier evidence.
@@ -331,6 +361,13 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
 	if receipt == nil {
 		return nil
+	}
+	finalContent, validContent := acceptance.Content.(renderContent)
+	if records != nil {
+		if !validContent || !acceptance.Reads.Valid() || !acceptance.OutputReads.Valid() {
+			return nil
+		}
+		finalContent.Dependencies = acceptance.DependencySubstitutions
 	}
 	frame, ok := receipt.Value().(renderFrame)
 	if !ok || frame.header.Key == "" {
@@ -386,7 +423,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	var data []byte
 	content := frame.raw
 	if records != nil {
-		accepted, err = prepareAccepted(owner, frame, records)
+		accepted, err = prepareAccepted(owner, frame, manifest.Fingerprint(finalContent), records)
 		if err != nil {
 			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
 		}

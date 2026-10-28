@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -63,7 +64,12 @@ func TestWithReaders_ReusesCompleteDeclarations(t *testing.T) {
 				input.opens.Store(0)
 			}
 			for range 2 {
-				changes, err = changes.WithReaders(t.Context(), loaders[0].Index, loaders[1].Index)
+				changes, err = changes.WithReaders(
+					t.Context(),
+					loaders[0].Index,
+					loaders[1].Index,
+					[2]map[manifest.NamedResource]inputprojection.Projection{loaders[0].InputContent, loaders[1].InputContent},
+				)
 				assert.NoError(t, err)
 				for _, input := range inputs {
 					assert.Equal(t, input.opens.Load(), int64(0))
@@ -144,7 +150,12 @@ func declarationMovePair(t *testing.T, scenario string, reverse bool) ([2]*Loade
 	}
 	changes, err := change.Detect(t.Context(), inputs[0], inputs[1])
 	assert.NoError(t, err)
-	changes, err = changes.WithReaders(t.Context(), loaders[0].Index, loaders[1].Index)
+	changes, err = changes.WithReaders(
+		t.Context(),
+		loaders[0].Index,
+		loaders[1].Index,
+		[2]map[manifest.NamedResource]inputprojection.Projection{loaders[0].InputContent, loaders[1].InputContent},
+	)
 	assert.NoError(t, err)
 	for side, l := range loaders {
 		l.side, l.sideKnown = manifest.TreeSide(side), true

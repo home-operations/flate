@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -1113,7 +1114,12 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 		observations[0].Visibility = append(observations[0].Visibility, visible)
 		observations[1].Visibility = append(observations[1].Visibility, empty)
 	}
-	changes, err = changes.WithReaders(t.Context(), &observations[0], &observations[1])
+	changes, err = changes.WithReaders(
+		t.Context(),
+		&observations[0],
+		&observations[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 		{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true},
@@ -1601,7 +1607,12 @@ func TestAdmission_InputVisibility(t *testing.T) {
 					}
 					changes, err := change.Qualify(t.Context(), nil, stores[before], stores[after])
 					assert.NoError(t, err)
-					changes, err = changes.WithReaders(t.Context(), loaders[before].Index, loaders[after].Index)
+					changes, err = changes.WithReaders(
+						t.Context(),
+						loaders[before].Index,
+						loaders[after].Index,
+						[2]map[manifest.NamedResource]inputprojection.Projection{loaders[before].InputContent, loaders[after].InputContent},
+					)
 					assert.NoError(t, err)
 					for _, l := range loaders {
 						l.Options.Changes = changes
@@ -1673,7 +1684,12 @@ func TestAdmission_DuplicateInputContent(t *testing.T) {
 				}
 				changes, err := change.Qualify(t.Context(), nil, stores[before], stores[after])
 				assert.NoError(t, err)
-				changes, err = changes.WithReaders(t.Context(), loaders[before].Index, loaders[after].Index)
+				changes, err = changes.WithReaders(
+					t.Context(),
+					loaders[before].Index,
+					loaders[after].Index,
+					[2]map[manifest.NamedResource]inputprojection.Projection{loaders[before].InputContent, loaders[after].InputContent},
+				)
 				assert.NoError(t, err)
 				if scenario == "changed_content" {
 					assert.Equal(t, changes.Contains("b/settings.yaml"), true)

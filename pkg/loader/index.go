@@ -228,6 +228,7 @@ func (l *Loader) freezeConstruction() {
 
 // Retire releases admission readers while preserving completed owners' read tracking.
 func (l *Loader) Retire() {
+	l.InputContent = nil
 	l.Options.HistoryOwners = nil
 	l.inputReaders, l.inputObjects = nil, nil
 	l.templateTargets = nil

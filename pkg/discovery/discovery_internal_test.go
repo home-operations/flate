@@ -501,7 +501,7 @@ func TestRun_EntryOwnerEligibility(t *testing.T) {
 				previous := d.prepared[owner].receipt
 				input, _, err := kustomize.SourceInput(st, selected)
 				assert.NoError(t, err)
-				assert.NoError(t, d.prepareEntry(t.Context(), selected, input))
+				assert.NoError(t, d.prepareProducer(t.Context(), selected, input))
 				declaration := d.loader.Index.Records[owner.Named()].Declaration
 				if declaration == nil || !manifest.Equal(declaration, owner) {
 					t.Fatal("literal registration erased the original authored declaration")
@@ -624,7 +624,11 @@ spec:
 			}
 			owner := &manifest.Kustomization{Name: "entry", Path: "./app"}
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
-			if err := d.prepareEntry(t.Context(), owner, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)); !errors.Is(err, manifest.ErrFlux) {
+			if err := d.prepareProducer(
+				t.Context(),
+				owner,
+				st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact),
+			); !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("invalid package build error = %v, want ErrFlux", err)
 			}
 			if got := d.loader.EntryFailure(t.Context(), root); got == nil || got.Error() != rawError.Error() {
@@ -656,8 +660,8 @@ spec:
 			_, err := d.loader.Load(t.Context(), d.cfg.Path)
 			assert.NoError(t, err)
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
-			assert.NoError(t, d.prepareEntry(t.Context(), owner, source))
-			assert.NoError(t, d.acceptEntry(t.Context()))
+			assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
+			assert.NoError(t, d.acceptPrepared(t.Context()))
 			assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 1)
 			closeCache()
 			trees, closeCache = testReceiptTrees(t, cacheDir)
@@ -686,8 +690,8 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	assert.NoError(t, err)
 	req := preparedRequest(t, d.cfg, owner, source)
 	assert.NoError(t, os.RemoveAll(cacheDir))
-	assert.NoError(t, d.prepareEntry(t.Context(), owner, source))
-	err = d.acceptEntry(t.Context())
+	assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
+	err = d.acceptPrepared(t.Context())
 	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), `discovery entry "app" publish`) {
 		t.Fatalf("publication failure lost classification, cause or entry context: %v", err)
 	}
@@ -830,7 +834,7 @@ func TestRun_BuiltPackages(t *testing.T) {
 					}
 				}
 				assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root, true))
-				assert.NoError(t, d.acceptEntry(t.Context()))
+				assert.NoError(t, d.acceptPrepared(t.Context()))
 				if dir != "" {
 					assert.Diff(t, packageHistory(t, trees, req, owner.Named()), wantHistory)
 				}
@@ -1131,9 +1135,7 @@ func TestBindEntry_ReemittedPublication(t *testing.T) {
 		}
 	}, false)
 	defer unsubscribe()
-	st.RecordEmitted(producer.Named(), &store.Emission{
-		Children: []store.Child{{Obj: applier}, {Obj: sibling}}, Complete: true,
-	}, nil)
+	st.RecordEmitted(producer.Named(), &store.Emission{Children: []store.Child{{Obj: applier}, {Obj: sibling}}, Complete: true}, nil)
 	replacement := applier.Clone()
 	st.RecordEmitted(producer.Named(), &store.Emission{
 		Children: []store.Child{{Obj: replacement}, {Obj: &manifest.ConfigMap{

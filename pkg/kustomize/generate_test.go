@@ -403,7 +403,7 @@ func TestGenerateManifest_TypedOverrides(t *testing.T) {
 			want, _, _, err := oracle.GenerateManifest(root)
 			assert.NoError(t, err)
 			assert.Equal(t, string(got), string(want))
-			assert.Equal(t, manifest.Fingerprint(ks.Content(nil)), manifest.Fingerprint(plain.Content(nil)))
+			assert.Equal(t, manifest.Fingerprint(ks.Content(nil, nil, false)), manifest.Fingerprint(plain.Content(nil, nil, false)))
 		})
 	}
 }

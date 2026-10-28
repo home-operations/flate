@@ -2,11 +2,18 @@ package kustomize
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"testing"
 	"time"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/fluxcd/pkg/envsubst"
 	fluxkustomize "github.com/fluxcd/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
+	yamlv3 "go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/kustomize/api/resource"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
@@ -37,6 +44,14 @@ func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
 		{"nested default", map[string]any{"value": "${ENV:=${OTHER:=prod}}"}, map[string]string{"OTHER": "stage"}, true, map[string]any{"value": "stage"}},
 		{"escaped default", map[string]any{"value": "$${ENV:=prod}"}, map[string]string{"ENV": "stage"}, true, map[string]any{"value": "${ENV:=prod}"}},
 		{"colon question upstream control", map[string]any{"value": "${MISSING:?required}"}, nil, true, map[string]any{"value": "required"}},
+		{"eager strict operand", map[string]any{"value": "${SET:=${MISSING}}"}, map[string]string{"SET": "present"}, true, nil},
+		{
+			"replacement is not recursive",
+			map[string]any{"value": "${SET}"},
+			map[string]string{"SET": "${MISSING}"},
+			true,
+			map[string]any{"value": "${MISSING}"},
+		},
 		{"strict missing bare", map[string]any{"value": "${MISSING}"}, nil, true, nil},
 		{"default reference", map[string]any{"value": "${MISSING:=yes}"}, map[string]string{"VAR": "example"}, true, nil},
 		{"escape after bare dollar", map[string]any{"value": "$PID $$PID"}, map[string]string{"VAR": "example"}, true, nil},
@@ -114,6 +129,119 @@ func TestSubstituteDoc_PrecheckEquivalence(t *testing.T) {
 			}
 			if diff := cmp.Diff(string(raw), string(encoded)); diff != "" {
 				t.Errorf("precheck equivalence (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestSubstitutionNames_EvaluatorReads(t *testing.T) {
+	t.Parallel()
+	for _, expression := range []string{
+		"literal", "${USED}", "${MISSING:=fallback}", "${USED:=${OTHER:=fallback}}",
+		"${SET:=${MISSING}}", "${#USED}", "${USED#${PREFIX}}", "${USED%${SUFFIX}}",
+		"${USED/${SEARCH}/${REPLACEMENT}}", "${USED:${START}:${LENGTH}}", "$${ESCAPED}", "${USED^^}",
+	} {
+		t.Run(expression, func(t *testing.T) {
+			t.Parallel()
+			doc := map[string]any{"${KEY}": expression}
+			raw, err := yamlv3.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := make(map[string]struct{})
+			_, err = envsubst.Eval(string(raw), func(name string) (string, bool) {
+				want[name] = struct{}{}
+				return "1", true
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(want, values.SubstitutionNames([]manifest.DocOccurrence{{Document: doc}}, true)); diff != "" {
+				t.Errorf("names (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestSubstitutionNames_ExcludedAndUnproved(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		doc            map[string]any
+		active, proven bool
+	}{
+		{name: "inactive", doc: map[string]any{"value": "${ARR[@]}"}, proven: true},
+		{
+			name: "disabled",
+			doc: map[string]any{
+				"metadata": map[string]any{"labels": map[string]any{"kustomize.toolkit.fluxcd.io/substitute": "disabled"}},
+				"value":    "${ARR[@]}",
+			},
+			active: true,
+			proven: true,
+		},
+		{name: "invalid expression", doc: map[string]any{"value": "${ARR[@]}"}, active: true},
+		{name: "no round trip", doc: map[string]any{"value": "literal"}, active: true, proven: true},
+		{name: "scalar round trip", doc: map[string]any{"value": math.Copysign(0, -1)}, active: true, proven: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			names := values.SubstitutionNames([]manifest.DocOccurrence{{Document: tc.doc}}, tc.active)
+			if (names != nil) != tc.proven || len(names) != 0 {
+				t.Fatalf("names = %v, proven = %t, want %t", names, names != nil, tc.proven)
+			}
+		})
+	}
+}
+
+func TestRenderRequestContent_UnprovedAlways(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		postBuild *kustomizev1.PostBuild
+		invalid   bool
+	}{
+		{name: "nil PostBuild"},
+		{name: "Always empty", postBuild: &kustomizev1.PostBuild{SubstituteStrategy: kustomizev1.SubstituteStrategyAlways}, invalid: true},
+		{
+			name: "Always whole bag",
+			postBuild: &kustomizev1.PostBuild{
+				SubstituteStrategy: kustomizev1.SubstituteStrategyAlways,
+				Substitute:         map[string]string{"OTHER": "first"},
+			},
+			invalid: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ks := &manifest.Kustomization{Name: "app", Namespace: "apps", PostBuild: tc.postBuild}
+			docs := []manifest.DocOccurrence{
+				{
+					Document: map[string]any{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata":   map[string]any{"name": "result"},
+						"data":       map[string]any{"value": "${ARR[@]}"},
+					},
+				},
+			}
+			req := RenderRequest{Spec: ks, Source: &store.SourceArtifact{}}
+			content := req.Content(docs)
+			before := manifest.Fingerprint(content)
+			if tc.postBuild != nil && len(tc.postBuild.Substitute) != 0 {
+				next := ks.Clone()
+				next.PostBuild.Substitute["OTHER"] = "second"
+				req.Spec = next
+				if manifest.Fingerprint(req.Content(docs)) == before {
+					t.Fatal("unproved syntax omitted the conservative whole bag")
+				}
+			}
+			err := Shape(ks, docs, false)
+			if errors.Is(err, manifest.ErrInvalidSubstituteReference) != tc.invalid {
+				t.Fatalf("Shape error = %v, want invalid substitution %t", err, tc.invalid)
+			}
+			if manifest.Fingerprint(content) != before {
+				t.Fatal("Shape mutated the captured content")
 			}
 		})
 	}

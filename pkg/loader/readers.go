@@ -71,10 +71,8 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 
 	objects := map[manifest.NamedResource]manifest.BaseManifest{}
 	object := func(id manifest.NamedResource) manifest.BaseManifest {
-		if record, ok := l.Index.Lookup(id); ok && record.Builder != "" {
-			if child := l.IndexedObject(id, record); child.Obj != nil {
-				return child.Obj
-			}
+		if record, ok := l.Index.Lookup(id); ok && record.Builder != "" && record.Declaration != nil {
+			return record.Declaration
 		}
 		if obj := l.Store.GetObject(id); obj != nil {
 			return obj
@@ -361,7 +359,7 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			}
 		}
 		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
-		if !l.documents.compact {
+		if !l.documents.compact && r.Builder == "" {
 			r.Declaration = l.IndexedObject(id, r).Obj
 		}
 		r.StaticOutput = kind.Structural || len(l.templateTargets[id]) != 0

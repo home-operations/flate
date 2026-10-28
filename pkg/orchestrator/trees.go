@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
@@ -178,11 +179,19 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 				continue
 			}
 			before, after := current.index, (*manifest.DiscoveryIndex)(nil)
+			inputs := [2]map[manifest.NamedResource]inputprojection.Projection{}
+			if current.loader != nil {
+				inputs[0] = current.loader.InputContent
+			}
 			if other != nil {
 				after = other.index
+				if other.loader != nil {
+					inputs[1] = other.loader.InputContent
+				}
 			}
 			if results[i].ID.Side == manifest.TreeHead {
 				before, after = after, before
+				inputs[0], inputs[1] = inputs[1], inputs[0]
 			}
 			if constructionRound != 0 && !requalify[current.cfg.ID.Cluster] {
 				continue
@@ -205,7 +214,7 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 					continue
 				}
 			}
-			resolved, err := changes.WithReaders(ctx, before, after)
+			resolved, err := changes.WithReaders(ctx, before, after, inputs)
 			if err != nil {
 				return results, err
 			}
@@ -302,18 +311,23 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 			if owner.store != st {
 				owner = other
 			}
-			for id, record := range owner.index.Records {
-				if record.Builder == "" {
+			builders := map[string]bool{}
+			for _, id := range slices.SortedFunc(maps.Keys(owner.index.Records), manifest.NamedResource.Compare) {
+				record := owner.index.Records[id]
+				if record.Builder == "" || builders[record.Builder] {
 					continue
 				}
-				child := owner.loader.IndexedObject(id, record)
-				if child.Obj == nil {
-					continue
+				builders[record.Builder] = true
+				for _, child := range owner.loader.PromotionDocuments(id) {
+					fact, _ := owner.index.Lookup(child.Obj.Named())
+					if fact.Builder != record.Builder || fact.BuilderOwner != record.BuilderOwner {
+						continue
+					}
+					if prepared[side] == nil {
+						prepared[side] = map[manifest.NamedResource]store.Child{}
+					}
+					prepared[side][child.Obj.Named()] = child
 				}
-				if prepared[side] == nil {
-					prepared[side] = map[manifest.NamedResource]store.Child{}
-				}
-				prepared[side][id] = child
 			}
 		}
 		changes, failure := o.cfg.ExternalChanges.WithDeclarations(ctx, base, head, prepared)
@@ -335,10 +349,12 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		}
 		if other == nil {
 			before, after := o.index, (*manifest.DiscoveryIndex)(nil)
+			inputs := [2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, nil}
 			if o.cfg.ID.Side == manifest.TreeHead {
 				before, after = after, before
+				inputs[0], inputs[1] = inputs[1], inputs[0]
 			}
-			resolved, err := changes.WithReaders(ctx, before, after)
+			resolved, err := changes.WithReaders(ctx, before, after, inputs)
 			if err != nil {
 				return results, err
 			}
@@ -347,23 +363,43 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 			projectedOther := projectEntryReaders(other.index, other.entryBinding, o.entryBinding)
 			projectedCurrent := projectEntryReaders(o.index, o.entryBinding, other.entryBinding)
 			if o.cfg.ID.Side == manifest.TreeBase {
-				resolved, err := changes.WithReaders(ctx, o.index, projectedOther)
+				resolved, err := changes.WithReaders(
+					ctx,
+					o.index,
+					projectedOther,
+					[2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, other.loader.InputContent},
+				)
 				if err != nil {
 					return results, err
 				}
 				o.cfg.ExternalChanges = resolved
-				resolved, err = changes.WithReaders(ctx, projectedCurrent, other.index)
+				resolved, err = changes.WithReaders(
+					ctx,
+					projectedCurrent,
+					other.index,
+					[2]map[manifest.NamedResource]inputprojection.Projection{o.loader.InputContent, other.loader.InputContent},
+				)
 				if err != nil {
 					return results, err
 				}
 				other.cfg.ExternalChanges = resolved
 			} else {
-				resolved, err := changes.WithReaders(ctx, projectedOther, o.index)
+				resolved, err := changes.WithReaders(
+					ctx,
+					projectedOther,
+					o.index,
+					[2]map[manifest.NamedResource]inputprojection.Projection{other.loader.InputContent, o.loader.InputContent},
+				)
 				if err != nil {
 					return results, err
 				}
 				o.cfg.ExternalChanges = resolved
-				resolved, err = changes.WithReaders(ctx, other.index, projectedCurrent)
+				resolved, err = changes.WithReaders(
+					ctx,
+					other.index,
+					projectedCurrent,
+					[2]map[manifest.NamedResource]inputprojection.Projection{other.loader.InputContent, o.loader.InputContent},
+				)
 				if err != nil {
 					return results, err
 				}

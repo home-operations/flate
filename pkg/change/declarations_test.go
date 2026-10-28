@@ -1,13 +1,18 @@
 package change
 
 import (
+	"context"
+	"encoding/json"
 	"maps"
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/task"
 )
 
 func TestWithDeclarations_OneSidedInput(t *testing.T) {
@@ -30,12 +35,18 @@ func TestWithDeclarations_OneSidedInput(t *testing.T) {
 			for side, st := range stores {
 				files := fstest.MapFS{}
 				if side == tc.side {
-					files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart}\n")}
+					files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\n" +
+						"kind: OCIRepository\nmetadata: {name: chart, namespace: apps}\n" +
+						"spec: {url: oci://fixture.invalid/chart}\n")}
 					production := manifest.Production{Authored: input.Named(), Source: manifest.BootstrapSourceID, File: "input.yaml"}
 					if tc.produced {
 						production.Owner = manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "emitter"}
 					}
-					st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{input.Named(): {Productions: []manifest.Production{production}}}})
+					st.SetDiscoveryIndex(&manifest.DiscoveryIndex{
+						Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+							input.Named(): {Productions: []manifest.Production{production}},
+						},
+					})
 					st.AddObject(input)
 				}
 				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
@@ -75,8 +86,16 @@ func TestInputs_QualifiedIdentity(t *testing.T) {
 		query manifest.NamedResource
 		want  map[manifest.NamedResource]InputChange
 	}{
-		{name: "namespace", query: id, want: map[manifest.NamedResource]InputChange{id: set.inputs[id], unqualified: set.inputs[unqualified]}},
-		{name: "unknown namespace", query: unqualified, want: map[manifest.NamedResource]InputChange{id: set.inputs[id], unqualified: set.inputs[unqualified], foreign: set.inputs[foreign]}},
+		{
+			name: "namespace", query: id,
+			want: map[manifest.NamedResource]InputChange{id: set.inputs[id], unqualified: set.inputs[unqualified]},
+		},
+		{
+			name: "unknown namespace", query: unqualified,
+			want: map[manifest.NamedResource]InputChange{
+				id: set.inputs[id], unqualified: set.inputs[unqualified], foreign: set.inputs[foreign],
+			},
+		},
 		{name: "all", want: set.inputs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,9 +117,15 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"}
 	for side, st := range stores {
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
-		owners[side] = &manifest.HelmRelease{Name: "app", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: input.Kind, Name: input.Name, ValuesKey: "chosen"}}}
+		owners[side] = &manifest.HelmRelease{
+			Name: "app", Namespace: "apps",
+			ValuesFrom: []manifest.ValuesReference{{Kind: input.Kind, Name: input.Name, ValuesKey: "chosen"}},
+		}
 		st.AddObject(owners[side])
-		st.AddObject(&manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{"chosen": "equal", "unrelated": []any{side}}})
+		st.AddObject(&manifest.ConfigMap{
+			Name: input.Name, Namespace: input.Namespace,
+			Data: map[string]any{"chosen": "equal", "unrelated": []any{side}},
+		})
 	}
 	changes, err := Qualify(t.Context(), NewSet([]string{"values.yaml"}), stores[0], stores[1])
 	assert.NoError(t, err)
@@ -113,8 +138,13 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 				ref = candidate
 			}
 		}
-		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner.Named(), owner), manifest.BaseManifest(owners[1-side]))
-		foreign := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "foreign"}
+		assert.Equal(t,
+			frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner.Named(), owner),
+			manifest.BaseManifest(owners[1-side]),
+		)
+		foreign := manifest.NamedResource{
+			Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "foreign",
+		}
 		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), foreign, owner.Named(), owner), nil)
 		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner.Named(), owner.Clone()), nil)
 		changed, known := frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
@@ -135,7 +165,9 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	unknown, err := changes.WithDeclarations(t.Context(), stores[0], nil, [2]map[manifest.NamedResource]store.Child{})
 	assert.NoError(t, err)
 	assert.Equal(t, unknown.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, owners[0].Named(), owners[0]), nil)
-	_, known := unknown.OutputChanged(manifest.TreeBase, manifest.BootstrapSourceID, manifest.Reference{NamedResource: owners[0].Named()}, owners[0])
+	_, known := unknown.OutputChanged(
+		manifest.TreeBase, manifest.BootstrapSourceID, manifest.Reference{NamedResource: owners[0].Named()}, owners[0],
+	)
 	assert.Equal(t, known, false)
 	assert.Equal(t, len(changes.declarations), 0)
 }
@@ -144,10 +176,16 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 	t.Parallel()
 	stores := [2]*store.Store{store.New(), store.New()}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
-	owner := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent"}
+	owner := manifest.NamedResource{
+		Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent",
+	}
 	for _, st := range stores {
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
-		st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID}}}}})
+		st.SetDiscoveryIndex(&manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child.Named(): {Productions: []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID}}},
+			},
+		})
 		st.AddObject(child)
 	}
 	changes, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
@@ -167,7 +205,10 @@ func TestWithDeclarations_DoesNotRetainSourceCaptures(t *testing.T) {
 		reads := &store.ReadSet{}
 		reads.Init(st, manifest.BootstrapSourceID, nil)
 		t.Cleanup(reads.Close)
-		inputs[side] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}, Reads: reads, Metadata: map[string]string{"key": "original"}, Warnings: []manifest.Warning{{Detail: []string{"original"}}}}
+		inputs[side] = &store.SourceArtifact{
+			LocalPath: t.TempDir(), FS: fstest.MapFS{}, Reads: reads,
+			Metadata: map[string]string{"key": "original"}, Warnings: []manifest.Warning{{Detail: []string{"original"}}},
+		}
 		st.SetArtifact(manifest.BootstrapSourceID, inputs[side])
 	}
 	qualified, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
@@ -203,7 +244,12 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 	for _, tc := range []struct {
 		name                     string
 		output, foreign, missing bool
-	}{{name: "same output"}, {name: "unknown spec", output: true}, {name: "foreign source", foreign: true}, {name: "missing opposite preparation", missing: true}} {
+	}{
+		{name: "same output"},
+		{name: "unknown spec", output: true},
+		{name: "foreign source", foreign: true},
+		{name: "missing opposite preparation", missing: true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			stores := [2]*store.Store{store.New(), store.New()}
@@ -211,20 +257,32 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 			var children [2]*manifest.Kustomization
 			source := manifest.BootstrapSourceID
 			if tc.foreign {
-				source = manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "foreign"}
+				source = manifest.NamedResource{
+					Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "foreign",
+				}
 			}
-			owner := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent"}
+			owner := manifest.NamedResource{
+				Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "parent",
+			}
 			for side, st := range stores {
 				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}})
 				children[side] = &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./app"}
 				id := children[side].Named()
-				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: []manifest.Production{{Owner: owner, Source: source}}}}})
+				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						id: {Productions: []manifest.Production{{Owner: owner, Source: source}}},
+					},
+				})
 				st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "./raw"})
 				value := 0
 				if tc.output {
 					value = side
 				}
-				doc := map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": id.Name, "namespace": id.Namespace}, "spec": map[string]any{"path": "./app", "unknown": value}}
+				doc := map[string]any{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization,
+					"metadata": map[string]any{"name": id.Name, "namespace": id.Namespace},
+					"spec":     map[string]any{"path": "./app", "unknown": value},
+				}
 				prepared[side] = map[manifest.NamedResource]store.Child{id: {Obj: children[side], Doc: doc}}
 			}
 			if tc.missing {
@@ -235,7 +293,9 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 			frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
 			assert.NoError(t, err)
 			for side, child := range children {
-				changed, known := frozen.OutputChanged(manifest.TreeSide(side), source, manifest.Reference{NamedResource: child.Named()}, child)
+				changed, known := frozen.OutputChanged(
+					manifest.TreeSide(side), source, manifest.Reference{NamedResource: child.Named()}, child,
+				)
 				var opposite manifest.BaseManifest
 				if !tc.foreign && !tc.missing {
 					opposite = children[1-side]
@@ -246,4 +306,183 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWithReaders_UnchangedAncestorOutput(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name            string
+		output, missing bool
+	}{
+		{name: "reconciliation field"},
+		{name: "render field", output: true},
+		{name: "unprepared ancestor", missing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stores := [2]*store.Store{store.New(), store.New()}
+			indexes := [2]*manifest.DiscoveryIndex{}
+			parent := manifest.NamedResource{
+				Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "parent",
+			}
+			child := parent
+			child.Name = "child"
+			for side, st := range stores {
+				input := fstest.MapFS{}
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: input})
+				spec := map[string]any{"path": "./app", "timeout": []string{"1m", "2m"}[side]}
+				if tc.output && side == 1 {
+					spec["path"] = "./other"
+				}
+				doc := map[string]any{
+					"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": parent.Kind,
+					"metadata": map[string]any{"name": parent.Name, "namespace": parent.Namespace},
+					"spec":     spec,
+				}
+				data, err := json.Marshal(doc)
+				assert.NoError(t, err)
+				input["parent.yaml"] = &fstest.MapFile{Data: data}
+				childDoc, err := manifest.ObjectDocument(child, &manifest.Kustomization{Name: child.Name, Namespace: child.Namespace})
+				assert.NoError(t, err)
+				data, err = json.Marshal(childDoc)
+				assert.NoError(t, err)
+				input["child.yaml"] = &fstest.MapFile{Data: data}
+				indexes[side] = &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+						parent: {File: "parent.yaml", Authored: parent},
+						child:  {File: "child.yaml", Authored: child, Parent: parent},
+					},
+					CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+				}
+				st.SetDiscoveryIndex(indexes[side])
+				if !tc.missing || side == 0 {
+					st.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace}, doc)
+				}
+			}
+			changes, err := Qualify(t.Context(), NewSet([]string{"parent.yaml"}), stores[0], stores[1])
+			assert.NoError(t, err)
+			changes, err = changes.WithReaders(
+				t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
+			assert.NoError(t, err)
+			changes, err = changes.WithDeclarations(t.Context(), stores[0], stores[1], [2]map[manifest.NamedResource]store.Child{})
+			assert.NoError(t, err)
+			changes, err = changes.WithReaders(
+				t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
+			assert.NoError(t, err)
+			delta, _, _ := changes.ForSource(manifest.BootstrapSourceID)
+			inputs := maps.Collect(delta.Inputs(manifest.NamedResource{}))
+			_, found := inputs[child]
+			assert.Equal(t, found, tc.output || tc.missing)
+			_, found = inputs[parent]
+			assert.Equal(t, found, tc.output || tc.missing)
+		})
+	}
+}
+
+func TestWithDeclarations_EffectiveInputApplicability(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"unused", "used", "missing projection", "invalidated"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			f := newDeclarationInputFixture(t, scenario)
+			inputID := f.inputs[0].Named()
+			changes, err := Qualify(t.Context(), NewSet([]string{"settings.yaml"}), f.stores[0], f.stores[1])
+			assert.NoError(t, err)
+			changes, err = changes.WithReaders(t.Context(), f.indexes[0], f.indexes[1], f.projections)
+			assert.NoError(t, err)
+			var frozen *Set
+			freeze := func(ctx context.Context) {
+				var err error
+				frozen, err = changes.WithDeclarations(ctx, f.stores[0], f.stores[1], [2]map[manifest.NamedResource]store.Child{})
+				assert.NoError(t, err)
+			}
+			if scenario == "invalidated" {
+				captured, invalidated := make(chan struct{}), make(chan struct{})
+				tasks := task.NewBounded(2)
+				tasks.Go(t.Context(), "freeze", func(ctx context.Context) {
+					close(captured)
+					<-invalidated
+					freeze(ctx)
+				})
+				tasks.Go(t.Context(), "invalidate", func(context.Context) {
+					<-captured
+					replacement := *f.inputs[1]
+					replacement.Data = maps.Clone(replacement.Data)
+					replacement.Data["OTHER"] = "changed after projection"
+					f.stores[1].AddObject(&replacement)
+					close(invalidated)
+				})
+				tasks.BlockTillDone()
+				assert.Equal(t, tasks.Failures(), int64(0))
+			} else {
+				freeze(t.Context())
+			}
+			for side, owner := range f.owners {
+				for ref := range manifest.References(owner, manifest.ReferenceRelations) {
+					if ref.NamedResource != inputID {
+						continue
+					}
+					changed, known := frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
+					assert.Equal(t, known, true)
+					assert.Equal(t, changed, scenario != "unused")
+				}
+			}
+		})
+	}
+}
+
+type declarationInputFixture struct {
+	stores      [2]*store.Store
+	indexes     [2]*manifest.DiscoveryIndex
+	projections [2]map[manifest.NamedResource]inputprojection.Projection
+	owners      [2]*manifest.Kustomization
+	inputs      [2]*manifest.ConfigMap
+}
+
+func newDeclarationInputFixture(t *testing.T, scenario string) declarationInputFixture {
+	t.Helper()
+	f := declarationInputFixture{stores: [2]*store.Store{store.New(), store.New()}}
+	inputID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	for side, st := range f.stores {
+		input := fstest.MapFS{}
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: input})
+		f.owners[side] = &manifest.Kustomization{Name: "reader", Namespace: "apps", Path: "./app"}
+		f.owners[side].PostBuild = &kustomizev1.PostBuild{
+			SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: inputID.Kind, Name: inputID.Name}},
+		}
+		f.inputs[side] = &manifest.ConfigMap{
+			Name: inputID.Name, Namespace: inputID.Namespace,
+			Data: map[string]any{"OTHER": "same", "CHANGED": []string{"old", "new"}[side]},
+		}
+		st.AddObject(f.inputs[side])
+		st.AddObject(f.owners[side])
+		prepared := f.owners[side].Clone()
+		prepared.PostBuild.Substitute = map[string]string{"OTHER": "same", "CHANGED": []string{"old", "new"}[side]}
+		name := "OTHER"
+		if scenario == "used" {
+			name = "CHANGED"
+		}
+		projection := inputprojection.Projection{
+			Content: prepared.Content(nil, map[string]struct{}{name: {}}, true),
+			Inputs:  map[manifest.NamedResource]manifest.Data{inputID: f.inputs[side]},
+		}
+		if scenario != "missing projection" || side != 1 {
+			f.projections[side] = map[manifest.NamedResource]inputprojection.Projection{f.owners[side].Named(): projection}
+		}
+		doc, err := manifest.ObjectDocument(f.owners[side].Named(), f.owners[side])
+		assert.NoError(t, err)
+		data, err := json.Marshal(doc)
+		assert.NoError(t, err)
+		input["reader.yaml"] = &fstest.MapFile{Data: data}
+		f.indexes[side] = &manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				f.owners[side].Named(): {File: "reader.yaml", Authored: f.owners[side].Named()},
+			},
+			CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+		}
+		st.SetDiscoveryIndex(f.indexes[side])
+	}
+	return f
 }

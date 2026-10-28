@@ -120,6 +120,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	}
 	rel, _ := filepath.Rel(sourceRoot, root)
 	var inputs, shared []string
+	selected := map[string]bool{}
 	for _, visit := range l.scopeWalk(graphVisit{root: sourceRoot, dir: filepath.ToSlash(rel), source: input.Source, owner: input.Owner}) {
 		for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
 			if file == "" {
@@ -134,6 +135,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 			continue
 		}
 
+		selected[visit.file] = true
 		cached := l.documents.cache[visit.file]
 		cached.selected = true
 		l.documents.cache[visit.file] = cached
@@ -151,20 +153,28 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	_, builder := l.documents.read(root)
 	builder = l.fileCoordinate(cmp.Or(builder, root))
 	records := make([]manifest.DiscoveryRecord, len(docs))
+	authored := map[manifest.NamedResource]store.Child{}
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
 		record := manifest.DiscoveryRecord{Declaration: obj, File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
 		if raw, ok := l.Index.Lookup(id); ok {
 			original := l.IndexedObject(id, raw)
+			if raw.Authored != (manifest.NamedResource{}) && original.Obj != nil {
+				authored[id] = original
+				if l.documents.compact {
+					record.Authored, record.Path = raw.Authored, raw.Path
+					if raw.Authored != id {
+						record.File = raw.File
+					}
+					record.Productions = slices.Clone(raw.Productions)
+				}
+			}
 			same := manifest.Equal(obj, original.Obj)
 			if !same && l.documents.compact && l.Options.Changes != nil && raw.Path != "" {
 				evidence := admissionClosure{loader: l, objects: l.Store}
 				delta, _, _ := evidence.delta(input.Source)
 				same = delta != nil && !evidence.fileChanged(input.Source, raw.File) && !slices.ContainsFunc(shared, func(file string) bool { return evidence.fileChanged(input.Source, file) })
-				if same {
-					original.Obj = obj
-				}
 			}
 			if !same && original.Doc != nil {
 				if producer, ok := l.Store.GetObject(input.Owner).(interface {
@@ -174,20 +184,24 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 					producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
 					projected, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 					same = err == nil && manifest.Equal(obj, projected)
-					original.Obj = projected
 				}
 			}
 			if same {
 				record.File, record.Inputs = raw.File, shared
-				record.Declaration = original.Obj
 			}
 		}
 		record.Refs = discoveryReferences(nil, obj)
 		if id != input.Owner {
 			record.Parent = input.Owner
-			record.Productions = []manifest.Production{{Owner: input.Owner, Source: input.Source, File: record.File}}
+			production := manifest.Production{Owner: input.Owner, Source: input.Source, File: record.File}
 			if record.File != builder {
-				record.Productions[0].Authored = id
+				production.Authored = record.Authored
+				if production.Authored == (manifest.NamedResource{}) {
+					production.Authored = id
+				}
+			}
+			if !slices.Contains(record.Productions, production) {
+				record.Productions = append(record.Productions, production)
 			}
 		}
 		records[i] = record
@@ -196,7 +210,10 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 		if id == input.Owner {
 			continue
 		}
-		if record.Path == "" || !l.documents.cache[record.Path].selected {
+		if _, retained := authored[id]; retained {
+			continue
+		}
+		if record.Path == "" || !selected[record.Path] {
 			continue
 		}
 		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
@@ -226,8 +243,8 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 		}
 		delete(l.admitted, id)
 		l.Index.Records[id] = records[i]
-		if records[i].Declaration != nil {
-			child.Obj = records[i].Declaration
+		if original, retained := authored[id]; retained {
+			child = original
 		}
 		l.candidates[id] = child
 	}
@@ -255,4 +272,19 @@ func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 		}
 	}
 	return nil
+}
+
+func (l *Loader) preparedObject(id manifest.NamedResource) store.Child {
+	r, _ := l.Index.Lookup(id)
+	if r.Builder != "" {
+		if child := l.candidates[id]; child.Obj == r.Declaration {
+			return child
+		}
+		for _, child := range l.PromotionDocuments(id) {
+			if child.Obj == r.Declaration {
+				return child
+			}
+		}
+	}
+	return store.Child{}
 }

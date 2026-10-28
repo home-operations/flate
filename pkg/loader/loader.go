@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/home-operations/flate/internal/claimpath"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -58,7 +59,9 @@ type Loader struct {
 
 	// Index records static discovery facts and is initialized by New. Caller
 	// replacements MUST initialize Records before Load. Mutable until FinalizeIndex returns.
-	Index                 *manifest.DiscoveryIndex
+	Index *manifest.DiscoveryIndex
+	// InputContent contains transient evidence paired with the current derived index.
+	InputContent          map[manifest.NamedResource]inputprojection.Projection
 	documents             documentReader
 	facts                 *ParsedInputs
 	scopes                *scopeConstruction
@@ -324,6 +327,9 @@ func (l *Loader) eachKustomization(objects []manifest.BaseManifest, yield func(s
 			continue
 		}
 		child := l.IndexedObject(id, r)
+		if r.Builder != "" && r.Declaration != nil {
+			child.Obj = r.Declaration
+		}
 		if _, ok := child.Obj.(*manifest.Kustomization); ok {
 			yield(child)
 		}

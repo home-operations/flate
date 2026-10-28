@@ -19,6 +19,11 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/output"
 	"github.com/home-operations/flate/internal/testutil"
@@ -30,9 +35,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestDAG_SourceEffectiveWarmCache(t *testing.T) {
@@ -213,7 +215,9 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 						raw.Named():    {File: "unchanged.yaml", Productions: []manifest.Production{production}},
 					}}
 					if order == "excluded then refire" {
-						o.filter = change.NewFilter(change.NewSet([]string{"changed.yaml"}), o.index, s, "")
+						o.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"changed.yaml"}), Index: o.index, Inventory: s, Root: ""})
+						admissiontest.Commit(t, o.loader, nil)
+						o.filter = o.loader.Options.Filter
 						if o.filter.ShouldReconcile(raw.Named()) {
 							t.Fatal("fixture already selects covered source")
 						}
@@ -236,6 +240,9 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 					d := dagDispatcher{o}
 					dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
 						if id == parent.Named() {
+							if order == "excluded then refire" {
+								once.Do(func() { close(entered) })
+							}
 							o.tasks.YieldSlot(func() {
 								select {
 								case <-publishPermit:
@@ -248,18 +255,19 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 							}
 							f.mu.Unlock()
 							if order == "excluded then refire" {
-								info, _ := s.GetStatus(raw.Named())
-								if info.Reason != store.ReasonUnchanged || len(s.FailedResources()) != 0 {
+								info, exists := s.GetStatus(raw.Named())
+								if exists || dispatches.Load() != 0 || len(s.FailedResources()) != 0 {
 									t.Errorf("excluded source created work/failure: %+v", info)
 								}
 								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}), nil)
+								close(excluded)
 								o.tasks.YieldSlot(func() {
 									select {
 									case <-extendPermit:
 									case <-ctx.Done():
 									}
 								})
-								o.ksc.KeepEmitted(id, store.Child{Obj: &accepted}, nil)
+								o.ksc.KeepEmitted(t.Context(), id, store.Child{Obj: &accepted}, nil)
 							} else {
 								s.RecordEmitted(id, captureEmission(s, id, &store.Emission{Children: []store.Child{{Obj: &accepted}}, Complete: false}), nil)
 							}
@@ -274,12 +282,7 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 								once.Do(func() { close(entered) })
 							}
 						}
-						if call == 2 && order == "excluded then refire" {
-							if out.Assessment.Outcome() != schedule.Terminal {
-								t.Errorf("accepted excluded source added dependency work: %v", out)
-							}
-							close(excluded)
-						}
+
 						if call == 1 && order == "before parking" {
 							once.Do(func() { close(entered) })
 							o.tasks.YieldSlot(func() { <-published })
@@ -319,7 +322,7 @@ func TestDAGDispatch_CoveredArrival(t *testing.T) {
 					wantDispatches := int64(2)
 					if order == "excluded then refire" {
 						want = schedule.Terminal
-						wantDispatches = 3
+						wantDispatches = 1
 					}
 					if initial != want {
 						t.Fatalf("initial outcome=%v want=%v", initial, want)

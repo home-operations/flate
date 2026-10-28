@@ -207,6 +207,13 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 		"kustomizations", ksCount,
 		"helm_releases", hrCount,
 		"failed", len(failed))
+	if o.loader != nil && ksCount == 0 && hrCount == 0 {
+		for id := range o.index.Records {
+			if id.KindInfo().Render {
+				return
+			}
+		}
+	}
 	if ksCount == 0 && hrCount == 0 {
 		o.store.AddWarning(manifest.Warning{
 			Category: manifest.WarnEmptyScan,

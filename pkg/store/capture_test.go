@@ -73,6 +73,7 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 	objects := reads.ListObjects(provider.Named().Group, provider.Named().Kind)
 	assert.Equal(t, len(objects), 1)
 	assert.Equal(t, objects[0].(*manifest.ResourceSetInputProvider).Labels["selected"], "false")
+	reads.Accept()
 	sh := s.shardFor(provider.Named())
 	sh.mu.RLock()
 	before := sh.byName[kindID{provider.Named().Group, provider.Named().Kind}].generation
@@ -86,8 +87,10 @@ func TestReadRegistration_CollectionLabelReplacement(t *testing.T) {
 	if after <= before {
 		t.Fatal("same-identity label publication bypassed collection replacement")
 	}
+	assert.Equal(t, reads.Valid(), false)
 	assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.ID()})
 	assert.Equal(t, reads.Valid(), false)
+	assert.Equal(t, len(slices.Collect(s.Sweep())), 0)
 	objects = s.ListObjects(provider.Named().Group, provider.Named().Kind)
 	assert.Equal(t, objects[0].(*manifest.ResourceSetInputProvider).Labels["selected"], "true")
 }

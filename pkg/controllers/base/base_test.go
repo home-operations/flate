@@ -12,6 +12,7 @@ import (
 	"testing/fstest"
 	"weak"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
@@ -53,7 +54,9 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 	s.AddObject(parent)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
 	c := base.New(s, nil)
-	c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, ""), Index: index})
+	admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+	admissiontest.Commit(t, admissionLoader1, nil)
+	c.Configure(base.Options{Filter: admissionLoader1.Options.Filter, Index: index, Loader: admissionLoader1})
 
 	publish := func(value string) *base.Execution {
 		execution := controllertest.NewExecution(c, parent.Named())
@@ -62,7 +65,7 @@ func TestExecution_RetiredSuccessfulOutput(t *testing.T) {
 			defer next.Finish()
 			next.Children = []store.Child{{Obj: &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}
 			next.Complete = true
-			execution.Emit(parent.Named(), &next, nil)
+			execution.Emit(t.Context(), parent.Named(), &next, nil)
 			return nil
 		})
 		return execution
@@ -115,7 +118,7 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 						defer next.Finish()
 						next.Children = []store.Child{{Obj: child}}
 						next.Complete = true
-						execution.Emit(id, &next, nil)
+						execution.Emit(t.Context(), id, &next, nil)
 					}
 					return nil
 				})
@@ -429,9 +432,11 @@ func TestExecution_Dispatch(t *testing.T) {
 			c := base.New(st, nil)
 			opts := base.Options{}
 			if tc.filtered {
-				opts.Filter = change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
+				admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"other.yaml"}), Index: &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
-				}, st, "")
+				}, Inventory: st, Root: ""})
+				admissiontest.Commit(t, admissionLoader1, nil)
+				opts.Filter, opts.Loader = admissionLoader1.Options.Filter, admissionLoader1
 			}
 			if tc.preflight {
 				opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
@@ -474,7 +479,7 @@ func TestExecution_Dispatch(t *testing.T) {
 					_, _, output := s.run.Reads.GetEmission(got.Named())
 					defer output.Finish()
 					output.Complete = true
-					s.run.Emit(got.Named(), &output, nil)
+					s.run.Emit(t.Context(), got.Named(), &output, nil)
 					if s.failure {
 						return fmt.Errorf("%w: synthetic failure", manifest.ErrInput)
 					}
@@ -613,24 +618,24 @@ func TestFingerprintDedup(t *testing.T) {
 	s.AddObject(ks)
 	id := ks.Named()
 	docs := []map[string]any{{"kind": "ConfigMap"}}
-	fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
+	fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	if fp == "" || handled || err != nil {
 		t.Fatalf("first key = %q, handled=%v, err=%v", fp, handled, err)
 	}
 	s.RecordEmitted(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs), Fingerprint: fp, Complete: true}, nil)
-	if _, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, "other", &store.Emission{}); handled || err != nil {
+	if _, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, "other", &store.Emission{}); handled || err != nil {
 		t.Errorf("mismatch: handled=%v err=%v; want false,nil", handled, err)
 	}
 	foreign := id
 	foreign.Group = "other.example"
-	if _, handled, err := controllertest.NewExecution(c, foreign).FingerprintDedup(foreign, []string{"one"}, &store.Emission{}); handled || err != nil {
+	if _, handled, err := controllertest.NewExecution(c, foreign).FingerprintDedup(t.Context(), foreign, []string{"one"}, &store.Emission{}); handled || err != nil {
 		t.Fatalf("foreign group: handled=%v err=%v; want false,nil", handled, err)
 	}
-	if got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{}); !handled || err != nil || got != fp {
+	if got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{}); !handled || err != nil || got != fp {
 		t.Errorf("match: key=%q handled=%v err=%v; want %q,true,nil", got, handled, err, fp)
 	}
 	none := testutil.KustomizationID("ns", "none")
-	if _, handled, _ := controllertest.NewExecution(c, none).FingerprintDedup(none, []string{"one"}, &store.Emission{}); handled {
+	if _, handled, _ := controllertest.NewExecution(c, none).FingerprintDedup(t.Context(), none, []string{"one"}, &store.Emission{}); handled {
 		t.Error("no-artifact id: handled=true; want false")
 	}
 	for _, tc := range []struct {
@@ -640,7 +645,7 @@ func TestFingerprintDedup(t *testing.T) {
 		{"nil content", nil}, {"unmarshalable content", []any{make(chan int)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, tc.content, &store.Emission{})
+			got, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, tc.content, &store.Emission{})
 			if got != "" || handled || err != nil {
 				t.Fatalf("invalid content key=%q, handled=%v, err=%v", got, handled, err)
 			}
@@ -649,10 +654,10 @@ func TestFingerprintDedup(t *testing.T) {
 	emptyStore := store.New()
 	emptyStore.AddObject(ks)
 	emptyStore.RecordEmitted(id, &store.Emission{Manifests: testutil.DocumentOccurrences(docs)}, nil)
-	if _, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).FingerprintDedup(id, []string{"one"}, &store.Emission{}); handled {
+	if _, handled, _ := controllertest.NewExecution(base.New(emptyStore, nil), id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{}); handled {
 		t.Error("empty stored fingerprint replayed")
 	}
-	if fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []any{make(chan int)}, &store.Emission{}); fp != "" || handled || err != nil {
+	if fp, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []any{make(chan int)}, &store.Emission{}); fp != "" || handled || err != nil {
 		t.Fatalf("invalid content replayed an empty stored key: key=%q, handled=%v, err=%v", fp, handled, err)
 	}
 }
@@ -664,10 +669,10 @@ func TestFingerprintDedup_PreflightError(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 	s.AddObject(ks)
 	id := ks.Named()
-	fp, _, _ := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
+	fp, _, _ := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	s.RecordEmitted(id, &store.Emission{Fingerprint: fp, Complete: true}, nil)
 	c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle detected", true }})
-	_, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(id, []string{"one"}, &store.Emission{})
+	_, handled, err := controllertest.NewExecution(c, id).FingerprintDedup(t.Context(), id, []string{"one"}, &store.Emission{})
 	if !handled || err == nil {
 		t.Errorf("preflight error: handled=%v err=%v; want true, non-nil", handled, err)
 	}
@@ -844,7 +849,7 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 				entered, replaced := make(chan struct{}), make(chan struct{})
 				content = blockedFingerprintContent{tasks: tasks, entered: entered, replaced: replaced}
 				tasks.Go(t.Context(), "dedup", func(context.Context) {
-					fp, handled, err = run.FingerprintDedup(input.Named(), content, &store.Emission{})
+					fp, handled, err = run.FingerprintDedup(t.Context(), input.Named(), content, &store.Emission{})
 				})
 				tasks.Go(t.Context(), "replace", func(context.Context) {
 					tasks.YieldSlot(func() { <-entered })
@@ -856,7 +861,7 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 					t.Fatal("fingerprint task panicked")
 				}
 			} else {
-				fp, handled, err = run.FingerprintDedup(input.Named(), content, &store.Emission{})
+				fp, handled, err = run.FingerprintDedup(t.Context(), input.Named(), content, &store.Emission{})
 			}
 			_, _, after := st.GetEmission(input.Named())
 			defer after.Finish()
@@ -864,7 +869,7 @@ func TestFingerprintDedup_InputReplacement(t *testing.T) {
 				t.Fatalf("stale A accepted: key=%q handled=%t err=%v", fp, handled, err)
 			}
 			if path != "absent" && path != "suspended" {
-				fp, handled, err = controllertest.NewExecution(c, replacement.Named()).FingerprintDedup(replacement.Named(), "B", &store.Emission{})
+				fp, handled, err = controllertest.NewExecution(c, replacement.Named()).FingerprintDedup(t.Context(), replacement.Named(), "B", &store.Emission{})
 				if fp != manifest.Fingerprint("B") || handled || err != nil {
 					t.Fatalf("replacement B cannot prepare: %q %t %v", fp, handled, err)
 				}
@@ -944,8 +949,10 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				child := &manifest.Kustomization{Name: "child", Namespace: "apps"}
 				s.AddObject(parent)
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-				filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
-				c.Configure(base.Options{Filter: filter, Index: index})
+				filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+				admissiontest.Commit(t, filterLoader, nil)
+				filter := filterLoader.Options.Filter
+				c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
 				fingerprint := manifest.Fingerprint("same")
 				_, _, next := s.GetEmission(parent.Named())
 				defer next.Finish()
@@ -967,7 +974,7 @@ func TestFingerprintDedup_CompleteOnly(t *testing.T) {
 				if filter.ShouldReconcile(child.Named()) {
 					t.Fatal("fixture child already selected before replay")
 				}
-				fp, handled, err := controllertest.NewExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "same", &store.Emission{})
+				fp, handled, err := controllertest.NewExecution(c, parent.Named()).FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
 				if fp != fingerprint || handled != complete || err != nil {
 					t.Fatalf("replay key=%q handled=%t err=%v, want %q,%t,nil", fp, handled, err, fingerprint, complete)
 				}

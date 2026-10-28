@@ -17,19 +17,22 @@ import (
 type PromoteOptions struct {
 	Record      manifest.Production
 	Reads       *store.ReadSet
-	WipeSecrets bool                             // SOPS ciphertext is replaced with offline placeholders.
-	Documents   []store.Child                    // Parsed, sanitized documents replace raw file acquisition.
-	Admit       func(manifest.BaseManifest) bool // Admission applies to the requested object and every sibling.
+	WipeSecrets bool                                      // SOPS ciphertext is replaced with offline placeholders.
+	Documents   []store.Child                             // Parsed, sanitized documents replace raw file acquisition.
+	Admit       func(manifest.BaseManifest) (bool, error) // Admission applies to the requested object and every sibling.
 }
 
 // Promote materializes admitted documents and reports whether id is available.
 // Authored proves which raw identity may be projected; absent evidence requires an exact id.
 // Existing objects take precedence over raw files.
-func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, opts PromoteOptions) bool {
+func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, opts PromoteOptions) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	record := opts.Record
 	path := record.Path
-	if st == nil || path == "" && opts.Documents == nil || ctx.Err() != nil {
-		return false
+	if st == nil || path == "" && opts.Documents == nil {
+		return false, nil
 	}
 	if obj := st.GetObject(id); obj != nil {
 		return opts.Admit(obj)
@@ -51,8 +54,11 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 		var err error
 		objs, err = reader.parseFile(path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""})
 		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
 			slog.Debug("loader: promote re-parse failed", "id", id.String(), "path", path, "err", err)
-			return false
+			return false, nil
 		}
 	}
 	authored := record.Authored
@@ -68,11 +74,15 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 		} else if opts.Documents == nil && obj.Named() == id {
 			continue
 		}
-		if !opts.Admit(obj) || st.GetObject(obj.Named()) != nil {
+		admitted, err := opts.Admit(obj)
+		if err != nil {
+			return false, err
+		}
+		if !admitted || st.GetObject(obj.Named()) != nil {
 			continue
 		}
-		if ctx.Err() != nil {
-			return false
+		if err := ctx.Err(); err != nil {
+			return false, err
 		}
 		if opts.Reads != nil {
 			opts.Reads.Admit(obj, source, record.Owner, child.Doc)
@@ -81,7 +91,10 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 		}
 	}
 	obj := st.GetObject(id)
-	return obj != nil && opts.Admit(obj)
+	if obj == nil {
+		return false, nil
+	}
+	return opts.Admit(obj)
 }
 
 // BuiltInput binds prepared documents and observed source-relative reads to their ordinary producer.
@@ -95,6 +108,9 @@ type BuiltInput struct {
 // Documents MUST be sanitized immutable build output.
 func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	root := input.Root
+	if l.documents.compact {
+		l.construction++
+	}
 	l.ensureScopes()
 	sourceRoot := cmp.Or(l.documents.mountedRoot(root), l.SourceRoot, root)
 	l.Admit(sourceRoot)
@@ -138,10 +154,18 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		record := manifest.DiscoveryRecord{File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
+		record := manifest.DiscoveryRecord{Declaration: obj, File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
 		if raw, ok := l.Index.Lookup(id); ok {
 			original := l.IndexedObject(id, raw)
 			same := manifest.Equal(obj, original.Obj)
+			if !same && l.documents.compact && l.Options.Changes != nil && raw.Path != "" {
+				evidence := admissionClosure{loader: l, objects: l.Store}
+				delta, _, _ := evidence.delta(input.Source)
+				same = delta != nil && !evidence.fileChanged(input.Source, raw.File) && !slices.ContainsFunc(shared, func(file string) bool { return evidence.fileChanged(input.Source, file) })
+				if same {
+					original.Obj = obj
+				}
+			}
 			if !same && original.Doc != nil {
 				if producer, ok := l.Store.GetObject(input.Owner).(interface {
 					EmissionPolicy() manifest.EmissionPolicy
@@ -179,6 +203,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.Index.Records, id)
+		delete(l.locations, id)
 		delete(l.candidates, id)
 		delete(l.admitted, id)
 	}

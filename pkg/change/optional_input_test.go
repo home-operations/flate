@@ -13,12 +13,14 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -50,12 +52,12 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "optional", Namespace: "flux-system"}
 	probe := store.New()
 	probe.SetArtifact(manifest.BootstrapSourceID, selected[0])
-	assert.Equal(t, change.NewFilter(delta, nil, probe, selected[0].LocalPath).ShouldReconcile(input), true)
-	assert.Equal(t, change.NewFilter(bootstrap, nil, probe, selected[0].LocalPath).ShouldReconcile(input), false)
+	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: delta, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), true)
+	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: bootstrap, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), false)
 	changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
 	assert.NoError(t, err)
 	for side, st := range stores {
-		filter := change.NewFilter(changes, indexes[side], st, roots[side])
+		filter := admissiontest.Filter(t, admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: st, Root: roots[side]})
 		assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), true)
 	}
 }
@@ -134,7 +136,7 @@ data: {VALUE: available}
 			}
 			empty, err := change.Detect(t.Context(), inputs.Source, inputs.Source)
 			assert.NoError(t, err)
-			unchanged := change.NewFilter(empty, discovered.Index, st, "")
+			unchanged := admissiontest.Filter(t, admissiontest.Config{Changes: empty, Index: discovered.Index, Inventory: st, Root: ""})
 			if unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster) {
 				t.Fatal("unchanged input selects app or cluster")
 			}
@@ -211,7 +213,8 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 			assert.NoError(t, err)
 			changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
 			assert.NoError(t, err)
-			f, index := optionalInputFilter(t, inputs.Source, changes)
+			f, l := optionalInputFilter(t, inputs.Source, changes)
+			index := l.Index
 			app := testutil.KustomizationID("flux-system", "app")
 			cluster := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
 			for _, id := range []manifest.NamedResource{app, cluster} {
@@ -224,7 +227,9 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 				}
 			}
 			child := &manifest.Kustomization{Name: "emitted", Namespace: "flux-system"}
-			f.AddEmitted(app, store.Child{Obj: child}, nil)
+			proposal, err := l.Prepare(t.Context(), store.Child{Obj: child, Productions: []manifest.Production{{Owner: app}}}, nil, nil)
+			assert.NoError(t, err)
+			admissiontest.Commit(t, l, proposal)
 			assert.Equal(t, f.ShouldReconcile(child.Named()), tc.want)
 		})
 	}
@@ -317,10 +322,12 @@ func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
 	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), false)
 }
 
-func optionalInputFilter(t *testing.T, input *store.SourceArtifact, changes *change.Set) (*change.Filter, *manifest.DiscoveryIndex) {
+func optionalInputFilter(t *testing.T, input *store.SourceArtifact, changes *change.Set) (*change.Filter, *loader.Loader) {
 	t.Helper()
 	st := store.New()
 	result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st, SelfURLs: []string{"https://example.test/cluster.git"}})
 	assert.NoError(t, err)
-	return change.NewFilter(changes, result.Index, st, ""), result.Index
+	l := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: result.Index, Inventory: st, Root: input.LocalPath})
+	admissiontest.Commit(t, l, nil)
+	return l.Options.Filter, l
 }

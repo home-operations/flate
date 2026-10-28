@@ -6,18 +6,18 @@ import (
 	"slices"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
-
-	"github.com/home-operations/flate/pkg/manifest"
 )
 
 type indexedOrderingDeps map[manifest.NamedResource]bool
 
 func (i indexedOrderingDeps) IsFileIndexed(id manifest.NamedResource) bool { return i[id] }
-func (indexedOrderingDeps) Promote(context.Context, *store.ReadSet, manifest.NamedResource) bool {
-	return false
+func (indexedOrderingDeps) Promote(context.Context, *store.ReadSet, manifest.NamedResource) (bool, error) {
+	return false, nil
 }
 
 func parentIndexForTest(parents map[manifest.NamedResource]manifest.NamedResource) *manifest.DiscoveryIndex {
@@ -33,7 +33,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 	defer c.Reads.Retire()
 	deps := c.dependencies(obj, manifest.GateInputs)
 	provider := values.NewStoreProvider(&c.Reads, false)
-	inputs := c.DataInputs(context.TODO(), obj, provider)
+	inputs, _ := c.DataInputs(context.TODO(), obj, provider)
 	inputs = slices.DeleteFunc(inputs, func(input depwait.DataDependency) bool { return input.Optional })
 	for _, input := range inputs {
 		if !input.AllowMissing && !input.Input.Private && !input.Input.Generated && !slices.Contains(input.Input.Materializers, obj.Named()) {

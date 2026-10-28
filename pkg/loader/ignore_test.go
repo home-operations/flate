@@ -158,7 +158,7 @@ data: {env: `+env+`}
 
 	envOf := func(t *testing.T, l *Loader) string {
 		t.Helper()
-		if !Promote(t.Context(), l.Store, appID, PromoteOptions{Record: productionForTest(l.Index.Records[appID]), Admit: func(manifest.BaseManifest) bool { return true }}) {
+		if promoted, err := Promote(t.Context(), l.Store, appID, PromoteOptions{Record: productionForTest(l.Index.Records[appID]), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
 			t.Fatal("app-config was not indexed for promotion")
 		}
 		obj := l.Store.GetObject(appID)
@@ -234,7 +234,7 @@ data: {env: `+env+`}
 		if _, err := loadForTest(t.Context(), t, l, dir); err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if !Promote(t.Context(), s, appID, PromoteOptions{Record: productionForTest(l.Index.Records[appID]), Admit: func(manifest.BaseManifest) bool { return true }}) {
+		if promoted, err := Promote(t.Context(), s, appID, PromoteOptions{Record: productionForTest(l.Index.Records[appID]), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
 			t.Fatal("app-config was not indexed for promotion")
 		}
 		cm, ok := s.GetObject(appID).(*manifest.ConfigMap)

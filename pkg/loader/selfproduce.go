@@ -23,7 +23,8 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	if repoRoot == "" {
 		return nil
 	}
-	b := &selfProduceBuilder{idx: l.Index, store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents, emittedFiles: emittedFiles}
+	b := &selfProduceBuilder{idx: l.Index, store: l.Store, wipeSecrets: l.Options.WipeSecrets, reader: l.documents,
+		emittedFiles: emittedFiles, locations: l.locations}
 	var generators []generatorRecord
 	incomplete := map[manifest.NamedResource][]string{}
 	var declarations []producerDeclaration
@@ -98,7 +99,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 			}
 			return nil
 		}
-		if v.readable {
+		if v.readable || l.documents.compact && v.deferDecode && safepath.Contains(v.root, v.file) {
 			var err error
 			declarations, err = b.recordProduced(v, l.documents.cache[v.file].objects, declarations, l)
 			return err
@@ -163,6 +164,32 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		b.joinProductions(declarations, contribution.visits)
 		declarations = nil
 	}
+	if l.documents.compact {
+		for _, contribution := range l.scopes.contributions {
+			occurrence, located := l.locations[contribution.owner]
+			if !located {
+				continue
+			}
+			var roots []string
+			complete := true
+			for _, v := range contribution.visits {
+				file, err := filepath.Rel(contribution.context.root, v.file)
+				if v.incomplete != "" || err != nil {
+					complete = false
+					break
+				}
+				roots = append(roots, filepath.ToSlash(file))
+			}
+			if complete && len(roots) != 0 {
+				slices.Sort(roots)
+				facts := *occurrence.facts
+				facts.roots = slices.Compact(roots)
+				occurrence.facts = &facts
+				l.locations[contribution.owner] = occurrence
+			}
+		}
+	}
+
 	if len(incomplete) != 0 {
 		for _, owner := range slices.SortedFunc(maps.Keys(incomplete), manifest.NamedResource.Compare) {
 			details := incomplete[owner]
@@ -190,8 +217,17 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 	}
 	var candidates map[string][]manifest.NamedResource
 	for id, r := range l.Index.Files() {
+		if !id.KindInfo().Runnable || r.Path == "" {
+			continue
+		}
 		obj := l.Store.GetObject(id)
-		if obj == nil || !manifest.KindOf(obj).Runnable || r.Path == "" {
+		declaration := producerDeclaration{obj: obj, identity: id, authored: r.Authored}
+		if l.documents.compact {
+			if occurrence, ok := l.locations[id]; ok {
+				declaration.fact = &occurrence
+			}
+		}
+		if obj == nil && declaration.fact == nil {
 			continue
 		}
 		if slices.ContainsFunc(r.Productions, func(p manifest.Production) bool { return p.Owner != (manifest.NamedResource{}) }) {
@@ -201,7 +237,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		if slices.ContainsFunc(append(owners, ancestors...), func(owner manifest.NamedResource) bool { return owner != id }) {
 			continue
 		}
-		if manifest.ProducerNeedsCandidates(obj) && candidates == nil {
+		if (obj != nil && manifest.ProducerNeedsCandidates(obj) || declaration.fact != nil && declaration.fact.facts.needsCandidates) && candidates == nil {
 			candidates = map[string][]manifest.NamedResource{}
 			for _, input := range l.Index.Files() {
 				root := l.documents.mountedRoot(input.Path)
@@ -209,7 +245,8 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 			}
 		}
 		v := graphVisit{owner: id, source: manifest.BootstrapSourceID, coordinate: r.File}
-		b.recordProducer(producerDeclaration{obj: obj, identity: id, authored: r.Authored, visit: v}, candidates[l.documents.mountedRoot(r.Path)])
+		declaration.visit = v
+		b.recordProducer(declaration, candidates[l.documents.mountedRoot(r.Path)])
 	}
 	if b.err != nil {
 		return b.err
@@ -257,6 +294,9 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			record.Productions = append(record.Productions, p)
 		}
 		l.Index.Records[id] = record
+		if l.documents.compact {
+			continue
+		}
 		obj, err := r.materialize(ctx, l.Options)
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
@@ -393,6 +433,7 @@ func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 
 type producerDeclaration struct {
 	obj      manifest.BaseManifest
+	fact     *Occurrence
 	identity manifest.NamedResource
 	authored manifest.NamedResource
 	visit    graphVisit
@@ -404,6 +445,7 @@ type selfProduceBuilder struct {
 	emittedFiles   map[string][]manifest.NamedResource
 	store          *store.Store
 	wipeSecrets    bool
+	locations      map[manifest.NamedResource]Occurrence
 	scanExclusions bool
 	err            error
 }
@@ -411,11 +453,52 @@ type selfProduceBuilder struct {
 func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject, declarations []producerDeclaration, l *Loader) ([]producerDeclaration, error) {
 	coordinate := cmp.Or(v.localCoordinate(), v.coordinate)
 	var projectionErr error
-	record := func(child store.Child, version string) {
-		if projectionErr != nil || child.Obj == nil {
+	record := func(child parsedObject, version string) {
+		if projectionErr != nil || child.outcome.Err != nil || child.Obj == nil && child.fact == nil {
 			return
 		}
 		obj, info := child.Obj, manifest.KindOf(child.Obj)
+		if child.fact != nil {
+			o := *child.fact
+			if !o.facts.tracked && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
+				return
+			}
+			if o.facts.uncertain {
+				b.recordProducer(producerDeclaration{fact: &o, visit: v}, nil)
+				return
+			}
+			id, err := l.projectIdentity(o.Authored, v, version, o.facts.namespaced)
+			if err != nil {
+				projectionErr = err
+				return
+			}
+			o.Identity = id
+			r := b.idx.Records[id]
+			if r.Authored == (manifest.NamedResource{}) {
+				r.Authored, r.Path, r.File = o.Authored, v.file, coordinate
+				for ref := range o.references() {
+					if discoveryReference(ref) {
+						r.Refs = append(r.Refs, ref.NamedResource)
+					}
+				}
+			}
+			p := manifest.Production{Owner: v.owner, Authored: o.Authored, Path: v.file, File: coordinate, Source: v.source}
+			if v.owner != (manifest.NamedResource{}) && id.KindInfo().Runnable && b.store.GetObject(id) == nil {
+				p.Path = ""
+			}
+			if !slices.Contains(r.Productions, p) {
+				r.Productions = append(r.Productions, p)
+			}
+			b.idx.Records[id] = r
+			if r.Path == v.file && r.Authored == o.Authored {
+				b.locations[id] = o
+			}
+			b.recordProducer(producerDeclaration{fact: &o, identity: id, authored: o.Authored, visit: v}, nil)
+			if id.KindInfo().Structural {
+				b.emittedFiles[coordinate] = appendUniqueProducer(b.emittedFiles[coordinate], v.owner)
+			}
+			return
+		}
 		if !info.Tracked && b.reader.cache[v.file].loaded && len(manifest.ProducerTargets(obj)) == 0 {
 			return
 		}
@@ -424,7 +507,7 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 		if owner, _ := b.idx.Lookup(v.owner); v.owner == obj.Named() || owner.Authored == obj.Named() {
 			id = v.owner
 		} else if info.Runnable && (v.namePrefix != "" || v.nameSuffix != "") {
-			id, projectionErr = l.projectIdentity(obj, v, version)
+			id, projectionErr = l.projectIdentity(obj.Named(), v, version, manifest.KindOf(obj).Namespaced())
 			if projectionErr != nil {
 				return
 			}
@@ -476,14 +559,18 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 	}
 	if objects == nil {
 		var err error
-		objects, err = b.reader.fileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+		if b.reader.compact {
+			objects, err = b.reader.censusFile(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+		} else {
+			objects, err = b.reader.fileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+		}
 		if err != nil {
 			return declarations, err
 		}
 	}
 	for _, obj := range objects {
 		if obj.outcome.Err == nil {
-			record(obj.Child, obj.version)
+			record(obj, obj.version)
 		}
 	}
 	return declarations, projectionErr
@@ -548,12 +635,18 @@ func (b *selfProduceBuilder) joinProductions(declarations []producerDeclaration,
 func (b *selfProduceBuilder) recordProducer(declaration producerDeclaration, candidates []manifest.NamedResource) {
 	obj, authored, v := declaration.obj, declaration.authored, declaration.visit
 	projected := declaration.identity
-	if v.owner == (manifest.NamedResource{}) && manifest.KindOf(obj).Runnable {
+	if v.owner == (manifest.NamedResource{}) && (manifest.KindOf(obj).Runnable || declaration.fact != nil && projected.KindInfo().Runnable) {
 		v.owner = projected
 	}
-	for _, target := range manifest.ProducerTargets(obj, candidates...) {
+	var targets []manifest.ProducerTarget
+	if declaration.fact != nil {
+		targets = declaration.fact.facts.authoredTargets
+	} else {
+		targets = manifest.ProducerTargets(obj, candidates...)
+	}
+	for _, target := range targets {
 		target.NamedResource = manifest.Resolve(target.NamedResource, v.namespace, v.fallback)
-		if target.Namespace == "" {
+		if target.Namespace == "" || target.Name == "" || manifest.HasEnvsubstReference(target.Name) || manifest.HasEnvsubstReference(target.Namespace) {
 			continue
 		}
 		p := manifest.Production{Owner: v.owner, Declaration: projected, Authored: authored, Source: v.source, File: cmp.Or(v.localCoordinate(), v.coordinate)}
@@ -565,7 +658,7 @@ func (b *selfProduceBuilder) recordProducer(declaration producerDeclaration, can
 			r.ReferenceData = append(r.ReferenceData, manifest.ReferenceData{Production: p, DeclaredKeys: target.DeclaredKeys})
 		}
 		b.idx.Records[target.NamedResource] = r
-		if v.owner != (manifest.NamedResource{}) {
+		if v.owner != (manifest.NamedResource{}) && (declaration.fact == nil || !declaration.fact.facts.uncertain) {
 			for _, producer := range []manifest.NamedResource{authored, projected} {
 				r := b.idx.Records[producer]
 				if !slices.Contains(r.Productions, p) {
@@ -582,4 +675,39 @@ func appendUniqueProducer[T comparable](dst []T, v T) []T {
 		return dst
 	}
 	return append(dst, v)
+}
+
+// StandaloneRoots returns sorted, unbuilt bootstrap packages outside Flux ownership.
+// Coordinates are borrowed until the next loader admission.
+func (l *Loader) StandaloneRoots(repoRoot string) []string {
+	l.Admit(repoRoot)
+	l.scopes.roots = slices.DeleteFunc(l.scopes.roots, func(dir string) bool {
+		root := filepath.Join(repoRoot, filepath.FromSlash(dir))
+		doc := l.documents.cache[root]
+		if doc.buildExcluded || doc.selected || doc.built != nil || isKustomizeComponent(doc.body) && root != l.entryPath {
+			return true
+		}
+		if root == l.entryPath {
+			for _, claim := range l.scopes.claims {
+				if strings.HasPrefix(dir+"/", claim.Prefix) {
+					return true
+				}
+			}
+			return false
+		}
+		for _, visit := range l.scopeWalk(graphVisit{root: repoRoot, dir: dir}) {
+			if visit.role == kustomizeinput.Resource {
+				found := false
+				l.fileOwners(visit.file, visit.coordinate, func(manifest.NamedResource) bool {
+					found = true
+					return false
+				})
+				if found {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	return l.scopes.roots
 }

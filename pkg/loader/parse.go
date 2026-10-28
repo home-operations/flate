@@ -2,10 +2,15 @@ package loader
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"path/filepath"
+	"strings"
+
+	"sigs.k8s.io/kustomize/api/resource"
 
 	_ "github.com/home-operations/flate/internal/kustomize" // Loader-only SDK entrypoints MUST install the process scope owner at startup.
 	"github.com/home-operations/flate/pkg/manifest"
@@ -27,6 +32,16 @@ func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.C
 }
 
 func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([]store.Child, error) {
+	if r.compact && r.coordinate == nil {
+		facts, err := r.censusFile(path, opts)
+		var children []store.Child
+		for _, fact := range facts {
+			if fact.Obj != nil && fact.outcome.Err == nil && !fact.fact.facts.uncertain {
+				children = append(children, fact.Child)
+			}
+		}
+		return children, err
+	}
 	out, err := r.fileObjects(path, opts)
 	if err != nil {
 		return nil, err
@@ -83,32 +98,117 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 	defer func() { _ = f.Close() }()
 	docs, err := manifest.DecodeDocs(f, manifest.IncidentalDocuments)
 	for _, occurrence := range docs {
-		version := manifest.DocAPIVersion(occurrence.Document)
-		child, outcome, _ := Prepare(occurrence, opts)
-		if outcome.Err != nil {
-			yield(parsedObject{Child: child, outcome: outcome, version: version})
-			continue
-		}
-		obj := child.Obj
-		tracked := obj != nil && manifest.KindOf(obj).Tracked
-		if obj == nil || !tracked && !keepRaw {
+		if r.coordinate != nil && occurrence.Ordinal != r.coordinate.Document {
 			manifest.ReleaseDoc(occurrence.Document)
 			continue
 		}
-		id := obj.Named()
-		if manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace) {
-			slog.Debug("loader: skipped template doc (unresolved envsubst in name/namespace)", "path", path, "id", id.String())
-			manifest.ReleaseDoc(occurrence.Document)
+		if occurrence.Err != nil {
+			yield(parsedObject{outcome: occurrence})
 			continue
 		}
-		if !tracked {
-			manifest.ReleaseDoc(occurrence.Document)
-			child.Doc, outcome.Document = nil, nil
+		leaves := []manifest.DocOccurrence{occurrence}
+		collection := false
+		if r.compact {
+			var expandErr error
+			leaves, collection, expandErr = expandDocuments(occurrence)
+			if expandErr != nil {
+				occurrence.Err = expandErr
+				yield(parsedObject{outcome: occurrence})
+				continue
+			}
 		}
-		yield(parsedObject{Child: child, outcome: outcome, version: version})
+		for item, leaf := range leaves {
+			if r.coordinate != nil && (leaf.Ordinal != r.coordinate.Document || item != r.coordinate.item) {
+				manifest.ReleaseDoc(leaf.Document)
+				continue
+			}
+			version := manifest.DocAPIVersion(leaf.Document)
+			child, outcome, _ := Prepare(leaf, opts)
+			if outcome.Err != nil {
+				yield(parsedObject{Child: child, outcome: outcome, item: item, version: version})
+				continue
+			}
+			obj := child.Obj
+			tracked := obj != nil && manifest.KindOf(obj).Tracked
+			if obj == nil || !tracked && !keepRaw {
+				manifest.ReleaseDoc(leaf.Document)
+				continue
+			}
+			id := obj.Named()
+			if (!r.compact || r.coordinate != nil) && (manifest.HasEnvsubstReference(id.Name) || manifest.HasEnvsubstReference(id.Namespace)) {
+				slog.Debug("loader: skipped template doc (unresolved envsubst in name/namespace)", "path", path, "id", id.String())
+				manifest.ReleaseDoc(leaf.Document)
+				continue
+			}
+			if !tracked {
+				manifest.ReleaseDoc(leaf.Document)
+				child.Doc, outcome.Document = nil, nil
+			}
+			yield(parsedObject{Child: child, outcome: outcome, item: item, version: version})
+		}
+		if collection {
+			manifest.ReleaseDoc(occurrence.Document)
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
 	return nil
+}
+
+func (r documentReader) censusFile(path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
+	r.restore(path)
+	if cached := r.cache[path]; cached.objects != nil || cached.decodeErr != nil {
+		return cached.objects, cached.decodeErr
+	}
+	facts := []parsedObject{}
+	err := r.decodeFileObjects(path, opts, true, func(child parsedObject) {
+		if child.outcome.Err != nil {
+			facts = append(facts, child)
+			return
+		}
+		o := compactOccurrence(child.Obj)
+		origin := r.localPath(path)
+		root := r.mountedRoot(origin)
+		file, _ := filepath.Rel(root, origin)
+		o.Declaration = OccurrenceID{Source: root, File: filepath.ToSlash(file), Document: child.outcome.Ordinal, item: child.item}
+		var structural manifest.BaseManifest
+		if o.facts.structural != nil {
+			structural = o.facts.structural
+		}
+		manifest.ReleaseDoc(child.Doc)
+		outcome := child.outcome
+		outcome.Document = nil
+		facts = append(facts, parsedObject{Obj: structural, fact: &o, outcome: outcome, version: child.version})
+	})
+	cached := r.cache[path]
+	cached.objects, cached.decodeErr = facts, err
+	r.cache[path] = cached
+	return facts, err
+}
+
+func expandDocuments(o manifest.DocOccurrence) ([]manifest.DocOccurrence, bool, error) {
+	kind, _ := o.Document["kind"].(string)
+	if _, collection := o.Document["items"]; !strings.HasSuffix(kind, "List") || !collection {
+		return []manifest.DocOccurrence{o}, false, nil
+	}
+	data, err := json.Marshal(o.Document)
+	if err != nil {
+		return nil, true, fmt.Errorf("%w: encode collection: %w", manifest.ErrInput, err)
+	}
+	// A second empty document MUST prevent kio from silently unwrapping malformed List items.
+	data = append(data, '\n', '-', '-', '-', '\n')
+	nodes, err := resource.NewFactory(nil).RNodesFromBytes(data)
+	if err != nil {
+		return nil, true, fmt.Errorf("%w: expand collection: %w", manifest.ErrInput, err)
+	}
+	out := make([]manifest.DocOccurrence, 0, len(nodes))
+	for _, node := range nodes {
+		doc, err := node.Map()
+		if err != nil {
+			return nil, true, fmt.Errorf("%w: decode collection leaf: %w", manifest.ErrInput, err)
+		}
+		out = append(out, manifest.DocOccurrence{Document: doc, Ordinal: o.Ordinal})
+	}
+	return out, true, nil
 }

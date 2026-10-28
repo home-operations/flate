@@ -1,8 +1,9 @@
-package change
+package loader
 
 import (
 	"fmt"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,14 +11,15 @@ import (
 	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func optionalSupplierPair(tb testing.TB, namespace string) (*Set, [2]*store.Store, [2]string, *manifest.GitRepository) {
+func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*store.Store, [2]string, *manifest.GitRepository) {
 	tb.Helper()
 	var stores [2]*store.Store
 	var roots [2]string
@@ -40,7 +42,7 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*Set, [2]*store.Stor
 		}
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".supplier"), LocalRoot: root, Key: fmt.Sprint(side), Content: fmt.Sprint(side), FS: files})
 	}
-	changes, err := Qualify(tb.Context(), nil, stores[0], stores[1])
+	changes, err := change.Qualify(tb.Context(), nil, stores[0], stores[1])
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -49,7 +51,7 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*Set, [2]*store.Stor
 
 func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"exact_removed", "deferred_consumer", "wrong_namespace", "unrelated_blank_namespace", "empty_supplier_collision", "artifact_replaced", "declaration_replaced", "stale_bootstrap_alternative"} {
+	for _, mode := range []string{"exact_removed", "deferred_consumer", "wrong_namespace", "unrelated_blank_namespace", "artifact_replaced", "declaration_replaced", "stale_bootstrap_alternative"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			namespace := "apps"
@@ -61,26 +63,27 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 			}
 			changes, stores, roots, source := optionalSupplierPair(t, namespace)
 			input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: "optional"}
-			assert.Equal(t, changes.sources[source.Named()].changes.inputs[input], "inputs/optional.yaml")
-			assert.Equal(t, len(changes.inputs), 0)
+			assert.Equal(t, inputMap(sourceChanges(changes, source.Named()))[input], "inputs/optional.yaml")
+			assert.Equal(t, len(inputMap(changes)), 0)
 			assert.Equal(t, changes.Len(), 0)
-			assert.Diff(t, changes.sources[source.Named()].changes.Paths(), []string{"inputs/kustomization.yaml", "inputs/optional.yaml"})
+			assert.Diff(t, sourceChanges(changes, source.Named()).Paths(), []string{"inputs/kustomization.yaml", "inputs/optional.yaml"})
 			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}}}}
 			sibling := consumer.Clone()
 			sibling.Name = "sibling"
 			sibling.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true}}}
-			if mode == "empty_supplier_collision" {
-				evidence := changes.sources[source.Named()]
-				evidence.changes = NewSet(nil)
-				changes.sources[source.Named()] = evidence
-				changes.inputs = map[manifest.NamedResource]string{input: "inputs/optional.yaml"}
-			}
 			if mode == "stale_bootstrap_alternative" {
-				bootstrap := changes.sources[source.Named()]
-				bootstrap.declarations = [2]manifest.BaseManifest{}
-				changes.sources[manifest.BootstrapSourceID] = bootstrap
+				var original [2]store.Artifact
+				for side, st := range stores {
+					original[side] = st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent)
+					st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
+				}
+				var err error
+				changes, err = change.Qualify(t.Context(), nil, stores[0], stores[1])
+				assert.NoError(t, err)
+				for side, st := range stores {
+					st.SetArtifact(manifest.BootstrapSourceID, original[side].(*store.SourceArtifact))
+				}
 			}
-			changes.groupSources()
 			for side, st := range stores {
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer.Named(): {File: "flux/consumer.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}}},
@@ -100,7 +103,7 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 					replacement.URL = "https://example.test/replaced"
 					st.AddObject(&replacement)
 				}
-				filter := NewFilter(changes, index, st, roots[side])
+				filter := newAdmission(t, admissionConfig{changes: changes, index: index, inventory: st, root: roots[side]})
 				want := mode == "exact_removed" || mode == "deferred_consumer" || mode == "stale_bootstrap_alternative"
 				if got := filter.ShouldReconcile(consumer.Named()); got != want {
 					t.Errorf("side %d consumer selected=%t, want %t: %v", side, got, want, filter.KeepNames())
@@ -148,11 +151,11 @@ spec:
 					value = 0
 				}
 				st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".selected"), LocalRoot: root, Key: fmt.Sprint(side), Content: fmt.Sprint(side), FS: fstest.MapFS{"config/prod.yaml": {Data: fmt.Appendf(nil, "value: %d\n", value)}}})
-				l := loader.New(st)
+				l := New(st)
 				l.SourceRoot = root
 				_, err := l.Load(t.Context(), root)
 				assert.NoError(t, err)
-				assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 				indexes[side] = l.Index
 				r, ok := l.Index.Lookup(release)
 				if !ok || r.Parent != parent || !slices.ContainsFunc(r.Productions, func(p manifest.Production) bool { return p.Owner == parent }) || st.GetObject(release) != nil {
@@ -162,17 +165,17 @@ spec:
 					st.AddObject(&manifest.HelmRelease{Name: release.Name, Namespace: release.Namespace, Chart: manifest.HelmChart{Source: source.Named()}, ChartValuesFiles: []string{"config/prod.yaml"}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source.Named()).Kind, Name: (source.Named()).Name, Namespace: (source.Named()).Namespace, APIVersion: ""}, ValuesFiles: []string{"config/prod.yaml"}}}}})
 				}
 			}
-			bootstrap := NewSet(nil)
+			bootstrap := change.NewSet(nil)
 			if state == "unchanged_collision" {
-				bootstrap = NewSet([]string{".selected/config/prod.yaml"})
+				bootstrap = change.NewSet([]string{".selected/config/prod.yaml"})
 			}
-			changes, err := Qualify(t.Context(), bootstrap, stores[0], stores[1])
+			changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
 			assert.NoError(t, err)
 			want := state != "unchanged_collision"
-			assert.Equal(t, changes.sources[source.Named()].changes.Contains("config/prod.yaml"), want)
+			assert.Equal(t, sourceChanges(changes, source.Named()).Contains("config/prod.yaml"), want)
 			assert.Equal(t, changes.Len(), bootstrap.Len())
 			for side, st := range stores {
-				filter := NewFilter(changes, indexes[side], st, roots[side])
+				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})
 				for _, id := range []manifest.NamedResource{release, parent} {
 					if got := filter.ShouldReconcile(id); got != want {
 						t.Errorf("SELECTION side %d: %s selected=%t, want %t", side, id, got, want)
@@ -222,16 +225,47 @@ func TestFilter_ReadSourceAlternatives(t *testing.T) {
 					index.Claims = map[string][]manifest.NamedResource{".selected/": {reader.Named()}}
 				}
 			}
-			bootstrap := NewSet(nil)
+			bootstrap := change.NewSet(nil)
 			if mode == "read_only_collision" || mode == "structural_collision" {
-				bootstrap = NewSet([]string{".selected/input.yaml"})
+				bootstrap = change.NewSet([]string{".selected/input.yaml"})
 			}
-			changes, err := Qualify(t.Context(), bootstrap, stores[0], stores[1])
+			changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
 			assert.NoError(t, err)
 			for side, st := range stores {
-				filter := NewFilter(changes, indexes[side], st, roots[side])
+				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})
 				assert.Equal(t, filter.ShouldReconcile(reader.Named()), mode != "read_only_collision")
 			}
 		})
+	}
+}
+
+func TestSet_WithReadersSelectedSource(t *testing.T) {
+	t.Parallel()
+	changes, stores, roots, source := optionalSupplierPair(t, "apps")
+	reader := testutil.HelmReleaseID("apps", "reader")
+	foreign := testutil.HelmReleaseID("apps", "foreign")
+	opposite := testutil.HelmReleaseID("apps", "opposite")
+	var indexes [2]*manifest.DiscoveryIndex
+	for side := range indexes {
+		indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}, Readers: map[string][]manifest.FileReader{}}
+		for _, id := range []manifest.NamedResource{reader, foreign, opposite} {
+			indexes[side].Records[id] = manifest.DiscoveryRecord{File: "flux/" + id.Name + ".yaml", Refs: []manifest.NamedResource{source.Named()}}
+		}
+	}
+	file := ".supplier/inputs/optional.yaml"
+	indexes[0].Readers[file] = []manifest.FileReader{{Reader: reader, Source: source.Named(), Exact: true}, {Reader: foreign, Source: manifest.BootstrapSourceID, Exact: true}}
+	indexes[1].Readers[file] = []manifest.FileReader{{Reader: opposite, Source: source.Named(), Exact: true}}
+	original := maps.Clone(inputMap(sourceChanges(changes, source.Named())))
+	resolved := changes.WithReaders(indexes[0], indexes[1])
+	assert.Equal(t, len(inputMap(resolved)), 0)
+	assert.Equal(t, inputMap(sourceChanges(resolved, source.Named()))[reader], "inputs/optional.yaml")
+	assert.Equal(t, inputMap(sourceChanges(resolved, source.Named()))[foreign], "")
+	assert.Equal(t, inputMap(sourceChanges(resolved, source.Named()))[opposite], "")
+	assert.Diff(t, inputMap(sourceChanges(changes, source.Named())), original)
+	for side, st := range stores {
+		filter := newAdmission(t, admissionConfig{changes: resolved, index: indexes[side], inventory: st, root: roots[side]})
+		assert.Equal(t, filter.ShouldReconcile(reader), true)
+		assert.Equal(t, filter.ShouldReconcile(foreign), false)
+		assert.Equal(t, filter.ShouldReconcile(opposite), side == 1)
 	}
 }

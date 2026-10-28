@@ -8,6 +8,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"iter"
 	"maps"
 	"path/filepath"
 	"reflect"
@@ -17,7 +18,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -27,12 +27,19 @@ import (
 // Set carries immutable bootstrap-path changes and qualified source evidence.
 // Completed sets are immutable and safe to share; CollectInputs is construction-only.
 type Set struct {
-	oneSided [2]map[string]struct{}
-	origins  [2]*store.SourceArtifact
-	inputs   map[manifest.NamedResource]string
-	paths    map[string]struct{}
-	sources  map[manifest.NamedResource]sourceDelta
-	groups   []sourceGroup
+	oneSided     [2]map[string]struct{}
+	origins      [2]*store.SourceArtifact
+	inputs       map[manifest.NamedResource]InputChange
+	paths        map[string]struct{}
+	sources      map[manifest.NamedResource]sourceDelta
+	groups       []sourceGroup
+	declarations map[comparisonKey]declarationComparison
+}
+
+// InputChange records a one-sided input and its discovery authority.
+type InputChange struct {
+	File    string
+	Unbound bool // Neither side supplies an admitted read of File.
 }
 
 type sourceDelta struct {
@@ -81,7 +88,13 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 			continue
 		}
 		delta := changes
-		if id != manifest.BootstrapSourceID || delta == nil {
+		var previous sourceDelta
+		if changes != nil {
+			previous = changes.sources[id]
+		}
+		if previous.changes != nil && previous.artifacts == evidence.artifacts && previous.declarations == evidence.declarations {
+			delta = previous.changes
+		} else if id != manifest.BootstrapSourceID || delta == nil {
 			pair := readerPair{before: a, after: b}
 			for i, input := range evidence.artifacts {
 				exclusion, err := filepath.Rel(input.LocalPath, evidence.artifacts[1-i].LocalPath)
@@ -124,6 +137,11 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 			}
 		}
 		evidence.changes = delta
+		if len(delta.sources) != 0 || len(delta.groups) != 0 || len(delta.declarations) != 0 {
+			local := *delta
+			local.sources, local.groups, local.declarations = nil, nil, nil
+			evidence.changes = &local
+		}
 		out.sources[id] = evidence
 		if id == manifest.BootstrapSourceID {
 			out.paths, out.inputs, out.origins, out.oneSided = delta.paths, delta.inputs, evidence.artifacts, delta.oneSided
@@ -374,9 +392,9 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 		manifest.ReleaseDoc(doc)
 		if eligible {
 			if s.inputs == nil {
-				s.inputs = make(map[manifest.NamedResource]string)
+				s.inputs = make(map[manifest.NamedResource]InputChange)
 			}
-			s.inputs[id] = name
+			s.inputs[id] = InputChange{File: name, Unbound: true}
 		}
 	}
 	return ctx.Err()
@@ -421,27 +439,46 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, source manifest.N
 	}
 	out := *s
 	out.inputs = maps.Clone(s.inputs)
+	coordinate := func(side int, name string) string {
+		if input := artifacts[side]; input != nil && roots[side] != "" {
+			relative, err := filepath.Rel(roots[side], input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(name))))
+			if err != nil {
+				return ""
+			}
+			return filepath.ToSlash(relative)
+		}
+		return name
+	}
+	for id, input := range out.inputs {
+		if !input.Unbound {
+			continue
+		}
+		for side, index := range indexes {
+			if _, present := s.oneSided[side][input.File]; !present {
+				continue
+			}
+			for reader := range index.ReadersOfFile(coordinate(side, input.File)) {
+				if reader.Source == source {
+					input.Unbound = false
+					out.inputs[id] = input
+					break
+				}
+			}
+		}
+	}
 	for side, index := range indexes {
 		if index == nil {
 			continue
 		}
 		for name := range s.oneSided[side] {
-			file := name
-			if input := artifacts[side]; input != nil && roots[side] != "" {
-				relative, err := filepath.Rel(roots[side], loader.OriginPath(input, filepath.Join(input.LocalPath, filepath.FromSlash(name))))
-				if err != nil {
-					continue
-				}
-				file = filepath.ToSlash(relative)
-			}
-			for reader := range index.ReadersOfFile(file) {
+			for reader := range index.ReadersOfFile(coordinate(side, name)) {
 				if reader.Source != source {
 					continue
 				}
 				if out.inputs == nil {
-					out.inputs = make(map[manifest.NamedResource]string)
+					out.inputs = make(map[manifest.NamedResource]InputChange)
 				}
-				out.inputs[reader.Reader] = name
+				out.inputs[reader.Reader] = InputChange{File: name}
 			}
 		}
 	}
@@ -555,4 +592,279 @@ func hashFile(ctx context.Context, input fs.FS, name string) ([sha256.Size]byte,
 	}
 	h.Sum(buf.sum[:0])
 	return buf.sum, nil
+}
+
+// Inputs yields qualified one-sided input identities and their source-relative files.
+func (s *Set) Inputs() iter.Seq2[manifest.NamedResource, InputChange] {
+	return func(yield func(manifest.NamedResource, InputChange) bool) {
+		if s == nil {
+			return
+		}
+		for id, file := range s.inputs {
+			if !yield(id, file) {
+				return
+			}
+		}
+	}
+}
+
+// Sources yields the source identities carrying immutable comparison evidence.
+func (s *Set) Sources() iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		if s == nil {
+			return
+		}
+		if _, ok := s.sources[manifest.BootstrapSourceID]; !ok && !yield(manifest.BootstrapSourceID) {
+			return
+		}
+		for id := range s.sources {
+			if !yield(id) {
+				return
+			}
+		}
+	}
+}
+
+// ForSource returns source-relative changes, exact admitted artifacts and their source declarations.
+func (s *Set) ForSource(source manifest.NamedResource) (*Set, [2]*store.SourceArtifact, [2]manifest.BaseManifest) {
+	if s == nil {
+		return nil, [2]*store.SourceArtifact{}, [2]manifest.BaseManifest{}
+	}
+	if evidence, ok := s.sources[source]; ok {
+		return evidence.changes, evidence.artifacts, evidence.declarations
+	}
+	if source == manifest.BootstrapSourceID {
+		return s, s.origins, [2]manifest.BaseManifest{}
+	}
+	return nil, [2]*store.SourceArtifact{}, [2]manifest.BaseManifest{}
+}
+
+type comparisonKey struct {
+	source, owner, input manifest.NamedResource
+	use                  string
+	position             int
+}
+
+type declarationComparison struct {
+	objects    [2]manifest.BaseManifest
+	references [2]manifest.Reference
+	changed    bool
+}
+
+// WithDeclarations freezes observed authoritative declaration and reference comparisons before dispatch.
+// Only completed producer output is prepared comparison authority; raw producer-owned input is excluded.
+// Missing preparation is unknown; the returned set retains no Store or captured read set.
+func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, prepared [2]map[manifest.NamedResource]store.Child) (*Set, error) {
+	if s == nil {
+		return nil, nil
+	}
+	out := *s
+	out.declarations = map[comparisonKey]declarationComparison{}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if before == nil || after == nil {
+		return out.freezeSources(), nil
+	}
+	stores := [2]*store.Store{before, after}
+	objects := [2]map[manifest.NamedResource]store.Child{}
+	sources := [2]map[manifest.NamedResource]manifest.NamedResource{}
+	for side, st := range stores {
+		objects[side], sources[side] = map[manifest.NamedResource]store.Child{}, map[manifest.NamedResource]manifest.NamedResource{}
+		for _, obj := range st.Objects() {
+			id := obj.Named()
+			if st.GetDeclaration(id) != obj {
+				continue
+			}
+			_, doc, emission := st.GetEmission(id)
+			emission.Finish()
+			objects[side][id] = store.Child{Obj: obj, Doc: doc}
+		}
+		for id, child := range prepared[side] {
+			if _, known := objects[side][id]; !known {
+				objects[side][id] = child
+			}
+		}
+		for id, child := range objects[side] {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			obj := child.Obj
+			source, ambiguous := manifest.BootstrapSourceID, false
+			found := false
+			for _, production := range st.Productions(id, nil) {
+				ref := production.Source
+				if ref == (manifest.NamedResource{}) {
+					ref = manifest.BootstrapSourceID
+				}
+				if found && ref != source {
+					ambiguous = true
+					break
+				}
+				source, found = ref, true
+			}
+			if ambiguous {
+				delete(objects[side], id)
+				continue
+			}
+			_, snapshots, _ := s.ForSource(source)
+			if snapshots[side] == nil || snapshots[side] != st.GetArtifact(source, store.ArtifactContent) {
+				delete(objects[side], id)
+				continue
+			}
+			objects[side][id] = store.Child{Obj: obj, Doc: manifest.DeepCopyMap(child.Doc)}
+			sources[side][id] = source
+		}
+	}
+	for id, left := range objects[0] {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		right, ok := objects[1][id]
+		if !ok || sources[0][id] != sources[1][id] {
+			continue
+		}
+		source := sources[0][id]
+		equal, err := manifest.OutputEqual(left.Obj, right.Obj, [2]map[string]any{left.Doc, right.Doc})
+		if err != nil {
+			return nil, err
+		}
+		out.declarations[comparisonKey{source: source, owner: id, input: id}] = declarationComparison{objects: [2]manifest.BaseManifest{left.Obj, right.Obj}, changed: !equal}
+		refs := [2][]manifest.Reference{}
+		for side, child := range [2]store.Child{left, right} {
+			for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
+				refs[side] = append(refs[side], ref.Clone())
+			}
+		}
+		for _, ref := range refs[0] {
+			if !ref.ContentInput() || ref.Selector != nil {
+				continue
+			}
+			peer := slices.IndexFunc(refs[1], func(other manifest.Reference) bool { return referencesEqual(ref, other) })
+			if peer < 0 {
+				continue
+			}
+			inputs := [2]store.Child{objects[0][ref.NamedResource], objects[1][ref.NamedResource]}
+			if inputs[0].Obj == nil || inputs[1].Obj == nil {
+				continue
+			}
+			changed := false
+			if ref.Key != "" {
+				values := [2]string{}
+				present := [2]bool{}
+				valid := true
+				for side, input := range inputs {
+					data, ok := input.Obj.(manifest.Data)
+					if !ok {
+						valid = false
+						break
+					}
+					var err error
+					values[side], present[side], err = data.Value(ref.Key)
+					if err != nil {
+						valid = false
+						break
+					}
+				}
+				if !valid || !present[0] || !present[1] {
+					continue
+				}
+				changed = values[0] != values[1] || present[0] != present[1]
+			} else {
+				equal, err := manifest.OutputEqual(inputs[0].Obj, inputs[1].Obj, [2]map[string]any{inputs[0].Doc, inputs[1].Doc})
+				if err != nil {
+					return nil, err
+				}
+				changed = !equal
+			}
+			out.declarations[comparisonKey{source: source, owner: id, input: ref.NamedResource, use: ref.Use, position: ref.Position}] = declarationComparison{objects: [2]manifest.BaseManifest{left.Obj, right.Obj}, references: [2]manifest.Reference{ref, refs[1][peer]}, changed: changed}
+		}
+	}
+	return out.freezeSources(), nil
+}
+
+func (s *Set) freezeSources() *Set {
+	snapshots := map[*store.SourceArtifact]*store.SourceArtifact{}
+	s.origins = freezeArtifacts(s.origins, snapshots)
+	s.sources = maps.Clone(s.sources)
+	locals := map[*Set]*Set{}
+	for source, evidence := range s.sources {
+		evidence.artifacts = freezeArtifacts(evidence.artifacts, snapshots)
+		if evidence.changes != nil {
+			original := evidence.changes
+			local := locals[original]
+			if local == nil {
+				copied := *original
+				copied.origins = freezeArtifacts(copied.origins, snapshots)
+				copied.sources, copied.groups, copied.declarations = nil, nil, nil
+				local = &copied
+				locals[original] = local
+			}
+			evidence.changes = local
+		}
+		s.sources[source] = evidence
+	}
+	s.groupSources()
+	return s
+}
+
+func freezeArtifacts(inputs [2]*store.SourceArtifact, snapshots map[*store.SourceArtifact]*store.SourceArtifact) [2]*store.SourceArtifact {
+	for side, input := range inputs {
+		if input == nil {
+			continue
+		}
+		if snapshot := snapshots[input]; snapshot != nil {
+			inputs[side] = snapshot
+			continue
+		}
+		snapshot := *input
+		snapshot.Reads, snapshot.ContentFingerprint = nil, nil
+		snapshot.Metadata = maps.Clone(input.Metadata)
+		snapshot.Warnings = slices.Clone(input.Warnings)
+		for i := range snapshot.Warnings {
+			snapshot.Warnings[i].Detail = slices.Clone(snapshot.Warnings[i].Detail)
+		}
+		inputs[side] = &snapshot
+		snapshots[input] = &snapshot
+	}
+	return inputs
+}
+
+// OutputChanged reads a frozen verdict only while the same local declaration and reference apply.
+// Source artifact applicability MUST be checked by the caller against ForSource first.
+func (s *Set) OutputChanged(side manifest.TreeSide, source manifest.NamedResource, ref manifest.Reference, current manifest.BaseManifest) (changed, known bool) {
+	if s == nil || current == nil || side > manifest.TreeHead {
+		return false, false
+	}
+	fact, ok := s.declarations[comparisonKey{source: source, owner: current.Named(), input: ref.NamedResource, use: ref.Use, position: ref.Position}]
+	if !ok || current != fact.objects[side] {
+		return false, false
+	}
+	if ref.Use != "" && !referencesEqual(ref, fact.references[side]) {
+		return false, false
+	}
+	return fact.changed, true
+}
+
+// OppositeDeclaration returns the paired declaration while the same local declaration applies.
+// Source artifact applicability MUST be checked by the caller against ForSource first.
+func (s *Set) OppositeDeclaration(side manifest.TreeSide, source manifest.NamedResource, current manifest.BaseManifest) manifest.BaseManifest {
+	if s == nil || current == nil || side > manifest.TreeHead {
+		return nil
+	}
+	id := current.Named()
+	fact := s.declarations[comparisonKey{source: source, owner: id, input: id}]
+	if current != fact.objects[side] {
+		return nil
+	}
+	return fact.objects[manifest.TreeHead-side]
+}
+
+func referencesEqual(a, b manifest.Reference) bool {
+	left, right := a.DependencyRef, b.DependencyRef
+	left.ReadyExpr, right.ReadyExpr = nil, nil
+	if left != right || (a.ReadyExpr == nil) != (b.ReadyExpr == nil) || a.ReadyExpr != nil && *a.ReadyExpr != *b.ReadyExpr {
+		return false
+	}
+	return a.Use == b.Use && a.Position == b.Position && a.Optional == b.Optional && a.Content == b.Content && a.Gate == b.Gate && a.ArtifactStages == b.ArtifactStages && a.Ordering == b.Ordering && a.ChartPath == b.ChartPath && a.Key == b.Key && a.NamespaceDefault == b.NamespaceDefault && a.Selector == b.Selector && slices.Equal(a.Files, b.Files)
 }

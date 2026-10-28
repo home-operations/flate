@@ -22,7 +22,7 @@ func TestSeedBootstrapSource_ExplicitURLsOverrideGitConfig(t *testing.T) {
 			testutil.WriteFile(t, parent, ".git/config", "[remote \"origin\"]\nurl = https://github.com/parent/repo.git\n")
 			root := filepath.Join(parent, "child")
 			testutil.WriteFile(t, root, "scan.yaml", "")
-			d := &discoverer{cfg: Config{Path: root, RepoRoot: root, Store: store.New()}}
+			d := &Session{cfg: Config{Path: root, RepoRoot: root, Store: store.New()}}
 			want := "github.com/parent/repo"
 			wantRoot := root
 			if identity == "inferred" {
@@ -65,7 +65,7 @@ func TestSeedBootstrapSource_NoRepository(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "scan.yaml", "admitted\n")
-			d := &discoverer{cfg: Config{Path: root, Store: store.New()}}
+			d := &Session{cfg: Config{Path: root, Store: store.New()}}
 			switch kind {
 			case "gitfile":
 				testutil.WriteFile(t, root, ".git", "gitdir: missing\n")

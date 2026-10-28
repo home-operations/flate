@@ -19,6 +19,10 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
@@ -30,8 +34,6 @@ import (
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
@@ -139,7 +141,9 @@ data: {key: fixed}
 				case "preflight failure":
 					opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
 				case "filter skip":
-					opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s, "")
+					opts.Loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: indexForTest(nil), Inventory: s, Root: ""})
+					admissiontest.Commit(t, opts.Loader, nil)
+					opts.Filter = opts.Loader.Options.Filter
 				case "vanished":
 					s.DeleteObject(rs.Named())
 					s.RecordEmitted(rs.Named(), before, nil)
@@ -634,14 +638,14 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							children, retained := parseChildrenForTest(p, []map[string]any{nextDoc}, manifest.ParseDocOptions{})
 							next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
 							next.Complete = true
-							o.ksc.Emit(p, &next, nil)
+							controllertest.Emit(t.Context(), o.ksc.Controller, p, &next)
 							s.UpdateStatus(p, store.StatusInfo{Status: store.StatusReady})
 							close(published)
 						})
 						if scenario != "effective_input_change" {
 							_, _, initial := s.GetEmission(p)
 							initial.Children = children
-							o.ksc.Emit(p, &initial, nil)
+							controllertest.Emit(t.Context(), o.ksc.Controller, p, &initial)
 							initial.Finish()
 						}
 						type acquisition struct {
@@ -684,7 +688,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 									_, _, empty := s.GetEmission(p)
 									defer empty.Finish()
 									empty.Children, empty.Manifests, empty.Complete = nil, nil, true
-									o.ksc.Emit(p, &empty, nil)
+									controllertest.Emit(t.Context(), o.ksc.Controller, p, &empty)
 									if s.GetDeclaration(repo) != nil {
 										t.Error("withdrawal retained repository authority")
 									}
@@ -945,7 +949,7 @@ func TestDAGDispatch_DirtyTransitiveSubstitutionAfterDrain(t *testing.T) {
 			}
 			settled.Store(true)
 			obj := &manifest.ConfigMap{Name: "hello", Namespace: "flux-system", Data: map[string]any{"value": "pinned"}}
-			run.Emit(id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: testutil.DocumentOccurrences([]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}), Complete: true}, nil)
+			run.Emit(t.Context(), id, &store.Emission{Children: []store.Child{{Obj: obj}}, Manifests: testutil.DocumentOccurrences([]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hello", "namespace": "flux-system"}, "data": obj.Data}}), Complete: true}, nil)
 			return nil
 		})
 		return schedule.Result{Assessment: run}

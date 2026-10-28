@@ -11,6 +11,7 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
@@ -104,7 +105,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				}
 				_, _, attempt := runState.run.Reads.GetEmission(id)
 				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&runState.run.Reads), func(content any) (bool, error) {
-					fp, hit, err := runState.run.FingerprintDedup(id, content, &store.Emission{})
+					fp, hit, err := runState.run.FingerprintDedup(t.Context(), id, content, &store.Emission{})
 					if hit || err != nil {
 						return hit, err
 					}
@@ -124,7 +125,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				children, retained := testutil.ParseChildren(c, c.Store.GetObject(id), testutil.DocumentMaps(docs), manifest.ParseDocOptions{})
 				attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(retained)
 				attempt.Complete = true
-				runState.run.Emit(id, &attempt, nil)
+				runState.run.Emit(t.Context(), id, &attempt, nil)
 			})
 			tasks.BlockTillDone()
 			if tasks.Failures() != 0 {
@@ -181,7 +182,9 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			check := func(count int, status store.Status) *store.Emission {
 				t.Helper()
 				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{rs.Named(): {File: "reader.yaml"}}}
-				filter := change.NewFilter(change.NewSet([]string{"reader.yaml"}), index, st, "")
+				filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"reader.yaml"}), Index: index, Inventory: st, Root: ""})
+				admissiontest.Commit(t, filterLoader, nil)
+				filter := filterLoader.Options.Filter
 				_, _, before := st.GetEmission(rs.Named())
 				for _, child := range before.Children {
 					if !filter.ShouldReconcile(child.Obj.Named()) {
@@ -190,7 +193,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 				}
 				before.Finish()
 				c := New(st, tasks, false)
-				c.Configure(base.Options{Filter: filter, Index: index})
+				c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
 				c.StartLifecycle()
 
 				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: tasks, Store: st, ID: rs.Named(), ReconcileNode: c.ReconcileNode})

@@ -27,6 +27,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -70,7 +71,7 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			st.AddObject(local)
 			root := t.TempDir()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-			filter := change.NewFilter(paired, &manifest.DiscoveryIndex{}, st, root)
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: paired, Index: &manifest.DiscoveryIndex{}, Inventory: st, Root: root})
 			assert.Equal(t, filter.ShouldReconcile(to), true)
 			assert.Equal(t, filter.ShouldReconcile(from), false)
 			assert.Diff(t, changes.Paths(), []string{"removed.yaml"})
@@ -325,6 +326,265 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 	}
 }
 
+func TestRenderTrees_ChangedOnlyAndDiff_SelectorRelabel(t *testing.T) {
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	trees := make([]Tree, len(roots))
+	for side, root := range roots {
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [set.yaml, provider-a.yaml, provider-b.yaml]\n")
+		testutil.WriteFile(t, root, "set.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: matrix, namespace: apps}
+spec:
+  inputsFrom:
+    - kind: ResourceSetInputProvider
+      selector:
+        matchLabels: {app: selected}
+  resourcesTemplate: |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: 'cfg-<< inputs.name >>', namespace: apps}
+    data: {value: '<< inputs.value >>'}
+`)
+		for _, name := range []string{"a", "b"} {
+			label := "selected"
+			if side == 1 && name == "a" {
+				label = "other"
+			}
+			testutil.WriteFile(t, root, "provider-"+name+".yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: provider-%s
+  namespace: apps
+  labels: {app: %s}
+spec:
+  type: Static
+  defaultValues: {name: %s, value: stable}
+`, name, label, name))
+		}
+		trees[side] = Tree{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}}
+	}
+
+	render := func(trees []Tree) []Rendered {
+		t.Helper()
+		runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		assert.NoError(t, err)
+		assert.Equal(t, len(runs), len(trees))
+		for _, run := range runs {
+			assert.NoError(t, run.Err)
+			if run.Result == nil {
+				t.Fatal("missing render result")
+			}
+			assert.Equal(t, len(run.Result.Blocked), 0)
+			assert.Equal(t, len(run.Result.Failed), 0)
+		}
+		return runs
+	}
+	compare := func(runs []Rendered) []byte {
+		t.Helper()
+		selected, selectedErr, remainder := Select(runs, nil, []manifest.NamedResource{
+			testutil.KustomizationID("", ""),
+			{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet},
+		}, nil)
+		assert.NoError(t, selectedErr)
+		assert.NoError(t, remainder)
+		body, _, _, err := diff.Compare(
+			diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+			diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
+			selectedErr, diff.Options{Format: diff.FormatJSON})
+		assert.NoError(t, err)
+		return body
+	}
+
+	full := []Rendered{render(trees[:1])[0], render(trees[1:])[0]}
+	for _, run := range full {
+		assert.Equal(t, run.filter.Enabled(), false)
+	}
+	assert.Diff(t, configMapNames(full[0].Result), map[string]bool{"cfg-a": true, "cfg-b": true})
+	assert.Diff(t, configMapNames(full[1].Result), map[string]bool{"cfg-b": true})
+	want := compare(full)
+	var first []byte
+	for run := range 2 {
+		paired := render(trees)
+		for _, side := range paired {
+			assert.Equal(t, side.filter.Enabled(), true)
+			assert.Diff(t, side.cfg.ExternalChanges.Paths(), []string{"provider-a.yaml"})
+		}
+		assert.Diff(t, configMapNames(paired[0].Result), map[string]bool{"cfg-a": true, "cfg-b": true})
+		assert.Diff(t, configMapNames(paired[1].Result), map[string]bool{"cfg-b": true})
+		body := compare(paired)
+		assert.Diff(t, string(body), string(want))
+		var output struct {
+			Changes []diff.Change `json:"changes"`
+		}
+		assert.NoError(t, json.Unmarshal(body, &output))
+		assert.Equal(t, len(output.Changes), 2)
+		var deleted []string
+		for _, change := range output.Changes {
+			if change.Kind == manifest.KindConfigMap {
+				assert.Equal(t, change.Status, diff.StatusRemoved)
+				deleted = append(deleted, change.Name)
+			} else {
+				assert.Equal(t, change.Kind, manifest.KindResourceSetInputProvider)
+				assert.Equal(t, change.Name, "provider-a")
+				assert.Equal(t, change.Status, diff.StatusChanged)
+			}
+		}
+		assert.Diff(t, deleted, []string{"cfg-a"})
+		if run == 0 {
+			first = body
+		} else {
+			assert.Diff(t, string(body), string(first))
+		}
+	}
+}
+
+func TestRenderTrees_MultipleValuesFromKeys(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		keys    []string
+		changed bool
+	}{
+		{"unchanged then changed", []string{"stable.yaml", "changed.yaml"}, true},
+		{"changed then unchanged", []string{"changed.yaml", "stable.yaml"}, true},
+		{"all unchanged", []string{"stable.yaml", "changed.yaml"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			roots := [2]string{t.TempDir(), t.TempDir()}
+			trees := make([]Tree, 2)
+			for side, root := range roots {
+				value := "old"
+				if side == 1 && tc.changed {
+					value = "new"
+				}
+				testutil.WriteFile(t, root, "flux/values.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata:\n  stable.yaml: 'stable: same'\n  changed.yaml: 'changed: %s'\n  unused: '%d'\n", value, side))
+				release := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: app, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}\n  valuesFrom:\n"
+				for _, key := range tc.keys {
+					release += "  - {kind: ConfigMap, name: values, valuesKey: " + key + "}\n"
+				}
+				testutil.WriteFile(t, root, "flux/release.yaml", release)
+				testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+				testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata:\n  changed: {{ .Values.changed | quote }}\n  stable: {{ .Values.stable | quote }}\n")
+				trees[side] = Tree{RepoRoot: root, Path: filepath.Join(root, "flux"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, ExternalChanges: change.NewSet([]string{"flux/values.yaml"})}
+			}
+			runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+			assert.NoError(t, err)
+			assert.Equal(t, len(runs), 2)
+			app := testutil.HelmReleaseID("apps", "app")
+			for side, run := range runs {
+				assert.NoError(t, run.Err)
+				assert.Equal(t, len(run.Result.Warnings), 0)
+				assert.Equal(t, len(run.Result.ClusterWarnings), 0)
+				assert.Equal(t, len(run.Result.Blocked), 0)
+				_, selected, dirty, _ := run.filter.Membership(app)
+				assert.Equal(t, selected, tc.changed)
+				assert.Equal(t, dirty, tc.changed)
+				docs := outputByParent(run.Result.Manifests)[app]
+				if !tc.changed {
+					assert.Equal(t, len(docs), 0)
+					continue
+				}
+				assert.Equal(t, len(docs), 1)
+				if len(docs) == 1 {
+					value := "old"
+					if side == 1 {
+						value = "new"
+					}
+					assert.Diff(t, docs[0]["data"], map[string]any{"changed": value, "stable": "same"})
+				}
+			}
+		})
+	}
+}
+
+func TestRenderTrees_ParentIntervalExternalChart(t *testing.T) {
+	t.Parallel()
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	trees := make([]Tree, 2)
+	for side, root := range roots {
+		testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "apps", fmt.Sprintf("  interval: %dm\n  path: ./apps/child\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n", side+1)))
+		testutil.WriteFile(t, root, "apps/child/kustomization.yaml", "resources: [release.yaml]\n")
+		testutil.WriteFile(t, root, "apps/child/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child, namespace: apps}\nspec:\n  interval: 1m\n  chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}}}\n")
+		testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+		testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: v%d}\n", side+1))
+		trees[side] = Tree{RepoRoot: root, Path: filepath.Join(root, "flux"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}}
+	}
+	changes, err := change.Detect(t.Context(), testDirectoryInput(t, roots[0]), testDirectoryInput(t, roots[1]))
+	assert.NoError(t, err)
+	assert.Diff(t, changes.Paths(), []string{"charts/demo/templates/cm.yaml", "flux/parent.yaml"})
+	child := testutil.HelmReleaseID("apps", "child")
+	parent := testutil.KustomizationID("apps", "parent")
+	full := make([]Rendered, 2)
+	for side, tree := range trees {
+		runs, err := RenderTrees(t.Context(), []Tree{tree}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		assert.NoError(t, err)
+		assert.Equal(t, len(runs), 1)
+		full[side] = runs[0]
+	}
+	delta := func(runs []Rendered) []byte {
+		t.Helper()
+		for side, run := range runs {
+			assert.NoError(t, run.Err)
+			assert.Equal(t, len(run.Result.Warnings), 0)
+			assert.Equal(t, len(run.Result.ClusterWarnings), 0)
+			assert.Equal(t, len(run.Result.Blocked), 0)
+			docs := outputByParent(run.Result.Manifests)[child]
+			assert.Equal(t, len(docs), 1)
+			if len(docs) == 1 {
+				assert.Diff(t, docs[0]["data"], map[string]any{"value": fmt.Sprintf("v%d", side+1)})
+			}
+		}
+		selected, selectedErr, err := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+		assert.NoError(t, err)
+		body, warnings, suppressed, err := diff.Compare(
+			diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+			diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
+			selectedErr, diff.Options{Format: diff.FormatJSON})
+		assert.NoError(t, err)
+		assert.Equal(t, len(warnings), 0)
+		assert.Equal(t, len(suppressed), 0)
+		return body
+	}
+	want := delta(full)
+	var expected struct {
+		Changes []diff.Change `json:"changes"`
+	}
+	assert.NoError(t, json.Unmarshal(want, &expected))
+	assert.Equal(t, len(expected.Changes) > 0, true)
+	assert.Equal(t, slices.ContainsFunc(expected.Changes, func(c diff.Change) bool {
+		return c.Parent.NamedResource == child && c.Kind == "ConfigMap" && c.Name == "output" && c.Status == diff.StatusChanged
+	}), true)
+	t.Logf("independent full delta: %s", want)
+	var first [2][]byte
+	for run := range 2 {
+		for side := range trees {
+			trees[side].ExternalChanges = changes
+		}
+		runs, err := RenderTrees(t.Context(), trees, Config{CacheDir: t.TempDir(), Concurrency: 2})
+		assert.NoError(t, err)
+		assert.Equal(t, len(runs), 2)
+		assert.Equal(t, string(delta(runs)), string(want))
+		for side, rendered := range runs {
+			needed, selected, dirty, _ := rendered.filter.Membership(parent)
+			assert.Equal(t, needed, true)
+			assert.Equal(t, selected, true)
+			t.Logf("run %d side %d parent membership: needed=%t selected=%t dirty=%t", run, side, needed, selected, dirty)
+			_, selected, dirty, _ = rendered.filter.Membership(child)
+			assert.Equal(t, selected, true)
+			assert.Equal(t, dirty, true)
+			assert.Equal(t, rendered.Store().GetObject(child) != nil, true)
+			body, err := json.Marshal(rendered.Result.Manifests)
+			assert.NoError(t, err)
+			if run == 0 {
+				first[side] = body
+			} else {
+				assert.Equal(t, string(body), string(first[side]))
+			}
+		}
+	}
+}
+
 func TestRenderTrees_OptionalInputRoutes(t *testing.T) {
 	t.Parallel()
 	for _, route := range []string{"directory_0300", "committed_0301"} {
@@ -404,8 +664,8 @@ spec: {url: https://example.test/cluster.git}
 							t.Errorf("side %d required %s was not reconciled: %+v", side, id, info)
 						}
 					}
-					info, _ := rendered.Store().GetStatus(stable)
-					assert.Equal(t, info.Outcome(), store.OutcomeUnchanged)
+					_, dispatched := rendered.Store().GetStatus(stable)
+					assert.Equal(t, dispatched, false)
 					byParent := outputByParent(rendered.Result.Manifests)
 					assert.Equal(t, len(byParent[stable]), 0)
 					assert.Diff(t, byParent[app], fullApp[side])
@@ -1003,6 +1263,14 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						defer cancel()
 						release := make(chan struct{})
 						defer close(release)
+						active := 2
+						if headOnly {
+							active = 1
+						}
+						wantOrigErrors := 1
+						if headOnly {
+							wantOrigErrors = 0
+						}
 						entered, canceled, completed := make(chan struct{}, 2), make(chan struct{}, 2), make(chan struct{}, 2)
 						inputs := [2]*store.SourceArtifact{}
 						for i := range inputs {
@@ -1010,11 +1278,11 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 								"kustomization.yaml":     {Data: []byte("resources: [flux.yaml]\n")},
 								"flux.yaml":              {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n"))},
 								"app/kustomization.yaml": {Data: []byte("configMapGenerator: [{name: held, files: [payload.txt]}]\n")},
-								"app/payload.txt":        {Data: []byte("fixture")},
+								"app/payload.txt":        {Data: fmt.Appendf(nil, "fixture-%d", i)},
 							}}
 							input.acquire = func() error {
 								_, _, _, err := owner.Blob(ctx, sourcecache.BlobKey{Content: fmt.Sprintf("held-input-%d", i)}, sourcecache.Policy{},
-									func(ctx context.Context, _ sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
+									func(_ context.Context, _ sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
 										entered <- struct{}{}
 										<-ctx.Done()
 										canceled <- struct{}{}
@@ -1027,9 +1295,12 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 							inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
 						}
 						cfg := treeConfig{CacheDir: root, Concurrency: workers, HeadOnly: headOnly,
-							StatusListener: func(id manifest.TreeID, _ manifest.DiagnosticIdentity, _ store.StatusInfo) {
-								inputs[id.Side].FS.(*joinedTreeFS).armed.Store(true)
-							}, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
+							StatusListener: func(id manifest.TreeID, resource manifest.DiagnosticIdentity, status store.StatusInfo) {
+								if resource.ID == testutil.KustomizationID("apps", "owner") && status.String() == "resolving dependencies" {
+									input := inputs[id.Side].FS.(*joinedTreeFS)
+									input.once.Do(func() { input.err = input.acquire() })
+								}
+							}, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet([]string{"app/payload.txt"})}
 						if tc.injected {
 							cfg.Cache = owner
 						}
@@ -1038,7 +1309,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 							_, err := RenderTrees(ctx, []Tree{{RepoRoot: inputs[0].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: inputs[1].LocalPath, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 							done <- err
 						}()
-						for range 2 {
+						for range active {
 							<-entered
 						}
 						if !tc.injected {
@@ -1046,7 +1317,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 							externalShare = false
 						}
 						cancel()
-						for range 2 {
+						for range active {
 							<-canceled
 						}
 						synctest.Wait()
@@ -1068,12 +1339,13 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 						})
 						assert.NoError(t, err)
 
-						release <- struct{}{}
-						release <- struct{}{}
-						if err := <-done; !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "orig snapshot:") != 1 || strings.Count(err.Error(), "current snapshot:") != 1 {
+						for range active {
+							release <- struct{}{}
+						}
+						if err := <-done; !errors.Is(err, context.Canceled) || strings.Count(err.Error(), "orig snapshot:") != wantOrigErrors || strings.Count(err.Error(), "current snapshot:") != 1 {
 							t.Fatalf("joined cancellation lost a side: %v", err)
 						}
-						for range 2 {
+						for range active {
 							<-completed
 						}
 						if tc.injected {
@@ -1105,6 +1377,10 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 	t.Run("http-bootstrap", func(t *testing.T) {
 		for _, tc := range []struct{ headOnly, injected bool }{{false, false}, {false, true}, {true, false}, {true, true}} {
 			t.Run(fmt.Sprintf("head_only_%t/injected_%t", tc.headOnly, tc.injected), func(t *testing.T) {
+				active, wantOrigErrors := 2, 1
+				if tc.headOnly {
+					active, wantOrigErrors = 1, 0
+				}
 				entered, completed := make(chan struct{}, 2), make(chan struct{}, 2)
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.WriteHeader(http.StatusOK)
@@ -1135,14 +1411,14 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 					_, err := RenderTrees(ctx, []Tree{{RepoRoot: trees[0].RepoRoot, Path: trees[0].Path, SelfURLs: trees[0].SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Input: cfg.BaseInput, BaseInput: cfg.Input, ExternalChanges: cfg.ExternalChanges}, {RepoRoot: trees[1].RepoRoot, Path: trees[1].Path, SelfURLs: trees[1].SelfURLs, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: cfg.Input, BaseInput: cfg.BaseInput, ExternalChanges: cfg.ExternalChanges}}, cfg.Config)
 					done <- err
 				}()
-				for range 2 {
+				for range active {
 					<-entered
 				}
 				cancel()
-				if err := <-done; !errors.Is(err, context.Canceled) || errors.Is(err, fs.ErrClosed) || strings.Count(err.Error(), "orig snapshot:") != 1 || strings.Count(err.Error(), "current snapshot:") != 1 {
+				if err := <-done; !errors.Is(err, context.Canceled) || errors.Is(err, fs.ErrClosed) || strings.Count(err.Error(), "orig snapshot:") != wantOrigErrors || strings.Count(err.Error(), "current snapshot:") != 1 {
 					t.Fatalf("HTTP bootstrap teardown lost a side or closed backing early: %v", err)
 				}
-				for range 2 {
+				for range active {
 					<-completed
 				}
 				if tc.injected {

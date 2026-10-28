@@ -18,20 +18,21 @@ import (
 )
 
 // document caches a directory document or parsed file objects by source-view path.
-// Consumers MUST never mutate its objects.
+// Consumers MUST never mutate its objects. Pointer fields precede flags to keep map values inline.
 type document struct {
 	body          *types.Kustomization
 	file          string
 	objects       []parsedObject
+	decodeErr     error
 	built         []store.Child
 	builtInput    *BuiltInput
+	lookup        map[manifest.NamedResource]store.Child
+	plugins       *[]pluginInputs
 	selected      bool
 	eligible      fileEligibility
 	rootKnown     bool
 	rootAdmitted  bool
 	terminal      bool
-	lookup        map[manifest.NamedResource]store.Child
-	plugins       *[]pluginInputs
 	loaded        bool
 	scanExcluded  bool
 	bootstrap     bool
@@ -47,6 +48,8 @@ type document struct {
 type parsedObject struct {
 	store.Child
 	outcome manifest.DocOccurrence
+	item    int
+	fact    *Occurrence
 	version string
 }
 
@@ -66,6 +69,8 @@ type documentReader struct {
 	views      map[string]fs.FS
 	artifacts  map[string]*store.SourceArtifact
 	parsed     *ParsedInputs
+	compact    bool
+	coordinate *OccurrenceID
 	regular    bool
 	changed    []string
 	bootstrap  string
@@ -175,7 +180,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 
 func (l *Loader) refreshSources() {
 	l.documents.parsed = nil
-	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets {
+	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets && inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs
 	}
 	changed := l.documents.mountSources(l.Store, l.Index)

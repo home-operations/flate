@@ -11,7 +11,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []manifest.NamedResource) {
+func (d *Session) promoteOrphans(ctx context.Context, standaloneSecrets []manifest.NamedResource) error {
 	index := d.loader.Index
 	// All admitted stand-ins MUST be removed before promotion so real sibling Secrets take precedence.
 	slices.SortFunc(standaloneSecrets, manifest.NamedResource.Compare)
@@ -29,14 +29,17 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 		if d.cfg.Store.GetObject(id) != nil || record.Declaration != nil && !d.loader.AdmitsRoot(record.Declaration, record.Path) {
 			continue
 		}
-		admit := func(obj manifest.BaseManifest) bool {
-			id := obj.Named()
-			sibling, ok := index.Lookup(id)
-			return ok && cmp.Or(sibling.Builder, sibling.File) == cmp.Or(record.Builder, record.File) && d.loader.AdmitsRoot(obj, record.Path)
+		admit := func(obj manifest.BaseManifest) (bool, error) {
+			sibling, ok := index.Lookup(obj.Named())
+			return ok && cmp.Or(sibling.Builder, sibling.File) == cmp.Or(record.Builder, record.File) && d.loader.AdmitsRoot(obj, record.Path), nil
 		}
 		opts := loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, WipeSecrets: d.cfg.WipeSecrets, Admit: admit}
 		opts.Documents = d.loader.PromotionDocuments(id)
-		if !loader.Promote(ctx, d.cfg.Store, id, opts) {
+		promoted, err := loader.Promote(ctx, d.cfg.Store, id, opts)
+		if err != nil {
+			return err
+		}
+		if !promoted {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}
 	}
@@ -46,4 +49,5 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 			d.cfg.Store.AddObject(obj, child.Doc)
 		}
 	}
+	return nil
 }

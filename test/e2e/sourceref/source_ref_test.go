@@ -1645,7 +1645,7 @@ spec:
 										assert.Equal(t, labels[manifest.FluxKustomizeDomain+"/namespace"], "flux-system")
 									}
 								}
-								assert.Diff(t, ids, map[string]int{"ConfigMap/apps/hello": 1, "Kustomization/flux-system/apps": 2, "GitRepository/flux-system/cluster": 1})
+								assert.Diff(t, ids, map[string]int{"Kustomization/flux-system/apps": 1, "GitRepository/flux-system/cluster": 1})
 							} else if stage == "dirty-only" {
 								if out != "" {
 									t.Fatalf("dirty content selected the pinned root:\n%s", out)

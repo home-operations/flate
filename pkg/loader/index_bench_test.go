@@ -32,7 +32,7 @@ func BenchmarkFinalizeIndex_WideDirectory(b *testing.B) {
 			r.Path = filepath.Join(root, r.File)
 			l.Index.Records[id] = r
 		}
-		if err := l.FinalizeIndex(b.Context(), root); err != nil {
+		if err := l.FinalizeIndex(b.Context(), root, true); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -61,7 +61,7 @@ func BenchmarkFinalizeIndex_LocalChart(b *testing.B) {
 			r.Refs = []manifest.NamedResource{source.Named()}
 			l.Index.Records[id] = r
 		}
-		if err := l.FinalizeIndex(b.Context(), root); err != nil {
+		if err := l.FinalizeIndex(b.Context(), root, true); err != nil {
 			b.Fatal(err)
 		}
 	}

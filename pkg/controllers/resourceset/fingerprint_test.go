@@ -1,6 +1,7 @@
 package resourceset
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -256,7 +257,7 @@ func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderR
 	docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
 		var hit bool
 		var err error
-		fp, hit, err = run.FingerprintDedup(rs.Named(), content, &store.Emission{})
+		fp, hit, err = run.FingerprintDedup(context.TODO(), rs.Named(), content, &store.Emission{})
 		return hit, err
 	})
 	return testutil.DocumentMaps(docs), fp, err

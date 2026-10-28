@@ -124,12 +124,116 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		})
 	}
 	wg.Wait()
+	constructionRound := 0
+	requalify := map[manifest.ClusterID]bool{}
+	for {
+		for i := range results {
+			current := results[i].Orchestrator
+			if current == nil {
+				continue
+			}
+			opposite := results[i].ID
+			opposite.Side = manifest.TreeHead - opposite.Side
+			j, found := byID[opposite]
+			var other *Orchestrator
+			if found {
+				other = results[j].Orchestrator
+			}
+			if other != nil && j < i {
+				continue
+			}
+			before, after := current.index, (*manifest.DiscoveryIndex)(nil)
+			if other != nil {
+				after = other.index
+			}
+			if results[i].ID.Side == manifest.TreeHead {
+				before, after = after, before
+			}
+			if constructionRound != 0 && !requalify[current.cfg.ID.Cluster] {
+				continue
+			}
+			changes := current.cfg.ExternalChanges
+			if other != nil && (changes != nil || current.cfg.Input != other.cfg.Input) {
+				base, head := current, other
+				if current.cfg.ID.Side == manifest.TreeHead {
+					base, head = other, current
+				}
+				var failure error
+				changes, failure = change.Qualify(ctx, changes, base.store, head.store)
+				if failure != nil {
+					for _, side := range []int{i, j} {
+						results[side].Err = &treeError{id: results[side].ID, err: failure, attributed: len(results) > 1}
+						results[side].Result = &Result{Warnings: results[side].store.Warnings()}
+						results[side].stop()
+						results[side].Orchestrator = nil
+					}
+					continue
+				}
+			}
+			changes = changes.WithReaders(before, after)
+			current.cfg.ExternalChanges = changes
+			if other != nil {
+				other.cfg.ExternalChanges = changes
+			}
+		}
+		clear(requalify)
+		for i := range results {
+			o := results[i].Orchestrator
+			if o == nil || o.session == nil {
+				continue
+			}
+			wg.Go(func() {
+				o.preparation = nil
+				o.loader.Options.Changes = o.cfg.ExternalChanges
+				proposal, failure := o.loader.Prepare(ctx, store.Child{}, nil, nil)
+				advanced := false
+				if failure == nil {
+					advanced, failure = o.session.Advance(ctx, proposal)
+				}
+				if failure != nil {
+					results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
+					results[i].Result = &Result{Warnings: o.store.Warnings()}
+					o.stop()
+					results[i].Orchestrator = nil
+				} else if !advanced {
+					o.preparation = proposal
+				}
+			})
+		}
+		wg.Wait()
+		for i := range results {
+			o := results[i].Orchestrator
+			if o != nil && o.session != nil && o.preparation == nil {
+				requalify[results[i].ID.Cluster] = true
+			}
+		}
+		if len(requalify) == 0 {
+			break
+		}
+		constructionRound++
+	}
 	for i := range results {
-		current := results[i].Orchestrator
-		if current == nil {
+		o := results[i].Orchestrator
+		if o == nil || o.session == nil {
 			continue
 		}
-		opposite := results[i].ID
+		wg.Go(func() {
+			if failure := o.discover(ctx); failure != nil {
+				results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
+				results[i].Result = &Result{Warnings: o.store.Warnings()}
+				o.stop()
+				results[i].Orchestrator = nil
+			}
+		})
+	}
+	wg.Wait()
+
+	for i := range results {
+		o := results[i].Orchestrator
+		if o == nil || o.loader == nil {
+			continue
+		}
+		opposite := o.cfg.ID
 		opposite.Side = manifest.TreeHead - opposite.Side
 		j, found := byID[opposite]
 		var other *Orchestrator
@@ -139,43 +243,97 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		if other != nil && j < i {
 			continue
 		}
-		before, after := current.index, (*manifest.DiscoveryIndex)(nil)
+		base, head := o.store, (*store.Store)(nil)
 		if other != nil {
-			after = other.index
+			head = other.store
 		}
-		if results[i].ID.Side == manifest.TreeHead {
-			before, after = after, before
+		if o.cfg.ID.Side == manifest.TreeHead {
+			base, head = head, base
 		}
-		changes := current.cfg.ExternalChanges
-		if other != nil && (changes != nil || current.cfg.Input != other.cfg.Input) {
-			base, head := current, other
-			if current.cfg.ID.Side == manifest.TreeHead {
-				base, head = other, current
-			}
-			var failure error
-			changes, failure = change.Qualify(ctx, changes, base.store, head.store)
-			if failure != nil {
-				for _, side := range []int{i, j} {
-					results[side].Err = &treeError{id: results[side].ID, err: failure, attributed: len(results) > 1}
-					results[side].Result = &Result{Warnings: results[side].store.Warnings()}
-					results[side].stop()
-					results[side].Orchestrator = nil
-				}
+		var prepared [2]map[manifest.NamedResource]store.Child
+		for side, st := range [2]*store.Store{base, head} {
+			if st == nil {
 				continue
 			}
+			owner := o
+			if owner.store != st {
+				owner = other
+			}
+			for id, record := range owner.index.Records {
+				if record.Builder == "" {
+					continue
+				}
+				child := owner.loader.IndexedObject(id, record)
+				if child.Obj == nil {
+					continue
+				}
+				if prepared[side] == nil {
+					prepared[side] = map[manifest.NamedResource]store.Child{}
+				}
+				prepared[side][id] = child
+			}
+		}
+		changes, failure := o.cfg.ExternalChanges.WithDeclarations(ctx, base, head, prepared)
+		if failure != nil {
+			for _, index := range []int{i, j} {
+				if index != i && !found {
+					continue
+				}
+				side := results[index].Orchestrator
+				if side == nil {
+					continue
+				}
+				results[index].Result = &Result{Warnings: side.store.Warnings()}
+				results[index].Err = &treeError{id: results[index].ID, err: failure, attributed: len(results) > 1}
+				side.stop()
+				results[index].Orchestrator = nil
+			}
+			continue
 		}
 		if other == nil {
-			current.cfg.ExternalChanges = changes.WithReaders(before, after)
+			before, after := o.index, (*manifest.DiscoveryIndex)(nil)
+			if o.cfg.ID.Side == manifest.TreeHead {
+				before, after = after, before
+			}
+			o.cfg.ExternalChanges = changes.WithReaders(before, after)
 		} else {
-			projectedOther := projectEntryReaders(other.index, other.entryBinding, current.entryBinding)
-			projectedCurrent := projectEntryReaders(current.index, current.entryBinding, other.entryBinding)
-			if current.cfg.ID.Side == manifest.TreeBase {
-				current.cfg.ExternalChanges = changes.WithReaders(current.index, projectedOther)
+			projectedOther := projectEntryReaders(other.index, other.entryBinding, o.entryBinding)
+			projectedCurrent := projectEntryReaders(o.index, o.entryBinding, other.entryBinding)
+			if o.cfg.ID.Side == manifest.TreeBase {
+				o.cfg.ExternalChanges = changes.WithReaders(o.index, projectedOther)
 				other.cfg.ExternalChanges = changes.WithReaders(projectedCurrent, other.index)
 			} else {
-				current.cfg.ExternalChanges = changes.WithReaders(projectedOther, current.index)
+				o.cfg.ExternalChanges = changes.WithReaders(projectedOther, o.index)
 				other.cfg.ExternalChanges = changes.WithReaders(other.index, projectedCurrent)
 			}
+		}
+	}
+	for i := range results {
+		o := results[i].Orchestrator
+		if o == nil || o.loader == nil {
+			continue
+		}
+		wg.Go(func() {
+			o.completeBootstrap()
+			if failure := o.buildChangeFilter(ctx); failure != nil {
+				results[i].Result = &Result{Warnings: o.store.Warnings()}
+				results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
+				o.stop()
+				results[i].Orchestrator = nil
+			}
+		})
+	}
+	wg.Wait()
+	for i := range results {
+		o := results[i].Orchestrator
+		if o == nil || o.loader == nil {
+			continue
+		}
+		if failure := o.installAdmission(ctx); failure != nil {
+			results[i].Result = &Result{Warnings: o.store.Warnings()}
+			results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
+			o.stop()
+			results[i].Orchestrator = nil
 		}
 	}
 	for i := range results {
@@ -190,12 +348,14 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		}
 		wg.Go(func() {
 			defer o.stop()
-			o.completeBootstrap()
-			if failure := o.buildChangeFilter(ctx); failure != nil {
-				results[i].Orchestrator = nil
-				results[i].Result = &Result{Warnings: o.store.Warnings()}
-				results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
-				return
+			if o.loader == nil {
+				o.completeBootstrap()
+				if failure := o.buildChangeFilter(ctx); failure != nil {
+					results[i].Orchestrator = nil
+					results[i].Result = &Result{Warnings: o.store.Warnings()}
+					results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
+					return
+				}
 			}
 			result, failure := o.collectResult(o.run(ctx))
 			results[i].Result = result
@@ -271,7 +431,9 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 				tree.ExternalChanges, changes[pair] = set, set
 			}
 		}
-		entries, err := discovery.Plan(ctx, discovery.Config{Input: tree.Input, Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, WipeSecrets: cfg.WipeSecrets, RemoteInputs: &inputs, RemoteRetry: cfg.SourceRetry})
+		selection := cfg.Selection
+		selection.Changed = selection.Changed || tree.ExternalChanges != nil
+		entries, err := discovery.Plan(ctx, discovery.Config{Selection: selection, Input: tree.Input, Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, WipeSecrets: cfg.WipeSecrets, RemoteInputs: &inputs, RemoteRetry: cfg.SourceRetry})
 		if err != nil {
 			return trees, &treeError{id: tree.ID, err: err}
 		}

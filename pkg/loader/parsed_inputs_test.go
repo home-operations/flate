@@ -161,7 +161,8 @@ func TestParsedInputs_SourceAndParsePolicy(t *testing.T) {
 
 type parsedReadFS struct {
 	fs.FS
-	reads map[string]*atomic.Int64
+	reads       map[string]*atomic.Int64
+	directories *atomic.Int64
 }
 
 func (f parsedReadFS) Open(name string) (fs.File, error) {
@@ -173,4 +174,76 @@ func (f parsedReadFS) Open(name string) (fs.File, error) {
 
 func (f parsedReadFS) Stat(name string) (fs.FileInfo, error) { return fs.Stat(f.FS, name) }
 
-func (f parsedReadFS) ReadDir(name string) ([]fs.DirEntry, error) { return fs.ReadDir(f.FS, name) }
+func (f parsedReadFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	if f.directories != nil {
+		f.directories.Add(1)
+	}
+	return fs.ReadDir(f.FS, name)
+}
+
+func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	files := fstest.MapFS{
+		"left/kustomization.yaml":   {Data: []byte("namespace: left\nnamePrefix: left-\nresources: [../shared]\n")},
+		"right/kustomization.yaml":  {Data: []byte("namespace: right\nnamePrefix: right-\nresources: [../shared]\n")},
+		"shared/kustomization.yaml": {Data: []byte("resources: [objects.yaml]\n")},
+		"shared/objects.yaml":       {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: data}\ndata: {KEY: value}\n")},
+	}
+	reads := map[string]*atomic.Int64{}
+	for name := range files {
+		reads[name] = &atomic.Int64{}
+	}
+	var directories atomic.Int64
+	input := &store.SourceArtifact{LocalPath: root, FS: parsedReadFS{FS: files, reads: reads, directories: &directories}}
+	newLoader := func(input *store.SourceArtifact, parsed *ParsedInputs) *Loader {
+		st := store.New()
+		st.SetArtifact(manifest.BootstrapSourceID, input)
+		l := New(st)
+		l.SourceRoot = root
+		l.Options.Selection = manifest.Selection{Changed: true}
+		l.Options.ParsedInputs = parsed
+		return l
+	}
+	planner := newLoader(input, nil)
+	_, err := planner.Load(t.Context(), root)
+	assert.NoError(t, err)
+	for _, side := range []string{"left", "right"} {
+		_, err := planner.Occurrences(t.Context(), filepath.Join(root, side), "")
+		assert.NoError(t, err)
+	}
+	parsed := planner.ParsedInputs()
+	before := map[string]int64{}
+	for name, count := range reads {
+		before[name] = count.Load()
+	}
+	directoryCount := directories.Load()
+	for _, side := range []string{"left", "right"} {
+		l := newLoader(input, parsed)
+		_, err := l.Load(t.Context(), root)
+		assert.NoError(t, err)
+		occurrences, err := l.Occurrences(t.Context(), filepath.Join(root, side), "")
+		assert.NoError(t, err)
+		assert.Equal(t, len(occurrences), 1)
+		assert.Equal(t, occurrences[0].Identity.Namespace, side)
+		assert.Equal(t, occurrences[0].Identity.Name, side+"-data")
+		assert.Equal(t, len(l.Store.Objects()), 0)
+		l.Index.Records = nil
+	}
+	assert.Equal(t, directories.Load(), directoryCount)
+	for name, count := range reads {
+		assert.Equal(t, count.Load(), before[name])
+	}
+	assert.Equal(t, len(planner.Index.Records), 1)
+
+	other := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"only.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n")},
+	}}
+	l := newLoader(other, parsed)
+	_, err = l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.Equal(t, len(l.Index.Records), 1)
+	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "other"}); !ok {
+		t.Fatal("borrowed facts from another source view")
+	}
+}

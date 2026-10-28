@@ -14,6 +14,8 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -46,7 +48,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 			if _, err := l.Load(t.Context(), filepath.Join(root, "entry")); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			if overlay != "entry" {
@@ -60,7 +62,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 				if !slices.Contains(ownersForFilter(l.Index, file), owner.Named()) {
 					t.Errorf("owner missing for %s", file)
 				}
-				filter := change.NewFilter(change.NewSet([]string{file}), l.Index, s, "")
+				filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: l.Index, Inventory: s, Root: ""})
 				if !filter.ShouldReconcile(owner.Named()) {
 					t.Errorf("changed %s did not select owner", file)
 				}
@@ -68,7 +70,7 @@ func TestFinalizeIndex_ImplicitAndTerminalInputs(t *testing.T) {
 			if id := testutil.KustomizationID("apps", "terminal"); s.GetObject(id) != nil || len(l.Index.Records[id].Productions) != 0 {
 				t.Fatal("terminal input became an object or producer")
 			}
-			if change.NewFilter(change.NewSet([]string{"inputs/unrelated"}), l.Index, s, "").ShouldReconcile(owner.Named()) {
+			if admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/unrelated"}), Index: l.Index, Inventory: s, Root: ""}).ShouldReconcile(owner.Named()) {
 				t.Fatal("unrelated input selected owner")
 			}
 		})
@@ -93,7 +95,7 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 	admitForFilter(s, root)
 	_, err := l.Load(t.Context(), filepath.Join(root, "entry"))
 	assert.NoError(t, err)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, file := range []string{"shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch"} {
@@ -102,7 +104,7 @@ func TestFilter_DuplicateDocumentKeys(t *testing.T) {
 			t.Errorf("owner missing for %s", file)
 		}
 	}
-	if !change.NewFilter(change.NewSet([]string{"inputs/patch"}), l.Index, s, "").ShouldReconcile(owner.Named()) {
+	if !admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"inputs/patch"}), Index: l.Index, Inventory: s, Root: ""}).ShouldReconcile(owner.Named()) {
 		t.Error("changed terminal patch did not select owner")
 	}
 }
@@ -137,7 +139,7 @@ func TestFinalizeIndex_InputSourceViews(t *testing.T) {
 			admitForFilter(s, root)
 			_, err := l.Load(t.Context(), filepath.Join(local, "entry"))
 			assert.NoError(t, err)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			prefix := ".artifacts/" + mode + "/"
@@ -149,7 +151,7 @@ func TestFinalizeIndex_InputSourceViews(t *testing.T) {
 			if mode == "alias" {
 				file = "subtree/inputs/patch"
 			}
-			filter := change.NewFilter(change.NewSet([]string{file}), l.Index, s, "")
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: l.Index, Inventory: s, Root: ""})
 			assert.Equal(t, filter.ShouldReconcile(owner.Named()), mode != "pinned")
 			assert.Equal(t, filter.ShouldReconcile(source.Named()), mode != "pinned")
 			if mode == "pinned" {
@@ -246,7 +248,7 @@ spec:
 				return l, input, want
 			}
 			l, input, want := newLoader()
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			id := testutil.HelmReleaseID("apps", "demo")
@@ -262,16 +264,16 @@ spec:
 			assert.Equal(t, len(l.Index.Records), 1)
 			record, _ = l.Index.Lookup(id)
 			assert.Equal(t, len(record.Productions), 1)
-			filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), l.Index, l.Store, "")
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"config/prod.yaml"}), Index: l.Index, Inventory: l.Store, Root: ""})
 			assert.Equal(t, filter.ShouldReconcile(id), mode == "working")
 			snapshot := snapshotIndexForFilter(l.Index)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			assertFilterIndexForTest(t, *l.Index, snapshot)
 			assert.Equal(t, input.opens, 0)
 			fresh, freshInput, _ := newLoader()
-			if err := fresh.FinalizeIndex(t.Context(), root); err != nil {
+			if err := fresh.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			assertFilterIndexForTest(t, *fresh.Index, snapshot)
@@ -300,7 +302,7 @@ spec:
 		chart.SourceRef.Kind, chart.SourceRef.Name = source.Named().Kind, source.Name
 		chart.ValuesFiles = []string{"config/prod.yaml", "config/prod.yaml", "entry/kustomization.yaml"}
 		l.RegisterBuilt(loader.BuiltInput{Root: filepath.Join(root, "entry"), Source: manifest.BootstrapSourceID, Owner: manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "entry"}}, []store.Child{{Obj: chart}})
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		consumer := testutil.HelmReleaseID("apps", "demo")
 		want := []manifest.FileReader{{Reader: consumer, Source: source.Named(), Exact: true}, {Reader: chartID, Source: source.Named(), Exact: true}}
 		slices.SortFunc(want, func(a, b manifest.FileReader) int { return a.Reader.Compare(b.Reader) })
@@ -319,7 +321,7 @@ spec:
 		assert.Equal(t, slices.Contains(l.Index.Readers["entry/kustomization.yaml"], manifest.FileReader{Reader: chartID, Source: manifest.BootstrapSourceID}), false)
 		assert.Equal(t, input.opens, 0)
 		snapshot := snapshotIndexForFilter(l.Index)
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		assertFilterIndexForTest(t, *l.Index, snapshot)
 		assert.Equal(t, input.opens, 0)
 	})
@@ -370,7 +372,7 @@ func TestFinalizeIndex_OwnersOfFileResourcesEscape(t *testing.T) {
 					t.Errorf("Readers[%s] = %v, want %v", file, got, want)
 				}
 			}
-			filter := change.NewFilter(change.NewSet([]string{"apps/base/postgres/cluster.yaml"}), idx, s, "")
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"apps/base/postgres/cluster.yaml"}), Index: idx, Inventory: s, Root: ""})
 			for _, id := range want {
 				if !filter.ShouldReconcile(id.Reader) {
 					t.Errorf("changed shared base did not select %s", id.Reader)
@@ -427,7 +429,7 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 			if _, err := l.Load(t.Context(), filepath.Join(root, tc.scan)); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			idx := l.Index
@@ -450,7 +452,7 @@ func TestFinalizeIndex_ArtifactGenerators(t *testing.T) {
 				want := manifest.Production{Owner: testutil.KustomizationID("flux-system", ns), Declaration: generator, Authored: manifest.NamedResource{Group: generator.Group, Kind: generator.Kind, Namespace: "authored", Name: generator.Name}, Source: source, File: generatorFile}
 				assert.Diff(t, r.Productions, []manifest.Production{want})
 			}
-			filter := change.NewFilter(change.NewSet([]string{generatorFile}), idx, s, "")
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{generatorFile}), Index: idx, Inventory: s, Root: ""})
 			assert.Diff(t, idx.Readers[generatorFile], []manifest.FileReader{{Reader: testutil.KustomizationID("flux-system", "apps"), Source: source}, {Reader: testutil.KustomizationID("flux-system", "staging"), Source: source}})
 			for _, ns := range []string{"apps", "staging"} {
 				owner := testutil.KustomizationID("flux-system", ns)
@@ -486,7 +488,7 @@ func ownersForFilter(index *manifest.DiscoveryIndex, file string) []manifest.Nam
 func rendererForFilter(t *testing.T, l *loader.Loader, root string) *manifest.DiscoveryIndex {
 	t.Helper()
 	admitForFilter(l.Store, root)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	return l.Index
 }
 
@@ -556,7 +558,7 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	generator := manifest.NamedResource{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Namespace: "apps", Name: "generator"}
@@ -575,7 +577,7 @@ func TestFinalizeIndex_StaticArtifactGeneratorConsumer(t *testing.T) {
 			t.Fatalf("static declaration escaped its namespace or source view: %s", unrelated)
 		}
 	}
-	filter := change.NewFilter(change.NewSet([]string{"entry/consumer.yaml"}), l.Index, s, "")
+	filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"entry/consumer.yaml"}), Index: l.Index, Inventory: s, Root: ""})
 	assert.Equal(t, filter.ShouldReconcile(generator), true)
 	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("apps", "consumer")), true)
 	assert.Equal(t, filter.ShouldReconcile(testutil.KustomizationID("other", "other")), false)

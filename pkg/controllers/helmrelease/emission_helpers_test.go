@@ -1,8 +1,10 @@
 package helmrelease
 
 import (
+	"context"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -15,7 +17,7 @@ func publishDocuments(c *Controller, id manifest.NamedResource, docs []manifest.
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Failures, next.Complete = children, retained, failures, true
-	c.Emit(id, &next, nil)
+	controllertest.Emit(context.TODO(), c.Controller, id, &next)
 	return children, retained
 }
 
@@ -33,5 +35,5 @@ func publishRawFixture(t *testing.T, c *Controller, obj manifest.BaseManifest) {
 	if c.Store.GetObject(root.Named()) == nil {
 		c.Store.AddObject(root)
 	}
-	c.Emit(root.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true}, nil)
+	controllertest.Emit(t.Context(), c.Controller, root.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true})
 }

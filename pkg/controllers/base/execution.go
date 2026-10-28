@@ -70,14 +70,11 @@ func (e *Execution) Retire() {
 }
 
 // Emit publishes the candidate inventory with its consumed provenance.
-func (e *Execution) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
+func (e *Execution) Emit(ctx context.Context, id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
 	if err := e.Checkpoint(); err != nil {
 		return err
 	}
-	e.bindEmission(next)
-	e.Controller.Emit(id, next, payloads)
-	e.acceptEmission(next)
-	return manifest.DocumentFailure(next.Failures)
+	return e.publish(ctx, id, next, payloads)
 }
 
 func (e *Execution) bindEmission(next *store.Emission) {
@@ -97,10 +94,26 @@ func (e *Execution) acceptEmission(next *store.Emission) {
 	}
 }
 
+func (e *Execution) publish(ctx context.Context, id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
+	e.bindEmission(next)
+	if err := e.emit(ctx, id, next, payloads); err != nil {
+		return err
+	}
+	e.acceptEmission(next)
+	return manifest.DocumentFailure(next.Failures)
+}
+
 // Require assesses and retains readiness gates from the captured inputs.
 func (e *Execution) Require(ctx context.Context, deps []manifest.DependencyRef, level manifest.DrainLevel) error {
+	admit := false
 	for _, dep := range deps {
 		e.Reads.Require(dep)
+		admit = admit || e.filterActive() && !e.filter.ShouldReconcile(dep.NamedResource)
+	}
+	if admit {
+		if _, err := e.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &e.Reads); err != nil {
+			return err
+		}
 	}
 	return e.classify(ctx, level)
 }
@@ -157,15 +170,15 @@ func (e *Execution) Settle(ctx context.Context, level manifest.DrainLevel) {
 	if pending, ok := e.pending.(interface {
 		Settle(context.Context, manifest.DrainLevel) error
 	}); ok {
-		e.finish(pending.Settle(ctx, level))
+		e.finish(ctx, pending.Settle(ctx, level))
 	} else if e.resume != nil {
-		e.finish(e.resume(ctx, level))
+		e.finish(ctx, e.resume(ctx, level))
 	} else {
-		e.finish(e.classify(ctx, level))
+		e.finish(ctx, e.classify(ctx, level))
 	}
 }
 
-func (e *Execution) finish(err error) {
+func (e *Execution) finish(ctx context.Context, err error) {
 	if blocked, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
 		e.Blocked = blocked.Deps
 		e.kind = schedule.Blocked
@@ -199,9 +212,9 @@ func (e *Execution) finish(err error) {
 		_, _, next := e.Reads.GetEmission(id)
 		if e.Store.HasInventory(id) && len(next.Failures) == 0 {
 			next.Complete = !next.OutputReads.Valid()
-			e.bindEmission(&next)
-			e.Controller.Emit(id, &next, nil)
-			e.acceptEmission(&next)
+			if publishErr := e.publish(ctx, id, &next, nil); publishErr != nil {
+				err = errors.Join(err, publishErr)
+			}
 		}
 		next.Finish()
 		if errors.Is(err, manifest.ErrSourceSkipped) {
@@ -231,16 +244,22 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 	}()
 	obj, ok := e.Reads.Get[T](id)
 	if ok && e.filterActive() {
-		e.KeepEmitted(manifest.NamedResource{}, store.Child{Obj: obj, Productions: e.Reads.Promotions(id, nil)}, &e.Reads)
+		if _, err := e.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{Obj: obj}, &e.Reads); err != nil {
+			e.finish(ctx, err)
+			return
+		}
 	}
 
 	if ok && e.preGate(obj) {
-		e.withdrawInvalid()
+		if err := e.withdrawInvalid(ctx); err != nil {
+			e.finish(ctx, err)
+			return
+		}
 		e.Reads.Accept()
 		return
 	}
 	if err := e.Checkpoint(); err != nil {
-		e.finish(err)
+		e.finish(ctx, err)
 		return
 	}
 	if !e.Reads.Admitted() {
@@ -250,7 +269,10 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 			}
 		}
 		e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
-		e.withdrawInvalid()
+		if err := e.withdrawInvalid(ctx); err != nil {
+			e.finish(ctx, err)
+			return
+		}
 		e.Reads.Accept()
 		return
 	}
@@ -258,7 +280,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 		e.resume = e.requireDeclaration
 		err := e.requireDeclaration(ctx, level)
 		if err != nil && !errors.Is(err, manifest.ErrSourceSkipped) {
-			e.finish(err)
+			e.finish(ctx, err)
 		} else if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
 			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "object not in store at reconcile time"})
 		}
@@ -277,7 +299,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 			})
 		}
 	}
-	e.finish(err)
+	e.finish(ctx, err)
 }
 
 func (e *Execution) reconcile[T manifest.BaseManifest](ctx context.Context, obj T, level manifest.DrainLevel, reconcile func(context.Context, T, manifest.DrainLevel) error) error {
@@ -288,14 +310,14 @@ func (e *Execution) reconcile[T manifest.BaseManifest](ctx context.Context, obj 
 		return err
 	}
 	if !e.prepared {
-		if err := e.prepare(obj); err != nil {
+		if err := e.prepare(ctx, obj); err != nil {
 			return err
 		}
 	}
 	return reconcile(ctx, obj, level)
 }
 
-func (e *Execution) prepare(obj manifest.BaseManifest) error {
+func (e *Execution) prepare(ctx context.Context, obj manifest.BaseManifest) error {
 	e.prepared = true
 	objects, err := manifest.GeneratedObjects(obj)
 	if err != nil {
@@ -310,7 +332,7 @@ func (e *Execution) prepare(obj manifest.BaseManifest) error {
 	_, _, inventory := e.Reads.GetEmission(e.Reads.ID())
 	defer inventory.Finish()
 	inventory.Children, inventory.Manifests, inventory.Complete = e.generated, nil, false
-	return e.Emit(e.Reads.ID(), &inventory, nil)
+	return e.Emit(ctx, e.Reads.ID(), &inventory, nil)
 }
 
 func (e *Execution) generatedChildren(children []store.Child) []store.Child {
@@ -375,9 +397,20 @@ func (e *Execution) keepOrderingDep(id manifest.NamedResource) bool {
 
 // FingerprintDedup derives the replay key from content and reuses accepted children.
 // Nil or unmarshalable content MUST bypass replay; preflight failures still win.
-func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, attempt *store.Emission) (string, bool, error) {
+func (e *Execution) FingerprintDedup(ctx context.Context, id manifest.NamedResource, content any, attempt *store.Emission) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", true, err
+	}
 	if err := e.Checkpoint(); err != nil {
 		return "", true, err
+	}
+	if e.filter != nil {
+		_, selected, dirty, _ := e.filter.Membership(id)
+		if selected && !dirty {
+			e.Reused = true
+			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
+			return "", true, nil
+		}
 	}
 	if content == nil {
 		return "", false, e.admitRender()
@@ -415,7 +448,7 @@ func (e *Execution) FingerprintDedup(id manifest.NamedResource, content any, att
 	if attempt.OutputReads.Valid() && e.Reads.Matches(attempt.OutputReads) && slices.Equal(output.Unreadable, e.Unreadable) {
 		attempt.Reads = attempt.OutputReads
 	}
-	return fp, true, e.Emit(id, attempt, nil)
+	return fp, true, e.Emit(ctx, id, attempt, nil)
 }
 
 // Outcome returns the retained readiness decision without reading the store.
@@ -427,17 +460,16 @@ func (e *Execution) Progressed() bool { return !e.Reused }
 // Close retires all provenance borrowed by the completed invocation.
 func (e *Execution) Close() { e.Reads.Close() }
 
-func (e *Execution) withdrawInvalid() {
+func (e *Execution) withdrawInvalid(ctx context.Context) error {
 	_, _, next := e.Reads.GetEmission(e.Reads.ID())
+	defer next.Finish()
 	invalid := !next.OutputReads.Valid()
 	generated := slices.ContainsFunc(next.Children, func(child store.Child) bool { return child.Generated })
 	if e.Store.HasInventory(e.Reads.ID()) && (invalid || generated) {
 		next.Complete = invalid
-		e.bindEmission(&next)
-		e.Controller.Emit(e.Reads.ID(), &next, nil)
-		e.acceptEmission(&next)
+		return e.publish(ctx, e.Reads.ID(), &next, nil)
 	}
-	next.Finish()
+	return nil
 }
 
 func (e *Execution) admitRender() error {
@@ -492,6 +524,9 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 	}
 	for _, input := range p.wait.Inputs {
 		result := w.Available(ctx, input, level)
+		if result.Err != nil {
+			return result.Err
+		}
 		if !input.Optional && !input.Input.Private && result.Kind != schedule.Blocked && !result.Omit {
 			e.Reads.RequireData(input.NamedResource)
 		}
@@ -538,9 +573,19 @@ func compactDataIDs(ids []manifest.NamedResource) []manifest.NamedResource {
 	return slices.Compact(ids)
 }
 
-// PromoteData admits a file-indexed input before recording its semantic value.
-func (e *Execution) PromoteData(ctx context.Context, id manifest.NamedResource) {
-	if e.existence != nil {
-		e.existence.Promote(ctx, &e.Reads, id)
+func (e *Execution) promoteData(ctx context.Context, id manifest.NamedResource) error {
+	if e.filter.Enabled() {
+		var proof store.ReadSet
+		proof.Init(e.Store, e.Reads.ID(), nil)
+		defer proof.Retire()
+		proof.RequireData(id)
+		if _, err := e.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &proof); err != nil {
+			return err
+		}
 	}
+	if e.existence != nil {
+		_, err := e.existence.Promote(ctx, &e.Reads, id)
+		return err
+	}
+	return nil
 }

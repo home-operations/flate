@@ -28,7 +28,8 @@ func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
 func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
-			orig, current := writeInputWarningsFixture(t, "5m"), writeInputWarningsFixture(t, "10m")
+			orig, current := writeInputWarningsFixture(t, "5m"), writeInputWarningsFixture(t, "5m")
+			appendScopeSpec(t, current, "flux/selected.yaml", "  postBuild: {substitute: {TRIGGER: selected}}\n")
 			stdout, stderr, code := runCLI(t, verb, "all", "--path", current, "--path-orig", orig,
 				"--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir())
 			if code != 0 {
@@ -68,7 +69,7 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 				}, {
 					"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization",
 					"metadata": map[string]any{"name": "selected", "namespace": "infra"},
-					"spec":     map[string]any{"interval": "10m", "path": "./infra"},
+					"spec":     map[string]any{"interval": "5m", "path": "./infra", "postBuild": map[string]any{"substitute": map[string]any{"TRIGGER": "selected"}}},
 				}})
 				return
 			}
@@ -118,7 +119,7 @@ func testComparisonInputWarnings(t *testing.T, verb string) {
 			stdout, stderr, code := runCLI(t, args...)
 			want := ""
 			if verb == "all" {
-				want = "\nspec.interval  (kustomize.toolkit.fluxcd.io/v1/Kustomization/infra/selected)\n  ± value change\n    - 5m\n    + 10m\n\n"
+				want = "\nspec.interval\n  ± value change\n    - 5m\n    + 10m\n\n"
 			}
 			if code != 0 || stdout != want {
 				t.Fatalf("comparison changed output or failed: code=%d stdout=%q stderr=%s", code, stdout, stderr)

@@ -1,17 +1,18 @@
 package kustomization
 
 import (
+	"context"
 	"github.com/home-operations/flate/internal/testutil"
 	"testing"
 
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
-
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	fluxapis "github.com/fluxcd/pkg/apis/kustomize"
+
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
@@ -209,6 +210,6 @@ func TestKustomizationFingerprint_ArtifactKey(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil)
-	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).FingerprintDedup(manifest.NamedResource{}, content, &store.Emission{})
+	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).FingerprintDedup(context.TODO(), manifest.NamedResource{}, content, &store.Emission{})
 	return fp
 }

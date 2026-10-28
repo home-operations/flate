@@ -1,4 +1,4 @@
-package change
+package loader
 
 import (
 	"context"
@@ -15,9 +15,10 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -37,7 +38,7 @@ func TestAddEmitted_CrossSourceOptionalInputEvidence(t *testing.T) {
 			emitter := &manifest.Kustomization{Name: "emitter", Namespace: "apps", Path: "unchanged"}
 			st.AddObject(emitter)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{emitter.Named(): {File: "flux/emitter.yaml"}}}
-			filter := NewFilter(changes, index, st, roots[1])
+			filter := newAdmission(t, admissionConfig{changes: changes, index: index, inventory: st, root: roots[1]})
 			assert.Equal(t, st.GetObject(child.Obj.Named()) == nil, true)
 			_, indexed := index.Lookup(child.Obj.Named())
 			assert.Equal(t, indexed, false)
@@ -46,12 +47,11 @@ func TestAddEmitted_CrossSourceOptionalInputEvidence(t *testing.T) {
 			input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "optional", Namespace: "apps"}
 			assert.Equal(t, filter.ShouldReconcile(input), false)
 			assert.Equal(t, changes.Len(), 0)
-			assert.Equal(t, len(changes.inputs), 0)
-			setup := selection{filter: filter, objects: st, child: child}
-			assert.Equal(t, setup.affectedRoot(child.Obj.Named()), false)
+			assert.Equal(t, len(inputMap(changes)), 0)
+			setup := admissionClosure{loader: filter.loader, objects: st, incoming: child}
+			assert.Equal(t, setup.affected(child.Obj.Named(), child.Obj), false)
 			for _, production := range st.IncomingProductions(child, index) {
-				relative, indexed := setup.coordinates(production)
-				assert.Equal(t, setup.changedProduction(production, relative, indexed), false)
+				assert.Equal(t, setup.fileChanged(production.Source, production.File), false)
 			}
 			var reads store.ReadSet
 			reads.Init(st, child.Obj.Named(), nil)
@@ -73,7 +73,7 @@ func TestAddEmitted_CrossSourceOptionalInputEvidence(t *testing.T) {
 				st.AddObject(&replacement)
 			}
 			assert.Equal(t, reads.Valid(), false)
-			fresh := NewFilter(changes, index, st, roots[1])
+			fresh := newAdmission(t, admissionConfig{changes: changes, index: index, inventory: st, root: roots[1]})
 			var current store.ReadSet
 			current.Init(st, child.Obj.Named(), nil)
 			defer current.Close()
@@ -132,7 +132,7 @@ func TestFilter_ProducedTargetsWithoutObjects(t *testing.T) {
 			if tc.edge == "file_index_only" {
 				inventory = nil
 			}
-			f := NewFilter(NewSet(changes), index, inventory, "/repo")
+			f := newAdmission(t, admissionConfig{changes: change.NewSet(changes), index: index, inventory: inventory, root: "/repo"})
 			want := []string{producer.String(), target.String(), consumer.String()}
 			if tc.edge == "file_present" {
 				want = []string{target.String(), consumer.String()}
@@ -195,7 +195,7 @@ func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 				testutil.WriteFile(t, root, "components/common/kustomization.yaml", "kind: Component\n")
 				st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)})
 			}
-			changes := NewSet([]string{changed})
+			changes := change.NewSet([]string{changed})
 			if mode == "paired_pinned" || mode == "paired_alias" {
 				current := *st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 				before := current
@@ -207,10 +207,10 @@ func TestAddEmitted_EffectiveSourceRoots(t *testing.T) {
 				peer.AddObject(st.GetObject(source))
 				peer.SetArtifact(source, &before)
 				var err error
-				changes, err = Qualify(t.Context(), NewSet(nil), peer, st)
+				changes, err = change.Qualify(t.Context(), change.NewSet(nil), peer, st)
 				assert.NoError(t, err)
 			}
-			f := NewFilter(changes, nil, st, root)
+			f := newAdmission(t, admissionConfig{changes: changes, index: nil, inventory: st, root: root})
 			f.AddEmitted(testutil.KustomizationID("apps", "dependency"), store.Child{Obj: child}, f.objs)
 			assert.Equal(t, f.ShouldReconcile(child.Named()), mode == "bootstrap" || mode == "alias" || mode == "parent_segments" || mode == "paired_pinned" || mode == "paired_alias" || mode == "changed_component")
 			sibling := *child
@@ -231,7 +231,7 @@ func TestAddEmitted_IncomingEvidence(t *testing.T) {
 			selected := &manifest.GitRepository{Name: "new-source", Namespace: "apps"}
 			st.AddObject(selected)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{selected.Named(): {File: "source.yaml"}}}
-			f := NewFilter(NewSet([]string{"source.yaml", "incoming.yaml"}), index, st, "/repo")
+			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"source.yaml", "incoming.yaml"}), index: index, inventory: st, root: "/repo"})
 			stale := &manifest.Kustomization{Name: "child", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "old-source"}}
 			st.AddObject(stale)
 			incoming := *stale
@@ -259,12 +259,12 @@ func TestIntegration_ResourceEscapeSelection(t *testing.T) {
 	st := store.New()
 	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "apps/homelab"}
 	st.AddObject(owner)
-	l := loader.New(st)
+	l := New(st)
 	l.SourceRoot = root
 	_, err := l.Load(t.Context(), root)
 	assert.NoError(t, err)
-	l.FinalizeIndex(t.Context(), root)
-	f := NewFilter(NewSet([]string{"apps/base/postgres/cluster.yaml"}), l.Index, st, root)
+	l.FinalizeIndex(t.Context(), root, true)
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/base/postgres/cluster.yaml"}), index: l.Index, inventory: st, root: root})
 	assert.Equal(t, f.ShouldReconcile(owner.Named()), true)
 }
 
@@ -301,10 +301,10 @@ func TestFilter_SharedInputRelationLookupBounded(t *testing.T) {
 	st, files := seedKSStore(100)
 	index := filterFixture{files: files, root: "/repo", objects: st}.index()
 	counted := &countedProductions{Store: st, id: manifest.BootstrapSourceID}
-	f := NewFilter(NewSet([]string{"apps/app-7/ks.yaml"}), index, counted, "/repo")
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"apps/app-7/ks.yaml"}), index: index, inventory: counted, root: "/repo"})
 	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app-7")), true)
 	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app-8")), false)
-	assert.Equal(t, counted.stored, 2)
+	assert.Equal(t, counted.stored, 1)
 }
 
 func TestAddEmitted_PrimaryAdmissionReadsRelationOnce(t *testing.T) {
@@ -315,7 +315,7 @@ func TestAddEmitted_PrimaryAdmissionReadsRelationOnce(t *testing.T) {
 			parent := testutil.KustomizationID("apps", "parent")
 			child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "unrelated", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "incoming"}}
 			st := &countedProductions{Store: store.New(), id: child.Named()}
-			f := NewFilter(NewSet([]string{"parent.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}}}, st, "/repo")
+			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"parent.yaml"}), index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}}}, inventory: st, root: "/repo"})
 			switch mode {
 			case "primary_child":
 				f.keep[child.Named()] = primary
@@ -353,7 +353,7 @@ func TestAddEmitted_PromotionDuringEvaluation(t *testing.T) {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		primary.Named(): {File: "primary.yaml"}, settings: {Productions: []manifest.Production{{Owner: dependency}}},
 	}}
-	f := NewFilter(NewSet([]string{"primary.yaml"}), index, objects, "/repo")
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"primary.yaml"}), index: index, inventory: objects, root: "/repo"})
 	assert.Equal(t, f.ShouldReconcile(dependency), true)
 	assert.Equal(t, f.keep[target.Named()], kept)
 	slots := task.NewBounded(2)
@@ -418,7 +418,7 @@ func TestFilter_ProductionReadersSourceCoordinates(t *testing.T) {
 				st.AddObject(foreign)
 				assert.Equal(t, st.GetObject(reader) == nil, true)
 			}
-			filter := NewFilter(NewSet([]string{"consumer.yaml"}), index, st, root)
+			filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: root})
 			assert.Equal(t, filter.ShouldReconcile(target), true)
 			assert.Equal(t, filter.ShouldReconcile(owner), true)
 			assert.Equal(t, filter.ShouldReconcile(reader), mode == "alias" || mode == "pinned_reader" || mode == "index_only_pinned" || mode == "index_only_external")
@@ -452,7 +452,7 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 		st.AddObject(first)
 		st.SetArtifact(first.Named(), artifacts[side])
 	}
-	_, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
+	_, err := change.Qualify(t.Context(), change.NewSet(nil), stores[0], stores[1])
 	assert.NoError(t, err)
 	var single [2]int64
 	for side, st := range stores {
@@ -464,13 +464,13 @@ func TestQualify_SharedNonComparableArtifact(t *testing.T) {
 		st.AddObject(second)
 		st.SetArtifact(second.Named(), artifacts[side])
 	}
-	changes, err := Qualify(t.Context(), NewSet(nil), stores[0], stores[1])
+	changes, err := change.Qualify(t.Context(), change.NewSet(nil), stores[0], stores[1])
 	assert.NoError(t, err)
 	for side := range stores {
 		assert.Equal(t, readers[side].opens.Load(), single[side])
 	}
 	for _, source := range []*manifest.GitRepository{first, second} {
-		assert.Diff(t, changes.sources[source.Named()].changes.Paths(), []string{"file"})
+		assert.Diff(t, sourceChanges(changes, source.Named()).Paths(), []string{"file"})
 	}
 }
 
@@ -535,11 +535,11 @@ func TestQualify_ContentFingerprint(t *testing.T) {
 			if mode == "canceled" {
 				cancel()
 			}
-			changes := NewSet(nil)
+			changes := change.NewSet(nil)
 			if mode == "bootstrap" {
 				changes = nil
 			}
-			qualified, err := Qualify(ctx, changes, st[0], st[1])
+			qualified, err := change.Qualify(ctx, changes, st[0], st[1])
 			if mode == "error" || mode == "canceled" || mode == "callback_canceled" || mode == "callback_deadline" {
 				want := fs.ErrPermission
 				if mode == "canceled" || mode == "callback_canceled" {
@@ -549,7 +549,7 @@ func TestQualify_ContentFingerprint(t *testing.T) {
 					want = context.DeadlineExceeded
 				}
 				if !errors.Is(err, want) {
-					t.Fatalf("Qualify error = %v, want %v", err, want)
+					t.Fatalf("change.Qualify error = %v, want %v", err, want)
 				}
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), mode == "error")
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), mode == "error")
@@ -560,7 +560,7 @@ func TestQualify_ContentFingerprint(t *testing.T) {
 			if mode != "immutable" && mode != "mutable" {
 				paths = []string{"file"}
 			}
-			assert.Diff(t, qualified.sources[id].changes.Paths(), paths)
+			assert.Diff(t, sourceChanges(qualified, id).Paths(), paths)
 			for _, reader := range readers {
 				assert.Equal(t, reader.opens.Load() == 0, paths == nil)
 			}
@@ -605,7 +605,7 @@ func TestFilter_EqualSelectedSources(t *testing.T) {
 					input.FS = &relationReader{FS: input.FS}
 				}
 			}
-			delta, err := Detect(t.Context(), selected[0], selected[1])
+			delta, err := change.Detect(t.Context(), selected[0], selected[1])
 			assert.NoError(t, err)
 			var wantDelta []string
 			if mode == "payload_edit" || mode == "ownership_only" {
@@ -691,10 +691,10 @@ func TestFilter_EqualSelectedSources(t *testing.T) {
 			if mode == "unavailable" {
 				selected[1].FS = nil
 			}
-			supplied := NewSet(paths)
+			supplied := change.NewSet(paths)
 			if mode == "missing_bootstrap" {
 				stores[0].SetArtifact(manifest.BootstrapSourceID, nil)
-				_, err := Qualify(t.Context(), nil, stores[0], stores[1])
+				_, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				return
 			}
@@ -702,17 +702,17 @@ func TestFilter_EqualSelectedSources(t *testing.T) {
 			if mode == "comparison_policy" || mode == "reader_reuse" {
 				compareInput = nil
 			}
-			changes, err := Qualify(t.Context(), compareInput, stores[0], stores[1])
+			changes, err := change.Qualify(t.Context(), compareInput, stores[0], stores[1])
 			assert.NoError(t, err)
-			assert.Diff(t, supplied.Paths(), NewSet(paths).Paths())
-			assert.Equal(t, len(supplied.sources), 0)
+			assert.Diff(t, supplied.Paths(), change.NewSet(paths).Paths())
+			assert.Equal(t, sourceChanges(supplied, source.Named()) == nil, true)
 			if mode == "reader_reuse" {
 				for i, input := range selected {
 					assert.Equal(t, input.FS.(*relationReader).opens.Load(), expectedOpens[i])
 				}
 			}
 			if mode == "comparison_policy" {
-				assert.Equal(t, changes.sources[source.Named()].changes.Len(), 0)
+				assert.Equal(t, sourceChanges(changes, source.Named()).Len(), 0)
 				assert.Equal(t, changes.Contains("nested/extra.txt"), true)
 			}
 			if mode == "artifact_replaced" {
@@ -732,7 +732,7 @@ func TestFilter_EqualSelectedSources(t *testing.T) {
 			}
 			var kept [2][]string
 			for i := range stores {
-				kept[i] = NewFilter(changes, indexes[i], stores[i], roots[i]).KeepNames()
+				kept[i] = newAdmission(t, admissionConfig{changes: changes, index: indexes[i], inventory: stores[i], root: roots[i]}).KeepNames()
 				t.Logf("side %d exact kept identities: %v", i, kept[i])
 				want := []string{}
 				if mode == "payload_edit" || mode == "ownership_only" || mode == "declaration_edit" || mode == "authored_file" || i == 0 && (mode == "artifact_replaced" || mode == "declaration_replaced" || mode == "unavailable") {
@@ -771,14 +771,14 @@ func TestFilter_CurrentSideEvidenceAmbiguity(t *testing.T) {
 		input := &store.SourceArtifact{LocalPath: "/base", LocalRoot: "/base", FS: fstest.MapFS{"apps/cm.yaml": {Data: []byte("A\n")}}}
 		before.SetArtifact(manifest.BootstrapSourceID, input)
 		before.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: "/selected", LocalRoot: "/base", Key: "committed", Content: "committed", FS: fstest.MapFS{"apps/cm.yaml": {Data: []byte(payload)}}})
-		paths, err := Detect(t.Context(), input, current)
+		paths, err := change.Detect(t.Context(), input, current)
 		assert.NoError(t, err)
 		assert.Diff(t, paths.Paths(), []string{"apps/cm.yaml"})
-		unqualified[i] = NewFilter(paths, index, head, "").KeepNames()
+		unqualified[i] = newAdmission(t, admissionConfig{changes: paths, index: index, inventory: head, root: ""}).KeepNames()
 		assert.Diff(t, unqualified[i], selectedNames)
-		evidence, err := Qualify(t.Context(), paths, before, head)
+		evidence, err := change.Qualify(t.Context(), paths, before, head)
 		assert.NoError(t, err)
-		got := NewFilter(evidence, index, head, "").KeepNames()
+		got := newAdmission(t, admissionConfig{changes: evidence, index: index, inventory: head, root: ""}).KeepNames()
 		want := []string{}
 		if i == 1 {
 			want = selectedNames
@@ -808,7 +808,7 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 		fromA: {Productions: []manifest.Production{{Owner: a.Named(), Source: manifest.BootstrapSourceID}}},
 		fromB: {Productions: []manifest.Production{{Owner: b.Named(), Source: manifest.BootstrapSourceID}}},
 	}}
-	filter := NewFilter(NewSet([]string{"a.yaml"}), index, st, "/repo")
+	filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"a.yaml"}), index: index, inventory: st, root: "/repo"})
 	assert.Diff(t, filter.keep, map[manifest.NamedResource]role{a.Named(): primary, b.Named(): primary, fromA: primary, fromB: primary, source.Named(): kept})
 	assert.Equal(t, filter.ShouldReconcile(peer.Named()), false)
 
@@ -824,7 +824,7 @@ func TestFilter_PrimaryRolesAndCycles(t *testing.T) {
 	next.Records = maps.Clone(index.Records)
 	next.Records[c.Named()] = manifest.DiscoveryRecord{File: "c.yaml"}
 	next.Records[fromC] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: c.Named(), Source: manifest.BootstrapSourceID}}}
-	filter = NewFilter(NewSet([]string{"a.yaml"}), &next, st, "/repo")
+	filter = newAdmission(t, admissionConfig{changes: change.NewSet([]string{"a.yaml"}), index: &next, inventory: st, root: "/repo"})
 	assert.Diff(t, filter.keep, map[manifest.NamedResource]role{a.Named(): primary, b.Named(): primary, c.Named(): primary, fromA: primary, fromB: primary, fromC: primary, source.Named(): kept})
 	assert.Equal(t, filter.ShouldReconcile(peer.Named()), false)
 }
@@ -840,7 +840,7 @@ func TestAddEmitted_RetainedInputsRemainUnconsumed(t *testing.T) {
 		consumer.Named(): {File: "consumer.yaml"},
 		target.Named():   {Productions: []manifest.Production{{Owner: producer.Named()}}},
 	}}
-	f := NewFilter(NewSet([]string{"consumer.yaml"}), index, st, "/repo")
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"})
 	assert.Equal(t, f.ShouldReconcile(producer.Named()), true)
 	var reads store.ReadSet
 	reads.Init(st, consumer.Named(), nil)
@@ -886,7 +886,7 @@ func TestFilter_ProducedOrderingTarget(t *testing.T) {
 			} else {
 				st.AddObject(consumer)
 			}
-			f := NewFilter(NewSet([]string{changed}), index, st, "/repo")
+			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{changed}), index: index, inventory: st, root: "/repo"})
 			want := map[manifest.NamedResource]role{consumer.Named(): primary, target: kept, producer.Named(): kept, declaration: kept, ancestor: kept}
 			if mode == "emitted" {
 				assert.Equal(t, f.ShouldReconcile(consumer.Named()), false)
@@ -918,7 +918,7 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 		emitter:        {File: "emitter.yaml"},
 		target.Named(): {Productions: []manifest.Production{{Owner: producer.Named()}}},
 	}}
-	f := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"})
 	var reads store.ReadSet
 	reads.Init(st, emitter, nil)
 	defer reads.Close()
@@ -930,7 +930,7 @@ func TestAddEmitted_CapturedAbsentOrderingTarget(t *testing.T) {
 	assert.Diff(t, f.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary, target.Named(): kept, producer.Named(): kept})
 	assert.Equal(t, reads.Valid(), false)
 
-	fresh := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	fresh := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"})
 	var current store.ReadSet
 	current.Init(st, emitter, nil)
 	defer current.Close()
@@ -953,7 +953,7 @@ func TestAddEmitted_CapturedUnpublishedDeclaration(t *testing.T) {
 	st := store.New()
 	st.AddObjects([]manifest.BaseManifest{producer, target})
 	st.SetDiscoveryIndex(index)
-	f := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"})
 	var reads store.ReadSet
 	reads.Init(st, emitter, nil)
 	defer reads.Close()
@@ -967,7 +967,7 @@ func TestAddEmitted_CapturedUnpublishedDeclaration(t *testing.T) {
 	assert.Diff(t, f.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary, target.Named(): kept, producer.Named(): kept})
 	assert.Equal(t, reads.Valid(), false)
 
-	fresh := NewFilter(NewSet([]string{"emitter.yaml"}), index, st, "/repo")
+	fresh := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"emitter.yaml"}), index: index, inventory: st, root: "/repo"})
 	fresh.AddEmitted(emitter, store.Child{Obj: child}, st)
 	assert.Diff(t, fresh.keep, map[manifest.NamedResource]role{emitter: primary, child.Named(): primary, target.Named(): kept})
 }
@@ -979,7 +979,7 @@ func TestAddEmitted_OrderingDoesNotSelectConsumer(t *testing.T) {
 	st := store.New()
 	st.AddObject(target)
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{target.Named(): {File: "target.yaml"}}}
-	f := NewFilter(NewSet([]string{"target.yaml"}), index, st, "/repo")
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"target.yaml"}), index: index, inventory: st, root: "/repo"})
 	f.AddEmitted(testutil.KustomizationID("apps", "unchanged"), store.Child{Obj: consumer}, st)
 	assert.Diff(t, f.keep, map[manifest.NamedResource]role{target.Named(): primary})
 }
@@ -996,7 +996,7 @@ func TestAddEmitted_DoesNotReadIncomingDeclaration(t *testing.T) {
 	}}
 	st := store.New()
 	st.AddObjects([]manifest.BaseManifest{producer, consumer})
-	f := NewFilter(NewSet([]string{"consumer.yaml"}), index, st, "/repo")
+	f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"consumer.yaml"}), index: index, inventory: st, root: "/repo"})
 	assert.Equal(t, f.keep[target.Named()], kept)
 	var reads store.ReadSet
 	reads.Init(st, producer.Named(), nil)
@@ -1007,3 +1007,6 @@ func TestAddEmitted_DoesNotReadIncomingDeclaration(t *testing.T) {
 	st.RecordEmitted(producer.Named(), &store.Emission{Children: []store.Child{child}, Complete: true}, nil)
 	assert.Equal(t, reads.Valid(), true)
 }
+
+func (c *countedProductions) fixtureStore() *store.Store { return c.Store }
+func (p *pausedIncoming) fixtureStore() *store.Store     { return p.Store }

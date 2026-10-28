@@ -18,6 +18,9 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -27,17 +30,21 @@ import (
 	sourcecontroller "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func newTestController(t *testing.T, filter *change.Filter) (*Controller, *store.Store) {
+func newTestController(t *testing.T, l *loader.Loader) (*Controller, *store.Store) {
 	t.Helper()
-	return newTestControllerWithOptions(t, base.Options{Filter: filter})
+	opts := base.Options{}
+	if l != nil {
+		opts.Filter, opts.Loader = l.Options.Filter, l
+	}
+	return newTestControllerWithOptions(t, opts)
 }
 
 func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedResource]manifest.NamedResource) (*Controller, *store.Store) {
@@ -48,6 +55,9 @@ func newTestControllerWithParentOf(t *testing.T, parentOf map[manifest.NamedReso
 func newTestControllerWithOptions(t *testing.T, opts base.Options) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
+	if opts.Loader != nil {
+		st = opts.Loader.Store
+	}
 	ts := task.NewBounded(2)
 	owner := cachetest.New(t, "", sourcecache.New)
 	hc := helm.NewClient(owner)
@@ -299,11 +309,12 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var filter *change.Filter
+			var filterLoader *loader.Loader
 			if !tc.suspend {
-				filter = change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, filtertest.MapLister{}, "")
+				filterLoader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, Inventory: filtertest.MapLister{}, Root: ""})
+				admissiontest.Commit(t, filterLoader, nil)
 			}
-			c, st := newTestController(t, filter)
+			c, st := newTestController(t, filterLoader)
 			hr := &manifest.HelmRelease{Name: "demo", Namespace: "default", Suspend: tc.suspend}
 			st.AddObject(hr)
 			info := reconcileFixture(t, c, hr.Named())
@@ -776,7 +787,7 @@ func TestController_ChartAndValuesPrerequisites(t *testing.T) {
 
 func replayKey(content any) string {
 	c := base.New(store.New(), nil)
-	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).FingerprintDedup(manifest.NamedResource{}, content, &store.Emission{})
+	fp, _, _ := controllertest.NewExecution(c, manifest.NamedResource{}).FingerprintDedup(context.TODO(), manifest.NamedResource{}, content, &store.Emission{})
 	return fp
 }
 

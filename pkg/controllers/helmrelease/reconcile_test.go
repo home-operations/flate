@@ -13,13 +13,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
-
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -28,6 +25,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -463,7 +461,7 @@ data: {greeting: hi}
 					original := hr.Clone()
 					st.AddObject(hr)
 					if site.parent {
-						c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true}, nil)
+						controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true})
 					}
 					st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 					var retained *store.Emission
@@ -623,7 +621,7 @@ data:
 				children, retained := testutil.ParseChildren(c, parent, []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
 				next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
 				next.Complete = true
-				c.Emit(parent.Named(), &next, nil)
+				controllertest.Emit(t.Context(), c.Controller, parent.Named(), &next)
 			}
 			publish(docA)
 			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
@@ -933,7 +931,7 @@ items:
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	st.AddObject(parent)
 	hr := &manifest.HelmRelease{Name: "demo", Namespace: "apps", Values: map[string]any{"required": ""}, Chart: manifest.HelmChart{Name: "mychart", Source: src.Named()}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "mychart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (src.Named()).Kind, Name: (src.Named()).Name, Namespace: (src.Named()).Namespace, APIVersion: ""}}}}}
-	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}}}, nil)
+	controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "apps", Name: "unreadable"}}})
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 	info := reconcileFixture(t, c, hr.Named())
 	if info.Status != store.StatusFailed || !strings.Contains(info.Message, "Object 'Kind' is missing") {
@@ -975,7 +973,7 @@ func TestReconcile_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
 			original := hr.Clone()
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindSecret, Name: "unreadable"}}}}
 			st.AddObject(parent)
-			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Name: "unreadable", Namespace: "apps"}}}, nil)
+			controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: hr}}, Complete: true, Unreadable: []manifest.NamedResource{{Kind: manifest.KindSecret, Name: "unreadable", Namespace: "apps"}}})
 			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			info := reconcileFixture(t, c, hr.Named())
 			if info.Status != store.StatusFailed || !strings.Contains(info.Message, "missing required value") {

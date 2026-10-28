@@ -111,7 +111,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 			content = hr.Content(key, omitted)
 		}
 		var err error
-		fp, handled, err = c.run.FingerprintDedup(id, content, &attempt)
+		fp, handled, err = c.run.FingerprintDedup(ctx, id, content, &attempt)
 		if handled || err != nil {
 			return handled, err
 		}
@@ -120,19 +120,9 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		return false, nil
 	}
 	docs, receipt, err := c.Helm.Template(ctx, hr, hr.Values, input)
-	if handled {
-		if err != nil {
-			return err
-		}
-		return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
-	}
 	if err != nil {
 		return err
 	}
-	// #744: flag top-level release values no chart template references — a key
-	// renamed/removed when the chart was upgraded silently does nothing, so the
-	// override is a stale no-op. Advisory only; rides Result.Warnings to the
-	// footer + konflate. See StaleValuePaths.
 	if stale := c.Helm.StaleValuePaths(ctx, hr, hr.Values, input.Sources); len(stale) > 0 {
 		c.run.Reads.AddWarning(manifest.Warning{
 			Resource: id,
@@ -141,11 +131,14 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 			Detail:   stale,
 		})
 	}
+	if handled {
+		return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+	}
 	hr.EmissionPolicy().Stamp(docs)
 
 	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
-	if err := c.run.Emit(id, &attempt, nil); err != nil {
+	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
 	return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
@@ -165,7 +158,7 @@ func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManife
 			continue
 		}
 		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional, AllowMissing: slices.Contains(c.AllowMissingKinds, ref.Kind)}, manifest.DrainNone)
-		if availability.Kind != schedule.Terminal {
+		if availability.Err != nil || availability.Kind != schedule.Terminal {
 			return nil, false
 		}
 		if availability.Omit {

@@ -121,22 +121,16 @@ data:
 			t.Errorf("%s: expected reconciled, got OutcomeUnchanged — keep-cascade fix did not pull this into keep", id)
 		}
 	}
-	requireUnchanged := func(id manifest.NamedResource) {
+	requireUnadmitted := func(id manifest.NamedResource) {
 		t.Helper()
-		info, ok := o.Store().GetStatus(id)
-		if !ok {
-			t.Errorf("%s: no status reported (expected OutcomeUnchanged)", id)
-			return
-		}
-		if info.Outcome() != store.OutcomeUnchanged {
-			t.Errorf("%s: keep-cascade leaked; expected OutcomeUnchanged, got Status=%s Message=%q",
-				id, info.Status, info.String())
+		if info, exists := o.Store().GetStatus(id); exists {
+			t.Errorf("%s: unselected sibling received a scheduler status: %+v", id, info)
 		}
 	}
 
 	requireReconciled(plex)
-	requireUnchanged(dbApps)
-	requireUnchanged(postgres)
+	requireUnadmitted(dbApps)
+	requireUnadmitted(postgres)
 }
 
 // The depwait long-wait + render-budget-cap behavior (#310/#313/#311)

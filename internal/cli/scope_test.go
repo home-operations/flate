@@ -76,9 +76,13 @@ func TestRun_NamedScope_UnrelatedFailure(t *testing.T) {
 				if out == "" || out != want {
 					t.Fatalf("selected YAML differs: want %s, got %s", want, out)
 				}
-				if path != root && (!strings.Contains(errOut, "warnings") || !strings.Contains(errOut, "outside") || !strings.Contains(errOut, "unrelated")) {
-					t.Fatalf("unrelated diagnostics missing: %s", errOut)
+				if strings.Contains(errOut, "outside") || strings.Contains(errOut, "unrelated") {
+					t.Fatalf("excluded producer diagnostics leaked: %s", errOut)
 				}
+			}
+			_, stderr, code := runCLI(t, "build", "all", "--path", filepath.Join(root, "cluster"), "--cache-dir", cache, "--concurrency", "2")
+			if code != 1 || !strings.Contains(stderr, "outside") || !strings.Contains(stderr, "unrelated") {
+				t.Fatalf("full render diagnostics missing: exit=%d %s", code, stderr)
 			}
 		})
 	}
@@ -386,16 +390,13 @@ func TestRun_NamedScope_WarningWriteErrors(t *testing.T) {
 	for _, verb := range []string{"build", "diff"} {
 		t.Run(verb, func(t *testing.T) {
 			root := writeNamedScopeFixture(t)
+			appendScopeSpec(t, root, "cluster/hr.yaml", "  values: {unused: selected}\n")
 			args := []string{verb, "hr", "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
 			if verb == "diff" {
 				orig := writeNamedScopeFixture(t)
 				testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: changed}\n")
 				appendScopeSpec(t, root, "cluster/ks.yaml", "  postBuild: {substitute: {GREETING: changed}}\n")
-				body, err := os.ReadFile(filepath.Join(root, "cluster/unrelated.yaml"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				testutil.WriteFile(t, root, "cluster/unrelated.yaml", strings.Replace(string(body), "path: ./unrelated", "path: ./missing-dir", 1))
+
 				args = append(args, "--path-orig", filepath.Join(orig, "cluster"))
 			}
 			want := errors.New("warning write failed")
@@ -479,9 +480,13 @@ spec:
 	testutil.WriteFile(t, root, "cluster/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  interval: 10m\n  path: ./siblings\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	for _, verb := range []string{"build", "test"} {
 		_, stderr, code := runCLI(t, verb, "ks", "selected", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
-		if code != 0 || !strings.Contains(stderr, "sibling") && verb == "build" {
+		if code != 0 || strings.Contains(stderr, "missing-sibling-dependency") {
 			t.Fatalf("%s included prerequisite parent's sibling: code=%d %s", verb, code, stderr)
 		}
+	}
+	_, stderr, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2")
+	if code != 1 || !strings.Contains(stderr, "missing-sibling-dependency") {
+		t.Fatalf("full render hid sibling failure: code=%d %s", code, stderr)
 	}
 }
 
@@ -649,12 +654,12 @@ func TestRun_NamedScope_TestWarningDestinations(t *testing.T) {
 				"--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, wantCode)
 			assert.Equal(t, strings.Contains(out, "warnings") || strings.Contains(out, "unrelated") || strings.Contains(out, "outside"), false)
-			assert.Equal(t, strings.Count(stderr, "warnings (2)"), 1)
-			assert.Equal(t, strings.Count(stderr, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/unrelated"), 1)
-			assert.Equal(t, strings.Contains(stderr, "outside"), true)
+			assert.Equal(t, strings.Count(stderr, "warnings (1)"), 1)
+			assert.Equal(t, strings.Count(stderr, "Kustomization.kustomize.toolkit.fluxcd.io/flux-system/unrelated"), 0)
+			assert.Equal(t, strings.Contains(stderr, "outside"), false)
 			if fatal {
 				assert.Equal(t, strings.Count(stderr, "apps/fatal-dependency"), 1)
-				assert.Equal(t, strings.Contains(stderr, "unrelated"), true)
+				assert.Equal(t, strings.Contains(stderr, "unrelated"), false)
 				assert.Equal(t, strings.Contains(stderr, "warnings"), true)
 				assert.Equal(t, strings.Count(stderr, "flate error:"), 0)
 			} else {
@@ -678,10 +683,8 @@ func TestRun_NamedScope_DiffBothSnapshots(t *testing.T) {
 	got, stderr, code := runCLI(t, args...)
 	assert.Equal(t, code, 0)
 	assert.Equal(t, got, want)
-	for _, label := range []string{"orig snapshot:", "current snapshot:"} {
-		if !strings.Contains(stderr, "[UnrelatedFailure] "+label+" Kustomization flux-system/outside: not found; required by") {
-			t.Fatalf("missing attributed warning %s: %s", label, stderr)
-		}
+	if strings.Contains(stderr, "outside") || strings.Contains(stderr, "unrelated") || !strings.Contains(stderr, "[StaleValues] current snapshot: HelmRelease apps/selected") {
+		t.Fatalf("selected warning scope differs: %s", stderr)
 	}
 }
 
@@ -756,9 +759,8 @@ spec:
 			appendScopeSpec(t, failing, "flux/apps.yaml", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: nope}]}\n")
 			flags := []string{"--path", filepath.Join(root, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2"}
 			_, stderr, code := runCLI(t, append([]string{"diff", "hr", "selected"}, flags...)...)
-			_, block, ok := strings.Cut(stderr, tc.failingSide+" snapshot:")
 			if tc.layout == "moved" && tc.failingSide == "current" {
-				if code != 0 || !ok || !strings.Contains(stderr, "warnings (2)") || !strings.Contains(block, "ConfigMap flux-system/nope: not found") || strings.Contains(stderr, "reconcile completed") {
+				if code != 0 || strings.Contains(stderr, "flux-system/nope") || strings.Contains(stderr, "reconcile completed") {
 					t.Fatalf("former owning Kustomization became fatal: %d %s", code, stderr)
 				}
 				_, stderr, code = runCLI(t, "build", "hr", "selected", "--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2")
@@ -940,7 +942,7 @@ func TestRun_GetNamed_UnrelatedFailureAndLabels(t *testing.T) {
 			testutil.WriteFile(t, root, file, string(body))
 			args := []string{"get", tc.kind, "selected", "--path", filepath.Join(root, "cluster"), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "name", "-l", tc.label}
 			stdout, stderr, code := runCLI(t, args...)
-			if code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) || strings.Count(stderr, "unrelated") != 1 || !strings.Contains(stderr, "outside") {
+			if code != 0 || (stdout != "") != tc.visible || !strings.Contains(stderr, persistenceMessage) || strings.Contains(stderr, "unrelated") || strings.Contains(stderr, "outside") {
 				t.Fatalf("healthy named get: exit=%d stdout=%q stderr=%s", code, stdout, stderr)
 			}
 			appendScopeSpec(t, root, file, "  dependsOn: [{name: missing, namespace: other}]\n")

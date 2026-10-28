@@ -83,9 +83,9 @@ type dataLookup interface {
 }
 
 // DataInputs captures authored values and substitution inputs through the shared gate.
-func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, provider dataLookup) []depwait.DataDependency {
+func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, provider dataLookup) ([]depwait.DataDependency, error) {
 	if _, inputs := obj.ReferenceCapacity(); inputs == 0 {
-		return nil
+		return nil, nil
 	}
 	e.SetPendingUnlessReady(e.Reads.ID(), "resolving values inputs")
 	var inputs []depwait.DataDependency
@@ -93,7 +93,9 @@ func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, p
 		if (ref.Use != "valuesFrom" && ref.Use != "substituteFrom") || ref.Name == "" || !ref.NamedResource.KindInfo().Data {
 			continue
 		}
-		e.PromoteData(ctx, ref.NamedResource)
+		if err := e.promoteData(ctx, ref.NamedResource); err != nil {
+			return nil, err
+		}
 		input := provider.Lookup(ref.NamedResource)
 		allowMissing := ref.Use == "valuesFrom" && slices.Contains(e.AllowMissingKinds, ref.Kind)
 		if ref.Use == "substituteFrom" {
@@ -104,5 +106,5 @@ func (e *Execution) DataInputs(ctx context.Context, obj manifest.BaseManifest, p
 		}
 		inputs = append(inputs, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: input, Optional: ref.Optional, AllowMissing: allowMissing})
 	}
-	return inputs
+	return inputs, nil
 }

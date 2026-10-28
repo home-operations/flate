@@ -16,6 +16,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
@@ -101,9 +102,12 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 						assert.NoError(t, err)
 					}
 					s.SetDiscoveryIndex(index)
-					filter := change.NewFilter(changes, index, s, root)
+					filterLoader := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: index, Inventory: s, Root: root})
+					admissiontest.Commit(t, filterLoader, nil)
+					filter := filterLoader.Options.Filter
 					c := base.New(s, tasks)
-					c.Configure(base.Options{Filter: filter, Index: index})
+					assert.NoError(t, filterLoader.FinalizeIndex(t.Context(), root, true))
+					c.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
 					release := make(chan struct{})
 					var dispatches, renders atomic.Int64
 					dispatch := fixtureDispatcher{store: s, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
@@ -119,7 +123,7 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 									next.Children = append(next.Children, store.Child{Obj: &replacement, Productions: []manifest.Production{{Source: manifest.BootstrapSourceID, File: "source.yaml", Path: filepath.Join(root, "source.yaml")}}})
 								}
 								next.Complete = true
-								execution.Emit(id, &next, nil)
+								execution.Emit(t.Context(), id, &next, nil)
 								return nil
 							})
 							return schedule.Result{Assessment: execution}
@@ -144,20 +148,24 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 							next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"value": input.Data["value"]}})
 							next.Complete = true
 							renders.Add(1)
-							execution.Emit(obj.Named(), &next, nil)
+							execution.Emit(t.Context(), obj.Named(), &next, nil)
 							return nil
 						})
 						return schedule.Result{Assessment: execution}
 					}}
 
 					sched := schedule.New(tasks, dispatch)
-					o := &Orchestrator{store: s, src: &sourcectrl.Controller{}}
+					o := &Orchestrator{store: s, src: &sourcectrl.Controller{}, filter: filter, loader: filterLoader, index: index}
 					defer o.watchDAG(sched)()
-					sched.Seed([]schedule.NodeID{emitter.Named(), consumer.Named()})
+					seeds := []schedule.NodeID{emitter.Named()}
+					if filter.ShouldReconcile(consumer.Named()) {
+						seeds = append(seeds, consumer.Named())
+					}
+					sched.Seed(seeds)
 					done := make(chan error, 1)
 					go func() { done <- sched.Run(t.Context()) }()
 					synctest.Wait()
-					initial, _ := s.GetStatus(consumer.Named())
+					_, initialStatus := s.GetStatus(consumer.Named())
 					initialDispatches, initialRenders := dispatches.Load(), renders.Load()
 					initiallySelected := filter.ShouldReconcile(consumer.Named())
 					close(release)
@@ -165,9 +173,8 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 						t.Fatal(err)
 					}
 					if !mode.upfront {
-						assert.Equal(t, initial.Status, store.StatusReady)
-						assert.Equal(t, initial.Message, "unchanged")
-						assert.Equal(t, initialDispatches, int64(1))
+						assert.Equal(t, initialStatus, false)
+						assert.Equal(t, initialDispatches, int64(0))
 						assert.Equal(t, initialRenders, int64(0))
 						assert.Equal(t, initiallySelected, false)
 					} else {

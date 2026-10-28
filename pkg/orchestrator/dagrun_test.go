@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -46,9 +47,11 @@ func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 				data: {Productions: []manifest.Production{{Owner: provider.Named(), Authored: data, File: "settings.yaml", Source: manifest.BootstrapSourceID}}},
 			}}
 			st.SetDiscoveryIndex(index)
-			filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, st, "")
+			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: st, Root: ""})
+			admissiontest.Commit(t, filterLoader, nil)
+			filter := filterLoader.Options.Filter
 			c := base.New(st, tasks)
-			c.Configure(base.Options{Filter: filter, Index: index})
+			c.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
 			c.StartLifecycle()
 			childDocs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": child.Name}, "spec": map[string]any{"path": "./child", "postBuild": map[string]any{"substituteFrom": []any{map[string]any{"kind": manifest.KindConfigMap, "name": data.Name}}}}}}
 			children, retained, failures := c.ParseChildren(parent, testutil.DocumentOccurrences(childDocs), manifest.ParseDocOptions{})
@@ -88,7 +91,7 @@ func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 						siblingRuns.Add(1)
 					}
 					next.Complete = true
-					return e.Emit(id, &next, nil)
+					return e.Emit(t.Context(), id, &next, nil)
 				})
 				if id == child && e.Outcome() == schedule.Blocked {
 					blocked <- slices.Clone(e.Blocked)
@@ -281,6 +284,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 				t.Run(fmt.Sprintf("changed_%t/retained_%t/workers_%d", changedOnly, retained, workers), func(t *testing.T) {
 					root := t.TempDir()
 					gate, child := testutil.KustomizationID("flux-system", "gate"), testutil.KustomizationID("flux-system", "child")
+					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/gate.yaml, unused/child.yaml, flux/dependent.yaml, flux/independent.yaml]\n")
 					testutil.WriteFile(t, root, "unused/kustomization.yaml", "resources: [child.yaml]\n")
 					testutil.WriteFile(t, root, "flux/gate.yaml", strings.Replace(ksYAML("gate", "unused", ""), "spec:\n", "spec:\n  suspend: true\n", 1))
 					for _, name := range []string{"child", "dependent", "independent"} {
@@ -313,6 +317,9 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if err := o.bootstrap(t.Context()); err != nil {
 						t.Fatal(err)
 					}
+					if changedOnly && o.store.GetObject(child) != nil {
+						t.Fatal("producer-owned child hydrated before publication")
+					}
 					reconcileEntryForTest(t, o)
 					original, ok := o.store.Get[*manifest.Kustomization](child)
 					if !ok || original.Suspend {
@@ -321,7 +328,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					o.store.UpdateStatus(gate, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSuspended, Message: "suspended"})
 					o.store.UpdateStatus(child, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "queued"})
 					o.configureControllers()
-					o.ksc.Emit(gate, &store.Emission{Children: []store.Child{{Obj: original}}, Complete: true}, nil)
+					assert.NoError(t, controllertest.Emit(t.Context(), o.ksc.Controller, gate, &store.Emission{Children: []store.Child{{Obj: original}}, Complete: true}))
 					var result schedule.Result
 					o.tasks.Go(t.Context(), "dependent", func(ctx context.Context) {
 						result = (dagDispatcher{o}).Dispatch(ctx, testutil.KustomizationID("flux-system", "dependent"), manifest.DrainNone)
@@ -351,7 +358,10 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						children, retained := parseChildrenForTest(gate, docs, manifest.ParseDocOptions{DefaultNamespace: gate.Namespace})
 						for _, emitted := range children {
 							if o.filter != nil {
-								o.filter.AddEmitted(gate, emitted, o.store)
+								if _, err := o.ksc.KeepEmitted(t.Context(), gate, emitted, nil); err != nil {
+									t.Error(err)
+									return
+								}
 							}
 						}
 						_, _, next := o.store.GetEmission(gate)
@@ -731,7 +741,9 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "flux-system"}
 	o.store.AddObjects([]manifest.BaseManifest{source, consumer})
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{consumer.Named(): {File: "consumer.yaml"}}}
-	o.filter = change.NewFilter(change.NewSet([]string{"consumer.yaml"}), index, o.store, root)
+	o.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"consumer.yaml"}), Index: index, Inventory: o.store, Root: root})
+	admissiontest.Commit(t, o.loader, nil)
+	o.filter = o.loader.Options.Filter
 	o.configureControllers()
 	o.seedNodes()
 	var reads store.ReadSet

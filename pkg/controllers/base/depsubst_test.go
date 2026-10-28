@@ -80,7 +80,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 					t.Errorf("first child arrival dependency=%q, want %q", got, tt.want)
 				}
 			}, false)
-			c.Emit(parent.Named(), next, nil)
+			c.emit(t.Context(), parent.Named(), next, nil)
 			assert.Equal(t, arrivals, 1)
 			got, ok := st.Get[*manifest.Kustomization](child.Named())
 			if !ok || got.DependsOn[0].Name != tt.want || got.DependsOn[0].Namespace != "${NS}" || got.DependsOn[0].ReadyExpr != "true" {
@@ -100,7 +100,7 @@ func TestEmit_DependencySubstitutions(t *testing.T) {
 			if diff := cmp.Diff(childDoc, accepted.Children[1].Doc); diff != "" {
 				t.Fatalf("child document changed (-want +got):\n%s", diff)
 			}
-			if _, handled, err := newExecution(c, parent.Named()).FingerprintDedup(parent.Named(), "inputs", &store.Emission{}); !handled || err != nil {
+			if _, handled, err := newExecution(c, parent.Named()).FingerprintDedup(t.Context(), parent.Named(), "inputs", &store.Emission{}); !handled || err != nil {
 				t.Fatalf("normalized replay: handled=%v err=%v", handled, err)
 			}
 			replayed, _ := st.Get[*manifest.Kustomization](child.Named())
@@ -142,7 +142,7 @@ func TestEmit_DependencySubstitutionsConcurrent(t *testing.T) {
 			defer done.Done()
 			ready.Done()
 			<-start
-			controllers[i].Emit(parents[i].Named(), &store.Emission{
+			controllers[i].emit(t.Context(), parents[i].Named(), &store.Emission{
 				Children: []store.Child{{Obj: children[i], Doc: docs[i]}}, Complete: true,
 			}, nil)
 		}()

@@ -2,15 +2,14 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
 	"slices"
 
-	"github.com/home-operations/flate/pkg/store"
-
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
@@ -20,57 +19,81 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	}
 	if o.cfg.BaseInput == o.cfg.Input && o.cfg.ExternalChanges == nil {
 		o.store.AddWarning(manifest.Warning{Category: manifest.WarnPathConfig, Message: "--path and --path-orig resolve to the same root; ignoring --path-orig", Detail: []string{o.repoRoot}})
+		if o.loader == nil {
+			return nil
+		}
+	}
+	if o.loader == nil {
 		return nil
 	}
-	changes := o.cfg.ExternalChanges
-	if changes == nil {
-		return nil
+	o.loader.Options.Changes = o.cfg.ExternalChanges
+	proposal := o.preparation
+	if proposal == nil {
+		var err error
+		proposal, err = o.loader.Prepare(ctx, store.Child{}, nil, nil)
+		if err != nil {
+			return err
+		}
 	}
-	history := map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{}
-	narrow := map[manifest.NamedResource]bool{}
+	o.preparation = proposal
+	history := map[manifest.NamedResource]struct {
+		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+		Complete bool
+	}{}
 	defer func() {
 		for range o.store.Sweep() {
 		}
 	}()
 	o.configureControllers()
-	objects := o.store.Objects()
-	for id, record := range o.index.Records {
-		if record.Declaration != nil && id.KindInfo().Render && o.store.GetObject(id) == nil {
-			objects = append(objects, record.Declaration)
-		}
-	}
-	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-	for _, obj := range objects {
+	for _, id := range proposal.Needed {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		id := obj.Named()
-		if !manifest.KindOf(obj).Render {
+		if !id.KindInfo().Render {
 			continue
 		}
 		reads := &store.ReadSet{}
 		reads.Init(o.store, id, nil)
 		func() {
 			_, _, output := reads.GetEmission(id)
-			defer output.Finish()
 			defer reads.Retire()
+			defer output.Finish()
+			obj := reads.GetDeclaration(id)
+			if obj == nil {
+				obj = o.index.Records[id].Declaration
+			}
+			if obj == nil {
+				return
+			}
 			records, canNarrow := o.controllers.PreviousRender(ctx, obj, reads)
-			narrow[id] = canNarrow
 			if records == nil {
 				return
 			}
-			materialized := maps.Collect(records)
+			materialized := make(map[manifest.NamedResource]manifest.DiscoveryRecord)
+			for child, record := range records {
+				record.Refs = slices.Clone(record.Refs)
+				record.Productions = slices.Clone(record.Productions)
+				record.Inputs = slices.Clone(record.Inputs)
+				record.ContentRoots = maps.Clone(record.ContentRoots)
+				for source, roots := range record.ContentRoots {
+					record.ContentRoots[source] = slices.Clone(roots)
+				}
+				materialized[child] = record
+			}
 			if reads.Valid() {
 				for child, record := range materialized {
 					o.admission.AddHistory(o.store, child, record)
 				}
-				history[id] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+				entry := history[id]
+				entry.Complete = canNarrow
+				entry.Records = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 					for child, record := range materialized {
 						if !yield(child, record) {
 							return
 						}
 					}
 				}
+				history[id] = entry
 			}
 		}()
 	}
@@ -80,21 +103,38 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 		}
 		o.index, o.entryBinding = o.entryDiscovery.Index, o.entryDiscovery.Binding
 	}
-	f := change.NewFilter(changes, o.index, o.store, o.repoRoot)
-	f.RefineHistory(history, narrow)
+	o.history = history
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if changes.Len() == 0 && len(f.KeepNames()) == 0 && o.cfg.BaseInput != nil {
-		o.store.AddWarning(manifest.Warning{
-			Category: manifest.WarnPathConfig,
-			Message:  "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots",
-		})
-	}
-	o.filter = f
-	slog.Debug("orchestrator: changed-only keep set", "filter", o.filter)
+
 	return nil
 }
 
-// computeChangeSet compares direct inputs in source-root coordinates.
-// PathOrig is a source root; an admitted BaseInput may have a synthetic label.
+func (o *Orchestrator) installAdmission(ctx context.Context) error {
+	o.loader.Options.Changes = o.cfg.ExternalChanges
+	proposal, err := o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+	if err != nil {
+		return err
+	}
+	added, retry := o.filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+	if retry {
+		return fmt.Errorf("%w: startup membership changed during preparation", manifest.ErrInput)
+	}
+	for _, id := range added {
+		o.store.SetIncluded(id, true)
+	}
+	for _, child := range proposal.Objects {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		o.store.AddObject(child.Obj, child.Doc)
+	}
+	o.changeNamespaces = proposal.Namespaces
+	o.preparation, o.history = nil, nil
+	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(o.filter.KeepNames()) == 0 && o.cfg.BaseInput != nil {
+		o.store.AddWarning(manifest.Warning{Category: manifest.WarnPathConfig, Message: "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots"})
+	}
+	slog.Debug("orchestrator: changed-only keep set", "filter", o.filter)
+	return nil
+}

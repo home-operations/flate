@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
 	"github.com/home-operations/flate/pkg/discovery"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	src "github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -54,6 +55,8 @@ type Controller struct {
 // onto the controller. Filter narrows fetches to sources referenced by
 // changed resources in changed-only mode.
 type FetchOptions struct {
+	// Loader borrows the invocation's declaration admission boundary.
+	Loader              *loader.Loader
 	Filter              *change.Filter
 	AllowMissingSecrets bool
 	// Admission resolves runtime sources against immutable discovery policy.
@@ -78,7 +81,11 @@ func New(s *store.Store, t *task.Service) *Controller {
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle.
 func (c *Controller) Configure(opts FetchOptions, retry cache.RetryConfig) {
-	c.Controller.Configure(base.Options{Filter: opts.Filter})
+	common := base.Options{Filter: opts.Filter, Loader: opts.Loader}
+	if opts.Loader != nil {
+		common.Index = opts.Loader.Index
+	}
+	c.Controller.Configure(common)
 	c.retry = retry
 	c.allowMissingSecrets = opts.AllowMissingSecrets
 	c.admission = opts.Admission

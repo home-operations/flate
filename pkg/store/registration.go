@@ -233,7 +233,9 @@ func (r *ReadSet) Valid() bool {
 	}
 	for input := r.inputs; input != nil; input = input.next {
 		if !input.current() || input.view.bound && (input.view.binding != nil && !input.view.binding.current() || input.view.support != nil && !input.view.support.productionCurrent()) {
-			r.invalid.Store(true)
+			if !r.accepted.Load() {
+				r.invalid.Store(true)
+			}
 			return false
 		}
 	}

@@ -70,3 +70,43 @@ func NewExecution(c *base.Controller, id manifest.NamedResource) *base.Execution
 	e.Init(c, id)
 	return e
 }
+
+// Emit installs immutable fixture output without starting a reconciliation.
+func Emit(ctx context.Context, c *base.Controller, id manifest.NamedResource, next *store.Emission) error {
+	children := next.Children
+	cloned := false
+	if next.Reads.Valid() {
+		for i, child := range children {
+			if child.Obj == nil || child.Obj.Named() == id {
+				continue
+			}
+			obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
+			if obj != child.Obj {
+				if !cloned {
+					next.Children = slices.Clone(children)
+					cloned = true
+				}
+				next.Children[i].Obj = obj
+			}
+			if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
+				return err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.Store.RecordEmitted(id, next, nil)
+	if cloned && !next.Complete {
+		next.Children = children
+	}
+	if next.Complete {
+		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {
+			message := store.ApplyingStatus(len(next.Manifests))
+			if info != message {
+				c.Store.UpdateStatus(id, message)
+			}
+		}
+	}
+	return nil
+}

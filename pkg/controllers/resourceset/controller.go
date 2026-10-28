@@ -22,7 +22,7 @@ type Controller struct {
 	*base.Controller
 
 	// WipeSecrets controls whether Secret cleartext is wiped when parsing
-	// emitted children (forwarded to base.Controller.Emit).
+	// emitted children (forwarded to base.Execution.Emit).
 	WipeSecrets bool
 }
 
@@ -69,7 +69,7 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 	defer attempt.Finish()
 	handled := false
 	docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&c.run.Reads), func(content any) (bool, error) {
-		fp, hit, err := c.run.FingerprintDedup(id, content, &attempt)
+		fp, hit, err := c.run.FingerprintDedup(ctx, id, content, &attempt)
 		handled = hit
 		if hit || err != nil {
 			return hit, err
@@ -90,5 +90,5 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 	rs.EmissionPolicy().Stamp(docs)
 	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Complete = true
-	return c.run.Emit(id, &attempt, nil)
+	return c.run.Emit(ctx, id, &attempt, nil)
 }

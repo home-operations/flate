@@ -8,16 +8,16 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -166,7 +166,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							var fp string
 							docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
 								var err error
-								fp, _, err = execution.run.FingerprintDedup(rs.Named(), content, &store.Emission{})
+								fp, _, err = execution.run.FingerprintDedup(b.Context(), rs.Named(), content, &store.Emission{})
 								return false, err
 							})
 							renders.Add(1)
@@ -185,7 +185,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						_, _, next := s.GetEmission(id)
 						next.Children, next.Manifests, next.Failures = c.ParseChildren(c.Store.GetObject(id), outcomes, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace})
 						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
-						c.Emit(id, &next, nil)
+						controllertest.Emit(b.Context(), c.Controller, id, &next)
 						expected[i].fingerprint, expected[i].manifests = next.Fingerprint, next.Manifests
 						next.Finish()
 						s.UpdateStatus(sets[i].Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
@@ -297,7 +297,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	_, _, inventory := replay.run.Reads.GetEmission(rs.Named())
 	inventory.Children, inventory.Manifests, inventory.Failures = c.ParseChildren(rs, initial.Manifests, manifest.ParseDocOptions{WipeSecrets: true})
 	inventory.Complete = true
-	replay.run.Emit(rs.Named(), &inventory, nil)
+	replay.run.Emit(t.Context(), rs.Named(), &inventory, nil)
 	inventory.Finish()
 	if accepted := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); accepted.Fingerprint != initial.Fingerprint || !cmp.Equal(accepted.Manifests, initial.Manifests) || !cmp.Equal(accepted.Children, initial.Children, cmpopts.IgnoreUnexported(store.Child{})) {
 		t.Error("same-inventory publication lost its rendered identity or bytes")
@@ -353,5 +353,5 @@ func publishResourceSetDocuments(tb testing.TB, c *Controller, id manifest.Named
 	defer next.Finish()
 	next.Children, next.Manifests, next.Failures = c.ParseChildren(parent, docs, manifest.ParseDocOptions{})
 	next.Complete = true
-	c.Emit(id, &next, nil)
+	controllertest.Emit(tb.Context(), c.Controller, id, &next)
 }

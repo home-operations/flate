@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"iter"
 	"maps"
 	"slices"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/bucket"
@@ -41,6 +43,8 @@ var reconcilableKinds = func() []manifest.KindInfo {
 
 // Config contains invocation policy and shared rendering resources.
 type Config struct {
+	// Selection narrows declarations before rendering; zero selection is universal.
+	Selection manifest.Selection
 	// HelmOptions tunes templating and kind filtering through SkipKinds.
 	HelmOptions helm.Options
 	// WipeSecrets controls Secret cleartext placeholders.
@@ -110,15 +114,23 @@ type Config struct {
 
 // Orchestrator exposes a completed execution tree's store.
 type Orchestrator struct {
-	cfg                     treeConfig
-	store                   *store.Store
-	tasks                   *task.Service
-	src                     *sourcectrl.Controller
-	ksc                     *kustomization.Controller
-	hrc                     *helmrelease.Controller
-	rsc                     *resourcesetctrl.Controller
-	agc                     *artifactgenerator.Controller
-	filter                  *change.Filter
+	changeNamespaces []string
+	cfg              treeConfig
+	store            *store.Store
+	tasks            *task.Service
+	src              *sourcectrl.Controller
+	ksc              *kustomization.Controller
+	hrc              *helmrelease.Controller
+	rsc              *resourcesetctrl.Controller
+	agc              *artifactgenerator.Controller
+	filter           *change.Filter
+	loader           *loader.Loader
+	session          *discovery.Session
+	preparation      *loader.Admission
+	history          map[manifest.NamedResource]struct {
+		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+		Complete bool
+	}
 	cache                   *sourcecache.Cache
 	inputs                  source.HTTPInputs
 	unsubStatus             store.Unsubscribe
@@ -152,20 +164,6 @@ type Result struct {
 	Manifests []manifest.DocumentBatch
 	Failed    map[manifest.NamedResource]store.StatusInfo
 	Orphans   map[manifest.NamedResource]string
-	// DependsOn is the declared spec.dependsOn graph: each Kustomization or
-	// HelmRelease that names dependencies maps to the sorted ids it depends on.
-	// Same-kind only (KS→KS, HR→HR per the Flux spec); implicit coupling
-	// (healthChecks, shared CRDs, service DNS) is not represented. Nodes with no
-	// declared dependencies are omitted, and the map is nil (not empty) when
-	// nothing declares a dependsOn. Consumers invert this into a dependents
-	// adjacency list for impact / "blast radius" analysis.
-	//
-	// It is the declared graph verbatim: cycle members and self-edges (A → A) are
-	// retained, not pruned (cycles also surface as render Failures) — a consumer
-	// that walks it must tolerate them. It is also independent of the --skip-*
-	// render filters, so an id here may have no entry in Manifests when its kind
-	// was skipped.
-	DependsOn map[manifest.NamedResource][]manifest.NamedResource
 	// Blocked maps a failed resource to the immediate dependencies that blocked
 	// it — present only for failures that are purely derived (the resource's own
 	// reconcile never ran because a dependency failed or was missing), absent for
@@ -189,6 +187,12 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	st := store.New()
 	st.SetSupplied(cfg.supplied)
 	o := &Orchestrator{cfg: treeConfig{Config: cfg, Tree: tree}, inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts), store: st, cache: cfg.Cache, tasks: ts}
+	o.cfg.Selection.Changed = cfg.Selection.Changed || tree.ExternalChanges != nil
+	if o.cfg.Selection.Changed || len(o.cfg.Selection.Roots) != 0 {
+		o.filter = change.NewFilter()
+		o.loader = loader.New(st)
+		o.loader.Options.Selection, o.loader.Options.Changes, o.loader.Options.Filter = o.cfg.Selection, tree.ExternalChanges, o.filter
+	}
 	if cfg.StatusListener != nil {
 		o.unsubStatus = st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, value any) {
 			if st.ReportHidden(id) {
@@ -265,12 +269,30 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	if current, exists := o.src.Fetchers[manifest.KindGitRepository]; exists && current == nil {
 		o.src.Fetchers[manifest.KindGitRepository] = source.Wrap(manifest.KindGitRepository, gitFetcher)
 	}
-	res, err := discovery.Run(ctx, discovery.Config{
+	config := discovery.Config{
+		Selection: o.cfg.Selection, Loader: o.loader,
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
 		Store: o.store, WipeSecrets: o.cfg.WipeSecrets, Entry: o.cfg.entry,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipResourceKinds(),
-	})
+	}
+	var res *discovery.Result
+	var err error
+	if o.loader != nil {
+		if o.session == nil {
+			o.session, err = discovery.Begin(ctx, config)
+			if err != nil {
+				return err
+			}
+			o.cfg.Input = o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+			o.cfg.RepoRoot, o.repoRoot, o.index = o.cfg.Input.LocalPath, o.cfg.Input.LocalPath, o.loader.Index
+			return nil
+		}
+		res, err = o.session.Freeze(ctx)
+	} else {
+		res, err = discovery.Run(ctx, config)
+	}
+
 	o.cfg.entry = nil
 	if err != nil {
 		return err
@@ -289,6 +311,9 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 
 func (o *Orchestrator) completeBootstrap() {
 	o.failDependsOnCycles()
+	if o.loader != nil && o.entryBinding.Failure != nil {
+		o.store.UpdateStatus(o.entryBinding.Producer, store.StatusInfo{Status: store.StatusFailed, Message: manifest.TrimSentinelPrefix(o.entryBinding.Failure.Error())})
+	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,

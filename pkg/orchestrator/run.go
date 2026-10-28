@@ -19,7 +19,37 @@ type orchestratorExistence struct {
 	o *Orchestrator
 }
 
-func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSet, id manifest.NamedResource) bool {
+func (e *orchestratorExistence) IsFileIndexed(id manifest.NamedResource) bool {
+	if e.o.loader != nil {
+		return e.o.loader.IsFileIndexed(id)
+	}
+	return e.DiscoveryIndex.IsFileIndexed(id)
+}
+
+func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSet, id manifest.NamedResource) (bool, error) {
+	if e.o.preparation != nil {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		obj := e.o.store.GetDeclaration(id)
+		if reads != nil {
+			obj = reads.GetDeclaration(id)
+		}
+		return obj != nil && slices.Contains(e.o.preparation.Needed, id), nil
+	}
+	if e.o.loader != nil {
+		captured := reads
+		if captured == nil {
+			captured = &store.ReadSet{}
+			captured.Init(e.o.store, id, nil)
+			defer captured.Retire()
+		}
+		_, err := e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, captured)
+		if err != nil {
+			return false, err
+		}
+		return e.o.filter.ShouldReconcile(id) && captured.GetObject(id) != nil, nil
+	}
 	obj := e.o.store.GetObject(id)
 	var productions []manifest.Production
 	if obj == nil || e.o.filter.Enabled() {
@@ -30,44 +60,54 @@ func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSe
 		}
 	}
 	if obj != nil {
-		return e.admit(store.Child{Obj: obj, Productions: productions}, reads)
+		return e.admit(ctx, store.Child{Obj: obj, Productions: productions}, reads)
 	}
 	for _, p := range productions {
-		admit := func(obj manifest.BaseManifest) bool {
-			return e.admit(store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
+		admit := func(obj manifest.BaseManifest) (bool, error) {
+			return e.admit(ctx, store.Child{Obj: obj, Productions: []manifest.Production{p}}, reads)
 		}
-		if loader.Promote(ctx, e.o.store, id, loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit}) {
+		promoted, err := loader.Promote(ctx, e.o.store, id, loader.PromoteOptions{Record: p, Reads: reads, WipeSecrets: e.o.cfg.WipeSecrets, Admit: admit})
+		if err != nil {
+			return false, err
+		}
+		if promoted {
 			if reads != nil {
 				reads.Productions(id, e.o.index)
 			}
-			return true
+			return true, nil
 		}
 	}
 	if e.o.admission != nil && reads != nil && reads.GetDeclaration(reads.ID()) != nil {
 		witness := reads.GetDeclaration(reads.ID())
 		object, artifact, err := e.o.admission.Resolve(ctx, id, nil, []manifest.BaseManifest{witness})
 		if err == nil && object != nil && artifact != nil && reads.Valid() {
-			if e.admit(store.Child{Obj: object}, reads) {
+			accepted, admissionErr := e.admit(ctx, store.Child{Obj: object}, reads)
+			if admissionErr != nil {
+				return false, admissionErr
+			}
+			if accepted {
 				e.o.store.AddObject(object)
 				e.o.store.SetArtifact(id, artifact)
 				e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
-func (e *orchestratorExistence) admit(child store.Child, reads *store.ReadSet) bool {
+func (e *orchestratorExistence) admit(ctx context.Context, child store.Child, reads *store.ReadSet) (bool, error) {
 	info := manifest.KindOf(child.Obj)
 	if !info.Tracked || info.Group != manifest.SourceDomain && info.Runnable {
-		return false
+		return false, nil
 	}
-	return e.o.ksc.KeepEmitted(manifest.NamedResource{}, child, reads)
+	return e.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, child, reads)
 }
 
 func (o *Orchestrator) run(ctx context.Context) error {
-	o.configureControllers()
+	if o.loader == nil {
+		o.configureControllers()
+	}
 	// Cycle failures MUST publish before scheduler admission of emitted objects.
 	unsubCycles := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
 		if !id.KindInfo().Render {
@@ -84,6 +124,7 @@ func (o *Orchestrator) run(ctx context.Context) error {
 func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Filter:              o.filter,
+		Loader:              o.loader,
 		AllowMissingSecrets: slices.Contains(o.cfg.AllowMissingKinds, manifest.KindSecret),
 		Admission:           o.admission,
 	}, o.cfg.SourceRetry)
@@ -92,6 +133,7 @@ func (o *Orchestrator) configureControllers() {
 		SkipKinds:               o.cfg.HelmOptions.SkipResourceKinds(),
 		DependencySubstitutions: o.dependencySubstitutions,
 		Filter:                  o.filter,
+		Loader:                  o.loader,
 		Index:                   o.index,
 		Existence:               existence,
 		PreflightFailure:        o.preflightFailure,
@@ -110,10 +152,7 @@ func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 	res := &Result{
 		Failed:  map[manifest.NamedResource]store.StatusInfo{},
 		Orphans: map[manifest.NamedResource]string{},
-		// The dependsOn graph is fully populated by now (Bootstrap's rebuild +
-		// per-id ReplaceEdges during Run); snapshot it for blast-radius consumers.
-		DependsOn: o.depGraph.Edges(),
-		Blocked:   map[manifest.NamedResource][]manifest.NamedResource{},
+		Blocked: map[manifest.NamedResource][]manifest.NamedResource{},
 		// Render advisories collected by producers during Run (HR stale values,
 		// empty scan, …). Nil when none, sorted deterministically by the store.
 		Warnings: o.store.Warnings(),
@@ -171,11 +210,13 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		if effective == nil {
 			continue
 		}
+		documentScope := false
 		filterOwnership := parentAttributed
 		if producer, ok := obj.(interface {
 			EmissionPolicy() manifest.EmissionPolicy
 		}); ok {
-			filterOwnership = filterOwnership || producer.EmissionPolicy().DocumentScope
+			documentScope = producer.EmissionPolicy().DocumentScope
+			filterOwnership = filterOwnership || documentScope
 		}
 		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
 		for _, child := range attempt.Children {
@@ -187,6 +228,12 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		for _, occurrence := range attempt.Manifests {
 			doc := occurrence.Document
 			target := resourceset.DedupKey(doc)
+			if o.filter != nil && !documentScope {
+				_, ownerSelected, _, _ := o.filter.Membership(id)
+				if !ownerSelected && !o.filter.ShouldReconcile(target) {
+					continue
+				}
+			}
 			apiVersion := manifest.DocAPIVersion(doc)
 			identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" && target.Group != manifest.KustomizeDomain
 			if parentAttributed && identifiable && target.Namespace == "" && manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {

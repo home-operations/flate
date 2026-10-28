@@ -2,19 +2,25 @@ package loader
 
 import (
 	"context"
+	"iter"
 	"path/filepath"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // FinalizeIndex freezes source-qualified graph contributions before reconciliation.
-func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
+func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	l.documents.compact = l.Options.Selection.Changed || len(l.Options.Selection.Roots) != 0
+	if l.documents.compact && l.frozen {
+		return nil
+	}
 	l.mountSources()
-	if l.scopes == nil || !l.scopes.complete {
+	if l.scopes == nil || !l.scopes.complete || l.documents.compact && freeze {
 		l.ensureScopes()
 		if repoRoot != "" {
 			for _, ks := range l.Store.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization) {
@@ -24,6 +30,23 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 			}
 		}
 		l.admit(repoRoot)
+	}
+	if l.documents.compact && l.indexDerived && l.derived == l.construction {
+		if freeze {
+			l.freezeConstruction()
+		}
+		return nil
+	}
+	if l.documents.compact && l.indexDerived {
+		for id, record := range l.Index.Records {
+			if record.Path == "" && record.Builder == "" {
+				delete(l.Index.Records, id)
+				delete(l.locations, id)
+				continue
+			}
+			record.Productions = nil
+			l.Index.Records[id] = record
+		}
 	}
 	var claims []manifest.KSClaim
 	if l.scopes != nil {
@@ -87,7 +110,79 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
+	if l.documents.compact {
+		l.derived, l.indexDerived = l.construction, true
+		if !freeze {
+			return nil
+		}
+		l.freezeConstruction()
+		return nil
+	}
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes = nil
 	return nil
+}
+
+func (l *Loader) freezeConstruction() {
+	l.bindings = map[manifest.NamedResource]*store.SourceArtifact{}
+	for source := range l.Options.Changes.Sources() {
+		input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+		l.bindings[source] = input
+	}
+	l.inputReaders = map[manifest.NamedResource][]manifest.NamedResource{}
+	for _, object := range l.Store.Objects() {
+		id := object.Named()
+		if _, indexed := l.Index.Lookup(id); indexed {
+			continue
+		}
+		for ref := range manifest.References(object, manifest.ReferenceRelations) {
+			if ref.ContentInput() && (ref.Name != "" || ref.Selector != nil) && !slices.Contains(l.inputReaders[ref.NamedResource], id) {
+				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
+			}
+		}
+	}
+	for id, record := range l.Index.Records {
+		var refs iter.Seq[manifest.Reference]
+		if object := l.Store.GetDeclaration(id); object != nil {
+			refs = manifest.References(object, manifest.ReferenceRelations)
+		} else if child := l.candidates[id]; child.Obj != nil && record.Path == "" {
+			refs = manifest.References(child.Obj, manifest.ReferenceRelations)
+		} else if occurrence, ok := l.locations[id]; ok {
+			refs = occurrence.references()
+		}
+		if refs == nil {
+			continue
+		}
+		for ref := range refs {
+			if !ref.ContentInput() || ref.Name == "" && ref.Selector == nil {
+				continue
+			}
+			if !slices.Contains(l.inputReaders[ref.NamedResource], id) {
+				l.inputReaders[ref.NamedResource] = append(l.inputReaders[ref.NamedResource], id)
+			}
+		}
+	}
+	l.inputObjects = map[manifest.NamedResource][]manifest.NamedResource{}
+	for id, occurrence := range l.locations {
+		if !occurrence.facts.labeled {
+			continue
+		}
+		key := id
+		key.Name = ""
+		l.inputObjects[key] = append(l.inputObjects[key], id)
+	}
+	for id, child := range l.candidates {
+		if _, located := l.locations[id]; located {
+			continue
+		}
+		if _, labeled := child.Obj.(interface{ GetLabels() map[string]string }); !labeled {
+			continue
+		}
+		key := id
+		key.Name = ""
+		l.inputObjects[key] = append(l.inputObjects[key], id)
+	}
+	l.frozen = true
+	l.Store.SetDiscoveryIndex(l.Index)
+	l.scopes, l.facts, l.Options.ParsedInputs, l.documents.parsed = nil, nil, nil, nil
 }

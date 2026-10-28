@@ -18,6 +18,8 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -35,7 +37,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func newControllerWithFixture(t *testing.T) (*Controller, *store.Store, string) {
@@ -411,7 +412,7 @@ spec:
 			l.SourceRoot = root
 			_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
 			assert.NoError(t, err)
-			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			s.SetDiscoveryIndex(l.Index)
 			childID := testutil.KustomizationID("flux-system", "child")
 			record, found := l.Index.Lookup(childID)
@@ -932,7 +933,7 @@ data: {greeting: hi}
 			}
 			ks := obj.(*manifest.Kustomization)
 			original := ks.Clone()
-			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: ks, Doc: doc}}, Complete: true}, nil)
+			controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: ks, Doc: doc}}, Complete: true})
 			st.UpdateStatus(ks.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 			replacement := manifest.DeepCopyMap(doc)
 			spec := replacement["spec"].(map[string]any)
@@ -1072,7 +1073,7 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 		valid := execution.run.Reads.Valid()
 		err := execution.render(ctx, ks, source, applyIgnore)
 		opens := guard.opened.Load() - before
-		_, handled, dedupErr := execution.run.FingerprintDedup(ks.Named(), nil, &store.Emission{})
+		_, handled, dedupErr := execution.run.FingerprintDedup(t.Context(), ks.Named(), nil, &store.Emission{})
 		result <- observation{valid: valid, opens: opens, err: err, handled: handled, dedupErr: dedupErr}
 	})
 	c.Tasks.Go(t.Context(), "replace", func(context.Context) {
@@ -1125,7 +1126,7 @@ func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
 	st.AddObject(declaration)
 	sourceContent := counted.Input(store.ArtifactContent)
 	probe := c.newExecution(ks.Named())
-	fp, handled, want := probe.run.FingerprintDedup(ks.Named(), ks.Content(sourceContent), &store.Emission{})
+	fp, handled, want := probe.run.FingerprintDedup(t.Context(), ks.Named(), ks.Content(sourceContent), &store.Emission{})
 	probe.run.Close()
 	if fp == "" || handled || want == nil || declaration.checks != 3 {
 		t.Fatalf("admission contract: fingerprint=%q handled=%t err=%v checkpoints=%d", fp, handled, want, declaration.checks)
@@ -1178,7 +1179,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			l.SourceRoot, l.Options.WipeSecrets = root, false
 			_, err = l.Load(t.Context(), filepath.Join(root, "apps"))
 			assert.NoError(t, err)
-			l.FinalizeIndex(t.Context(), root)
+			l.FinalizeIndex(t.Context(), root, true)
 			shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
 			exclusive := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "exclusive"}
 			if len(s.Productions(exclusive, l.Index)) == 0 {
@@ -1187,7 +1188,7 @@ func TestReconcile_SourceCoverageUsesRenderedArtifact(t *testing.T) {
 			for _, id := range []manifest.NamedResource{shared, exclusive} {
 				for _, p := range s.Productions(id, l.Index) {
 					if p.Path != "" {
-						loader.Promote(t.Context(), s, id, loader.PromoteOptions{Record: p, Admit: func(manifest.BaseManifest) bool { return true }})
+						loader.Promote(t.Context(), s, id, loader.PromoteOptions{Record: p, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }})
 					}
 				}
 				if s.GetObject(id) == nil {

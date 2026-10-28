@@ -122,7 +122,7 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			_, err := l.Load(t.Context(), root)
 			assert.NoError(t, err)
 			l.Admit(root)
-			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			if got := l.AdmitsRoot(l.IndexedObject(testutil.KustomizationID("apps", "stray"), l.Index.Records[testutil.KustomizationID("apps", "stray")]).Obj, filepath.Join(root, "app/ks.yaml")); got != tc.want {
 				t.Fatalf("admission=%t want %t", got, tc.want)
 			}
@@ -145,7 +145,7 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			if len(retainedErrorsForTest(l)) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "selected"}) == nil {
@@ -744,7 +744,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			_, err := l.Load(t.Context(), root)
 			assert.NoError(t, err)
 			l.Admit(root)
-			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			id := testutil.KustomizationID("apps", "owner")
 			if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "app/owner.yaml")) != included || (l.Store.GetObject(id) != nil) != included {
 				t.Fatalf("replacement membership retained another view: included=%t", included)
@@ -770,7 +770,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			t.Fatalf("replacement kept stale owner: %+v", owners)
 		}
 		sources := 0
-		for source := range l.Sources() {
+		for source := range l.Sources(t.Context()) {
 			sources++
 			repo := source.Obj.(*manifest.GitRepository)
 			if repo.Namespace != "apps" || repo.URL != "https://fixture.invalid/"+version {
@@ -788,7 +788,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			}
 			previousCandidates[id], previousPublished[id] = candidate, published
 		}
-		if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 			t.Fatal(err)
 		}
 	}

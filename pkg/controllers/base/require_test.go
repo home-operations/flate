@@ -96,7 +96,7 @@ func TestExecution_BlockedSuccessorRetainsAssessment(t *testing.T) {
 	first.Reads.GetObject(input.Named())
 	_, _, output := first.Reads.GetEmission(obj.Named())
 	output.Complete = true
-	first.Emit(obj.Named(), &output, nil)
+	first.Emit(t.Context(), obj.Named(), &output, nil)
 	output.Finish()
 	defer first.Close()
 	st.AddObject(&manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{"value": "new"}})
@@ -161,7 +161,7 @@ func TestRecordEmitted_PhantomSupersession(t *testing.T) {
 				first.Reads.GetObject(input.Named())
 				_, _, output := first.Reads.GetEmission(obj.Named())
 				output.Children, output.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, true
-				first.Emit(obj.Named(), &output, nil)
+				first.Emit(t.Context(), obj.Named(), &output, nil)
 				output.Finish()
 				return nil
 			})
@@ -556,8 +556,8 @@ func TestDispatch_ArrivalDuringClassification(t *testing.T) {
 type declarationPromotion func(manifest.NamedResource) bool
 
 func (declarationPromotion) IsFileIndexed(manifest.NamedResource) bool { return false }
-func (p declarationPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) bool {
-	return p(id)
+func (p declarationPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+	return p(id), nil
 }
 
 func TestRequire_MaterializerPurpose(t *testing.T) {

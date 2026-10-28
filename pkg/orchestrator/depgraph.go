@@ -250,40 +250,6 @@ func (g *dependencyGraph) Failures() map[manifest.NamedResource]*dependencyCycle
 	return g.snapshotFailedLocked()
 }
 
-// snapshotEdgesLocked returns the dependsOn graph as src → sorted dependency
-// list, a defensive copy that doesn't alias the graph's internal sets. Nodes
-// registered with no out-edges are omitted (only nodes that declare a
-// dependency appear); dependencies are sorted for deterministic output. Returns
-// nil when nothing depends on anything. Caller holds mu.
-func (g *dependencyGraph) snapshotEdgesLocked() map[manifest.NamedResource][]manifest.NamedResource {
-	out := make(map[manifest.NamedResource][]manifest.NamedResource, len(g.outEdges))
-	for src, dsts := range g.outEdges {
-		if len(dsts) == 0 {
-			continue
-		}
-		out[src] = sortedNeighbors(dsts)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// Edges returns a snapshot of the declared dependsOn graph: each Kustomization
-// or HelmRelease that names dependencies → the sorted ids it depends on
-// (same-kind only, per the Flux spec). The orchestrator installs it into
-// Result.DependsOn for impact / blast-radius analysis. Safe for concurrent use.
-//
-// The declared graph is returned verbatim: cycle members and self-edges (A → A)
-// are NOT pruned — cycle reporting is the separate concern of Failures(), and a
-// consumer walking these edges must tolerate them (e.g. a visited set). Returns
-// nil (not an empty map) when nothing declares a dependsOn, mirroring Failures().
-func (g *dependencyGraph) Edges() map[manifest.NamedResource][]manifest.NamedResource {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.snapshotEdgesLocked()
-}
-
 type dependencyCycle struct {
 	path    []manifest.NamedResource
 	message atomic.Pointer[string]

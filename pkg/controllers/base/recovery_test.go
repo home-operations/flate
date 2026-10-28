@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
@@ -37,7 +38,9 @@ func TestExecution_ReplacesDerivedFailureProvenance(t *testing.T) {
 			}
 			c := base.New(st, nil)
 			if mode == "filtered" {
-				c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}}}, st, "")})
+				admissionLoader1 := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"other.yaml"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}}}, Inventory: st, Root: ""})
+				admissiontest.Commit(t, admissionLoader1, nil)
+				c.Configure(base.Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
 			}
 			if mode == "preflight" {
 				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})

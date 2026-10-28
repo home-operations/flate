@@ -346,7 +346,13 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 			if h.ChartRef != nil && declared.Group == SourceDomain && declared.Kind == KindHelmChart {
 				stage |= GateInputs
 			}
-			if !yield(Reference{NamedResource: declared, Use: "chart", Content: true, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+			namespaceDefault := h.HelmReleaseSpec.Chart != nil
+			if h.ChartRef != nil {
+				namespaceDefault = h.ChartRef.Namespace == ""
+			} else if h.HelmReleaseSpec.Chart != nil && h.HelmReleaseSpec.Chart.Spec.SourceRef != nil {
+				namespaceDefault = h.HelmReleaseSpec.Chart.Spec.SourceRef.Namespace == ""
+			}
+			if !yield(Reference{NamespaceDefault: namespaceDefault, NamedResource: declared, Use: "chart", Content: true, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
 				return
 			}
 		}
@@ -357,7 +363,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 			if artifact {
 				stage = GateArtifacts
 			}
-			if !yield(Reference{NamedResource: backing.Source, Use: "source", Content: true, Files: files, ChartPath: path, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+			if !yield(Reference{NamespaceDefault: h.Chart.Source.Namespace == "", NamedResource: backing.Source, Use: "source", Content: true, Files: files, ChartPath: path, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
 				return
 			}
 		}
@@ -370,7 +376,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 		dep := &h.DependsOn[i]
 		if !yield(Reference{
 			NamedResource: Resolve(NamedResource{Group: kindTable[kindHelmRelease].Group, Kind: KindHelmRelease, Namespace: dep.Namespace, Name: dep.Name}, "", h.Namespace),
-			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true,
+			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true, NamespaceDefault: dep.Namespace == "",
 		}) {
 			return
 		}
@@ -379,7 +385,7 @@ func (h *HelmRelease) references(yield func(Reference) bool) {
 		ref := &h.ValuesFrom[i]
 		if !yield(Reference{
 			Kind: ref.Kind, Name: ref.Name, Namespace: h.Namespace,
-			Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true,
+			Use: "valuesFrom", Position: i, Optional: ref.Optional, Content: true, NamespaceDefault: true, Key: ref.GetValuesKey(),
 		}) {
 			return
 		}
@@ -413,4 +419,14 @@ func (h *HelmRelease) Content(source any, omitted []NamedResource) any {
 		IgnoreMissingValuesFiles: h.IgnoreMissingValuesFiles,
 		DisableSchemaValidation:  h.DisableSchemaValidation,
 	}
+}
+
+func (*HelmRelease) outputFields() string {
+	return `interval timeout maxHistory persistentClient
+ dependsOn.name dependsOn.namespace dependsOn.readyExpr
+ driftDetection.mode driftDetection.ignore.paths.* driftDetection.ignore.target.group driftDetection.ignore.target.version driftDetection.ignore.target.kind driftDetection.ignore.target.namespace driftDetection.ignore.target.name driftDetection.ignore.target.annotationSelector driftDetection.ignore.target.labelSelector
+install.timeout install.strategy.name install.strategy.retryInterval install.remediation.retries install.remediation.ignoreTestFailures install.remediation.remediateLastFailure install.disableWait install.disableWaitForJobs
+upgrade.timeout upgrade.strategy.name upgrade.strategy.retryInterval upgrade.remediation.retries upgrade.remediation.ignoreTestFailures upgrade.remediation.remediateLastFailure upgrade.remediation.strategy upgrade.disableWait upgrade.disableWaitForJobs upgrade.cleanupOnFail
+rollback.timeout rollback.disableWait rollback.disableWaitForJobs rollback.disableHooks rollback.recreate rollback.force rollback.cleanupOnFail rollback.serverSideApply
+uninstall.timeout uninstall.disableHooks uninstall.keepHistory uninstall.disableWait uninstall.deletionPropagation`
 }

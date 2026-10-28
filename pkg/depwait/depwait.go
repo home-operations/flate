@@ -59,7 +59,7 @@ type ExistenceLookup interface {
 	// Promote attempts to materialize id into the Store from the
 	// discovery index. Returns true when promotion succeeded
 	// and id is now reachable via store.GetObject.
-	Promote(context.Context, *store.ReadSet, manifest.NamedResource) bool
+	Promote(context.Context, *store.ReadSet, manifest.NamedResource) (bool, error)
 }
 
 // tryReadyExpr evaluates expr once against id's projected state and reports:

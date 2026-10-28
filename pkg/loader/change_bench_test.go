@@ -1,9 +1,10 @@
-package change
+package loader
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -20,7 +21,7 @@ import (
 func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 	s, sourceFiles := seedKSStore(1000)
 	// Small change set: 3 files spread across distinct app subpaths.
-	changeSet := NewSet([]string{
+	changeSet := change.NewSet([]string{
 		"apps/app-7/ks.yaml",
 		"apps/app-42/ks.yaml",
 		"apps/app-913/ks.yaml",
@@ -30,7 +31,7 @@ func BenchmarkFilterResolve_LargeRepo(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = NewFilter(changeSet, index, s, "/repo")
+		_ = newAdmission(b, admissionConfig{changes: changeSet, index: index, inventory: s, root: "/repo"})
 	}
 }
 
@@ -54,18 +55,18 @@ func BenchmarkFilterResolve_ProducerChain(b *testing.B) {
 	for id := range index.Records {
 		objects[id] = refObj(id)
 	}
-	changes := NewSet([]string{"input.yaml"})
+	changes := change.NewSet([]string{"input.yaml"})
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = NewFilter(changes, index, objects, "")
+		_ = newAdmission(b, admissionConfig{changes: changes, index: index, inventory: objects, root: ""})
 	}
 }
 
 // BenchmarkBuildOwnership measures canonical claim grouping for 1000 Kustomizations.
-// Discovery prepares this immutable state before Filter construction.
+// Discovery prepares this immutable state before admissionFixture construction.
 func BenchmarkBuildOwnership(b *testing.B) {
 	s, _ := seedKSStore(1000)
-	l := loader.New(s)
+	l := New(s)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -108,13 +109,13 @@ func BenchmarkAddEmitted_PrimaryFanOut(b *testing.B) {
 		b.Run(fmt.Sprintf("unrelated=%d/children=%d", unrelated, fanOut), func(b *testing.B) {
 			s, files := seedKSStore(unrelated + 1)
 			index := filterFixture{files: files, root: "/repo", objects: s}.index()
-			changes := NewSet([]string{"apps/app-0/ks.yaml"})
+			changes := change.NewSet([]string{"apps/app-0/ks.yaml"})
 			parent := testutil.KustomizationID("flux-system", "app-0")
 			children := make([]store.Child, fanOut)
 			for i := range children {
 				children[i] = store.Child{Obj: &manifest.ConfigMap{Name: fmt.Sprintf("child-%d", i), Namespace: "apps"}}
 			}
-			filter := NewFilter(changes, index, s, "/repo")
+			filter := newAdmission(b, admissionConfig{changes: changes, index: index, inventory: s, root: "/repo"})
 			next := 0
 			b.ReportAllocs()
 			for b.Loop() {
@@ -150,7 +151,7 @@ func BenchmarkFilterResolve_OneSidedSuppliers(b *testing.B) {
 				selected := 0
 				b.ReportAllocs()
 				for b.Loop() {
-					filter := NewFilter(changes, index, st, root)
+					filter := newAdmission(b, admissionConfig{changes: changes, index: index, inventory: st, root: root})
 					if filter.ShouldReconcile(consumer.Named()) {
 						selected++
 					}
@@ -172,7 +173,7 @@ func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
 				emitter := &manifest.Kustomization{Name: "emitter", Namespace: "apps", Path: "unchanged"}
 				st.AddObject(emitter)
 				index.Records[emitter.Named()] = manifest.DiscoveryRecord{File: "flux/emitter.yaml"}
-				filter := NewFilter(changes, index, st, root)
+				filter := newAdmission(b, admissionConfig{changes: changes, index: index, inventory: st, root: root})
 				name := "unrelated"
 				if match {
 					name = "optional"
@@ -181,14 +182,13 @@ func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
 				for i := range children {
 					children[i] = store.Child{Obj: &manifest.Kustomization{Name: fmt.Sprintf("late-%d", i), Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: name, Optional: true}}}}}
 				}
-				setup := selection{filter: filter, objects: st, child: children[0]}
+				setup := admissionClosure{loader: filter.loader, objects: st, incoming: children[0]}
 				input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: name, Namespace: "apps"}
-				if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) || filter.ShouldReconcile(children[0].Obj.Named()) || setup.affectedRoot(children[0].Obj.Named()) {
+				if filter.ShouldReconcile(emitter.Named()) || filter.ShouldReconcile(input) || filter.ShouldReconcile(children[0].Obj.Named()) || setup.affected(children[0].Obj.Named(), children[0].Obj) {
 					b.Fatal("supplier scan would be bypassed")
 				}
 				for _, production := range st.IncomingProductions(children[0], index) {
-					relative, indexed := setup.coordinates(production)
-					if setup.changedProduction(production, relative, indexed) {
+					if setup.fileChanged(production.Source, production.File) {
 						b.Fatal("incoming production would bypass supplier scan")
 					}
 				}
@@ -198,7 +198,7 @@ func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
 					if next == len(children) {
 						b.StopTimer()
 						clear(filter.keep)
-						filter.revision = 0
+						filter.loader.Options.Filter = change.NewFilter()
 						next = 0
 						b.StartTimer()
 					}
@@ -221,7 +221,7 @@ func BenchmarkAddEmitted_OneSidedSuppliers(b *testing.B) {
 	}
 }
 
-func oneSidedSuppliers(b *testing.B, count int) (*Set, *store.Store, *manifest.DiscoveryIndex, string) {
+func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *manifest.DiscoveryIndex, string) {
 	b.Helper()
 	_, stores, roots, source := optionalSupplierPair(b, "apps")
 	for i := 1; i < count; i++ {
@@ -232,12 +232,12 @@ func oneSidedSuppliers(b *testing.B, count int) (*Set, *store.Store, *manifest.D
 			st.SetArtifact(supplier.Named(), st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
 		}
 	}
-	changes, err := Qualify(b.Context(), nil, stores[0], stores[1])
+	changes, err := change.Qualify(b.Context(), nil, stores[0], stores[1])
 	if err != nil {
 		b.Fatal(err)
 	}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	if !NewFilter(changes, index, stores[1], roots[1]).hasInputs {
+	if len(slices.Collect(changes.Sources())) == 0 {
 		b.Fatal("supplier fixture has no one-sided inputs")
 	}
 	return changes, stores[1], index, roots[1]
@@ -283,7 +283,7 @@ func BenchmarkDetect(b *testing.B) {
 			testutil.WriteFile(b, after, "mod.yaml", "BBB")
 			b.ReportAllocs()
 			for b.Loop() {
-				if _, err := Detect(b.Context(), testInput(before), testInput(after)); err != nil {
+				if _, err := change.Detect(b.Context(), testInput(before), testInput(after)); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -298,12 +298,12 @@ func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "large"}
 	b.ReportAllocs()
 	for b.Loop() {
-		var set Set
+		var set change.Set
 		if err := set.CollectInputs(b.Context(), input, "input.yaml", false); err != nil {
 			b.Fatal(err)
 		}
-		if _, ok := set.inputs[id]; !ok || len(set.inputs) != 1 {
-			b.Fatalf("collected inputs=%v", set.inputs)
+		if _, ok := inputMap(&set)[id]; !ok || len(inputMap(&set)) != 1 {
+			b.Fatalf("collected inputs=%v", inputMap(&set))
 		}
 	}
 }

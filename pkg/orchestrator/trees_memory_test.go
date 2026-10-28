@@ -209,8 +209,9 @@ func TestRender_MemorySparseGit(t *testing.T) {
 					if siblingStatus.Outcome() == store.OutcomePassed {
 						t.Fatal("unrelated sibling reconciled")
 					}
+					assert.Equal(t, side.store.GetObject(sibling) == nil, true)
 					count := 0
-					for _, batch := range memoryWorkloadBatches(t, side.Result, side.Orchestrator, []manifest.NamedResource{app, sibling}) {
+					for _, batch := range memoryWorkloadBatches(t, side.Result, side.Orchestrator, []manifest.NamedResource{app}) {
 						if batch.Parent == nil || batch.Parent.Named().Name != "app" {
 							t.Fatalf("unrelated output parent=%v", batch.Parent)
 						}

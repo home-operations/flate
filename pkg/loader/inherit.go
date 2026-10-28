@@ -19,7 +19,7 @@ import (
 // scopeConstruction is confined to sequential discovery. Physical walks are
 // shared by equal contexts; each owner retains its own visits and claims.
 type scopeConstruction struct {
-	projections   map[identityProjection]manifest.NamedResource
+	projections   [2]map[identityProjection]manifest.NamedResource
 	walks         map[graphContext]scopeTraversal
 	records       map[manifest.NamedResource]manifest.DiscoveryRecord
 	candidates    map[manifest.NamedResource]store.Child
@@ -188,6 +188,9 @@ func (l *Loader) admit(repoRoot string) {
 		return
 	}
 
+	if l.documents.compact {
+		l.construction++
+	}
 	if repoRoot == "" {
 		l.refreshClaims(repoRoot, kss)
 		l.scopes.complete = true
@@ -321,6 +324,16 @@ func (l *Loader) scopesMatch(kss []store.Child, repoRoot string) bool {
 
 func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 	walk, seen := l.scopes.walks[root.graphContext]
+	var source parsedSource
+	var key physicalContext
+	if !seen && l.documents.compact {
+		source = l.sourceFacts(root.root)
+		key = physicalContext{graphContext: root.graphContext, sourceRoot: l.SourceRoot, prefix: root.prefix, localBase: root.localBase}
+		walk.visits, seen = source.walks[key]
+		if seen {
+			l.scopes.walks[root.graphContext] = walk
+		}
+	}
 	if !seen {
 		var visits []graphVisit
 		if k := l.documents.cache[filepath.Join(root.root, root.dir)].body; k != nil {
@@ -337,8 +350,15 @@ func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 			visits = append(visits, v)
 			return true
 		}
-		w.walk(nil, root, collect)
+		physical := root
+		if l.documents.compact {
+			physical.owner, physical.source, physical.input, physical.membershipOnly = manifest.NamedResource{}, manifest.NamedResource{}, 0, false
+		}
+		w.walk(nil, physical, collect)
 		walk.visits = visits
+		if l.documents.compact {
+			source.walks[key] = visits
+		}
 		l.scopes.walks[root.graphContext] = walk
 	}
 	return walk.visits
@@ -433,7 +453,7 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 			continue
 		}
 		doc := l.documents.cache[file]
-		if doc.bootstrap || l.entry == entryKustomize || !doc.loaded {
+		if l.documents.compact || doc.bootstrap || l.entry == entryKustomize || !doc.loaded {
 			structural := slices.ContainsFunc(indexed[start:end], func(r indexedRecord) bool { return r.id.KindInfo().Structural })
 			scopes[file] = l.rootAdmission(file, indexed[start].File, structural)
 		}
@@ -452,7 +472,7 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 	}
 	allowed := l.roots
 	clear(allowed)
-	if allowed == nil && len(objects) != 0 {
+	if allowed == nil && (len(objects) != 0 || l.documents.compact && len(next) != 0) {
 		allowed = make(map[manifest.NamedResource]bool, len(objects))
 	}
 	for id, child := range objects {
@@ -467,6 +487,19 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 		}
 		doc := l.documents.cache[r.Path]
 		allowed[id] = doc.eligible != fileInactive && (l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[r.Path].admits(l, id, r))
+	}
+	if l.documents.compact {
+		for id, record := range next {
+			if _, known := allowed[id]; known {
+				continue
+			}
+			if obj := l.CatalogObject(id); obj == nil || !manifest.AdmitsRoot(obj) {
+				allowed[id] = false
+				continue
+			}
+			doc := l.documents.cache[record.Path]
+			allowed[id] = doc.eligible != fileInactive && (id.KindInfo().Discovery && l.entry != entryKustomize && doc.loaded && !doc.bootstrap || scopes[record.Path].admits(l, id, record))
+		}
 	}
 	l.scopes.candidates, l.candidates = l.candidates, objects
 	l.roots = allowed
@@ -490,14 +523,56 @@ func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[mani
 		r := indexed.DiscoveryRecord
 		path, id := r.Path, r.Authored
 		authored := l.authoredObject(path, id)
+		forced := ""
+		if ks, ok := authored.Obj.(*manifest.Kustomization); ok {
+			authored.Obj, forced = l.predictNamespaces(ks, repoRoot, r, prediction)
+		}
+		if l.documents.compact {
+			if fact, ok := l.authoredOccurrence(path, id); ok {
+				if structural, ok := authored.Obj.(*manifest.Kustomization); ok && structural != fact.facts.structural {
+					facts := *fact.facts
+					facts.structural = structural
+					facts.catalog = structural
+					fact.facts = &facts
+				}
+				for _, namespace := range l.recordNamespaces(r, forced) {
+					projected := fact
+					if fact.facts.namespaced {
+						projected.Identity.Namespace = namespace
+					}
+					refs := []manifest.NamedResource{}
+					for ref := range projected.references() {
+						if discoveryReference(ref) {
+							refs = append(refs, ref.NamedResource)
+						}
+					}
+					record := r
+					record.Productions = nil
+					record.Refs = refs
+					next[projected.Identity] = record
+					l.locations[projected.Identity] = projected
+					if authored.Obj != nil {
+						object := authored.Obj
+						if previous := l.candidates[projected.Identity]; previous.Obj != nil && object.ProjectionCompatible(previous.Obj) {
+							object = previous.Obj
+						}
+						if object.Named().Namespace != projected.Identity.Namespace {
+							object = object.WithNamespace(projected.Identity.Namespace)
+						}
+						objects[projected.Identity] = store.Child{Obj: object}
+					} else if previous := l.candidates[projected.Identity]; previous.Obj != nil {
+						if current, ok := l.Index.Lookup(projected.Identity); ok && current.Path == r.Path && current.Authored == r.Authored {
+							objects[projected.Identity] = previous
+						}
+					}
+				}
+				continue
+			}
+		}
 		if authored.Obj == nil {
 			continue
 		}
 		obj := authored.Obj
-		forced := ""
-		if ks, ok := obj.(*manifest.Kustomization); ok {
-			obj, forced = l.predictNamespaces(ks, repoRoot, r, prediction)
-		}
 		for _, ns := range l.recordNamespaces(r, forced) {
 			id := obj.Named()
 			id.Namespace = ns
@@ -528,6 +603,14 @@ func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[mani
 
 func (l *Loader) authoredObject(path string, id manifest.NamedResource) store.Child {
 	doc := l.documents.cache[path]
+	if l.documents.compact {
+		for _, child := range doc.objects {
+			if child.fact != nil && child.fact.Authored == id && child.fact.facts.structural != nil {
+				return store.Child{Obj: child.fact.facts.structural}
+			}
+		}
+		return store.Child{}
+	}
 	if len(doc.objects) > 1 {
 		if doc.lookup == nil {
 			doc.lookup = make(map[manifest.NamedResource]store.Child, len(doc.objects))
@@ -589,7 +672,7 @@ func (l *Loader) applyAuthored(next map[manifest.NamedResource]manifest.Discover
 	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
 		child := objects[id]
 		obj := child.Obj
-		if !allowed[id] || !manifest.KindOf(obj).Discovery {
+		if !allowed[id] || !manifest.KindOf(obj).Discovery || l.documents.compact && next[id].Path != "" {
 			continue
 		}
 		if existing := l.Store.GetObject(id); existing != nil && obj.ProjectionCompatible(existing) {
@@ -823,4 +906,14 @@ func (l *Loader) resolveEligibility() {
 			mark(file, fileInactive)
 		}
 	}
+}
+
+func (l *Loader) authoredOccurrence(file string, id manifest.NamedResource) (Occurrence, bool) {
+	objects := l.documents.cache[file].objects
+	for _, object := range slices.Backward(objects) {
+		if occurrence := object.fact; occurrence != nil && occurrence.Authored == id {
+			return *occurrence, true
+		}
+	}
+	return Occurrence{}, false
 }

@@ -62,7 +62,7 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				st.AddObjects([]manifest.BaseManifest{source, release})
 				st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
 				l.Index.Records[release.Named()] = manifest.DiscoveryRecord{File: "release.yaml", Refs: []manifest.NamedResource{source.Named()}}
-				if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 					t.Fatal(err)
 				}
 				readers := l.Index.Readers[path.Join(tc.chartPath, "a.yaml")]
@@ -98,19 +98,21 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			file := path.Join(tc.chartPath, "generator.yaml")
 			l.Index.Records[generator] = manifest.DiscoveryRecord{Authored: generator, Path: root + "/" + file, File: file}
 			if tc.name == "discovery" {
-				if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 					t.Fatal(err)
 				}
 			}
-			d := &discoverer{cfg: Config{Store: st}, loader: l}
+			d := &Session{cfg: Config{Store: st}, loader: l}
 			readsBefore := documentReads.Load()
 			if tc.order == nil {
 				d.promoteOrphans(t.Context(), nil)
 			} else {
 				for _, id := range tc.order {
 					record, _ := l.Index.Lookup(id)
-					admit := func(obj manifest.BaseManifest) bool { return d.loader.AdmitsRoot(obj, record.Path) }
-					if !loader.Promote(t.Context(), st, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, Admit: admit}) {
+					admit := func(obj manifest.BaseManifest) (bool, error) {
+						return d.loader.AdmitsRoot(obj, record.Path), nil
+					}
+					if promoted, err := loader.Promote(t.Context(), st, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, Admit: admit}); err != nil || !promoted {
 						t.Fatalf("promotion failed for %s", id)
 					}
 				}
@@ -213,7 +215,7 @@ func TestPromoteOrphans_NamespaceAdmission(t *testing.T) {
 			assert.NoError(t, err)
 			document := manifest.DeepCopyMap(child.Doc)
 			object := child.Obj.(*manifest.Kustomization).Clone()
-			d := discoverer{cfg: Config{Store: st}, loader: l}
+			d := Session{cfg: Config{Store: st}, loader: l}
 			d.promoteOrphans(t.Context(), nil)
 			if st.GetObject(bare) != nil {
 				t.Error("namespace-less namespaced seed became an orphan root")
@@ -270,7 +272,7 @@ spec: {sources: [{alias: repo, kind: GitRepository, name: source}]}
 		}
 		l.Index.Records[id] = record
 	}
-	d := &discoverer{
+	d := &Session{
 		cfg: Config{Store: st, WipeSecrets: true}, loader: l,
 	}
 	l.Index.Claims = map[string][]manifest.NamedResource{"apps/": {self}}
@@ -302,10 +304,10 @@ func TestPromoteOrphans_GraphOwnedSiblingsAndSelf(t *testing.T) {
 			t.Fatal(err)
 		}
 		l.Admit(root)
-		if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 			t.Fatal(err)
 		}
-		d := discoverer{cfg: Config{Store: st}, loader: l}
+		d := Session{cfg: Config{Store: st}, loader: l}
 		d.promoteOrphans(t.Context(), nil)
 		for _, id := range []manifest.NamedResource{testutil.KustomizationID("apps", "disabled"), testutil.HelmReleaseID("apps", "sibling")} {
 			if st.GetObject(id) != nil {
@@ -339,7 +341,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	st.SetArtifact(source.Named(), st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact))
 	l := loader.New(st)
 	l.Options.WipeSecrets = false
-	if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+	if err := l.FinalizeIndex(t.Context(), dir, true); err != nil {
 		t.Fatal(err)
 	}
 	self := ks.Named()
@@ -348,7 +350,7 @@ spec: {chart: {spec: {chart: demo, sourceRef: {kind: HelmRepository, name: sourc
 	for _, id := range []manifest.NamedResource{self, child} {
 		l.Index.Records[id] = manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml"), File: "bundle.yaml"}
 	}
-	d := &discoverer{cfg: Config{Store: st}, loader: l}
+	d := &Session{cfg: Config{Store: st}, loader: l}
 	d.promoteOrphans(t.Context(), nil)
 	if st.GetObject(self) == nil {
 		t.Error("self-owned Kustomization must be admitted")
@@ -368,7 +370,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 			admitDiscoveryForTest(st, dir)
 			l := loader.New(st)
 			l.Claims(dir)
-			d := &discoverer{cfg: Config{Store: st, WipeSecrets: true}, loader: l}
+			d := &Session{cfg: Config{Store: st, WipeSecrets: true}, loader: l}
 			ids := []manifest.NamedResource{{Kind: manifest.KindSecret, Namespace: "secure", Name: "a"}}
 			if scenario == "siblings" {
 				ids = append(ids, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "secure", Name: "b"})
@@ -414,7 +416,7 @@ func TestPromoteOrphans_SecretPrecedence(t *testing.T) {
 				if _, err := l.Load(t.Context(), dir); err != nil {
 					t.Fatal(err)
 				}
-				if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+				if err := l.FinalizeIndex(t.Context(), dir, true); err != nil {
 					t.Fatal(err)
 				}
 			}

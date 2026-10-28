@@ -21,10 +21,10 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
@@ -295,7 +295,7 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 				}}
 				objects := store.New()
 				objects.SetArtifact(manifest.BootstrapSourceID, input)
-				filter := change.NewFilter(res.Changes, index, objects, input.LocalPath)
+				filter := admissiontest.Filter(t, admissiontest.Config{Changes: res.Changes, Index: index, Inventory: objects, Root: input.LocalPath})
 				if !filter.ShouldReconcile(app) {
 					t.Errorf("side %d ignore %s did not select optional input consumer", side, behavior)
 				}
@@ -317,7 +317,7 @@ func TestAutoResolve_TwoSidedInput(t *testing.T) {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		app: {File: "flux/app.yaml", Refs: []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}}},
 	}}
-	filter := change.NewFilter(res.Changes, index, nil, "")
+	filter := admissiontest.Filter(t, admissiontest.Config{Changes: res.Changes, Index: index, Inventory: nil, Root: ""})
 	if filter.ShouldReconcile(app) {
 		t.Fatal("two-sided input supplied an absent input identity")
 	}

@@ -144,10 +144,10 @@ func TestAdmit_GraphProjection(t *testing.T) {
 				}
 				first := check()
 				candidate := l.candidates[testutil.KustomizationID("media", "child")].Obj
-				assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 				assert.Equal(t, check(), first)
 				l.Admit(root)
-				assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+				assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 				assert.Equal(t, check(), first)
 				assert.Equal(t, l.candidates[testutil.KustomizationID("media", "child")].Obj, candidate)
 			})
@@ -341,7 +341,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		assert.Equal(t, len(l.PathObjects()), 1)
 		var paths []string
 		for _, child := range witnesses {
-			_, path, _ := child.Obj.SourcePath()
+			_, path, _ := child.SourcePath()
 			paths = append(paths, path)
 		}
 		assert.Diff(t, paths, []string{"./left", "./right"})
@@ -364,14 +364,14 @@ func TestAdmit_GraphProjection(t *testing.T) {
 			var ids []manifest.NamedResource
 			for _, o := range occurrences {
 				ids = append(ids, o.Identity)
-				if o.Object.Named() != o.Authored {
+				if o.object.Named() != o.Authored {
 					t.Fatal("projection mutated an authored object")
 				}
 			}
 			assert.Diff(t, ids, []manifest.NamedResource{{Kind: "Namespace", Name: side}, {Group: "foreign.example", Kind: "Namespace", Namespace: side, Name: "_"}, {Kind: manifest.KindConfigMap, Namespace: side, Name: "pre-values-post"}})
 		}
 		l.Admit(root)
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		for id := range l.Index.Records {
 			if id.Kind == "Namespace" {
 				t.Fatalf("inventory-only resource entered the production index: %s", id)
@@ -399,7 +399,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 			}
 		}
 		l.Admit(root)
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		if l.AdmitsRoot(l.IndexedObject(testutil.KustomizationID("apps", "self"), l.Index.Records[testutil.KustomizationID("apps", "self")]).Obj, filepath.Join(root, "app/siblings.yaml")) {
 			t.Fatal("finalization lost denial")
 		}
@@ -415,7 +415,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
 		l.Admit(root)
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		child := testutil.KustomizationID("apps", "child")
 		if l.Store.GetObject(child) != nil || l.AdmitsRoot(l.IndexedObject(child, l.Index.Records[child]).Obj, filepath.Join(root, "target/child.yaml")) {
 			t.Fatal("inactive unresolved owner enabled builder-free descendant")
@@ -432,7 +432,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
 		l.Admit(root)
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		id := testutil.KustomizationID("apps", "direct")
 		if l.Store.GetObject(id) == nil || !l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "direct.yaml")) {
 			t.Fatal("inactive broad claim disabled the plain entry's direct manifest")
@@ -458,12 +458,12 @@ func TestAdmit_GraphProjection(t *testing.T) {
 			assert.NoError(t, err)
 		}
 		l.Admit(root)
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "inactive-source"}
 		if st.GetObject(id) != nil || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "outside/source.yaml")) {
 			t.Fatal("inactive alias enabled its physical resource outside the path claim")
 		}
-		for child := range l.Sources() {
+		for child := range l.Sources(t.Context()) {
 			if child.Obj.Named() == id {
 				t.Fatal("inactive alias exposed its physical source for acquisition")
 			}
@@ -506,7 +506,10 @@ func TestAdmit_GraphProjection(t *testing.T) {
 					t.Fatalf("inactive cycle enabled %s", ks.Obj.Named())
 				}
 			}
-			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			if roots := l.StandaloneRoots(root); !included && len(roots) != 1 {
+				t.Fatalf("inactive targets became standalone: %v", roots)
+			}
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			id := testutil.KustomizationID("apps", "disabled")
 			file := filepath.Join(root, "apps/disabled.yaml")
 			if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file) != included {
@@ -516,7 +519,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 				t.Fatal("inactive owner evidence was discarded")
 			}
 			if !included {
-				for obj := range l.Sources() {
+				for obj := range l.Sources(t.Context()) {
 					t.Fatalf("inactive source escaped evidence boundary: %s", obj.Obj.Named())
 				}
 				for _, obj := range l.Store.ListObjects("", manifest.KindConfigMap) {
@@ -760,7 +763,7 @@ spec:
 				if _, ok := l.Index.Lookup(id); !ok || l.Store.GetObject(id) != nil {
 					t.Fatal("namespace-less owner must remain indexed without independent publication")
 				}
-				if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 					t.Fatal(err)
 				}
 				id.Namespace = "media"
@@ -769,7 +772,7 @@ spec:
 				}
 			}
 			if tc.pinned {
-				if err := l.FinalizeIndex(t.Context(), root); err != nil {
+				if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 					t.Fatal(err)
 				}
 				r, _ := l.Index.Lookup(testutil.HelmReleaseID("apps", "app"))
@@ -899,7 +902,7 @@ spec:
 				t.Fatalf("projected %s record=%+v, raw=%+v", id, record, raw[name])
 			}
 		}
-		if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 			t.Fatal(err)
 		}
 		for _, name := range []string{"child", "explicit"} {
@@ -925,7 +928,7 @@ spec:
 			t.Fatal(err)
 		}
 		l.Admit(root)
-		if err := l.FinalizeIndex(t.Context(), root); err != nil {
+		if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 			t.Fatal(err)
 		}
 		canonical := testutil.KustomizationID("immich", "immich-db")
@@ -1208,9 +1211,9 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 	assert.Equal(t, l.projectAuthored(root), false)
 	assert.Equal(t, l.candidates[projected].Obj, candidate)
 	assert.Equal(t, l.Store.GetObject(projected), manifest.BaseManifest(first))
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	l.Admit(root)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	if check() != first {
 		t.Fatal("repeat admission replaced the stable projected candidate")
 	}
@@ -1245,7 +1248,7 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	}
 	l.Store.AddObject(&manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./app"})
 	l.Admit(root)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := l.Index.Lookup(sibling); !ok || l.Store.GetObject(sibling) != nil || l.AdmitsRoot(l.IndexedObject(sibling, l.Index.Records[sibling]).Obj, filepath.Join(root, "app/sibling.yaml")) {
@@ -1269,11 +1272,11 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	assert.Equal(t, len(before), 1)
 	assert.Equal(t, before[0].Identity.Name, "pre-before-post")
 	old := l.scopes
-	assert.Equal(t, len(old.projections), 1)
+	assert.Equal(t, len(old.projections[0])+len(old.projections[1]), 1)
 	testutil.WriteFile(t, root, "object.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: after}\n")
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)})
 	l.mountSources()
-	if l.scopes == old || l.scopes == nil || l.scopes.projections != nil {
+	if l.scopes == old || l.scopes == nil || l.scopes.projections[0] != nil || l.scopes.projections[1] != nil {
 		t.Fatal("mounted replacement retained the old projection memo")
 	}
 	_, err = l.Load(t.Context(), root)
@@ -1282,13 +1285,15 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, len(after), 1)
 	assert.Equal(t, after[0].Identity.Name, "pre-after-post")
-	assert.Equal(t, len(l.scopes.projections), 1)
-	for key := range old.projections {
-		if _, retained := l.scopes.projections[key]; retained {
-			t.Fatal("replacement reused an old projection input")
+	assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
+	for scope, projections := range old.projections {
+		for key := range projections {
+			if _, retained := l.scopes.projections[scope][key]; retained {
+				t.Fatal("replacement reused an old projection input")
+			}
 		}
 	}
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.Equal(t, l.scopes, nil)
-	assert.Equal(t, before[0].Object.Named().Name, "before")
+	assert.Equal(t, before[0].object.Named().Name, "before")
 }

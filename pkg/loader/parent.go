@@ -215,7 +215,7 @@ func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (roo
 
 // Input aliases map source-relative readers and claims to their physical origin.
 func (r documentReader) localBase(root, repoRoot string) string {
-	if origin := OriginPath(r.artifacts[root], root); origin != root {
+	if origin := r.artifacts[root].OriginPath(root); origin != root {
 		base, _ := filepath.Rel(repoRoot, origin)
 		return filepath.ToSlash(base)
 	}
@@ -223,18 +223,5 @@ func (r documentReader) localBase(root, repoRoot string) string {
 }
 
 func (r documentReader) localPath(file string) string {
-	return OriginPath(r.artifacts[r.mountedRoot(file)], file)
-}
-
-// OriginPath projects mutable inputs and aliases onto their physical input origin.
-// file MUST be within the admitted artifact's LocalPath.
-func OriginPath(art *store.SourceArtifact, file string) string {
-	if art != nil && art.LocalRoot != "" && (art.InputAlias || art.Content == "") {
-		if art.LocalRoot == art.LocalPath {
-			return filepath.Clean(file)
-		}
-		rel, _ := filepath.Rel(art.LocalPath, file)
-		return filepath.Join(art.LocalRoot, rel)
-	}
-	return file
+	return r.artifacts[r.mountedRoot(file)].OriginPath(file)
 }

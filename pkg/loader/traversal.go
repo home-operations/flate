@@ -27,6 +27,7 @@ const (
 )
 
 type traversal struct {
+	files       *[]fileAdmission
 	documents   documentReader
 	policy      traversalPolicy
 	visited     map[graphContext]struct{}
@@ -124,6 +125,9 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 				}
 				v.role = kustomizeinput.Component
 			} else if !w.ignoreMatches(v.root, file, false) {
+				if w.files != nil {
+					*w.files = append(*w.files, fileAdmission{file: file, kind: admissionPackage})
+				}
 				n, err := w.loader.loadFile(file)
 				w.count += n
 				if err != nil {
@@ -296,12 +300,18 @@ func (w *traversal) admitFile(check func() error, root, file string, component b
 		return false
 	}
 	if component {
+		if w.files != nil {
+			*w.files = append(*w.files, fileAdmission{file: file, kind: admissionData})
+		}
 		if err := w.loader.recordDataFile(file); err != nil {
 			w.loader.Store.AddWarning(manifest.Warning{
 				Category: manifest.WarnInputParseFailed, Message: "component data file failed to parse", Detail: []string{file, err.Error()},
 			})
 		}
 		return true
+	}
+	if w.files != nil {
+		*w.files = append(*w.files, fileAdmission{file: file, kind: admissionResource})
 	}
 	n, err := w.loader.loadFile(file)
 	w.count += n
@@ -474,9 +484,11 @@ func (w *traversal) scanBootstrapFluxKS(check func() error, root, dir, kpath str
 	input, name := w.documents.input(dir)
 	entries, err := fs.ReadDir(input, name)
 	if err != nil {
-		w.loader.Store.AddWarning(manifest.Warning{
-			Category: manifest.WarnInputReadFailed, Message: "bootstrap-sibling readdir failed", Detail: []string{dir, err.Error()},
-		})
+		warning := manifest.Warning{Category: manifest.WarnInputReadFailed, Message: "bootstrap-sibling readdir failed", Detail: []string{dir, err.Error()}}
+		if w.files != nil {
+			*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
+		}
+		w.loader.Store.AddWarning(warning)
 		return 0
 	}
 	count := 0
@@ -498,9 +510,11 @@ func (w *traversal) scanBootstrapFluxKS(check func() error, root, dir, kpath str
 		reader.regular = e.Type().IsRegular()
 		objs, err := reader.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets, DefaultNamespace: ""})
 		if err != nil {
-			w.loader.Store.AddWarning(manifest.Warning{
-				Category: manifest.WarnInputParseFailed, Message: "bootstrap-sibling parse failed", Detail: []string{abs, err.Error()},
-			})
+			warning := manifest.Warning{Category: manifest.WarnInputParseFailed, Message: "bootstrap-sibling parse failed", Detail: []string{abs, err.Error()}}
+			if w.files != nil {
+				*w.files = append(*w.files, fileAdmission{kind: admissionWarning, warning: warning})
+			}
+			w.loader.Store.AddWarning(warning)
 			continue
 		}
 		for _, child := range objs {
@@ -514,6 +528,13 @@ func (w *traversal) scanBootstrapFluxKS(check func() error, root, dir, kpath str
 			// is sufficient for a bootstrap entry that renders the source root.
 			if ks.IsFragment() {
 				continue
+			}
+			if w.files != nil {
+				for _, fact := range w.documents.cache[abs].objects {
+					if fact.fact != nil && fact.Obj == obj {
+						*w.files = append(*w.files, fileAdmission{file: abs, kind: admissionBootstrap, coordinate: fact.fact.Declaration})
+					}
+				}
 			}
 			if !w.loader.acceptObject(obj.Named()) {
 				continue

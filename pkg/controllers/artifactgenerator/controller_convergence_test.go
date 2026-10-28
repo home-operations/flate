@@ -18,6 +18,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
@@ -388,7 +389,7 @@ func consumedPublication(t *testing.T, publication, change string) []byte {
 				childDoc := map[string]any{"apiVersion": manifest.SourceDomain + "/v1", "kind": repo.Kind, "metadata": map[string]any{"name": repo.Name, "namespace": repo.Namespace}}
 				children, docs := testutil.ParseChildren(generator, supplier, []map[string]any{childDoc}, manifest.ParseDocOptions{})
 				next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(docs), true
-				if err := producer.Emit(supplier.Named(), &next, map[manifest.NamedResource]*store.SourceArtifact{repo: input}); err != nil {
+				if err := producer.Emit(t.Context(), supplier.Named(), &next, map[manifest.NamedResource]*store.SourceArtifact{repo: input}); err != nil {
 					t.Error(err)
 				}
 				producer.Reads.Accept()

@@ -106,7 +106,7 @@ func TestFinalizeIndex_GeneratorData(t *testing.T) {
 			} else if _, err := l.Load(t.Context(), filepath.Join(root, "apps/a")); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			if tc.probe {

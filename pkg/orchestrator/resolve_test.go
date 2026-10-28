@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -442,7 +444,9 @@ func TestResolve_ResourceSetInput(t *testing.T) {
 						reader: {File: "reader.yaml", Refs: []manifest.NamedResource{target}},
 					}, Claims: map[string][]manifest.NamedResource{"reader/": {reader}}}
 					o.store.SetDiscoveryIndex(o.index)
-					o.filter = change.NewFilter(cfg.ExternalChanges, o.index, o.store, "")
+					o.loader = admissiontest.New(t, admissiontest.Config{Changes: cfg.ExternalChanges, Index: o.index, Inventory: o.store, Root: ""})
+					admissiontest.Commit(t, o.loader, nil)
+					o.filter = o.loader.Options.Filter
 					location, locateErr := gitrepo.Locate(t.Context(), root, "")
 					assert.NoError(t, locateErr)
 					input, admitErr := gittree.AdmitDirectory(t.Context(), location)
@@ -562,7 +566,7 @@ func TestResolve_OptionalForceCutInvalidation(t *testing.T) {
 					if kind == manifest.KindHelmRelease {
 						data = map[string]any{"values.yaml": "greeting: exact"}
 					}
-					f.o.ksc.Emit(owner, &store.Emission{Children: []store.Child{{Obj: &manifest.ConfigMap{Name: f.target.Name, Namespace: f.target.Namespace, Data: data}}}, Complete: true}, nil)
+					controllertest.Emit(t.Context(), f.o.ksc.Controller, owner, &store.Emission{Children: []store.Child{{Obj: &manifest.ConfigMap{Name: f.target.Name, Namespace: f.target.Namespace, Data: data}}}, Complete: true})
 				}
 				if prior.Valid() {
 					t.Fatal("changed authority retained the prior assessment")
@@ -609,7 +613,9 @@ func TestResolve_OptionalPairedSelection(t *testing.T) {
 				f.o.index.Records[reader] = manifest.DiscoveryRecord{File: "reader.yaml", Refs: []manifest.NamedResource{f.target}}
 				f.o.index.Claims = map[string][]manifest.NamedResource{"reader/": {reader}}
 				f.o.store.SetDiscoveryIndex(f.o.index)
-				f.o.filter = change.NewFilter(change.NewSet([]string{"reader/output.yaml"}), f.o.index, f.o.store, "")
+				f.o.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"reader/output.yaml"}), Index: f.o.index, Inventory: f.o.store, Root: ""})
+				admissiontest.Commit(t, f.o.loader, nil)
+				f.o.filter = f.o.loader.Options.Filter
 				if !f.o.filter.ShouldReconcile(reader) || !f.o.filter.ShouldReconcile(f.supplier) {
 					t.Fatal("changed-only selection lost optional materializer")
 				}

@@ -368,11 +368,23 @@ func verifyProducedDependencyEdit(t *testing.T, root string, intervalOnly bool) 
 					if consumerDiff != "" {
 						t.Fatalf("interval edit changed consumer payload: %s", consumerDiff)
 					}
-				} else {
-					value := "before"
-					if !intervalOnly {
-						value = "after"
+				} else if intervalOnly {
+					docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+					assert.NoError(t, err)
+					declarations := map[string]int{}
+					for _, doc := range docs {
+						id := manifest.DocIdentity(doc)
+						assert.Equal(t, id.Group, manifest.FluxKustomizeDomain)
+						assert.Equal(t, id.Kind, manifest.KindKustomization)
+						assert.Equal(t, id.Namespace, "apps")
+						declarations[id.Name]++
+						if id.Name == "consumer" {
+							assert.Equal(t, doc["spec"].(map[string]any)["interval"], any("2h"))
+						}
 					}
+					assert.Diff(t, declarations, map[string]int{"consumer": 1, "producer": 1, "unrelated": 1})
+				} else {
+					value := "after"
 					if !strings.Contains(stdout, "value: "+value) || mode == "diff" && !strings.Contains(stdout, "value: before") {
 						t.Fatalf("selected consumer or diff side missing: %s", stdout)
 					}

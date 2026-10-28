@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -25,7 +26,7 @@ import (
 
 // Result summarizes what discovery hydrated into the store.
 type Result struct {
-	pending *discoverer
+	pending *Session
 
 	// Binding identifies the entry's actual producer and admitted input.
 	Binding Binding
@@ -46,6 +47,11 @@ type Result struct {
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
+	// Selection controls restricted declaration construction.
+	Selection manifest.Selection
+	// Loader borrows the invocation's sole declaration loader.
+	Loader  *loader.Loader
+	session *Session
 	// Input is authoritative over a preseeded bootstrap artifact or disk admission.
 	Input *store.SourceArtifact
 	// Entry supplies immutable parsed input prepared by Plan for this admission.
@@ -90,15 +96,53 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("discovery: Store is required")
 	}
-	d := newDiscoverer(cfg)
-	l := d.loader
-	_, err := d.resolveEntrySources(ctx, false)
-	if err != nil {
-		return nil, err
+	if cfg.session == nil && (cfg.Selection.Changed || len(cfg.Selection.Roots) != 0) {
+		if cfg.Loader == nil {
+			cfg.Loader = loader.New(cfg.Store)
+		}
+		if cfg.Loader.Options.Filter == nil {
+			cfg.Loader.Options.Filter = change.NewFilter()
+		}
+		session, err := Begin(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		for {
+			proposal, err := cfg.Loader.Prepare(ctx, store.Child{}, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			advanced, err := session.Advance(ctx, proposal)
+			if err != nil {
+				return nil, err
+			}
+			if !advanced {
+				added, retry := cfg.Loader.Options.Filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+				if retry {
+					return nil, fmt.Errorf("%w: discovery membership changed during construction", manifest.ErrInput)
+				}
+				for _, id := range added {
+					cfg.Store.SetIncluded(id, true)
+				}
+				return session.Freeze(ctx)
+			}
+		}
 	}
-	repoRoot := cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact).LocalPath
-	if err := d.loadManifests(ctx, repoRoot, true); err != nil {
-		return nil, err
+	d := cfg.session
+	if d == nil {
+		d = newDiscoverer(cfg)
+	}
+	l := d.loader
+	if cfg.session == nil {
+		if _, err := d.resolveEntrySources(ctx, false); err != nil {
+			return nil, err
+		}
+	}
+	repoRoot := d.cfg.Input.LocalPath
+	if cfg.session == nil {
+		if err := d.loadManifests(ctx, repoRoot, true); err != nil {
+			return nil, err
+		}
 	}
 	for _, child := range d.loader.Kustomizations() {
 		ks := child.Obj.(*manifest.Kustomization)
@@ -116,13 +160,19 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			}
 		}
 	}
-	if err := l.EntryFailure(ctx, repoRoot); err != nil {
+	if d.binding.Failure == nil {
+		if err := l.EntryFailure(ctx, repoRoot); err != nil {
+			return nil, err
+		}
+	}
+	if err := l.FinalizeIndex(ctx, repoRoot, true); err != nil {
 		return nil, err
 	}
-	if err := l.FinalizeIndex(ctx, repoRoot); err != nil {
-		return nil, err
+	if !cfg.Selection.Changed && len(cfg.Selection.Roots) == 0 {
+		if err := d.promoteOrphans(ctx, standaloneSecrets); err != nil {
+			return nil, err
+		}
 	}
-	d.promoteOrphans(ctx, standaloneSecrets)
 	if err := d.acceptEntry(ctx); err != nil {
 		return nil, err
 	}
@@ -175,7 +225,7 @@ func (r *Result) PrepareEntry(ctx context.Context) error {
 			d.binding.Failure = err
 		}
 	}
-	if err := d.loader.FinalizeIndex(ctx, r.RepoRoot); err != nil {
+	if err := d.loader.FinalizeIndex(ctx, r.RepoRoot, true); err != nil {
 		return err
 	}
 	if err := d.acceptEntry(ctx); err != nil {
@@ -185,7 +235,8 @@ func (r *Result) PrepareEntry(ctx context.Context) error {
 	return nil
 }
 
-type discoverer struct {
+// Session retains invocation-local declaration construction until Freeze.
+type Session struct {
 	binding         Binding
 	entryApplier    manifest.NamedResource
 	prepared        map[*manifest.Kustomization]entryPreparation
@@ -196,6 +247,7 @@ type discoverer struct {
 	remotes         map[string]struct{}
 	aliasViews      map[string]*store.SourceArtifact
 	hasPins         bool
+	result          *Result
 }
 
 type entryPreparation struct {
@@ -205,10 +257,14 @@ type entryPreparation struct {
 	registered bool
 }
 
-func newDiscoverer(cfg Config) *discoverer {
-	l := loader.New(cfg.Store)
-	l.Options = loader.Options{WipeSecrets: cfg.WipeSecrets, RemoteInputs: cfg.RemoteInputs, RemoteRetry: cfg.RemoteRetry}
-	d := &discoverer{cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{}}
+func newDiscoverer(cfg Config) *Session {
+	l := cfg.Loader
+	if l == nil {
+		l = loader.New(cfg.Store)
+	}
+	l.Options.WipeSecrets, l.Options.RemoteInputs, l.Options.RemoteRetry = cfg.WipeSecrets, cfg.RemoteInputs, cfg.RemoteRetry
+	l.Options.Selection = cfg.Selection
+	d := &Session{cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{}}
 	if cfg.Entry == nil || cfg.Entry.prepared == nil {
 		return d
 	}
@@ -229,11 +285,15 @@ func newDiscoverer(cfg Config) *discoverer {
 	return d
 }
 
-func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build bool) error {
+func (d *Session) loadManifests(ctx context.Context, repoRoot string, build bool) error {
 	l := d.loader
 	l.SourceRoot = repoRoot
 
-	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	input := d.cfg.Input
+	if input == nil {
+		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+		d.cfg.Input = input
+	}
 	name, err := filepath.Rel(input.LocalPath, d.cfg.Path)
 	if err != nil {
 		return err
@@ -315,14 +375,14 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 			if missing != 0 {
 				continue
 			}
-			if !build {
-				break
-			}
 			var discovered []*manifest.Kustomization
 			for _, child := range kustomizations {
 				discovered = append(discovered, child.Obj.(*manifest.Kustomization))
 			}
 			d.substitutions = values.NewDependencySubstitutions(discovered)
+			if !build {
+				break
+			}
 			ks, err := d.bindEntry(ctx, repoRoot)
 			if err != nil {
 				return err
@@ -364,8 +424,11 @@ type Binding struct {
 	Failure               error
 }
 
-func (d *discoverer) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kustomization, error) {
-	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+func (d *Session) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kustomization, error) {
+	input := d.cfg.Input
+	if input == nil {
+		input, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+	}
 	var internal *manifest.Kustomization
 	if d.binding == (Binding{}) {
 		var err error
@@ -402,7 +465,7 @@ func (d *discoverer) bindEntry(ctx context.Context, repoRoot string) (*manifest.
 		if pinned || external {
 			continue
 		}
-		target := loader.OriginPath(art, filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
+		target := art.OriginPath(filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
 		if target == d.cfg.Path {
 			matches = append(matches, child)
 		}
@@ -412,6 +475,9 @@ func (d *discoverer) bindEntry(ctx context.Context, repoRoot string) (*manifest.
 	for _, child := range matches {
 		candidate := child.Obj.(*manifest.Kustomization)
 		if len(candidate.DependsOn) != 0 {
+			if d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0 {
+				continue
+			}
 			if d.cfg.Trees == nil || candidate.PostBuild != nil && len(candidate.PostBuild.SubstituteFrom) != 0 {
 				continue
 			}
@@ -441,7 +507,7 @@ func (d *discoverer) bindEntry(ctx context.Context, repoRoot string) (*manifest.
 		}
 	}
 	for owner, prepared := range d.prepared {
-		if prepared.registered && owner != ks {
+		if prepared.registered && owner.Named() != ks.Named() {
 			delete(d.prepared, owner)
 		}
 	}
@@ -449,11 +515,15 @@ func (d *discoverer) bindEntry(ctx context.Context, repoRoot string) (*manifest.
 	if source.Name == "" || source.Kind == "" {
 		source = manifest.BootstrapSourceID
 	}
-	d.binding = Binding{Producer: ks.Named(), Source: source, Path: manifest.NormalizeClaimBase(ks.Path), Key: internal.Named()}
+	failure := d.binding.Failure
+	if d.binding.Producer != ks.Named() {
+		failure = nil
+	}
+	d.binding = Binding{Producer: ks.Named(), Source: source, Path: manifest.NormalizeClaimBase(ks.Path), Key: internal.Named(), Failure: failure}
 	return ks, nil
 }
 
-func (d *discoverer) entryEligible(owner *manifest.Kustomization, children []store.Child) bool {
+func (d *Session) entryEligible(owner *manifest.Kustomization, children []store.Child) bool {
 	batch := make(map[manifest.NamedResource]manifest.BaseManifest, len(children))
 	for _, child := range children {
 		batch[child.Obj.Named()] = child.Obj
@@ -508,7 +578,7 @@ func (d *discoverer) entryEligible(owner *manifest.Kustomization, children []sto
 	return !prerequisites(owner)
 }
 
-func (d *discoverer) prepareDocuments(ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact) (entryPreparation, error) {
+func (d *Session) prepareDocuments(ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact) (entryPreparation, error) {
 	if previous, ok := d.prepared[ks]; ok && previous.source == input {
 		return previous, nil
 	}
@@ -538,18 +608,29 @@ func (d *discoverer) prepareDocuments(ctx context.Context, ks *manifest.Kustomiz
 	return result, nil
 }
 
-func (d *discoverer) prepareEntry(ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact) error {
+func (d *Session) prepareEntry(ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact) error {
 	prepared, err := d.prepareDocuments(ctx, ks, input)
 	if err != nil {
 		return err
 	}
-	d.loader.RegisterBuilt(loader.BuiltInput{Root: filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(ks.Path)), Owner: ks.Named(), Source: d.binding.Source, Reads: kustomize.RenderInputs(prepared.receipt)}, prepared.children)
+	source := ks.SourceID()
+	if source.Name == "" || source.Kind == "" {
+		source = manifest.BootstrapSourceID
+	}
+	owner := manifest.NamedResource{}
+	if d.binding.Producer == ks.Named() {
+		owner = ks.Named()
+	}
+	d.loader.RegisterBuilt(loader.BuiltInput{Root: filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(ks.Path)), Owner: owner, Source: source, Reads: kustomize.RenderInputs(prepared.receipt)}, prepared.children)
 	prepared.registered = true
 	d.prepared[ks] = prepared
+	if d.binding.Producer == ks.Named() {
+		d.binding.Failure = nil
+	}
 	return nil
 }
 
-func (d *discoverer) acceptEntry(ctx context.Context) error {
+func (d *Session) acceptEntry(ctx context.Context) error {
 	for ks, prepared := range d.prepared {
 		if !prepared.registered || ks.Named() != d.binding.Producer {
 			continue
@@ -579,13 +660,9 @@ func (d *discoverer) acceptEntry(ctx context.Context) error {
 // must be discarded before the committed subtree supplies discovery metadata.
 // Resolved sources must retain their objects and artifacts so a pinned root
 // claim cannot replace its own source with a working-tree alias.
-func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
+func (d *Session) discardPinnedWorkingTreeFiles(repoRoot string) {
 	d.loader.Admit(repoRoot)
-	children := d.loader.Kustomizations()
-	occurrences := make([]loader.Occurrence, len(children))
-	for i, child := range children {
-		occurrences[i] = loader.Occurrence{Identity: child.Obj.Named(), Object: child.Obj}
-	}
+	occurrences := d.loader.PathObjects()
 	prefixes, pinnedSources := d.pinnedWorkingTreeClaims(repoRoot, occurrences)
 	if len(prefixes) == 0 {
 		return
@@ -606,15 +683,11 @@ func (d *discoverer) discardPinnedWorkingTreeFiles(repoRoot string) {
 }
 
 // scratch MUST be caller-owned; package-owned occurrence slices are immutable.
-func (d *discoverer) pinnedWorkingTreeClaims(repoRoot string, scratch []loader.Occurrence) ([]manifest.KSClaim, map[manifest.NamedResource]struct{}) {
+func (d *Session) pinnedWorkingTreeClaims(repoRoot string, scratch []loader.Occurrence) ([]manifest.KSClaim, map[manifest.NamedResource]struct{}) {
 	pinned := scratch[:0]
 	sources := map[manifest.NamedResource]struct{}{}
 	for _, o := range scratch {
-		obj := o.Object
-		if obj.Named().Namespace != o.Identity.Namespace {
-			obj = obj.WithNamespace(o.Identity.Namespace)
-		}
-		ref, _, hasPath := obj.SourcePath()
+		ref, _, hasPath := o.SourcePath()
 		if !hasPath {
 			continue
 		}
@@ -626,7 +699,7 @@ func (d *discoverer) pinnedWorkingTreeClaims(repoRoot string, scratch []loader.O
 	return d.loader.OccurrenceClaims(repoRoot, pinned), sources
 }
 
-func (d *discoverer) pinnedWorkingTreeFile(repoRoot string, prefixes []manifest.KSClaim, id manifest.NamedResource, record manifest.DiscoveryRecord) bool {
+func (d *Session) pinnedWorkingTreeFile(repoRoot string, prefixes []manifest.KSClaim, id manifest.NamedResource, record manifest.DiscoveryRecord) bool {
 	if len(prefixes) == 0 {
 		return false
 	}
@@ -650,7 +723,7 @@ func (d *discoverer) pinnedWorkingTreeFile(repoRoot string, prefixes []manifest.
 }
 
 // The Loader deduplicates unchanged views; unavailable followed paths fail during reconciliation.
-func (d *discoverer) loadAt(ctx context.Context, dir string, total *int) error {
+func (d *Session) loadAt(ctx context.Context, dir string, total *int) error {
 	n, err := d.loader.Load(ctx, dir)
 	if d.loader.IgnoreFile == "" && errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -662,7 +735,7 @@ func (d *discoverer) loadAt(ctx context.Context, dir string, total *int) error {
 	return nil
 }
 
-func (d *discoverer) loadSourcePath(ctx context.Context, dir string, input *store.SourceArtifact, total *int) (bool, error) {
+func (d *Session) loadSourcePath(ctx context.Context, dir string, input *store.SourceArtifact, total *int) (bool, error) {
 	if err := d.loadAt(ctx, dir, total); err != nil {
 		if errors.Is(err, fs.ErrPermission) && input != nil && input.FS != nil {
 			name, _ := filepath.Rel(input.LocalPath, dir)
@@ -673,4 +746,107 @@ func (d *discoverer) loadSourcePath(ctx context.Context, dir string, input *stor
 		return false, err
 	}
 	return true, nil
+}
+
+// Begin binds sources and collects declarations without evaluating standalone packages.
+func Begin(ctx context.Context, cfg Config) (*Session, error) {
+	if cfg.Store == nil {
+		return nil, errors.New("discovery: Store is required")
+	}
+	d := newDiscoverer(cfg)
+	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+		return nil, err
+	}
+	root := d.cfg.Input.LocalPath
+	if err := d.loadManifests(ctx, root, false); err != nil {
+		return nil, err
+	}
+	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
+		return nil, err
+	}
+	return d, nil
+}
+
+// Advance constructs only the independent declarations and standalone packages required by admission.
+func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if d.result != nil || admission == nil {
+		return false, nil
+	}
+	changed, refresh := false, false
+	for _, child := range admission.Objects {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if child.Obj != nil && d.cfg.Store.GetObject(child.Obj.Named()) == nil {
+			d.cfg.Store.AddObject(child.Obj, child.Doc)
+			changed = true
+			_, _, hasPath := child.Obj.SourcePath()
+			_, source := child.Obj.(entrySource)
+			refresh = refresh || hasPath || source
+		}
+	}
+	root := d.cfg.Input.LocalPath
+	for _, packageRoot := range d.loader.StandaloneRoots(root) {
+		if !slices.Contains(admission.Blocked, packageRoot) {
+			continue
+		}
+		ks := manifest.NewEntryKustomization(manifest.BootstrapSourceID, packageRoot, manifest.NamedResource{})
+		if filepath.Join(root, packageRoot) == d.cfg.Path {
+			var err error
+			ks, err = d.bindEntry(ctx, root)
+			if err != nil {
+				return false, err
+			}
+			d.cfg.Store.AddObject(ks)
+		}
+		input := d.cfg.Input
+		if input == nil {
+			return false, fmt.Errorf("%w: entry source unavailable", manifest.ErrInput)
+		}
+		if err := d.prepareEntry(ctx, ks, input); err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if d.binding.Producer == ks.Named() {
+				d.binding.Failure = err
+			}
+			slog.Debug("discovery: entry preparation deferred", "err", err)
+			return false, nil
+		}
+		changed, refresh = true, true
+	}
+	if !changed || !refresh {
+		return changed, nil
+	}
+	if _, err := d.resolveEntrySources(ctx, false); err != nil {
+		return false, err
+	}
+	if err := d.loadManifests(ctx, root, false); err != nil {
+		return false, err
+	}
+	if err := d.loader.FinalizeIndex(ctx, root, false); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Freeze publishes the final index once and releases construction ownership.
+func (d *Session) Freeze(ctx context.Context) (*Result, error) {
+	if d.result != nil {
+		return d.result, nil
+	}
+	cfg := d.cfg
+	cfg.session = d
+	if _, err := d.bindEntry(ctx, d.cfg.Input.LocalPath); err != nil {
+		return nil, err
+	}
+	result, err := Run(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	d.result = result
+	return result, nil
 }

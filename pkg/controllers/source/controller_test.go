@@ -15,12 +15,14 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	src "github.com/home-operations/flate/pkg/source"
@@ -70,7 +72,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: "credentials.yaml"}})
 	assert.NoError(t, err)
 	st.SetSupplied(supply)
-	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
+	controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
 	var pending int
 	st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if info, ok := payload.(store.StatusInfo); id == repo.Named() && ok && info.Status == store.StatusPending {
@@ -94,12 +96,12 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 			secret.StringData = map[string]any{"username": "second"}
 			st.AddObject(secret)
 		case "authority":
-			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
+			controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
 		case "declaration":
 			next := *repo
 			repo = &next
 			repo.URL = "https://example.test/changed"
-			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
+			controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true})
 		}
 		previous := accepted
 		c.Tasks.Go(t.Context(), phase.name, func(ctx context.Context) {
@@ -135,12 +137,15 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
 				first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
 				second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
+				var filterLoader *loader.Loader
 				var filter *change.Filter
 				if tc.filtered {
 					index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{chart.Named(): {File: "chart.yaml"}}}
-					filter = change.NewFilter(change.NewSet([]string{"chart.yaml"}), index, filtertest.MapLister{chart.Named(): chart, first.Named(): first, second.Named(): second}, "/repo")
+					filterLoader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"chart.yaml"}), Index: index, Inventory: store.New(), Root: "/repo"})
+					admissiontest.Commit(t, filterLoader, nil)
+					filter = filterLoader.Options.Filter
 				}
-				c, st := newConfiguredController(t, map[string]src.Fetcher{manifest.KindHelmChart: f}, FetchOptions{Filter: filter})
+				c, st := newConfiguredController(t, map[string]src.Fetcher{manifest.KindHelmChart: f}, FetchOptions{Filter: filter, Loader: filterLoader})
 				st.AddObjects([]manifest.BaseManifest{first, second})
 				secret := &manifest.Secret{Name: "credentials", Namespace: "apps", StringData: map[string]any{"username": "same"}}
 				st.AddObject(secret)
@@ -148,7 +153,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				assert.NoError(t, err)
 				st.SetSupplied(supply)
 				publish := func(value string) {
-					c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete}, nil)
+					controllertest.Emit(t.Context(), c.Controller, first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete})
 				}
 				publish("first")
 				entered, release := make(chan struct{}), make(chan struct{})
@@ -174,7 +179,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 						next.Version = "2.0.0"
 						chart = &next
 					}
-					c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
+					controllertest.Emit(t.Context(), c.Controller, second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete})
 					publish("changed")
 					unblock()
 				}
@@ -197,7 +202,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				}
 				wantEvidence := store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}}
 				assert.Diff(t, st.AdvisoryEvidence(), wantEvidence)
-				c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
+				controllertest.Emit(t.Context(), c.Controller, second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete})
 				publish("changed again")
 				if accepted.Valid() {
 					t.Fatal("producer publication did not invalidate the captured availability assessment")
@@ -247,7 +252,7 @@ func TestSource_DeclarationSettlement(t *testing.T) {
 				if provisional.Outcome() != schedule.Blocked || f.calls != 0 {
 					t.Errorf("provisional unresolved=%t acquisitions=%d, want deferred with no acquisition", provisional.Outcome() == schedule.Blocked, f.calls)
 				}
-				c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: &settled}}, Complete: true}, nil)
+				controllertest.Emit(t.Context(), c.Controller, parent.Named(), &store.Emission{Children: []store.Child{{Obj: &settled}}, Complete: true})
 				st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			})
 			c.Tasks.BlockTillDone()
@@ -294,7 +299,7 @@ func TestSource_DeclarationProgress(t *testing.T) {
 					if run.Reads.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
 						t.Error("producer did not receive source content")
 					}
-					run.Emit(id, &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
+					run.Emit(t.Context(), id, &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
 					return nil
 				})
 				return run
@@ -324,6 +329,9 @@ func newController(t *testing.T, fetchers map[string]src.Fetcher) (*Controller, 
 func newConfiguredController(t *testing.T, fetchers map[string]src.Fetcher, opts FetchOptions) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
+	if opts.Loader != nil {
+		st = opts.Loader.Store
+	}
 	ts := task.NewBounded(2)
 	c := New(st, ts)
 	maps.Copy(c.Fetchers, fetchers)
@@ -448,8 +456,10 @@ func TestController_ShortCircuitsToReady(t *testing.T) {
 		c := New(st, tasks)
 		f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: manifest.KindGitRepository}}
 		c.Fetchers[manifest.KindGitRepository] = f
-		filter := change.NewFilter(change.NewSet(nil), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, filtertest.MapLister{}, "")
-		c.Configure(FetchOptions{Filter: filter}, sourcecache.RetryConfig{})
+		filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, Inventory: filtertest.MapLister{}, Root: ""})
+		admissiontest.Commit(t, filterLoader, nil)
+		filter := filterLoader.Options.Filter
+		c.Configure(FetchOptions{Filter: filter, Loader: filterLoader}, sourcecache.RetryConfig{})
 		t.Cleanup(func() { tasks.BlockTillDone() })
 		repo := &manifest.GitRepository{Name: "r", Namespace: "ns", URL: "https://example/r.git"}
 		st.AddObject(repo)

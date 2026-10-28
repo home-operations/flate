@@ -132,7 +132,7 @@ func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
 			id := manifest.Resolve(obj.Named(), "apps", "")
 			id.Name = prefix + id.Name
 			if prefix != "" {
-				assert.Equal(t, len(l.scopes.projections), 1)
+				assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
 			}
 			assert.Diff(t, index.Records[id].Refs, []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "input"}})
 			assert.Equal(t, len(index.Records[id].Productions), 2)
@@ -228,7 +228,7 @@ func TestFinalizeIndex_BareDirComponentNamespace(t *testing.T) {
 			if _, err := loadForTest(t.Context(), t, l, filepath.Join(dir, "kubernetes/apps/bare")); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+			if err := l.FinalizeIndex(t.Context(), dir, true); err != nil {
 				t.Fatal(err)
 			}
 			idx := l.Index
@@ -459,14 +459,14 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 				assert.NoError(t, err)
 				input.opens = 0
 			}
-			assert.NoError(t, l.FinalizeIndex(t.Context(), dir))
+			assert.NoError(t, l.FinalizeIndex(t.Context(), dir, true))
 			if tc.statError != nil {
 				failed := l.documents.cache[filepath.Join(dir, input.missing)].objects
 				if len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist) {
 					t.Fatalf("unreadable resource = %+v", failed)
 				}
 			}
-			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+			if err := l.FinalizeIndex(t.Context(), dir, true); err != nil {
 				t.Fatal(err)
 			}
 			for _, owner := range []manifest.NamedResource{ks.Named(), other.Named()} {
@@ -492,7 +492,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 				t.Fatalf("kustomization probes beneath a resource=%d, want %d", input.probes, wantProbes)
 			}
 			s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: dir, LocalRoot: dir, FS: input})
-			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
+			if err := l.FinalizeIndex(t.Context(), dir, true); err != nil {
 				t.Fatal(err)
 			}
 			if input.stats != wantStats+1 {
@@ -616,7 +616,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			l := newLoader()
 			_, exists := l.Index.Lookup(id)
 			assert.Equal(t, exists, !tc.graphAdded)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			declaration := manifest.BaseManifest(&manifest.Kustomization{Name: "child", Namespace: "flux-system", Path: "./apps/${ENV}/child"})
@@ -649,7 +649,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			assert.Diff(t, owners, wantOwners)
 			assert.Equal(t, len(ancestors), 0)
 			snapshot := snapshotIndexForTest(l.Index)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			if diff := cmp.Diff(snapshot.Records, l.Index.Records, cmp.Comparer(manifest.Equal)); diff != "" {
@@ -660,7 +660,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 			assert.Diff(t, owners, wantOwners)
 			assert.Equal(t, len(ancestors), 0)
 			fresh := newLoader()
-			if err := fresh.FinalizeIndex(t.Context(), root); err != nil {
+			if err := fresh.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			assertIndexForTest(t, *fresh.Index, snapshot)
@@ -998,7 +998,7 @@ data: {value: fixture}
 					t.Fatal(err)
 				}
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			idx := l.Index
@@ -1166,7 +1166,7 @@ func TestFinalizeIndex_ArtifactSourceViews(t *testing.T) {
 	if _, authoredNamespace := doc["metadata"].(map[string]any)["namespace"]; authoredNamespace {
 		t.Fatal("projection changed authored document namespace")
 	}
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	idx := l.Index
@@ -1255,7 +1255,7 @@ func TestFinalizeIndex_ArtifactScopeIsolation(t *testing.T) {
 			if _, err := l.Load(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			target := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindExternalArtifact, Namespace: "apps", Name: "app-api"}
@@ -1364,7 +1364,7 @@ func TestFinalizeIndex_UntraversedBuilder(t *testing.T) {
 	l.documents.read(filepath.Join(root, "evidence"))
 	_, err := l.Load(t.Context(), filepath.Join(root, "selected"))
 	assert.NoError(t, err)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"untraversed", "selected"} {

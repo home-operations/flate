@@ -14,6 +14,8 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -33,7 +35,7 @@ func TestFingerprintDedup_ChangedWorkBecomesPending(t *testing.T) {
 	s.AddObject(hr)
 	s.UpdateStatus(hr.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "completed"})
 	c := gateExecution(New(s, task.NewBounded(2)), hr.Named())
-	_, handled, err := c.FingerprintDedup(hr.Named(), "changed", &store.Emission{})
+	_, handled, err := c.FingerprintDedup(t.Context(), hr.Named(), "changed", &store.Emission{})
 	info, _ := s.GetStatus(hr.Named())
 	if err != nil || handled || info.Status != store.StatusPending {
 		t.Fatalf("admission=%t/%v, status=%+v", handled, err, info)
@@ -49,7 +51,7 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	_, _, next := s.GetEmission(parent.Named())
 	defer next.Finish()
 	next.Complete = true
-	c.Emit(parent.Named(), &next, nil)
+	c.emit(t.Context(), parent.Named(), &next, nil)
 	info, _ := s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 0 objects")
 	first := info
@@ -57,7 +59,7 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 		t.Helper()
 		if allocations := testing.AllocsPerRun(100, func() {
 			s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
-			c.Emit(parent.Named(), &next, nil)
+			c.emit(t.Context(), parent.Named(), &next, nil)
 		}); allocations != 0 {
 			t.Fatalf("applying publication allocates %g times", allocations)
 		}
@@ -66,12 +68,12 @@ func TestEmit_ApplyingProgress(t *testing.T) {
 	}
 	t.Run("first", func(t *testing.T) { publication(t, "applying 0 objects") })
 	if allocations := testing.AllocsPerRun(100, func() {
-		c.Emit(parent.Named(), &next, nil)
+		c.emit(t.Context(), parent.Named(), &next, nil)
 	}); allocations != 0 {
 		t.Fatalf("repeated publication allocates %g times", allocations)
 	}
 	next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"kind": "ConfigMap"}})
-	c.Emit(parent.Named(), &next, nil)
+	c.emit(t.Context(), parent.Named(), &next, nil)
 	info, _ = s.GetStatus(parent.Named())
 	assert.Equal(t, info.String(), "applying 1 objects")
 	t.Run("changed", func(t *testing.T) { publication(t, "applying 1 objects") })
@@ -115,8 +117,8 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 }
 
 func (*gatePromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *gatePromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) bool {
-	return p.promote(id)
+func (p *gatePromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+	return p.promote(id), nil
 }
 
 func TestRequireRefresh_DataPromotionRefreshesCanonical(t *testing.T) {
@@ -148,14 +150,20 @@ func TestRequireRefresh_DataPromotionRefreshesCanonical(t *testing.T) {
 	})
 	first := gateExecution(c, canonical.Named())
 	_ = first.Reads.GetObject(canonical.Named())
-	_ = first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads, false))
+	_, admissionErr1 := first.DataInputs(t.Context(), canonical, values.NewStoreProvider(&first.Reads, false))
+	if admissionErr1 != nil {
+		t.Fatal(admissionErr1)
+	}
 	if first.Reads.Valid() {
 		t.Fatal("promotion did not invalidate the captured declaration")
 	}
 	second := gateExecution(c, canonical.Named())
 	got, _ := second.Reads.Get[*manifest.Kustomization](canonical.Named())
 	assert.Equal(t, got, fresh)
-	inputs := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
+	inputs, admissionErr2 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
+	if admissionErr2 != nil {
+		t.Fatal(admissionErr2)
+	}
 	assert.Equal(t, len(inputs), 1)
 	assert.Equal(t, inputs[0].NamedResource, replacement.Named())
 	assert.Equal(t, inputs[0].Input.Data, manifest.Data(replacement))
@@ -207,7 +215,10 @@ func TestRequireRefresh_ChangedCanonicalReferences(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
-			inputs := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
+			inputs, admissionErr3 := second.DataInputs(t.Context(), got, values.NewStoreProvider(&second.Reads, false))
+			if admissionErr3 != nil {
+				t.Fatal(admissionErr3)
+			}
 			assert.Equal(t, len(inputs), 1)
 			assert.Equal(t, inputs[0].Name, "current")
 		})
@@ -228,12 +239,14 @@ func TestEmit_LatePreflight(t *testing.T) {
 			child := &manifest.ExternalArtifact{Name: "child", Namespace: "apps"}
 			s.AddObject(parent)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent.Named(): {File: "parent.yaml"}}}
-			filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "")
+			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: ""})
+			admissiontest.Commit(t, filterLoader, nil)
+			filter := filterLoader.Options.Filter
 			var reject atomic.Bool
 			c := New(s, task.NewBounded(2))
-			c.Configure(Options{Filter: filter, Index: index, PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() }})
+			c.Configure(Options{Filter: filter, Index: index, PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", reject.Load() }, Loader: filterLoader})
 			execution := gateExecution(c, parent.Named())
-			_, handled, err := execution.FingerprintDedup(parent.Named(), "new content", &store.Emission{})
+			_, handled, err := execution.FingerprintDedup(t.Context(), parent.Named(), "new content", &store.Emission{})
 			if handled || err != nil {
 				t.Fatalf("admission=%t/%v", handled, err)
 			}
@@ -243,7 +256,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 			reject.Store(true)
 			s.SetPreflight(parent.Named(), "cycle")
 			payloads := map[manifest.NamedResource]*store.SourceArtifact{child.Named(): {FS: fstest.MapFS{}}}
-			if err := execution.Emit(parent.Named(), &next, payloads); err == nil {
+			if err := execution.Emit(t.Context(), parent.Named(), &next, payloads); err == nil {
 				t.Fatalf("publication error=%v", err)
 			}
 			if s.GetObject(child.Named()) != nil || s.GetArtifact(child.Named(), store.ArtifactContent) != nil || s.GetArtifact(parent.Named(), store.ArtifactContent) != nil || filter.ShouldReconcile(child.Named()) {
@@ -337,7 +350,7 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 			_, _, next := s.GetEmission(producer.Named())
 			defer next.Finish()
 			next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(visible), true
-			c.Emit(producer.Named(), &next, nil)
+			c.emit(t.Context(), producer.Named(), &next, nil)
 			accepted, _ := s.GetArtifact(producer.Named(), store.ArtifactContent).(*store.Emission)
 			if accepted == nil || len(accepted.Manifests) != 1 {
 				t.Fatalf("accepted=%v", accepted)
@@ -426,7 +439,7 @@ func TestRequireRefresh_ArtifactReferences(t *testing.T) {
 				}
 				s.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
-			c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true}, nil)
+			c.emit(t.Context(), parent.Named(), &store.Emission{Children: []store.Child{{Obj: obj}}, Complete: true}, nil)
 			first := gateExecution(c, obj.Named())
 			defer first.Close()
 			canonical, err := first.RequireRefresh(t.Context(), obj, tc.stage, manifest.DrainNone)

@@ -1,4 +1,4 @@
-package change
+package loader
 
 import (
 	"slices"
@@ -8,6 +8,7 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -49,7 +50,7 @@ func TestFilter_InlineOCICredentialChangeSelectsRelease(t *testing.T) {
 					st.AddObject(release)
 				}
 				index := &manifest.DiscoveryIndex{Records: records}
-				f := NewFilter(NewSet([]string{"credentials.yaml"}), index, st, "")
+				f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"credentials.yaml"}), index: index, inventory: st})
 				if form == "emitted" {
 					f.AddEmitted(parent, store.Child{Obj: release}, st)
 				}

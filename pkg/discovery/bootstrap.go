@@ -37,14 +37,14 @@ type entryResolution struct {
 	subtree   string
 	synthetic bool
 	pinned    bool
-	refs      []manifest.BaseManifest
+	refs      []sourceWitness
 	artifact  *store.SourceArtifact
 	warnings  []manifest.Warning
 	viewKey   string
 }
 
 // Admission supplies bytes and remote metadata; only publishEntrySource publishes identities.
-func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
+func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifact, error) {
 	admitted := d.cfg.Input
 	if admitted == nil {
 		admitted, _ = d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
@@ -85,12 +85,24 @@ func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArti
 			d.remotes[normalized] = struct{}{}
 		}
 	}
+	d.cfg.Input = admitted
 	return admitted, nil
 }
 
+type sourceWitness struct {
+	id   manifest.NamedResource
+	path string
+}
+
 // Missing roots freeze at the first no-progress point; new references alone never invalidate them.
-func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool) (int, error) {
-	bootstrap, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
+func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (int, error) {
+	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
+	if d.resolvedSources != nil {
+		if input, ok := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact); ok {
+			d.cfg.Input = input
+		}
+	}
+	bootstrap := d.cfg.Input
 	if d.resolvedSources == nil {
 		var err error
 		bootstrap, err = d.admitBootstrapInput(ctx)
@@ -102,14 +114,19 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 	if previous, ok := d.resolvedSources[manifest.BootstrapSourceID]; ok && previous.input != bootstrap {
 		d.aliasViews = nil
 	}
-	groups := map[manifest.NamedResource][]manifest.BaseManifest{manifest.BootstrapSourceID: nil}
-	add := func(id manifest.NamedResource, witness manifest.BaseManifest) {
-		if _, seen := groups[id]; !seen {
-			groups[id] = nil
+	type sourceGroup struct {
+		refs     []sourceWitness
+		evidence store.Child
+		required bool
+	}
+	groups := map[manifest.NamedResource]sourceGroup{manifest.BootstrapSourceID: {required: true}}
+	add := func(id manifest.NamedResource, witness sourceWitness) {
+		group := groups[id]
+		group.required = true
+		if witness.id != (manifest.NamedResource{}) && !slices.Contains(group.refs, witness) {
+			group.refs = append(group.refs, witness)
 		}
-		if witness != nil && !slices.Contains(groups[id], witness) {
-			groups[id] = append(groups[id], witness)
-		}
+		groups[id] = group
 	}
 	for kind := range manifest.Kinds() {
 		if kind.Group != manifest.SourceDomain {
@@ -117,29 +134,36 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		}
 		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
 			if _, ok := obj.(entrySource); ok {
-				groups[obj.Named()] = nil
+				add(obj.Named(), sourceWitness{})
 			}
 		}
 	}
-	evidence := map[manifest.NamedResource]store.Child{}
 	if d.loader != nil {
-		for child := range d.loader.Sources() {
-			evidence[child.Obj.Named()] = child
+		for child, err := range d.loader.Sources(ctx) {
+			if err != nil {
+				return 0, err
+			}
+			group := groups[child.Obj.Named()]
+			group.evidence = child
+			groups[child.Obj.Named()] = group
+			if _, ok := child.Obj.(entrySource); ok && restricted {
+				add(child.Obj.Named(), sourceWitness{})
+			}
 		}
 		for _, child := range d.loader.PathObjects() {
-			if applier, ok := child.Obj.(entryApplication); ok {
+			if applier, ok := d.loader.CatalogObject(child.Identity).(entryApplication); ok {
 				if application, valid := applier.EntryApplication(); valid && application.Declaration != nil {
 					continue
 				}
 			}
-			ref, _, _ := child.Obj.SourcePath()
-			if allowMissing || evidence[ref].Obj != nil || d.cfg.Store.GetObject(ref) != nil {
-				add(ref, child.Obj)
+			ref, path, _ := child.SourcePath()
+			if allowMissing || groups[ref].evidence.Obj != nil || d.cfg.Store.GetObject(ref) != nil {
+				add(ref, sourceWitness{id: child.Identity, path: path})
 			}
 		}
 	}
 	if allowMissing {
-		addReferences := func(obj, witness manifest.BaseManifest) {
+		addReferences := func(obj manifest.BaseManifest, witness sourceWitness) {
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
 					add(ref.NamedResource, witness)
@@ -151,9 +175,9 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 				continue
 			}
 			for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-				var witness manifest.BaseManifest
-				if _, _, hasPath := obj.SourcePath(); hasPath {
-					witness = obj
+				var witness sourceWitness
+				if _, path, hasPath := obj.SourcePath(); hasPath {
+					witness = sourceWitness{id: obj.Named(), path: path}
 				}
 				addReferences(obj, witness)
 			}
@@ -163,9 +187,13 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 				if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil {
 					continue
 				}
-				obj := d.loader.IndexedObject(id, record).Obj
-				if d.loader.AdmitsRoot(obj, record.Path) {
-					addReferences(obj, nil)
+				if !d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
+					continue
+				}
+				for ref := range d.loader.References(id) {
+					if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
+						add(ref.NamedResource, sourceWitness{})
+					}
 				}
 			}
 		}
@@ -174,12 +202,31 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 	admission := d.admission()
 	admission.input = bootstrap
 	published := 0
-	for _, id := range slices.SortedFunc(maps.Keys(groups), manifest.NamedResource.Compare) {
+	var sourceIDs [8]manifest.NamedResource
+	ids := sourceIDs[:0]
+	for id, group := range groups {
+		if group.required {
+			ids = append(ids, id)
+		}
+	}
+	slices.SortFunc(ids, manifest.NamedResource.Compare)
+	for _, id := range ids {
+		group := groups[id]
 		obj := d.cfg.Store.GetObject(id)
+		if previous, seen := d.resolvedSources[id]; restricted && seen && previous.synthetic && obj == previous.object && group.evidence.Obj != nil {
+			obj = group.evidence.Obj
+		}
 		if obj == nil {
-			obj = evidence[id].Obj
-			if obj != nil && slices.ContainsFunc(groups[id], func(witness manifest.BaseManifest) bool { return d.cfg.Store.GetObject(witness.Named()) != nil }) {
-				d.cfg.Store.AddObject(obj, evidence[id].Doc)
+			obj = group.evidence.Obj
+			independentlyAdmitted := false
+			if restricted && obj != nil {
+				record, _ := d.loader.Index.Lookup(id)
+				independentlyAdmitted = d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path)
+			}
+			if obj != nil && (independentlyAdmitted || slices.ContainsFunc(group.refs, func(witness sourceWitness) bool {
+				return d.cfg.Store.GetObject(witness.id) != nil
+			})) {
+				d.cfg.Store.AddObject(obj, group.evidence.Doc)
 			}
 		}
 		previous, seen := d.resolvedSources[id]
@@ -203,7 +250,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			}
 			continue
 		}
-		if seen && previous.input == bootstrap && (obj == nil && slices.Equal(previous.refs, groups[id]) || obj != nil && previous.object == obj) {
+		if seen && previous.input == bootstrap && (obj == nil && slices.Equal(previous.refs, group.refs) || obj != nil && previous.object == obj) {
 			if previous.artifact != nil && obj != nil && d.cfg.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				d.publishEntrySource(previous, previous.artifact)
 				if id != manifest.BootstrapSourceID {
@@ -212,7 +259,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			}
 			continue
 		}
-		candidate, err := admission.resolve(ctx, id, obj, groups[id])
+		candidate, err := admission.resolve(ctx, id, obj, group.refs)
 		if err != nil {
 			return 0, err
 		}
@@ -253,7 +300,7 @@ type Admission struct {
 	aliasViews   map[string]*store.SourceArtifact
 }
 
-func (d *discoverer) admission() *Admission {
+func (d *Session) admission() *Admission {
 	input, _ := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	if input == nil {
 		input = d.cfg.Input
@@ -267,7 +314,14 @@ func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, obje
 	if a == nil {
 		return nil, nil, nil
 	}
-	resolved, err := a.resolve(ctx, id, object, witnesses)
+	var witnessBuf [1]sourceWitness
+	proofs := witnessBuf[:0]
+	for _, obj := range witnesses {
+		if _, path, ok := obj.SourcePath(); ok {
+			proofs = append(proofs, sourceWitness{id: obj.Named(), path: path})
+		}
+	}
+	resolved, err := a.resolve(ctx, id, object, proofs)
 	if resolved.artifact != nil && len(resolved.warnings) != 0 {
 		captured := *resolved.artifact
 		captured.Warnings = append(slices.Clone(captured.Warnings), resolved.warnings...)
@@ -276,7 +330,7 @@ func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, obje
 	return resolved.object, resolved.artifact, err
 }
 
-func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest, witnesses []manifest.BaseManifest) (entryResolution, error) {
+func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest, witnesses []sourceWitness) (entryResolution, error) {
 	bootstrap := a.input
 	candidate := entryResolution{object: obj, input: bootstrap, subtree: ".", synthetic: obj == nil, refs: slices.Clone(witnesses)}
 	if obj == nil {
@@ -299,7 +353,7 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 			}
 		} else if descriptor == nil {
 			witnesses = slices.Clone(witnesses)
-			slices.SortFunc(witnesses, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
+			slices.SortFunc(witnesses, func(a, b sourceWitness) int { return a.id.Compare(b.id) })
 			var err error
 			candidate.subtree, err = a.bootstrapArtifactRoot(ctx, witnesses)
 			if err != nil || candidate.subtree == "" {
@@ -342,7 +396,7 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 	return candidate, err
 }
 
-func (a *Admission) bootstrapArtifactRoot(ctx context.Context, witnesses []manifest.BaseManifest) (string, error) {
+func (a *Admission) bootstrapArtifactRoot(ctx context.Context, witnesses []sourceWitness) (string, error) {
 	bootstrap := a.input
 	scan, err := filepath.Rel(bootstrap.LocalPath, a.path)
 	if err != nil {
@@ -358,7 +412,7 @@ func (a *Admission) bootstrapArtifactRoot(ctx context.Context, witnesses []manif
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
-			_, authoredPath, _ := witness.SourcePath()
+			authoredPath := witness.path
 			name := path.Join(candidate, manifest.NormalizeClaimBase(authoredPath))
 			if !safepath.Contains(filepath.Join(bootstrap.LocalPath, candidate), filepath.Join(bootstrap.LocalPath, name)) {
 				valid = false
@@ -430,9 +484,9 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 	return &artifact, viewKey, nil
 }
 
-func (d *discoverer) publishEntrySource(candidate entryResolution, artifact *store.SourceArtifact) {
+func (d *Session) publishEntrySource(candidate entryResolution, artifact *store.SourceArtifact) {
 	id := candidate.object.Named()
-	if candidate.synthetic {
+	if candidate.synthetic || (d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0) && d.cfg.Store.GetObject(id) != nil && d.cfg.Store.GetObject(id) != candidate.object {
 		d.cfg.Store.AddObject(candidate.object)
 	}
 
@@ -442,7 +496,7 @@ func (d *discoverer) publishEntrySource(candidate entryResolution, artifact *sto
 }
 
 // Only working-input aliases contribute; canonical and independently committed artifacts do not.
-func (d *discoverer) warnBootstrapAliases(repoRoot string) {
+func (d *Session) warnBootstrapAliases(repoRoot string) {
 	var names []string
 	for id := range d.resolvedSources {
 		artifact, _ := d.cfg.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)

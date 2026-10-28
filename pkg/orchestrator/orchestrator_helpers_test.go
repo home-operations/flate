@@ -89,12 +89,45 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 	return o, nil
 }
 
-func (o *Orchestrator) bootstrap(ctx context.Context) error {
+func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
 	if err := o.discover(ctx); err != nil {
 		return err
 	}
+	if o.session != nil {
+		for {
+			o.loader.Options.Changes = o.cfg.ExternalChanges
+			proposal, err := o.loader.Prepare(ctx, store.Child{}, nil, nil)
+			if err != nil {
+				return err
+			}
+			advanced, err := o.session.Advance(ctx, proposal)
+			if err != nil {
+				return err
+			}
+			if !advanced {
+				o.preparation = proposal
+				break
+			}
+		}
+		if err := o.discover(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *Orchestrator) bootstrap(ctx context.Context) error {
+	if err := o.prepareBootstrap(ctx); err != nil {
+		return err
+	}
 	o.completeBootstrap()
-	return o.buildChangeFilter(ctx)
+	if err := o.buildChangeFilter(ctx); err != nil {
+		return err
+	}
+	if o.loader != nil {
+		return o.installAdmission(ctx)
+	}
+	return nil
 }
 
 func (o *Orchestrator) render(ctx context.Context) (*Result, error) {

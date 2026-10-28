@@ -1,9 +1,11 @@
 package orchestrator
 
 import (
+	"context"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -15,7 +17,7 @@ func publishDocuments(c *base.Controller, id manifest.NamedResource, docs []map[
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
 	next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(retained), true
-	c.Emit(id, &next, nil)
+	controllertest.Emit(context.TODO(), c, id, &next)
 	if hadStatus && prior.Status == store.StatusPending {
 		c.Store.UpdateStatus(id, prior)
 	}

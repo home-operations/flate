@@ -21,7 +21,7 @@ func BenchmarkBuildParentIndex(b *testing.B) {
 	l := loaderFixture(st, files)
 	b.ReportAllocs()
 	for b.Loop() {
-		if err := l.FinalizeIndex(b.Context(), ""); err != nil {
+		if err := l.FinalizeIndex(b.Context(), "", true); err != nil {
 			b.Fatal(err)
 		}
 	}

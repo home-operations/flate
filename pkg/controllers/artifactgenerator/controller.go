@@ -142,7 +142,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if evaluation.maxAge == 0 {
 		replayContent = nil
 	}
-	fingerprint, handled, err := c.run.FingerprintDedup(id, replayContent, &store.Emission{})
+	fingerprint, handled, err := c.run.FingerprintDedup(ctx, id, replayContent, &store.Emission{})
 	if handled || err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		}
 		targetID := declaration.Named()
 		attempt.Children, attempt.Manifests, attempt.Complete = children, docs, false
-		if err := c.run.Emit(id, &attempt, map[manifest.NamedResource]*store.SourceArtifact{targetID: payload}); err != nil {
+		if err := c.run.Emit(ctx, id, &attempt, map[manifest.NamedResource]*store.SourceArtifact{targetID: payload}); err != nil {
 			return err
 		}
 		desired, documents = append(desired, children...), append(documents, docs...)
@@ -210,5 +210,5 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		return err
 	}
 	attempt.Children, attempt.Manifests, attempt.Complete, attempt.Fingerprint = desired, documents, true, fingerprint
-	return c.run.Emit(id, &attempt, nil)
+	return c.run.Emit(ctx, id, &attempt, nil)
 }

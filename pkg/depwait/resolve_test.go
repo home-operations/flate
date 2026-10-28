@@ -4,11 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
-
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -179,7 +178,7 @@ type inputPromotion struct {
 }
 
 func (p *inputPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *inputPromotion) Promote(_ context.Context, _ *store.ReadSet, _ manifest.NamedResource) bool {
+func (p *inputPromotion) Promote(_ context.Context, _ *store.ReadSet, _ manifest.NamedResource) (bool, error) {
 	p.calls++
 	if p.before != nil {
 		p.before()
@@ -187,5 +186,5 @@ func (p *inputPromotion) Promote(_ context.Context, _ *store.ReadSet, _ manifest
 	if p.materialize {
 		p.store.AddObject(p.data)
 	}
-	return p.materialize
+	return p.materialize, nil
 }

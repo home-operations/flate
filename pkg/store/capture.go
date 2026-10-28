@@ -15,6 +15,7 @@ type ReadSet struct {
 	advisories   AdvisoryEvidence
 	produced     []admission
 	invalid      atomic.Bool
+	accepted     atomic.Bool
 	retired      atomic.Bool
 	store        *Store
 	id           manifest.NamedResource
@@ -79,6 +80,7 @@ type Gate struct {
 // Reused storage MUST have no live or detached registration or output borrower.
 func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.invalid.Store(false)
+	r.accepted.Store(false)
 	r.retired.Store(false)
 	r.local = Input{}
 	r.localDetails = inputDetails{}
@@ -615,6 +617,7 @@ func (r *ReadSet) Accept() {
 	if !r.Valid() {
 		return
 	}
+	r.accepted.Store(true)
 	input := r.input(r.id)
 	if head := input.object.head; head != nil && input.object.absent == nil {
 		head.assessment.Store(r)
@@ -654,12 +657,13 @@ func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq[manifest.Name
 	return reads.Required()
 }
 
-// SetIncluded publishes admission and resets stale unchanged readiness when excluded work is included.
+// SetIncluded publishes invocation-monotone admission and resets stale unchanged readiness.
+// Once included, an object cannot be excluded within this Store invocation.
 func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
 	cell := sh.cells[id]
-	if cell.excluded != included {
+	if !included && (cell.included || cell.excluded) {
 		sh.mu.Unlock()
 		return
 	}
@@ -673,9 +677,15 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 			condition = record.stamp()
 		}
 	}
-	sh.requireCapacityLocked(cell.authority, condition)
-	cell.excluded = !included
-	cell.authority = sh.advanceLocked(cell.current())
+	if cell.included && !reset {
+		sh.mu.Unlock()
+		return
+	}
+	if cell.excluded == included || reset {
+		sh.requireCapacityLocked(cell.authority, condition)
+		cell.authority = sh.advanceLocked(cell.current())
+	}
+	cell.excluded, cell.included = !included, included
 	sh.cells[id] = cell
 	var dispatch eventDispatch
 	if reset {
@@ -685,6 +695,11 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 			if dispatch.listeners != nil {
 				dispatch.payload, _ = updated.statusInfo()
 			}
+		}
+	} else if included && !cell.hidden {
+		if obj := sh.objectLocked(id); obj != nil {
+			dispatch = fireUnderLock(s, EventObjectAdded, id)
+			dispatch.payload = obj
 		}
 	}
 	sh.mu.Unlock()

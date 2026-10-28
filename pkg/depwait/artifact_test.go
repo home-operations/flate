@@ -8,10 +8,10 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/home-operations/flate/pkg/schedule"
-
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -20,8 +20,8 @@ type artifactPromotion struct {
 }
 
 func (*artifactPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (p *artifactPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) bool {
-	return p.promote(id)
+func (p *artifactPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
+	return p.promote(id), nil
 }
 
 func TestClassify_ArtifactRequirement(t *testing.T) {

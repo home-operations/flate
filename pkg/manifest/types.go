@@ -3,11 +3,13 @@ package manifest
 import (
 	"cmp"
 	"iter"
+	"slices"
 	"strings"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	meta "github.com/fluxcd/pkg/apis/meta"
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // LocalObjectReference is a name-only reference to a same-namespace
@@ -106,6 +108,7 @@ type BaseManifest interface {
 	Suspended() bool
 	ReferenceCapacity() (int, int)
 	kind() KindInfo
+	catalog(NamedResource) BaseManifest
 	producerTargets([]NamedResource) []ProducerTarget
 	overlayPayload(map[string]any) map[string]any
 }
@@ -149,7 +152,7 @@ const (
 )
 
 // Reference contains transient facts for one authored dependency or resolved source.
-// Consumers MUST retain only DependencyRef or NamedResource, never the full value.
+// Retained references MUST be cloned; iteration borrows immutable manifest fields.
 type Reference struct {
 	DependencyRef
 	// Use is source, chart, dependsOn, valuesFrom, substituteFrom, secretRef,
@@ -171,6 +174,30 @@ type Reference struct {
 	Files []string
 	// ChartPath declares a source-relative chart directory or archive; dot selects the root.
 	ChartPath string
+	// Selector borrows provider membership criteria.
+	Selector *metav1.LabelSelector
+	// Key selects the consumed data entry; empty means all entries.
+	Key string
+	// NamespaceDefault records a namespace inherited from the consumer.
+	NamespaceDefault bool
+	// Acquisition leaves unknown input proof to the source acquisition policy.
+	Acquisition bool
+}
+
+// Clone owns the mutable containers borrowed by a reference.
+func (r Reference) Clone() Reference {
+	r.Files = slices.Clone(r.Files)
+	r.Selector = r.Selector.DeepCopy()
+	if r.ReadyExpr != nil {
+		expression := *r.ReadyExpr
+		r.ReadyExpr = &expression
+	}
+	return r
+}
+
+// ContentInput reports whether a reference carries affected or required input content.
+func (r Reference) ContentInput() bool {
+	return r.Content || r.Use == "substituteFrom" && r.Name != ""
 }
 
 // References yields dependencies in source-field order for the selected view without deduplication.
@@ -218,7 +245,7 @@ func credentialReferences(yield func(Reference) bool, namespace string, refs ...
 	uses := [...]string{"secretRef", "certSecretRef", "proxySecretRef"}
 	for i, ref := range refs {
 		if ref != nil && !yield(Reference{NamedResource: Resolve(NamedResource{Kind: KindSecret, Name: ref.Name}, "", namespace),
-			Use: uses[i], Position: i, Content: true}) {
+			Use: uses[i], Position: i, Content: true, NamespaceDefault: true, Acquisition: true}) {
 			return false
 		}
 	}
@@ -341,7 +368,7 @@ func ContentInputs(obj BaseManifest, reverse bool) iter.Seq[NamedResource] {
 		for ref := range References(obj, ReferenceRelations) {
 			include := ref.Content || ref.Use == "substituteFrom" && ref.Name != ""
 			if reverse {
-				include = ref.Content || ref.Use == "source" || ref.Use == "artifact" || ref.Use == "chart" || ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Name != ""
+				include = ref.Content || ref.Use == "source" || ref.Use == "artifact" || ref.Use == "chart" || ref.Use == "valuesFrom" || ref.Use == "inputsFrom" || ref.Use == "substituteFrom" && ref.Name != ""
 			}
 			if include && !yield(ref.NamedResource) {
 				return

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/home-operations/flate/internal/chartinput"
+	"github.com/home-operations/flate/internal/kustomizeinput"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -39,6 +40,29 @@ func (l *Loader) recordReader(file, local string, reader manifest.FileReader) {
 }
 
 func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFiles map[string][]manifest.NamedResource) error {
+	controls := map[manifest.NamedResource][]string{}
+	if l.documents.compact && l.scopes != nil {
+		for _, contribution := range l.scopes.contributions {
+			if contribution.owner == (manifest.NamedResource{}) || contribution.membershipOnly || !contribution.active {
+				continue
+			}
+			for _, visit := range contribution.visits {
+				if visit.role == kustomizeinput.Resource && visit.document == nil {
+					continue
+				}
+				for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
+					if file != "" {
+						controls[contribution.owner] = append(controls[contribution.owner], file)
+					}
+				}
+			}
+		}
+	}
+	for owner, files := range controls {
+		slices.Sort(files)
+		controls[owner] = slices.Compact(files)
+	}
+
 	objects := map[manifest.NamedResource]manifest.BaseManifest{}
 	object := func(id manifest.NamedResource) manifest.BaseManifest {
 		if obj := l.Store.GetObject(id); obj != nil {
@@ -56,6 +80,84 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 	charts := map[string][]string{}
 	visited := map[manifest.NamedResource]struct{}{}
 	var collect func(manifest.NamedResource, manifest.NamedResource) error
+	observe := func(ref manifest.Reference, consumer manifest.NamedResource) error {
+		if ref.Content {
+			record, _ := l.Index.Lookup(ref.NamedResource)
+			for _, file := range record.Inputs {
+				l.recordReader(file, "", manifest.FileReader{Reader: consumer, Source: manifest.BootstrapSourceID})
+			}
+		}
+		if ref.Use == "chart" {
+			if err := collect(ref.NamedResource, consumer); err != nil {
+				return err
+			}
+			return nil
+		}
+		if len(ref.Files) == 0 && ref.ChartPath == "" || ref.Name == "" || ref.Kind == "" {
+			return nil
+		}
+		v, seen := sources[ref.NamedResource]
+		if !seen {
+			root, pinned, external := SourceView(l.Store, ref.NamedResource, repoRoot)
+			if !external {
+				v.root = root
+				prefix, _ := filepath.Rel(repoRoot, root)
+				if prefix != "." {
+					v.prefix = filepath.ToSlash(prefix)
+					if !pinned {
+						v.localBase = l.documents.localBase(root, repoRoot)
+					}
+				}
+			}
+			sources[ref.NamedResource] = v
+		}
+		if v.root == "" {
+			return nil
+		}
+		add := func(name string) {
+			v.coordinate = path.Join(v.prefix, name)
+			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true})
+		}
+		for _, name := range ref.Files {
+			clean := path.Clean(name)
+			if name != "" && fs.ValidPath(clean) && clean != "." && strings.IndexByte(clean, 0) < 0 {
+				add(clean)
+			}
+		}
+		if ref.ChartPath == "" {
+			return nil
+		}
+		ref.ChartPath = path.Clean(ref.ChartPath)
+		location := filepath.Join(v.root, filepath.FromSlash(ref.ChartPath))
+		names, seen := charts[location]
+		if !seen {
+			input, name := l.documents.input(location)
+			info, err := fs.Stat(input, name)
+			if err == nil {
+				if info.IsDir() {
+					names = append(names, path.Join(ref.ChartPath, ".helmignore"))
+					if sub, err := fs.Sub(input, name); err == nil {
+						// Reconciliation owns chart-local loading errors, including policy failures.
+						_ = chartinput.Walk(ctx, sub, true, func(name string, _ fs.FileInfo, _ []byte) error {
+							names = append(names, path.Join(ref.ChartPath, name))
+							return nil
+						})
+					}
+				} else if info.Mode().IsRegular() {
+					names = append(names, ref.ChartPath)
+				}
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			charts[location] = names
+		}
+		for _, name := range names {
+			add(name)
+		}
+
+		return nil
+	}
 	collect = func(id, consumer manifest.NamedResource) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -64,80 +166,19 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			return nil
 		}
 		visited[id] = struct{}{}
+		if l.documents.compact {
+			if occurrence, ok := l.locations[id]; ok {
+				for ref := range occurrence.references() {
+					if err := observe(ref, consumer); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+		}
 		for ref := range manifest.References(object(id), manifest.ReferenceRelations) {
-			if ref.Content {
-				record, _ := l.Index.Lookup(ref.NamedResource)
-				for _, file := range record.Inputs {
-					l.recordReader(file, "", manifest.FileReader{Reader: consumer, Source: manifest.BootstrapSourceID})
-				}
-			}
-			if ref.Use == "chart" {
-				if err := collect(ref.NamedResource, consumer); err != nil {
-					return err
-				}
-				continue
-			}
-			if len(ref.Files) == 0 && ref.ChartPath == "" || ref.Name == "" || ref.Kind == "" {
-				continue
-			}
-			v, seen := sources[ref.NamedResource]
-			if !seen {
-				root, pinned, external := SourceView(l.Store, ref.NamedResource, repoRoot)
-				if !external {
-					v.root = root
-					prefix, _ := filepath.Rel(repoRoot, root)
-					if prefix != "." {
-						v.prefix = filepath.ToSlash(prefix)
-						if !pinned {
-							v.localBase = l.documents.localBase(root, repoRoot)
-						}
-					}
-				}
-				sources[ref.NamedResource] = v
-			}
-			if v.root == "" {
-				continue
-			}
-			add := func(name string) {
-				v.coordinate = path.Join(v.prefix, name)
-				l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true})
-			}
-			for _, name := range ref.Files {
-				clean := path.Clean(name)
-				if name != "" && fs.ValidPath(clean) && clean != "." && strings.IndexByte(clean, 0) < 0 {
-					add(clean)
-				}
-			}
-			if ref.ChartPath == "" {
-				continue
-			}
-			ref.ChartPath = path.Clean(ref.ChartPath)
-			location := filepath.Join(v.root, filepath.FromSlash(ref.ChartPath))
-			names, seen := charts[location]
-			if !seen {
-				input, name := l.documents.input(location)
-				info, err := fs.Stat(input, name)
-				if err == nil {
-					if info.IsDir() {
-						names = append(names, path.Join(ref.ChartPath, ".helmignore"))
-						if sub, err := fs.Sub(input, name); err == nil {
-							// Reconciliation owns chart-local loading errors, including policy failures.
-							_ = chartinput.Walk(ctx, sub, true, func(name string, _ fs.FileInfo, _ []byte) error {
-								names = append(names, path.Join(ref.ChartPath, name))
-								return nil
-							})
-						}
-					} else if info.Mode().IsRegular() {
-						names = append(names, ref.ChartPath)
-					}
-				}
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				charts[location] = names
-			}
-			for _, name := range names {
-				add(name)
+			if err := observe(ref, consumer); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -181,11 +222,55 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			}
 			return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
 				return owner.Owner != (manifest.NamedResource{}) && (owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
-					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(l.IndexedObject(id, r).Obj, p.Path))
+					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(l.CatalogObject(id), p.Path))
 			})
 		})
+		if l.documents.compact && l.AdmitsRoot(l.CatalogObject(id), r.Path) {
+			for _, p := range r.Productions {
+				if p.Owner != (manifest.NamedResource{}) && p.Materializer(id) == (manifest.NamedResource{}) && p.Declaration == (manifest.NamedResource{}) && p.Authored != (manifest.NamedResource{}) {
+					p.Owner = manifest.NamedResource{}
+					if !slices.Contains(r.Productions, p) {
+						r.Productions = append(r.Productions, p)
+					}
+				}
+			}
+		}
 		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
-		r.Declaration = l.IndexedObject(id, r).Obj
+		if !l.documents.compact {
+			r.Declaration = l.IndexedObject(id, r).Obj
+		}
+		if l.documents.compact && id.KindInfo().Parent && r.Parent == (manifest.NamedResource{}) && !l.AdmitsRoot(l.CatalogObject(id), r.Path) {
+			var owner manifest.NamedResource
+			multiple := false
+			for _, p := range r.Productions {
+				if parent := p.Materializer(id); parent != (manifest.NamedResource{}) {
+					multiple = multiple || owner != (manifest.NamedResource{}) && owner != parent
+					owner = parent
+				}
+			}
+			if !multiple && owner != id {
+				r.Parent = owner
+			}
+		}
+		if len(controls) != 0 {
+			owners := []manifest.NamedResource{manifest.Resolve(r.Parent, "", id.Namespace)}
+			for _, p := range r.Productions {
+				owner := p.Materializer(id)
+				if owner != (manifest.NamedResource{}) && !slices.Contains(owners, owner) {
+					owners = append(owners, owner)
+				}
+			}
+			for _, owner := range owners {
+				files := controls[owner]
+				if len(r.Inputs) == 0 {
+					r.Inputs = files
+				} else if len(files) != 0 && !slices.Equal(r.Inputs, files) {
+					r.Inputs = append(slices.Clone(r.Inputs), files...)
+					slices.Sort(r.Inputs)
+					r.Inputs = slices.Compact(r.Inputs)
+				}
+			}
+		}
 		l.Index.Records[id] = r
 	}
 	return nil

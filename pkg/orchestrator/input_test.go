@@ -456,7 +456,9 @@ func TestRenderTrees_PreparesEachSideOnce(t *testing.T) {
 	assert.NoError(t, err)
 	for side, rendered := range []Rendered{base, head} {
 		assert.Equal(t, readers[side].fingerprints.Load(), int64(2))
-		assert.Equal(t, readers[side].parsed.Load(), int64(14))
+		// Mutable source proofs MUST retain two validations, alongside one census,
+		// one fingerprint, one required build, and seven stat-only opens.
+		assert.Equal(t, readers[side].parsed.Load(), int64(12))
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-a": true})
 		t.Logf("side=%d declaration reads=%d selected evidence reads=%d", side, readers[side].parsed.Load(), readers[side].fingerprints.Load())
 	}
@@ -511,11 +513,11 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		}()
 		<-entered
 		synctest.Wait()
-		assert.Equal(t, readers[0].inputOpens.Load(), int64(5))
+		assert.Equal(t, readers[0].inputOpens.Load(), int64(2))
 		close(release)
 		assert.NoError(t, <-done)
 		for side, reader := range readers {
-			assert.Equal(t, reader.inputOpens.Load(), int64(10))
+			assert.Equal(t, reader.inputOpens.Load(), int64(7))
 			t.Logf("side=%d render input opens=%d", side, reader.inputOpens.Load())
 		}
 	})

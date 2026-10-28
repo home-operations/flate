@@ -1255,8 +1255,14 @@ func TestBlob_RepairFailureCleanup(t *testing.T) {
 				t.Fatal("destination directory must have a different size from the payload")
 			}
 			var names []string
-			r, _, id, err := c.Blob(t.Context(), BlobKey{Content: "repair-failure"}, Policy{}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+			releases := 0
+			r, _, id, err := c.Blob(t.Context(), BlobKey{Content: "repair-failure"}, Policy{Admit: func(context.Context) (func(), error) {
+				return func() { releases++ }, nil
+			}}, func(_ context.Context, w ProducerInput) (ProducerResult, error) {
 				w.payload.discard = func() error {
+					if releases != 0 {
+						t.Error("admission released before staged cleanup")
+					}
 					entries, err := os.ReadDir(filepath.Join(root, ociDir))
 					if err != nil {
 						t.Fatal(err)
@@ -1284,6 +1290,9 @@ func TestBlob_RepairFailureCleanup(t *testing.T) {
 				_, err := w.Write(payload)
 				return ProducerResult{}, err
 			})
+			if releases != 1 {
+				t.Fatalf("repair releases=%d, want one after cleanup/publication failure", releases)
+			}
 			rename, ok := errors.AsType[*os.LinkError](err)
 			if !ok || rename.Op != "renameat" || rename.New != path || !slices.Contains(names, rename.Old) {
 				t.Fatalf("missing repair rename error: %v", err)

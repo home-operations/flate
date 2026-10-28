@@ -62,7 +62,7 @@ func TestFetch_OCIBranch(t *testing.T) {
 	if stub.reads != reads {
 		t.Fatal("nested OCI fetch did not receive execution inputs")
 	}
-	if stub.policy != (cache.Policy{MaxAge: time.Hour, Retry: retry}) {
+	if stub.policy.MaxAge != time.Hour || stub.policy.Retry != retry || stub.policy.Timeout != nil || stub.policy.Admit != nil {
 		t.Fatalf("nested policy=%+v, want %+v", stub.policy, retry)
 	}
 	if err != nil {

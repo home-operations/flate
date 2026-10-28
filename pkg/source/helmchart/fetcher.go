@@ -26,6 +26,7 @@ type Fetcher struct {
 
 	indexCache                 sync.Map                // map[string]*repo.IndexFile
 	indexLocks                 *keylock.KeyMap[string] // serialize parsed memo publication
+	indexDecodes               chan struct{}
 	disableChartDigestTracking bool
 }
 
@@ -35,6 +36,8 @@ type Config struct {
 	Cache *cache.Cache
 	// Network is the required non-nil invocation owner, borrowed by this fetcher.
 	Network *source.Network
+	// Concurrency is the invocation's task budget, from which index decoding borrows a smaller share.
+	Concurrency int
 	// DisableChartDigestTracking makes exact chart versions immutable cache pins.
 	DisableChartDigestTracking bool
 }
@@ -43,7 +46,7 @@ type Config struct {
 func New(oci ociFetcher, cfg Config) *Fetcher {
 	return &Fetcher{oci: oci, cache: cfg.Cache,
 		network: cfg.Network, disableChartDigestTracking: cfg.DisableChartDigestTracking,
-		indexLocks: keylock.New[string]()}
+		indexLocks: keylock.New[string](), indexDecodes: make(chan struct{}, max(1, cfg.Concurrency/128))}
 }
 
 // Fetch implements source.TypedFetcher[*manifest.HelmChartSource]. It

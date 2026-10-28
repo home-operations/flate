@@ -511,6 +511,13 @@ func fresh(at time.Time, maxAge time.Duration) bool {
 }
 
 func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callbacks acquisitionCallbacks) (result *entry, resultErr error) {
+	if key.policy.Admit != nil {
+		release, err := key.policy.Admit(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
 	if key.policy.Timeout != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, *key.policy.Timeout)

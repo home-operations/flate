@@ -13,6 +13,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/helmchart"
+	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -91,6 +93,8 @@ spec:
 				}
 				config, tree := cfg.Config, cfg.Tree
 				config.Cache, config.Network, config.HelmClient = owner, new(source.Network), helm.NewClient(owner)
+				config.chartFetcher = helmchart.New(&oci.Fetcher{Cache: config.Cache, Network: config.Network, RegistryConfig: config.RegistryConfig}, helmchart.Config{
+					Cache: config.Cache, Network: config.Network, Concurrency: config.Concurrency, DisableChartDigestTracking: config.HelmOptions.DisableChartDigestTracking})
 				tree.Input, tree.Path = input, path
 				o := newOrchestrator(config, tree, task.NewBounded(config.Concurrency))
 				if err := o.bootstrap(b.Context()); err != nil {

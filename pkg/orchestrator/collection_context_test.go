@@ -47,6 +47,10 @@ spec:
 	if len(runs) != 2 {
 		t.Fatalf("collection lost clusters: %+v", runs)
 	}
+	charts := source.Wrap(manifest.KindHelmChart, runs[0].cfg.chartFetcher)
+	if runs[0].cfg.chartFetcher == nil || runs[0].src.Fetchers[manifest.KindHelmChart] != charts || runs[1].src.Fetchers[manifest.KindHelmChart] != charts {
+		t.Fatal("clusters did not share the invocation's chart acquisition and decode budget")
+	}
 	id := testutil.HelmReleaseID("apps", "workload")
 	var warnings [][]manifest.Warning
 	for i, entry := range []string{"alpha", "omega"} {

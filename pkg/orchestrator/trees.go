@@ -17,6 +17,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/helmchart"
+	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -76,6 +78,8 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 	if cfg.HelmClient == nil {
 		cfg.HelmClient = helm.NewClient(cfg.Cache)
 	}
+	cfg.chartFetcher = helmchart.New(&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig}, helmchart.Config{
+		Cache: cfg.Cache, Network: cfg.Network, Concurrency: cfg.Concurrency, DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking})
 	budget := task.NewBounded(cfg.Concurrency)
 	trees, err = prepareTrees(ctx, trees, cfg, budget)
 	if err != nil {

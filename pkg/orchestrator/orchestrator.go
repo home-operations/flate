@@ -77,7 +77,8 @@ type Config struct {
 	// Cache, when injected, remains caller-owned and can be shared across runs.
 	Cache *sourcecache.Cache
 	// Network shares compatible HTTP transports and connection-timeout facts for this invocation.
-	Network *source.Network
+	Network      *source.Network
+	chartFetcher *helmchart.Fetcher
 	// HelmClient must borrow Cache; both remain caller-owned when supplied.
 	HelmClient *helm.Client
 	// StatusListener receives concurrent tree-qualified store events and must not block.
@@ -286,13 +287,11 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 func (o *Orchestrator) completeBootstrap() {
 	o.failDependsOnCycles()
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
-	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{
-		Cache: o.cache, Network: o.cfg.Network, DisableChartDigestTracking: o.hrc.Options.DisableChartDigestTracking})
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
 			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network}),
 		manifest.KindOCIRepository: source.Wrap(manifest.KindOCIRepository, ociFetcher),
-		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, chartFetcher),
+		manifest.KindHelmChart:     source.Wrap(manifest.KindHelmChart, o.cfg.chartFetcher),
 	} {
 		if current, exists := o.src.Fetchers[kind]; exists && current == nil {
 			o.src.Fetchers[kind] = f

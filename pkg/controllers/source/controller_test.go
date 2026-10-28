@@ -368,7 +368,7 @@ func TestController_FetchesAndStoresArtifact(t *testing.T) {
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 				t.Fatalf("status = %+v, want StatusReady", info)
 			}
-			if f.retry != (sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3}}) {
+			if f.retry.MaxAge != time.Hour || f.retry.Retry != (sourcecache.RetryConfig{Attempts: 3}) || f.retry.Timeout != nil || f.retry.Admit != nil {
 				t.Fatalf("configured policy=%+v", f.retry)
 			}
 			art, ok := st.GetArtifact(repo.Named(), store.ArtifactContent).(*store.SourceArtifact)
@@ -748,9 +748,14 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 			if st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
 				t.Error("fetch must store its artifact")
 			}
-			wantPolicy := sourcecache.Policy{MaxAge: time.Hour, Retry: sourcecache.RetryConfig{Attempts: 3}}
-			if f.retry != wantPolicy || tt.wantFallback > 0 && f.fallbackRetry != wantPolicy {
-				t.Fatalf("normal/fallback policies=%+v/%+v", f.retry, f.fallbackRetry)
+			policies := []sourcecache.Policy{f.retry}
+			if tt.wantFallback > 0 {
+				policies = append(policies, f.fallbackRetry)
+			}
+			for _, policy := range policies {
+				if policy.MaxAge != time.Hour || policy.Retry != (sourcecache.RetryConfig{Attempts: 3}) || policy.Timeout != nil || policy.Admit != nil {
+					t.Fatalf("normal/fallback policies=%+v/%+v", f.retry, f.fallbackRetry)
+				}
 			}
 			if f.fallbackCalls != tt.wantFallback {
 				t.Errorf("fallback calls = %d, want %d", f.fallbackCalls, tt.wantFallback)

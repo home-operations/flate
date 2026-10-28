@@ -31,6 +31,7 @@ func substitutionKS(name, path, postBuild string) string {
 
 func writeSubstitutionCluster(t *testing.T, root, reference, expression string) {
 	t.Helper()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml]\n")
 	testutil.WriteFile(t, root, "flux.yaml", substitutionKS("consumer", "app", "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: "+reference+"}]\n"))
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: '"+expression+"'}\n")
@@ -265,6 +266,7 @@ spec:
   values:
     greeting: "${MISSING}"
 `)
+			testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [flux/apps.yaml]\n")
 			testutil.WriteFile(t, dir, "charts/req/Chart.yaml", "apiVersion: v2\nname: req\nversion: 0.1.0\n")
 			testutil.WriteFile(t, dir, "charts/req/templates/cm.yaml",
 				"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\ndata:\n  g: {{ required \"greeting is required\" .Values.greeting | quote }}\n")
@@ -335,6 +337,9 @@ func TestBootstrap_SubstitutionCollisions(t *testing.T) {
 				}
 				testutil.WriteFile(t, root, "producer/external-secret.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: producer, namespace: apps}\nspec:\n  target: {name: external}\n"+data)
 				input.Object = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": "private-fixture-value"}}
+			}
+			if kind != "stored" {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, producer.yaml]\n")
 			}
 			cfg := treeConfig{Supply: []store.SuppliedObject{input}, Path: root}
 			if kind == "known Kustomization producer" {
@@ -419,6 +424,7 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 			testutil.WriteFile(t, root, "independent.yaml", substitutionKS("independent", "independent", ""))
 			testutil.WriteFile(t, root, "independent/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "independent/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent, namespace: apps}\ndata: {value: independent}\n")
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, producer.yaml, independent.yaml]\n")
 			source := suppliedSubstitution("late-settings")
 			cfg := treeConfig{CacheDir: t.TempDir(), WipeSecrets: true, Concurrency: 2, Supply: []store.SuppliedObject{source}, StrictSubstitutions: true, Path: root, RepoRoot: root}
 			o, err := newTestOrchestrator(t, cfg.Tree, cfg.Config)
@@ -466,7 +472,11 @@ func TestRender_SubstitutionLateProducer(t *testing.T) {
 			if repository == nil || repository.Data["VALUE"] != "repository" {
 				t.Fatal("supplied input entered store or late producer did not render")
 			}
-			encoded, err := json.Marshal(canonicalBatches(res))
+			workloads := *res
+			workloads.Manifests = slices.DeleteFunc(slices.Clone(res.Manifests), func(batch manifest.DocumentBatch) bool {
+				return batch.Parent.Named() == o.entryBinding.Producer
+			})
+			encoded, err := json.Marshal(canonicalBatches(&workloads))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -487,6 +497,7 @@ func TestRender_SubstitutionLateConsumer(t *testing.T) {
 	if err := os.MkdirAll(scan, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	testutil.WriteFile(t, scan, "kustomization.yaml", "resources: []\n")
 	o := newSubstitutionOrchestrator(t, treeConfig{Supply: []store.SuppliedObject{suppliedSubstitution("external")}, StrictSubstitutions: true, Path: scan, RepoRoot: root})
 	if err := o.bootstrap(t.Context()); err != nil {
 		t.Fatal(err)
@@ -514,6 +525,7 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 			expression = "${VALUE}-head"
 		}
 		writeSubstitutionCluster(t, root, "external", expression)
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, stable.yaml]\n")
 		testutil.WriteFile(t, root, "stable.yaml", substitutionKS("stable", "stable", "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: external}]\n"))
 		testutil.WriteFile(t, root, "stable/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, root, "stable/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: stable, namespace: apps}\ndata: {value: '${VALUE}'}\n")
@@ -540,7 +552,12 @@ func TestRenderTrees_SubstitutionAdmissionAndDiff(t *testing.T) {
 		}
 	}
 	for _, side := range []Rendered{base, head} {
-		batches := canonicalBatches(side.Result)
+		batches := slices.DeleteFunc(canonicalBatches(side.Result), func(batch struct {
+			Parent    manifest.NamedResource
+			Documents []map[string]any
+		}) bool {
+			return batch.Parent == side.entryBinding.Producer
+		})
 		if len(batches) != 1 || batches[0].Parent != consumer || len(batches[0].Documents) != 1 {
 			t.Fatalf("unexpected producer batches: %+v", batches)
 		}
@@ -586,6 +603,7 @@ func TestRenderTrees_SuppliedTransitionsMatchFull(t *testing.T) {
 						value = manifest.ValuePlaceholder("VALUE")
 					}
 					testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: '"+value+"'}\n")
+					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, settings.yaml]\n")
 				}
 			}
 			cfg := Config{CacheDir: t.TempDir(), Concurrency: 2, WipeSecrets: true, Supply: []store.SuppliedObject{suppliedSubstitution("settings")}}
@@ -703,4 +721,91 @@ func TestRenderTrees_RequiredPostBuildNotWaived(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestRender_SubstitutionDeferredEntry(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [root.yaml, child.yaml, source.yaml]\n")
+	testutil.WriteFile(t, root, "entry/root.yaml", substitutionKS("root", "entry", "  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"))
+	testutil.WriteFile(t, root, "entry/child.yaml", substitutionKS("${NAME}", "leaf", "  sourceRef: {kind: GitRepository, name: '${SOURCE}'}\n  dependsOn: [{name: '${DEP}'}]\n"))
+	testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: '${SOURCE}', namespace: apps}\nspec: {url: https://fixture.invalid/self}\n")
+	testutil.WriteFile(t, root, "data/kustomization.yaml", "namespace: apps\nconfigMapGenerator: [{name: settings, literals: [NAME=effective, SOURCE=late-self, DEP=ready]}]\ngeneratorOptions: {disableNameSuffixHash: true}\n")
+	testutil.WriteFile(t, root, "ready/kustomization.yaml", "resources: []\n")
+	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload, namespace: apps}\n")
+	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/self"}}, Config{Concurrency: 2})
+	assert.NoError(t, err)
+	for _, name := range []string{"data", "ready"} {
+		obj, _, _, err := manifest.ParseDoc(map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": name, "namespace": "apps"}, "spec": map[string]any{"path": "./" + name}}, manifest.ParseDocOptions{})
+		assert.NoError(t, err)
+		o.store.AddObject(obj)
+	}
+	assert.NoError(t, o.bootstrap(t.Context()))
+	owner := testutil.KustomizationID("apps", "root")
+	assert.Equal(t, o.entryBinding.Producer, owner)
+	child := testutil.KustomizationID("apps", "effective")
+	if o.store.GetObject(child) != nil {
+		t.Fatal("deferred entry published an effective child during discovery")
+	}
+	result, err := o.collectResult(o.run(t.Context()))
+	if err != nil {
+		t.Fatalf("deferred entry did not progress: %v; failed=%v blocked=%v", err, result.Failed, result.Blocked)
+	}
+	effective, ok := o.store.GetObject(child).(*manifest.Kustomization)
+	if !ok || effective.SourceID().Name != "late-self" || len(effective.DependsOn) != 1 || effective.DependsOn[0].Name != "ready" {
+		t.Fatalf("effective graph was not admitted together: %+v", effective)
+	}
+	if o.store.GetArtifact(effective.SourceID(), store.ArtifactContent) == nil {
+		t.Fatal("late self-source was not admitted")
+	}
+	if o.store.EmissionOwner(child) != owner {
+		t.Fatal("effective child lost entry publication ownership")
+	}
+	emission, ok := o.store.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
+	if !ok || !emission.Complete || emission.Render == nil {
+		t.Fatal("effective emission has no accepted render receipt")
+	}
+	if len(outputByParent(result.Manifests)[child]) != 1 {
+		t.Fatal("effective child did not render")
+	}
+}
+
+func TestRender_RootSecretOverridesProducerPlaceholder(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [secret.yaml, producer.yaml, consumer.yaml]\n")
+	testutil.WriteFile(t, root, "secret.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: settings, namespace: apps}\nstringData: {VALUE: repository}\n")
+	testutil.WriteFile(t, root, "producer.yaml", "apiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata: {name: settings, namespace: apps}\nspec:\n  target: {name: settings}\n  data: [{secretKey: VALUE, remoteRef: {key: fixture}}]\n")
+	testutil.WriteFile(t, root, "consumer.yaml", substitutionKS("consumer", "leaf", "  postBuild: {substituteFrom: [{kind: Secret, name: settings}]}\n"))
+	testutil.WriteFile(t, root, "leaf/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "leaf/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: '${VALUE}'}\n")
+	input := &manifest.Secret{Name: "settings", Namespace: "apps", StringData: map[string]any{"VALUE": "private-value"}}
+	o := newSubstitutionOrchestrator(t, treeConfig{Path: root, RepoRoot: root, Supply: []store.SuppliedObject{{Object: input}}})
+	assert.NoError(t, o.bootstrap(t.Context()))
+	secret := input.Named()
+	if o.store.GetObject(secret) != nil || o.store.EmissionOwner(secret) != (manifest.NamedResource{}) {
+		t.Fatal("root-owned Secret published before its producer")
+	}
+	record := o.index.Records[secret]
+	before, ok := record.Declaration.(*manifest.Secret)
+	if !ok || before.StringData["VALUE"] != "repository" || record.BuilderOwner != o.entryBinding.Producer {
+		t.Fatalf("root-owned Secret lost immutable entry evidence: %+v", record)
+	}
+	result, err := o.collectResult(o.run(t.Context()))
+	assert.NoError(t, err)
+	assert.Equal(t, substitutionValue(t, result, testutil.KustomizationID("apps", "consumer")), "repository")
+	after, ok := o.store.GetObject(secret).(*manifest.Secret)
+	if !ok || after.StringData["VALUE"] != "repository" {
+		t.Fatalf("runtime repository precedence lost: %+v", after)
+	}
+	assert.Equal(t, o.store.EmissionOwner(secret), o.entryBinding.Producer)
+	facts := o.store.ReferenceFacts(secret, nil)
+	if facts.Supplied == nil {
+		t.Fatal("repository data removed the invocation supplied snapshot")
+	}
+	supplied, _, err := facts.Supplied.Value("VALUE")
+	assert.NoError(t, err)
+	assert.Equal(t, supplied, "private-value")
+	assert.Equal(t, input.StringData["VALUE"], "private-value")
+
 }

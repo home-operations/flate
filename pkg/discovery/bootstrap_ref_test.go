@@ -93,7 +93,7 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 				scan = root
 			}
 			entries, err := Plan(t.Context(), Config{Path: scan, RepoRoot: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
-			if err != nil || len(entries) != 1 || entries[0].ID != "." || entries[0].Path != scan {
+			if err != nil || len(entries) != 1 || entries[0].Path != scan {
 				t.Fatalf("committed ownership partitioned working-tree declarations: %+v, %v", entries, err)
 			}
 			result, err := Run(t.Context(), Config{
@@ -177,7 +177,7 @@ func TestPlan_PinnedRootKeepsEntrySource(t *testing.T) {
 	testutil.WriteFile(t, root, "flux/repo.yaml", strings.Replace(source, "tag: v1", "tag: v2", 1))
 	entries, err := Plan(t.Context(), Config{Path: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
 	assert.NoError(t, err)
-	if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != root {
+	if len(entries) != 1 || entries[0].Path != root {
 		t.Fatalf("root pin replaced the entry's source view: %+v", entries)
 	}
 }
@@ -200,7 +200,7 @@ func TestPlan_PinnedPathExcludesWorkingTreePackages(t *testing.T) {
 	testutil.GitCommitAll(t, repo, "head", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(1, 0)}})
 	entries, err := Plan(t.Context(), Config{Path: root, SelfURLs: []string{"git://fixture.invalid/cluster"}})
 	assert.NoError(t, err)
-	if len(entries) != 1 || entries[0].ID != "." || entries[0].Path != root {
+	if len(entries) != 1 || entries[0].Path != root {
 		t.Fatalf("suppressed working-tree package became a cluster: %+v", entries)
 	}
 }
@@ -839,9 +839,9 @@ func TestEntrySourceView_WarningEvidence(t *testing.T) {
 					invocation := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "current only"}
 					bootstrap := &store.SourceArtifact{LocalPath: root, FS: input, Warnings: []manifest.Warning{invocation}}
 					obj := &manifest.OCIRepository{Name: "alias", Namespace: "apps"}
-					d := &discoverer{}
+					d := &Admission{aliasViews: map[string]*store.SourceArtifact{}}
 					for range 2 {
-						artifact, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, subtree: subtree})
+						artifact, _, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, subtree: subtree})
 						if failed && !errors.Is(err, fs.ErrPermission) || !failed && err != nil {
 							t.Fatalf("source view error=%v, failed=%t", err, failed)
 						}

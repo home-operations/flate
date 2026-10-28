@@ -42,7 +42,7 @@ spec:
 	owner := cachetest.New(t, "", sourcecache.New)
 	cfg := Config{Cache: owner, Network: new(source.Network), HelmClient: helm.NewClient(owner), Concurrency: 2}
 	t.Cleanup(cfg.Network.Close)
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: root, SelfURLs: []string{selfURL}}}, cfg)
+	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "alpha"), SelfURLs: []string{selfURL}}, {ID: manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "omega"), SelfURLs: []string{selfURL}}}, cfg)
 	assert.NoError(t, err)
 	if len(runs) != 2 {
 		t.Fatalf("collection lost clusters: %+v", runs)
@@ -60,8 +60,8 @@ spec:
 		if len(explicit) != 1 {
 			t.Fatalf("entry lost completed result: %+v", explicit)
 		}
-		if diff := cmp.Diff(explicit[0].Result, run.Result, cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
-			t.Fatal(diff)
+		if delta := cmp.Diff(run.Result, explicit[0].Result, cmpopts.IgnoreUnexported(manifest.Kustomization{}, manifest.HelmRelease{})); delta != "" {
+			t.Fatal(delta)
 		}
 		for _, obj := range explicit[0].Store().ListObjects("", "") {
 			got, gotOK := run.Store().GetStatus(obj.Named())
@@ -117,7 +117,7 @@ func TestRenderTrees_ClusterSecretAndDependencyIsolation(t *testing.T) {
 		testutil.WriteFile(t, root, "shared/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"-output, namespace: apps}\ndata: {value: '"+value+"'}\n")
 	}
 	testutil.WriteFile(t, root, "shared/ready/kustomization.yaml", "resources: []\n")
-	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: root}}, Config{Concurrency: 2})
+	runs, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: "alpha", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "alpha")}, {ID: manifest.TreeID{Cluster: "omega", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "omega")}}, Config{Concurrency: 2})
 	if err == nil || len(runs) != 2 || runs[0].Orchestrator == nil || runs[1].Orchestrator == nil {
 		t.Fatalf("collection lost isolated partial results: %+v %v", runs, err)
 	}

@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"context"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
@@ -31,6 +30,7 @@ import (
 // test deterministically, for both the no-dependsOn root and the dependent.
 func TestOrchestrator_CrossTreeBaseSubstitution(t *testing.T) {
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [cluster/flux-system.yaml]\n")
 
 	// Entry KSes: cluster-settings (provides the substitution ConfigMap) and
 	// cluster-apps (fans out ./apps/test with postBuild substitution + a patch
@@ -104,7 +104,7 @@ metadata:
   namespace: flux-system
 `)
 
-	renderedSingleton1, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true})
+	renderedSingleton1, err := RenderTrees(t.Context(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{WipeSecrets: true, Concurrency: 2})
 	if len(renderedSingleton1) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}

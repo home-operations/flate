@@ -117,6 +117,7 @@ func TestDAGDispatcher_RecoveredAndPrimaryFailures(t *testing.T) {
 			if err := o.bootstrap(t.Context()); err != nil {
 				t.Fatal(err)
 			}
+			reconcileEntryForTest(t, o)
 			o.configureControllers()
 			d := dagDispatcher{o}
 			victim, ghost := testutil.KustomizationID("flux-system", "consumer"), testutil.KustomizationID("flux-system", "ghost")

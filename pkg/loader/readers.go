@@ -185,6 +185,7 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			})
 		})
 		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })
+		r.Declaration = l.IndexedObject(id, r).Obj
 		l.Index.Records[id] = r
 	}
 	return nil

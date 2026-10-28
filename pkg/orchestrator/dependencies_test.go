@@ -2,9 +2,11 @@ package orchestrator
 
 import (
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -120,7 +122,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					}
 				}
 				excludedSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "excluded-source"}
-				if info, _ := st.GetStatus(excludedSource); info.Outcome() != store.OutcomeUnchanged || side.filter.ShouldReconcile(excludedSource) {
+				if info, known := st.GetStatus(excludedSource); side.filter.ShouldReconcile(excludedSource) || (known || st.GetObject(excludedSource) != nil) && info.Outcome() != store.OutcomeUnchanged {
 					t.Fatalf("discovered excluded source was activated: %+v", info)
 				}
 				if st.GetArtifact(excludedSource, store.ArtifactContent) != nil {
@@ -144,7 +146,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					t.Fatalf("required shared chart was not admitted: %s", chart)
 				}
 				otherSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "selected-source"}
-				if info, _ := st.GetStatus(otherSource); info.Outcome() != store.OutcomeUnchanged || side.filter.ShouldReconcile(otherSource) {
+				if info, known := st.GetStatus(otherSource); side.filter.ShouldReconcile(otherSource) || (known || st.GetObject(otherSource) != nil) && info.Outcome() != store.OutcomeUnchanged {
 					t.Fatalf("excluded source sibling was activated: %+v", info)
 				}
 				if st.GetArtifact(otherSource, store.ArtifactContent) != nil {
@@ -168,10 +170,19 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 			if !broken {
 				for i, side := range []Rendered{base, head} {
 					batches := canonicalBatches(side.Result)
-					if len(batches) != 2 || batches[0].Parent != (testutil.HelmReleaseID("flux-system", "selected")) || batches[1].Parent != testutil.KustomizationID("flux-system", "selected") {
+					if len(batches) != 3 || batches[0].Parent != (testutil.HelmReleaseID("flux-system", "selected")) || batches[1].Parent != side.entryBinding.Producer || batches[2].Parent != testutil.KustomizationID("flux-system", "selected") {
 						t.Fatalf("unexpected selected producer batches: %+v", batches)
 					}
-					if len(batches[0].Documents) != 1 || len(batches[1].Documents) != 2 {
+					var declarations []map[string]any
+					for _, name := range []string{"selected", "monitor-a", "monitor-b", "source"} {
+						body, err := fs.ReadFile(side.cfg.Input.FS, "flux/"+name+".yaml")
+						assert.NoError(t, err)
+						parsed, err := testutil.DecodeDocs(strings.NewReader(string(body)))
+						assert.NoError(t, err)
+						declarations = append(declarations, parsed...)
+					}
+					assert.Diff(t, batches[1].Documents, declarations)
+					if len(batches[0].Documents) != 1 || len(batches[2].Documents) != 2 {
 						t.Fatalf("unexpected selected document order: %+v", batches)
 					}
 					cm := batches[0].Documents[0]
@@ -184,13 +195,13 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 					if cm["kind"] != manifest.KindConfigMap || meta["name"] != "selected-rendered" || data["greeting"] != want {
 						t.Fatalf("rendered chart values = %+v, want %s", cm, want)
 					}
-					hrDoc, valuesDoc := batches[1].Documents[0], batches[1].Documents[1]
+					hrDoc, valuesDoc := batches[2].Documents[0], batches[2].Documents[1]
 					valuesMeta, _ := valuesDoc["metadata"].(map[string]any)
 					hrMeta, _ := hrDoc["metadata"].(map[string]any)
 					spec, _ := hrDoc["spec"].(map[string]any)
 					values, _ := spec["values"].(map[string]any)
 					if valuesDoc["kind"] != manifest.KindConfigMap || valuesMeta["name"] != "selected-values" || hrDoc["kind"] != manifest.KindHelmRelease || hrMeta["name"] != "selected" || values["greeting"] != want {
-						t.Fatalf("selected producer document order or values differ: %+v", batches[1].Documents)
+						t.Fatalf("selected producer document order or values differ: %+v", batches[2].Documents)
 					}
 				}
 			}
@@ -198,6 +209,7 @@ func TestRenderTrees_ExcludedOrderingAndPromotion(t *testing.T) {
 	}
 	t.Run("selected malformed reference", func(t *testing.T) {
 		dir := t.TempDir()
+		testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks.yaml, peer.yaml, good.yaml]\n")
 		testutil.WriteFile(t, dir, "ks.yaml", ksYAML("apps", "apps", ""))
 		testutil.WriteFile(t, dir, "peer.yaml", ksYAML("peer", "broken", ""))
 		testutil.WriteFile(t, dir, "good.yaml", ksYAML("good", "good", ""))

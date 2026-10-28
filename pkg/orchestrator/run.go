@@ -43,6 +43,18 @@ func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSe
 			return true
 		}
 	}
+	if e.o.admission != nil && reads != nil && reads.GetDeclaration(reads.ID()) != nil {
+		witness := reads.GetDeclaration(reads.ID())
+		object, artifact, err := e.o.admission.Resolve(ctx, id, nil, []manifest.BaseManifest{witness})
+		if err == nil && object != nil && artifact != nil && reads.Valid() {
+			if e.admit(store.Child{Obj: object}, reads) {
+				e.o.store.AddObject(object)
+				e.o.store.SetArtifact(id, artifact)
+				e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
+				return true
+			}
+		}
+	}
 	return false
 }
 
@@ -73,6 +85,7 @@ func (o *Orchestrator) configureControllers() {
 	o.src.Configure(sourcectrl.FetchOptions{
 		Filter:              o.filter,
 		AllowMissingSecrets: slices.Contains(o.cfg.AllowMissingKinds, manifest.KindSecret),
+		Admission:           o.admission,
 	}, o.cfg.SourceRetry)
 	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
@@ -134,7 +147,7 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		}
 	}
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
-	out := make([]manifest.DocumentBatch, 0, len(objects)+1)
+	out := make([]manifest.DocumentBatch, 0, len(objects))
 	positions := make(map[manifest.NamedResource]int, len(objects))
 	for _, obj := range objects {
 		id := obj.Named()
@@ -158,11 +171,17 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 		if effective == nil {
 			continue
 		}
+		filterOwnership := parentAttributed
+		if producer, ok := obj.(interface {
+			EmissionPolicy() manifest.EmissionPolicy
+		}); ok {
+			filterOwnership = filterOwnership || producer.EmissionPolicy().DocumentScope
+		}
 		selected := make(map[manifest.NamedResource]bool, len(attempt.Children))
 		for _, child := range attempt.Children {
 			if child.Doc != nil {
 				target := child.Obj.Named()
-				selected[target] = !parentAttributed || !manifest.KindOf(child.Obj).Render && o.store.EmissionOwner(target) == id
+				selected[target] = (!parentAttributed || !manifest.KindOf(child.Obj).Render) && o.store.EmissionOwner(target) == id
 			}
 		}
 		for _, occurrence := range attempt.Manifests {
@@ -173,7 +192,7 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 			if parentAttributed && identifiable && target.Namespace == "" && manifest.KindOf(&manifest.RawObject{APIVersion: apiVersion, Kind: target.Kind}).Namespaced() {
 				target.Namespace = id.Namespace
 			}
-			if !parentAttributed || !identifiable || selected[target] {
+			if !filterOwnership || !identifiable || selected[target] || !parentAttributed && o.store.EmissionOwner(target) == (manifest.NamedResource{}) {
 				position, ok := positions[parent]
 				if !ok {
 					position = len(out)
@@ -183,16 +202,6 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 				out[position].Documents = append(out[position].Documents, doc)
 			}
 		}
-	}
-	var documents []map[string]any
-	for _, doc := range o.documents {
-		id := manifest.DocIdentity(doc)
-		if o.store.EmissionOwner(id) == (manifest.NamedResource{}) && o.filter.ShouldReconcile(id) {
-			documents = append(documents, doc)
-		}
-	}
-	if len(documents) != 0 {
-		out = append(out, manifest.DocumentBatch{Documents: documents})
 	}
 	return out
 }

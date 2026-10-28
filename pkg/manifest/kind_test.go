@@ -53,6 +53,32 @@ func TestKindInfo_Rosters(t *testing.T) {
 	assert.Equal(t, (NamedResource{Kind: "Unknown"}).KindInfo(), KindInfo{Kind: "Unknown"})
 }
 
+func TestNamedResource_ReportHidden(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		id   NamedResource
+		want bool
+	}{
+		{"bootstrap", BootstrapSourceID, true},
+		{"internal entry", NewEntryKustomization(BootstrapSourceID, ".").Named(), true},
+		{"authored entry label", NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "entry"}, false},
+		{"chart", NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: "apps", Name: "chart"}, false},
+		{"foreign chart", NamedResource{Group: "foreign.example", Kind: KindHelmChart, Namespace: "apps", Name: "chart"}, false},
+		{"core chart", NamedResource{Kind: KindHelmChart, Name: "chart"}, false},
+		{"ordinary git", NamedResource{Group: SourceDomain, Kind: KindGitRepository, Namespace: BootstrapSourceID.Namespace, Name: "ordinary"}, false},
+		{"other namespace", NamedResource{Group: BootstrapSourceID.Group, Kind: BootstrapSourceID.Kind, Namespace: "other", Name: BootstrapSourceID.Name}, false},
+		{"other group", NamedResource{Group: "foreign.example", Kind: BootstrapSourceID.Kind, Namespace: BootstrapSourceID.Namespace, Name: BootstrapSourceID.Name}, false},
+		{"other kind", NamedResource{Group: BootstrapSourceID.Group, Kind: KindOCIRepository, Namespace: BootstrapSourceID.Namespace, Name: BootstrapSourceID.Name}, false},
+		{"empty", NamedResource{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.id.ReportHidden(), tc.want)
+		})
+	}
+}
+
 func TestKindInfo_ArtifactGenerator(t *testing.T) {
 	t.Parallel()
 	doc := map[string]any{"apiVersion": "source.extensions.fluxcd.io/v1beta1", "kind": "ArtifactGenerator", "metadata": map[string]any{"name": "generator", "namespace": "apps"}, "spec": map[string]any{}}

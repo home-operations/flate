@@ -40,6 +40,11 @@ func (n NamedResource) IsCRD() bool {
 	return n.Group == apix.GroupName && n.Kind == KindCustomResourceDefinition
 }
 
+// ReportHidden reports whether the identity is internal to reconciliation reports.
+func (n NamedResource) ReportHidden() bool {
+	return n == entryProducerID || n == BootstrapSourceID
+}
+
 // Resolve applies forced, authored and fallback namespace precedence without changing other fields.
 func Resolve(id NamedResource, forced, fallback string) NamedResource {
 	id.Namespace = cmp.Or(forced, id.Namespace, fallback)
@@ -49,7 +54,7 @@ func Resolve(id NamedResource, forced, fallback string) NamedResource {
 // NamespacedName returns "namespace/name", or just "name" when
 // cluster-scoped.
 func (n NamedResource) NamespacedName() string {
-	if n.Namespace == "" {
+	if n.Namespace == "" || n == entryProducerID {
 		return n.Name
 	}
 	return n.Namespace + "/" + n.Name

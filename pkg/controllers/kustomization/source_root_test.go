@@ -8,6 +8,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -78,7 +79,7 @@ func TestResolveSourceRoot_FallsBackToBootstrapWhenSourceRefEmpty(t *testing.T) 
 			// render's `patches:` block.
 		},
 	}
-	got, _, err := c.newExecution(ks.Named()).resolveSource(ks)
+	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
@@ -116,7 +117,7 @@ func TestResolveSourceRoot_ExplicitSourceRefUnchanged(t *testing.T) {
 		Path:      "./app",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
 	}
-	got, _, err := c.newExecution(ks.Named()).resolveSource(ks)
+	got, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	if err != nil {
 		t.Fatalf("resolveSourceRoot: %v", err)
 	}
@@ -135,7 +136,7 @@ func TestResolveSourceRoot_NoBootstrapNoSourceRefErrors(t *testing.T) {
 		Name: "foo", Namespace: "flux-system",
 		Path: "./app",
 	}
-	_, _, err := c.newExecution(ks.Named()).resolveSource(ks)
+	_, _, err := kustomize.SourceInput(&c.newExecution(ks.Named()).run.Reads, ks)
 	if err == nil {
 		t.Fatalf("expected error when bootstrap source is absent")
 	}

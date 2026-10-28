@@ -86,8 +86,8 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 		for i, group := range inv.groups {
 			orig, current := group.sides[0], group.sides[1]
 			imgs, suppressed, err := diff.CompareImages(
-				diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
-				diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable},
+				diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
+				diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys},
 				nil, includeRemoved,
 			)
 			groups[i] = output.ImageGroup{Cluster: group.cluster, Images: imgs, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead]}
@@ -127,16 +127,16 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 			orig, current := group.sides[0], group.sides[1]
 			if format == output.FormatJSON {
 				body, warnings, suppressed, err := diff.Compare(
-					diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
-					diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable}, nil,
+					diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
+					diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys}, nil,
 					diff.Options{Format: diff.FormatJSON, StripAttrs: d.stripAttrs, StripFields: d.stripFields})
 				groups[i] = output.DiffGroup{Cluster: group.cluster, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead], Body: body}
 				result.warnings[i] = appendSuppressionWarnings(warnings, suppressed)
 				result.err = errors.Join(result.err, err)
 				continue
 			}
-			left, right, notes := diffprep.Suppress(diffprep.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable},
-				diffprep.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable})
+			left, right, notes := diffprep.Suppress(diffprep.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
+				diffprep.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys})
 			p := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), diffprep.Options{StripAttrs: d.stripAttrs, StripFields: d.stripFields})
 			result.warnings[i] = slices.Grow(p.Warnings, len(notes))
 			for _, note := range notes {

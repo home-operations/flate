@@ -148,7 +148,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 			c := newTestTreeCache(t, storage)
 			docs, receipt1, err := testutil.RenderMaps(Render(t.Context(), c, req, sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), demoSpec.Named(), receipt1, emptyRenderInventory); recordErr != nil {
+				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -176,7 +176,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 
 	out1, receipt2, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt2, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -201,7 +201,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	var receipt3 *manifest.RenderReceipt
 	out1, receipt3, err = testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt3, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt3, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -225,7 +225,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	cache = newTestTreeCache(t, cacheDir)
 	out2, receipt4, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt4, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt4, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -248,7 +248,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	}
 	out3, receipt5, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt5, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt5, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -265,7 +265,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	testutil.WriteFile(t, root, "patch.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: demo}\ndata: {patched: v2}\n")
 	out4, receipt6, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt6, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt6, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -277,7 +277,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	var receipt7 *manifest.RenderReceipt
 	out4, receipt7, err = testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt7, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt7, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -290,7 +290,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 	var receipt8 *manifest.RenderReceipt
 	out4, receipt8, err = testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: demoSpec}, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt8, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt8, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -322,7 +322,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		req := RenderRequest{Source: localSource(t, root), Label: root, SubPath: "selected", Spec: spec}
 		out, receipt9, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt9, emptyRenderInventory); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt9, Records: emptyRenderInventory}); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -332,7 +332,7 @@ func TestRender_CacheHitMissInvalidate(t *testing.T) {
 		}
 		repeated, receipt10, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt10, emptyRenderInventory); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt10, Records: emptyRenderInventory}); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -365,7 +365,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 
 	out1, receipt11, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt11, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt11, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -393,7 +393,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	}
 	out2, receipt12, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt12, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt12, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -422,7 +422,7 @@ func TestRender_SourceignoreContentInvalidates(t *testing.T) {
 	}
 	out3, receipt13, err := testutil.RenderMaps(Render(ctx, cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt13, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt13, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -614,7 +614,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					cache := newCache(cacheDir)
 					out1, receipt16, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
 					if err == nil {
-						if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt16, emptyRenderInventory); recordErr != nil {
+						if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt16, Records: emptyRenderInventory}); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -646,7 +646,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					fresh := newCache("")
 					want, receipt17, err := testutil.RenderMaps(Render(t.Context(), fresh, request(), sourcecache.RetryConfig{}))
 					if err == nil {
-						if recordErr := fresh.RecordRender(t.Context(), demoSpec.Named(), receipt17, emptyRenderInventory); recordErr != nil {
+						if recordErr := fresh.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt17, Records: emptyRenderInventory}); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -666,7 +666,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					}
 					out2, receipt18, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
 					if err == nil {
-						if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt18, emptyRenderInventory); recordErr != nil {
+						if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt18, Records: emptyRenderInventory}); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -693,7 +693,7 @@ func TestRender_RemoteCacheDependencies(t *testing.T) {
 					}
 					out3, receipt19, err := testutil.RenderMaps(Render(t.Context(), cache, request(), sourcecache.RetryConfig{}))
 					if err == nil {
-						if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt19, emptyRenderInventory); recordErr != nil {
+						if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt19, Records: emptyRenderInventory}); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -850,7 +850,7 @@ func TestRender_CacheIdentityIsolated(t *testing.T) {
 	publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: struct{ Render string }{key}}, testRenderFrame(t, readSetSnapshot{}, []byte("ORDINARY\n")))
 	out, receipt20, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	if err == nil {
-		if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt20, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt20, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -943,7 +943,7 @@ func TestRender_CacheFrames(t *testing.T) {
 			publishTestFrame(t, cache.owner, sourcecache.BlobKey{Content: key, Render: sourcecache.RenderPending}, frame)
 			out, receipt22, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt22, emptyRenderInventory); recordErr != nil {
+				if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt22, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -962,7 +962,7 @@ func TestRender_CacheFrames(t *testing.T) {
 				assert.Diff(t, out, fresh)
 				again, receipt23, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 				if err == nil {
-					if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt23, emptyRenderInventory); recordErr != nil {
+					if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt23, Records: emptyRenderInventory}); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -993,7 +993,7 @@ func TestRender_CacheFrames(t *testing.T) {
 			if tc.corrupt {
 				again, receipt24, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 				if err == nil {
-					if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt24, emptyRenderInventory); recordErr != nil {
+					if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt24, Records: emptyRenderInventory}); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -1107,7 +1107,7 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 			if fault == "lookup" || fault == "read" {
 				_, receipt26, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 				if err == nil {
-					if recordErr := cache.RecordRender(t.Context(), demoSpec.Named(), receipt26, emptyRenderInventory); recordErr != nil {
+					if recordErr := cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt26, Records: emptyRenderInventory}); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -1132,7 +1132,7 @@ func TestRender_CacheStorageFailures(t *testing.T) {
 			for range 2 {
 				out, receipt27, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 				if err == nil {
-					err = cache.RecordRender(t.Context(), demoSpec.Named(), receipt27, emptyRenderInventory)
+					err = cache.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt27, Records: emptyRenderInventory})
 				}
 
 				if fault == "read" {
@@ -1248,7 +1248,7 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			c := newCache()
 			out, receipt28, err := testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), demoSpec.Named(), receipt28, emptyRenderInventory); recordErr != nil {
+				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt28, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1328,7 +1328,7 @@ func TestRender_RemoteCacheReachability(t *testing.T) {
 			var receipt29 *manifest.RenderReceipt
 			out, receipt29, err = testutil.RenderMaps(Render(ctx, c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(ctx, demoSpec.Named(), receipt29, emptyRenderInventory); recordErr != nil {
+				if recordErr := c.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt29, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1447,7 +1447,7 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 			}
 			out, receipt30, err := testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), demoSpec.Named(), receipt30, emptyRenderInventory); recordErr != nil {
+				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt30, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1479,7 +1479,7 @@ func TestRender_RemoteCacheLocalAttribution(t *testing.T) {
 			var receipt31 *manifest.RenderReceipt
 			out, receipt31, err = testutil.RenderMaps(Render(t.Context(), c, request(), sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), demoSpec.Named(), receipt31, emptyRenderInventory); recordErr != nil {
+				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt31, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1719,7 +1719,7 @@ func TestRender_RemoteCacheIsolation(t *testing.T) {
 			}
 			out, receipt32, err := testutil.RenderMaps(Render(t.Context(), c, request, sourcecache.RetryConfig{}))
 			if err == nil {
-				if recordErr := c.RecordRender(t.Context(), demoSpec.Named(), receipt32, emptyRenderInventory); recordErr != nil {
+				if recordErr := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt32, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -1875,7 +1875,7 @@ func TestRender_RemoteSelectionTransition(t *testing.T) {
 				t.Fatalf("initial directory selection: %s, %v", out, err)
 			}
 			realOutput := testRenderEncoding(t, out)
-			if err := c.RecordRender(t.Context(), demoSpec.Named(), receipt, emptyRenderInventory); err != nil {
+			if err := c.RecordRender(t.Context(), RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt, Records: emptyRenderInventory}); err != nil {
 				t.Fatal(err)
 			}
 			frame := receipt.Value().(renderFrame)
@@ -1971,7 +1971,7 @@ func TestRender_AcceptedCacheAcquisitionOverlap(t *testing.T) {
 			wg.Go(func() {
 				out, receipt25, err := testutil.RenderMaps(Render(ctx, cache, RenderRequest{Source: &store.SourceArtifact{FS: lower}, Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{}))
 				if err == nil {
-					if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt25, emptyRenderInventory); recordErr != nil {
+					if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt25, Records: emptyRenderInventory}); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}

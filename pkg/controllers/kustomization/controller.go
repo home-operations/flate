@@ -7,10 +7,7 @@ package kustomization
 
 import (
 	"context"
-	"fmt"
 	"iter"
-
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/depwait"
@@ -78,7 +75,6 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
 	c.retry = retry
 	c.strictSubstitutions = opts.StrictSubstitutions
-
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
@@ -104,7 +100,7 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if _, err := c.run.RequireRefresh(ctx, ks, manifest.GateArtifacts, level); err != nil {
 		return err
 	}
-	source, applyIgnore, err := c.resolveSource(ks)
+	source, applyIgnore, err := kustomize.SourceInput(&c.run.Reads, ks)
 	if err != nil {
 		return err
 	}
@@ -135,7 +131,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 			if err != nil {
 				return err
 			}
-			return c.Trees.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
 		}
 	} else if err := c.run.Checkpoint(); err != nil {
 		return err
@@ -158,31 +154,11 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 			if err != nil {
 				return err
 			}
-			return c.Trees.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
 		}
 	}
-	base.Stamp(ks.EmissionPolicy(), docs)
-
-	// Flux skips substitution on resources marked
-	// "kustomize.toolkit.fluxcd.io/substitute: disabled" to preserve shell
-	// expansions such as ${ARR[@]} that envsubst cannot parse.
-	strategy := ks.SubstituteStrategy()
-	if ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 || strategy == kustomizev1.SubstituteStrategyAlways {
-		var vars map[string]string
-		if ks.PostBuild != nil {
-			vars = manifest.VarsMap(ks.PostBuild.Substitute)
-		}
-		for i, occurrence := range docs {
-			doc := occurrence.Document
-			if occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) {
-				continue
-			}
-			substituted, sErr := substituteDoc(doc, vars, c.strictSubstitutions)
-			if sErr != nil {
-				return fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, id.NamespacedName(), sErr)
-			}
-			docs[i].Document = substituted
-		}
+	if err := kustomize.Shape(ks, docs, c.strictSubstitutions); err != nil {
+		return err
 	}
 
 	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(ks, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
@@ -190,35 +166,12 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err := c.run.Emit(id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.Trees.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+	return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
 }
 
-// resolveSource retains source-controller ignore shaping for working-tree aliases.
-// Acquired immutable views already carry their fetcher's policy.
-func (c *execution) resolveSource(ks *manifest.Kustomization) (*store.SourceArtifact, bool, error) {
-	return sourceInput(&c.run.Reads, ks)
-}
-
-func sourceInput(reads *store.ReadSet, ks *manifest.Kustomization) (*store.SourceArtifact, bool, error) {
-	srcID := ks.SourceID()
-	if srcID.Kind == "" || srcID.Name == "" {
-		if ks.Path == "" {
-			return nil, false, fmt.Errorf("%w: kustomization %s has no path and no source",
-				manifest.ErrInput, ks.Named().NamespacedName())
-		}
-		srcID = manifest.BootstrapSourceID
-	}
-	art := reads.GetArtifact(srcID, store.ArtifactContent)
-	if sa, ok := art.(*store.SourceArtifact); ok {
-		return sa, srcID == manifest.BootstrapSourceID || sa.InputAlias || sa.Content == "", nil
-	}
-	return nil, false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
-		manifest.ErrFlux, art, srcID.String())
-}
-
-// PreviousRender prepares captured inputs without reconciling or acquiring sources, and reports whether they can narrow selection.
-func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
-	ks, ok := reads.GetDeclaration(reads.ID()).(*manifest.Kustomization)
+// PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.
+func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	ks, ok := obj.(*manifest.Kustomization)
 	if !ok || ctx.Err() != nil {
 		return nil, false
 	}
@@ -237,7 +190,7 @@ func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (
 	if err != nil {
 		return nil, false
 	}
-	source, ignore, err := sourceInput(reads, prepared)
+	source, ignore, err := kustomize.SourceInput(reads, prepared)
 	if err != nil {
 		return nil, false
 	}

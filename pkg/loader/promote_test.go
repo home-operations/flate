@@ -20,21 +20,20 @@ import (
 
 func builtObjectsForTest(t *testing.T, data string) []store.Child {
 	t.Helper()
-	docs, err := testutil.DecodeDocs(strings.NewReader(data))
+	docs, err := manifest.DecodeDocs(strings.NewReader(data), manifest.RequiredDocuments)
 	if err != nil {
 		t.Fatal(err)
 	}
 	objects := make([]store.Child, 0, len(docs))
 	for _, doc := range docs {
-		obj, authoritative, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: true})
-		if err != nil {
-			t.Fatal(err)
+		child, outcome, _ := Prepare(doc, manifest.ParseDocOptions{WipeSecrets: true})
+		if outcome.Err != nil {
+			t.Fatal(outcome.Err)
 		}
-		if obj != nil {
-			objects = append(objects, store.Child{Obj: obj, Doc: authoritative})
-		}
-		if obj == nil {
-			manifest.ReleaseDoc(doc)
+		if child.Obj != nil {
+			objects = append(objects, child)
+		} else {
+			manifest.ReleaseDoc(outcome.Document)
 		}
 	}
 	return objects
@@ -134,7 +133,7 @@ spec:
 		t.Fatal(err)
 	}
 	docs := builtObjectsForTest(t, string(data))
-	l.RegisterBuilt(entry, docs)
+	l.RegisterBuilt(BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
 	if err := retainedErrorsForTest(l)[selectedFile]; err != nil {
 		t.Fatalf("selected raw error survived successful built registration: %v", err)
 	}
@@ -148,7 +147,10 @@ spec:
 	if _, exists := l.Index.Lookup(separate); !exists {
 		t.Fatal("independently loaded evidence under the entry prefix was removed")
 	}
-	admit := func(obj manifest.BaseManifest) bool { return l.AdmitsRoot(obj.Named(), "") }
+	admit := func(obj manifest.BaseManifest) bool {
+		record, ok := l.Index.Lookup(obj.Named())
+		return ok && record.Parent == testutil.KustomizationID("apps", "entry")
+	}
 	if !Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}) {
 		t.Fatal("built promotion failed")
 	}
@@ -205,7 +207,7 @@ spec:
 		if !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) || record.File != "entry/kustomization.yaml" {
 			t.Fatalf("built record %s lost authoritative evidence: %+v", id, record)
 		}
-		if st.GetObject(id) != obj || candidateForTest(t, l, id) != obj || !l.AdmitsRoot(id, "") {
+		if st.GetObject(id) != obj || candidateForTest(t, l, id) != obj || l.AdmitsRoot(id, "") {
 			t.Errorf("built identity %s did not survive admission and source mounts", id)
 		}
 		for _, file := range []string{"entry/kustomization.yaml", "entry/bundle.yaml", "entry/version.yaml", "entry/value.txt", selectedFile} {
@@ -276,7 +278,7 @@ spec:
 			t.Fatal(err)
 		}
 		docs := builtObjectsForTest(t, release+"---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: generated-hash, namespace: apps}\ndata: {value.txt: input}\n")
-		l.RegisterBuilt(root, docs)
+		l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
 		hr, _ := l.Index.Lookup(docs[0].Obj.Named())
 		generated, _ := l.Index.Lookup(docs[1].Obj.Named())
 		assert.Equal(t, hr.File, "release.yaml")
@@ -315,7 +317,7 @@ spec:
 			}
 			docs := builtObjectsForTest(t, strings.Replace(generator, "artifacts: [{name: app}]", "artifacts: [{name: "+tc.value+"}]", 1))
 			raw := docs[0].Obj.(*manifest.RawObject)
-			l.RegisterBuilt(root, docs)
+			l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
 			record, ok := l.Index.Lookup(raw.Named())
 			assert.Equal(t, ok, true)
 			assert.Equal(t, record.File, tc.file)
@@ -339,7 +341,7 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 		t.Fatal(err)
 	}
 	docs := []store.Child{{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}}}
-	l.RegisterBuilt(root, docs)
+	l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
 	l.Admit(root)
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatalf("finalization fetched an already built remote generator: %v", err)
@@ -402,11 +404,14 @@ spec:
 	if len(docs) != 1 || docs[0].Obj.Named() != (manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "retained"}) {
 		t.Fatalf("deletion patch did not leave only the retained ConfigMap: %v", docs)
 	}
-	l.RegisterBuilt(root, docs)
+	l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
 	if err := retainedErrorsForTest(l)[selectedFile]; err != nil {
 		t.Fatalf("deleted resource raw error survived successful built registration: %v", err)
 	}
-	admit := func(obj manifest.BaseManifest) bool { return l.AdmitsRoot(obj.Named(), "") }
+	admit := func(obj manifest.BaseManifest) bool {
+		record, ok := l.Index.Lookup(obj.Named())
+		return ok && record.Parent == testutil.KustomizationID("apps", "entry")
+	}
 	if !Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}) {
 		t.Fatal("retained built promotion failed")
 	}
@@ -436,7 +441,7 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 		_, err := l.Load(t.Context(), root)
 		assert.NoError(t, err)
 		obj := &manifest.ConfigMap{Name: "injected", Namespace: "apps"}
-		l.RegisterBuilt(filepath.Join(root, "target"), []store.Child{{Obj: obj}})
+		l.RegisterBuilt(BuiltInput{Root: filepath.Join(root, "target"), Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, []store.Child{{Obj: obj}})
 		if _, indexed := l.Index.Lookup(obj.Named()); indexed || l.Store.GetObject(obj.Named()) != nil {
 			t.Fatal("inactive package published authoritative output")
 		}
@@ -467,16 +472,14 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	assert.Diff(t, l.StandaloneRoots(root), []string{"entry", "entry/independent"})
-	l.RegisterBuilt(entry, nil)
-	assert.Diff(t, l.StandaloneRoots(root), []string{"entry/independent"})
+	l.RegisterBuilt(BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "shared"}
 	if _, ok := l.Index.Lookup(id); ok || l.BuiltDocuments(id) != nil {
 		t.Fatal("empty output retained raw resource evidence")
 	}
-	l.RegisterBuilt(filepath.Join(root, "entry/independent"), nil)
-	if roots := l.StandaloneRoots(root); len(roots) != 0 {
-		t.Fatalf("empty build was not complete: %v", roots)
+	l.RegisterBuilt(BuiltInput{Root: filepath.Join(root, "entry/independent"), Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, nil)
+	if l.documents.cache[entry].built == nil || l.documents.cache[filepath.Join(root, "entry/independent")].built == nil {
+		t.Fatal("empty builds did not retain completion evidence")
 	}
 	for _, tc := range []struct {
 		name, ownerPath string
@@ -512,13 +515,6 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 			if _, err := l.Load(t.Context(), entry); err != nil {
 				t.Fatal(err)
 			}
-			var want []string
-			if tc.eligible {
-				want = []string{"entry"}
-			}
-			if roots := l.StandaloneRoots(root); !slices.Equal(roots, want) {
-				t.Fatalf("standalone roots = %v, want %v", roots, want)
-			}
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
@@ -531,7 +527,6 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 						t.Fatalf("nested reader acquired a parent claim: %s", prefix)
 					}
 				}
-				assert.Diff(t, l.StandaloneRoots(root), want)
 			}
 		})
 	}

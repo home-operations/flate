@@ -474,7 +474,7 @@ func discoveryReferences(refs []manifest.NamedResource, obj manifest.BaseManifes
 }
 
 func discoveryReference(ref manifest.Reference) bool {
-	return ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Content && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
+	return ref.Use == "valuesFrom" || ref.Use == "substituteFrom" && ref.Group == "" && ref.Kind == manifest.KindConfigMap ||
 		(ref.Use == "source" || ref.Use == "chart" || ref.Use == "artifact") && ref.Kind != "" && ref.Name != ""
 }
 

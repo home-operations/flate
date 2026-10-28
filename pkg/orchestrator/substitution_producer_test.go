@@ -41,6 +41,7 @@ func TestRender_SubstitutionProducerOrdering(t *testing.T) {
 					if err := o.bootstrap(ctx); err != nil {
 						t.Fatal(err)
 					}
+					reconcileEntryForTest(t, o)
 					o.configureControllers()
 					d := dagDispatcher{o}
 					producer, consumer := testutil.KustomizationID("flux-system", "producer"), testutil.KustomizationID("flux-system", "consumer")
@@ -118,6 +119,7 @@ func TestRender_ResourceSetConflictingDataConsumers(t *testing.T) {
 
 				run := func(reverse bool) *Result {
 					root := t.TempDir()
+					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/parent.yaml, flux/consumer.yaml]\n")
 					testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "apps", "  path: ./producers\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 					testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./consumer\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  postBuild: {substituteFrom: [{kind: "+kind+", name: shared}]}\n"))
 					testutil.WriteFile(t, root, "producers/kustomization.yaml", "resources: [a.yaml, z.yaml]\n")
@@ -148,6 +150,7 @@ spec:
 					assert.NoError(t, err)
 					t.Cleanup(func() { o.stop() })
 					assert.NoError(t, o.bootstrap(t.Context()))
+					reconcileEntryForTest(t, o)
 					o.configureControllers()
 					d := dagDispatcher{o}
 					parent := testutil.KustomizationID("apps", "parent")

@@ -128,8 +128,9 @@ type Orchestrator struct {
 	repoRoot string
 
 	// index is immutable after discovery.
-	index     *manifest.DiscoveryIndex
-	documents []map[string]any
+	index        *manifest.DiscoveryIndex
+	entryBinding discovery.Binding
+	admission    *discovery.Admission
 
 	// orphans retain skipped failures for the completed result.
 	orphans map[manifest.NamedResource]string
@@ -143,7 +144,7 @@ type Orchestrator struct {
 }
 
 // Result contains rendered document batches, failures and discovery diagnostics.
-// Ownerless documents have no producer; all borrowed payloads MUST remain immutable.
+// All borrowed payloads MUST remain immutable.
 type Result struct {
 	Manifests []manifest.DocumentBatch
 	Failed    map[manifest.NamedResource]store.StatusInfo
@@ -265,6 +266,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
 		Store: o.store, WipeSecrets: o.cfg.WipeSecrets, Entry: o.cfg.entry,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
+		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipResourceKinds(),
 	})
 	o.cfg.entry = nil
 	if err != nil {
@@ -274,13 +276,8 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
-	var entryPolicy manifest.EmissionPolicy
-	skipKinds := o.cfg.HelmOptions.SkipResourceKinds()
-	for _, doc := range res.Documents {
-		if output, _ := entryPolicy.SelectDocument(doc, skipKinds); output {
-			o.documents = append(o.documents, doc)
-		}
-	}
+	o.entryBinding = res.Binding
+	o.admission = res.Admission
 	o.dependencySubstitutions = res.DependencySubstitutions
 
 	return nil

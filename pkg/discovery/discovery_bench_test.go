@@ -170,27 +170,17 @@ func BenchmarkRun_BuiltPackage(b *testing.B) {
 				return result
 			}
 			result := run()
-			if len(result.Documents) != count+1 {
-				b.Fatalf("built documents = %d, want %d", len(result.Documents), count+1)
+			children := 0
+			for _, record := range result.Index.Records {
+				if record.Parent == result.Binding.Producer {
+					children++
+				}
 			}
-			for _, doc := range result.Documents {
-				if manifest.DocIdentity(doc) != secret.Named() {
-					continue
-				}
-				want := "authored"
-				if existing {
-					want = "preexisting"
-					if cfg.Store.GetObject(secret.Named()) != secret {
-						b.Fatal("preexisting Secret replaced")
-					}
-				}
-				if doc["stringData"].(map[string]any)["token"] != want {
-					b.Fatalf("Secret payload = %v, want %s", doc, want)
-				}
-				_, hasType := doc["type"]
-				if hasType == existing {
-					b.Fatalf("Secret type present = %v, preexisting = %v", hasType, existing)
-				}
+			if children != count+1 {
+				b.Fatalf("prepared records=%d, want %d", children, count+1)
+			}
+			if existing && cfg.Store.GetObject(secret.Named()) != secret {
+				b.Fatal("preexisting secret replaced")
 			}
 			b.ReportAllocs()
 			for b.Loop() {

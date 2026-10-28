@@ -1,6 +1,7 @@
 package substitution
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,9 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
@@ -113,8 +116,8 @@ func TestE2E_DependsOnDefaults_EmptyNameFails(t *testing.T) {
 	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./app\n  dependsOn: [{name: '${PREFIX:-}'}]\n"))
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: should-not-render}\n")
-	stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
-	if code != 1 || stdout != "" || !strings.Contains(stderr, "required by flux-system/consumer") || !strings.Contains(stderr, "not found") {
+	stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
+	if code != 1 || strings.Contains(stdout, "name: should-not-render") || !strings.Contains(stderr, "required by flux-system/consumer") || !strings.Contains(stderr, "not found") {
 		t.Fatalf("resolved-empty dependency must fail normally: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }
@@ -192,7 +195,7 @@ func TestE2E_ReadyExpr_EmittedIndexed(t *testing.T) {
 	testutil.WriteFile(t, root, "flux/indexer.yaml", testutil.KustomizationYAML("indexer", "flux-system", "  path: ./indexed\n  suspend: true\n"))
 	testutil.WriteFile(t, root, "indexed/config.yaml", testutil.KustomizationYAML("config", "apps", "  path: ./config\n  postBuild: {substitute: {releaseVersion: v1}}\n"))
 	testutil.WriteFile(t, root, "config/kustomization.yaml", "resources: []\n")
-	testutil.WriteFile(t, root, "flux/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {FLAVOR: promoted}\n")
+	testutil.WriteFile(t, root, "flux/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {FLAVOR: promoted}\n")
 	testutil.WriteFile(t, root, "unowned/ks.yaml", testutil.KustomizationYAML("unowned", "apps", "  path: ./unowned\n"))
 	testutil.WriteFile(t, root, "unowned/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "unowned/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unowned-output}\n")
@@ -281,20 +284,51 @@ func verifyProducedDependencyEdit(t *testing.T, root string, intervalOnly bool) 
 	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	args := []string{"build", "all", "--path", filepath.Join(root, "flux"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress"}
 	before, _ := harness.RequireCLIOK(t, args...)
+	payloadArgs := append([]string{"build", "ks", "consumer"}, args[2:]...)
+	payloadBefore, _ := harness.RequireCLIOK(t, payloadArgs...)
 	harness.MutateFile(t, filepath.Join(root, "flux/consumer.yaml"), oldValue, newValue)
 	after, _ := harness.RequireCLIOK(t, args...)
+	payloadAfter, _ := harness.RequireCLIOK(t, payloadArgs...)
 	if !strings.Contains(before, "value: before") || !strings.Contains(before, "unrelated-output") || !strings.Contains(after, "unrelated-output") {
 		t.Fatalf("full-render controls missing output: before=%s after=%s", before, after)
 	}
-	if intervalOnly && before != after || !intervalOnly && !strings.Contains(after, "value: after") {
+	if !strings.Contains(payloadBefore, "name: consumer-output") || !strings.Contains(payloadAfter, "name: consumer-output") || intervalOnly && payloadBefore != payloadAfter || !intervalOnly && !strings.Contains(after, "value: after") {
 		t.Fatalf("full-render edit: before=%s after=%s", before, after)
+	}
+	for side, output := range []string{before, after} {
+		docs, err := testutil.DecodeDocs(strings.NewReader(output))
+		if err != nil {
+			t.Fatal(err)
+		}
+		declarations := 0
+		for _, doc := range docs {
+			id := manifest.DocIdentity(doc)
+			if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization || id.Namespace != "apps" || id.Name != "consumer" {
+				continue
+			}
+			declarations++
+			want := "1h"
+			if intervalOnly && side == 1 {
+				want = "2h"
+			}
+			if doc["spec"].(map[string]any)["interval"] != want {
+				t.Fatalf("root-applied consumer interval: %s", output)
+			}
+		}
+		if declarations != 1 {
+			t.Fatalf("root-applied consumer count=%d, want 1: %s", declarations, output)
+		}
 	}
 	for _, mode := range []string{"build", "diff"} {
 		t.Run(mode, func(t *testing.T) {
 			changedArgs := append([]string{mode}, args[1:]...)
 			changedArgs = append(changedArgs, "--base", "HEAD")
 			if mode == "diff" {
-				changedArgs = append(changedArgs, "-o", "diff")
+				format := "diff"
+				if intervalOnly {
+					format = "json"
+				}
+				changedArgs = append(changedArgs, "-o", format)
 			}
 			var previous string
 			for run := range 2 {
@@ -303,8 +337,35 @@ func verifyProducedDependencyEdit(t *testing.T, root string, intervalOnly bool) 
 					t.Fatalf("unrelated sibling selected: %s", stdout)
 				}
 				if mode == "diff" && intervalOnly {
-					if stdout != "" {
-						t.Fatalf("interval edit changed rendered output: %s", stdout)
+					var result struct {
+						Changes []struct {
+							Kind, Namespace, Name, Status string
+							Parent                        struct{ Kind, Name, Path string }
+							Old, New                      map[string]any
+						}
+						Suppressed []any
+					}
+					assert.NoError(t, json.Unmarshal([]byte(stdout), &result))
+					if len(result.Changes) != 1 || len(result.Suppressed) != 0 {
+						t.Fatalf("interval edit changed producer payload or lost root declaration: %s", stdout)
+					}
+					change := result.Changes[0]
+					assert.Equal(t, change.Kind, manifest.KindKustomization)
+					assert.Equal(t, change.Namespace, "apps")
+					assert.Equal(t, change.Name, "consumer")
+					assert.Equal(t, change.Status, "changed")
+					assert.Equal(t, change.Parent.Kind, manifest.KindKustomization)
+					assert.Equal(t, change.Parent.Name, "entry")
+					assert.Equal(t, change.Parent.Path, "flux")
+					expected := manifest.DeepCopyMap(change.Old)
+					assert.Equal(t, expected["spec"].(map[string]any)["interval"], any("1h"))
+					expected["spec"].(map[string]any)["interval"] = "2h"
+					assert.Diff(t, change.New, expected)
+					consumerArgs := append([]string{"diff", "ks", "consumer"}, args[2:]...)
+					consumerArgs = append(consumerArgs, "--base", "HEAD", "-o", "diff")
+					consumerDiff, _ := harness.RequireCLIOK(t, consumerArgs...)
+					if consumerDiff != "" {
+						t.Fatalf("interval edit changed consumer payload: %s", consumerDiff)
 					}
 				} else {
 					value := "before"

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -30,6 +31,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
+			testutil.GitInit(t, root)
 			testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n")
 			testutil.WriteFile(t, root, "flux/parent.yaml", testutil.KustomizationYAML("parent", "flux-system", "  path: ./apps\n")+tc.target+"  sourceRef: {kind: GitRepository, name: flux-system}\n")
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, raw.yaml]\n")
@@ -42,7 +44,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			testutil.WriteFile(t, root, "apps/raw.yaml", strings.Join(rawBodies, "---\n"))
 			testutil.WriteFile(t, root, "apps/child/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/child/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output}\n")
-			flags := []string{"--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
+			flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2", "--no-progress"}
 			wantCode, wantMaps := 0, 1
 			if tc.namespace == "" {
 				wantCode, wantMaps = 1, 0
@@ -182,7 +184,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 	for _, scenario := range []string{"sibling", "explicit", "standalone", "shared"} {
 		t.Run(scenario, func(t *testing.T) {
 			root, cache, namespaces := namespaceOrphanFixture(t, scenario)
-			flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
+			flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
 			getArgs := append([]string{"get", "hr", "-o", "json"}, flags...)
 			hr, _ := harness.RequireCLIOK(t, getArgs...)
 			var releases []struct {
@@ -223,13 +225,17 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			slices.Sort(repos)
 			wantRepos := namespaces
 			if scenario == "standalone" {
-				wantRepos = nil
-				if len(docs) != 1 {
-					t.Fatalf("standalone seed leaked into rendered output: %s", build)
+				counts := make(map[string]int)
+				for _, doc := range docs {
+					name, namespace := manifest.DocMetadata(doc)
+					kind := manifest.DocKind(doc)
+					if namespace != "demo" || kind == manifest.KindConfigMap && name != "demo-chart" {
+						t.Fatalf("standalone release lost its rendered namespace: %s", build)
+					}
+					counts[kind]++
 				}
-				name, namespace := manifest.DocMetadata(docs[0])
-				if manifest.DocKind(docs[0]) != manifest.KindConfigMap || name != "demo-chart" || namespace != "demo" {
-					t.Fatalf("standalone release lost its rendered namespace: %s", build)
+				if len(docs) != 3 || counts[manifest.KindHelmRelease] != 1 || counts[manifest.KindHelmRepository] != 1 || counts[manifest.KindConfigMap] != 1 {
+					t.Fatalf("standalone root declarations or workload missing: %s", build)
 				}
 			}
 			if scenario != "shared" && !slices.Equal(repos, wantRepos) {
@@ -253,7 +259,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 	}
 	t.Run("terminal replay", func(t *testing.T) {
 		root, cache, _ := namespaceOrphanFixture(t, "explicit")
-		flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
+		flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", cache, "--concurrency", "2", "--no-progress"}
 		out, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
 		if !strings.Contains(out, "name: demo-chart") {
 			t.Fatalf("last-good chart did not render: %s", out)
@@ -314,13 +320,13 @@ func TestE2E_NamespaceOrphans_FailingOwner(t *testing.T) {
 		t.Run(fmt.Sprintf("concurrency%d", concurrency), func(t *testing.T) {
 			root, cache, _ := namespaceOrphanFixture(t, "failing")
 			st := store.New()
-			if _, err := discovery.Run(t.Context(), discovery.Config{Path: root, RepoRoot: root, Store: st, WipeSecrets: true}); err != nil {
+			if _, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), RepoRoot: root, Store: st, WipeSecrets: true}); err != nil {
 				t.Fatal(err)
 			}
 			if releases := st.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease); len(releases) != 0 {
 				t.Fatalf("failed owner's raw releases admitted during discovery: %+v", releases)
 			}
-			flags := []string{"--path", root, "--cache-dir", cache, "--concurrency", fmt.Sprint(concurrency), "--no-progress"}
+			flags := []string{"--path", filepath.Join(root, "flux"), "--cache-dir", cache, "--concurrency", fmt.Sprint(concurrency), "--no-progress"}
 			out, stderr, code := harness.RunCLIBuffers(append([]string{"test", "all"}, flags...)...)
 			if code != 1 || !strings.Contains(out+stderr, "flux-system/owner") || !strings.Contains(out+stderr, "no matches") {
 				t.Errorf("owner build failure must remain visible: exit=%d stdout=%s stderr=%s", code, out, stderr)
@@ -380,13 +386,16 @@ spec: {url: "https://charts.example.invalid", interval: 24h}
 	if scenario == "shared" {
 		bundle, _, _ = strings.Cut(bundle, "\n---\n")
 		bundle = strings.Replace(bundle, "sourceRef: {kind: HelmRepository, name: demo}", "sourceRef: {kind: HelmRepository, name: demo, namespace: charts}", 1)
-		testutil.WriteFile(t, root, "sources/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+		testutil.WriteFile(t, root, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata: {name: demo, namespace: charts}
 spec: {url: "https://charts.example.invalid", interval: 24h}
 `)
 	}
 	testutil.WriteFile(t, root, "cluster/shared/demo/bundle.yaml", bundle)
+	if scenario == "standalone" {
+		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [../cluster/shared/demo]\n")
+	}
 	base := "namespace: demo\nresources: [bundle.yaml]\n"
 	if scenario == "shared" {
 		base = "resources: [bundle.yaml]\n"

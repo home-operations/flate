@@ -2,8 +2,6 @@ package discovery
 
 import (
 	"io/fs"
-	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -34,8 +32,8 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
 	entries, err := Plan(t.Context(), Config{Input: input, Path: root, WipeSecrets: true})
 	assert.NoError(t, err)
-	if len(entries) != 2 || len(entries[0].prepared.aliasViews) == 0 {
-		t.Fatalf("expected two prepared alias-backed entries: %+v", entries)
+	if len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0 {
+		t.Fatalf("expected one literal entry with prepared aliases: %+v", entries)
 	}
 	before := map[string]int64{}
 	for name, count := range reads {
@@ -58,7 +56,7 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	t.Run("native admissions", func(t *testing.T) {
 		t.Parallel()
 		for _, entry := range entries {
-			t.Run(string(entry.ID), func(t *testing.T) {
+			t.Run(entry.Path, func(t *testing.T) {
 				t.Parallel()
 				st := store.New()
 				d := newDiscoverer(Config{Input: input, Entry: &entry, Path: entry.Path, Store: st, WipeSecrets: true})
@@ -68,12 +66,10 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 				_, err := d.resolveEntrySources(t.Context(), false)
 				assert.NoError(t, err)
 				assert.NoError(t, d.loadManifests(t.Context(), root, false))
-				owner := st.GetObject(manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "owner"}).(*manifest.Kustomization)
-				side := strings.Split(owner.Path, "/")[1]
-				assert.Equal(t, entry.Path, filepath.Join(root, side))
-				for _, record := range d.loader.Index.Records {
-					if record.File != "" && !strings.Contains(record.File, side+"/") {
-						t.Fatalf("entry admitted sibling evidence: %+v", record)
+				assert.Equal(t, entry.Path, root)
+				for _, side := range []string{"left", "right"} {
+					if _, ok := d.loader.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"}); !ok {
+						t.Fatalf("%s leaf evidence missing", side)
 					}
 				}
 				for key, view := range entry.prepared.aliasViews {
@@ -123,11 +119,15 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 			result, err := Run(t.Context(), Config{Input: tc.input, Entry: &entries[0], Store: st, Trees: testTrees(t), WipeSecrets: tc.wipe})
 			assert.NoError(t, err)
 			id := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: tc.wantName}
-			if _, ok := result.Index.Lookup(id); !ok || st.GetObject(id) == nil {
-				t.Fatalf("authoritative input lost: %+v", result.Index.Records)
+			if record, ok := result.Index.Lookup(id); !ok || record.Parent != result.Binding.Producer || st.GetObject(id) != nil {
+				t.Fatalf("authoritative input ownership lost: %+v", result.Index.Records)
 			}
 			if tc.name != "different source" {
-				secret := st.GetObject(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}).(*manifest.Secret)
+				secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}
+				secret, ok := result.Index.Records[secretID].Declaration.(*manifest.Secret)
+				if !ok || st.GetObject(secretID) != nil {
+					t.Fatalf("prepared secret = %+v, published=%v", secret, st.GetObject(secretID))
+				}
 				assert.Equal(t, secret.HasPlaceholder(), tc.wipe)
 			}
 		})

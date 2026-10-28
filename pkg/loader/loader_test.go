@@ -705,6 +705,7 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	assert.Diff(t, l.Index.Records[ks.Named()].Refs, []manifest.NamedResource{
 		{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"},
 		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"},
+		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"},
 	})
 	assert.Diff(t, l.Index.Records[hrID].Refs, want)
 }

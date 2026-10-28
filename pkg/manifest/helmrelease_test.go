@@ -7,6 +7,28 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
+func TestHelmChart_DisplayNames(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, namespace, want string
+	}{
+		{name: "without namespace", want: "charts"},
+		{name: "with namespace", namespace: "flux-system", want: "flux-system-charts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			source := NamedResource{Group: SourceDomain, Kind: KindHelmRepository, Namespace: tc.namespace, Name: "charts"}
+			hr := &HelmRelease{Name: "release", Namespace: "apps", Chart: HelmChart{Name: "podinfo", Source: source}}
+			identity := hr.Named()
+
+			assert.Equal(t, hr.Chart.RepoFullName(), tc.want)
+			assert.Equal(t, hr.Chart.ChartName(), tc.want+"/podinfo")
+			assert.Equal(t, hr.Chart.Source, source)
+			assert.Equal(t, hr.Named(), identity)
+		})
+	}
+}
+
 func TestHelmRelease_TracksDigest(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

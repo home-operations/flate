@@ -32,7 +32,12 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 			continue
 		}
 		if required == nil && !s.includes(id.Namespace) {
-			continue
+			producer, ok := s.run.store.GetObject(id).(interface {
+				EmissionPolicy() manifest.EmissionPolicy
+			})
+			if !ok || !producer.EmissionPolicy().DocumentScope {
+				continue
+			}
 		}
 		s.result.Failed[id] = info
 		if deps := s.run.Result.Blocked[id]; len(deps) > 0 {
@@ -83,10 +88,19 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 	}
 	if other != nil {
 		for _, id := range other.roots {
-			if s.run.store.GetObject(id) == nil {
-				if parent, ok := other.run.parentOf(id); ok {
-					add(parent)
+			visited := make(map[manifest.NamedResource]bool)
+			for s.run.store.GetObject(id) == nil && !visited[id] {
+				visited[id] = true
+				parent, ok := other.run.parentOf(id)
+				if !ok {
+					break
 				}
+				actual := s.actualProducer(other.comparisonKey(parent))
+				add(actual)
+				if actual != parent {
+					break
+				}
+				id = parent
 			}
 		}
 	}
@@ -273,15 +287,27 @@ func (s *selectionSide) prepareStatuses(name string) {
 			continue
 		}
 		if info.Status == "" {
-			info = store.StatusInfo{Status: store.StatusFailed, Message: "no status reported"}
+			var known bool
+			info, known = s.run.statusOf(id)
+			if !known {
+				info = store.StatusInfo{Status: store.StatusFailed, Message: "no status reported"}
+			}
 		}
 		add(id, info)
 	}
 	for id := range s.run.Result.Failed {
-		if seen[id] || (name != "" && id.Name != name) || !s.includes(id.Namespace) {
+		if seen[id] {
 			continue
 		}
-		if info, hidden := s.run.store.ReportStatus(id); info.Status != "" && !hidden {
+		hidden := s.run.store.ReportHidden(id)
+		if hidden {
+			if _, selected := s.result.Failed[id]; !selected || !id.KindInfo().Render {
+				continue
+			}
+		} else if (name != "" && id.Name != name) || !s.includes(id.Namespace) {
+			continue
+		}
+		if info, known := s.run.statusOf(id); known {
 			add(id, info)
 		}
 	}

@@ -14,13 +14,13 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Claims builds final-store claims for reporting, including external sources
-// and committed source coordinates. Discovery MUST use Loader.Claims instead.
-func Claims(s *store.Store, repoRoot string) []manifest.KSClaim {
+// Claims builds reporting claims from caller-owned candidates, including external
+// sources and committed source coordinates. Discovery MUST use Loader.Claims instead.
+func Claims(s *store.Store, repoRoot string, candidates []*manifest.Kustomization) []manifest.KSClaim {
 	reader := documentReader{cache: map[string]document{}}
 	reader.mountSources(s)
 	var claimBuf [16]ownerClaims
-	built := reader.buildClaims(repoRoot, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization), func(id manifest.NamedResource) sourceScope {
+	built := reader.buildClaims(repoRoot, candidates, func(id manifest.NamedResource) sourceScope {
 		root, pinned, external := SourceView(s, id, repoRoot)
 		return sourceScope{root: root, pinned: pinned, external: external, origin: reader.localBase(root, repoRoot)}
 	}, claimBuf[:0])

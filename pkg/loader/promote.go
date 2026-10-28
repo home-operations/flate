@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"slices"
 
@@ -83,19 +84,27 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 	return obj != nil && opts.Admit(obj)
 }
 
-// RegisterBuilt replaces package resource evidence with authoritative built documents.
-// The root MUST be loaded and docs MUST be sanitized immutable build output.
-func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
+// BuiltInput binds prepared documents and observed source-relative reads to their ordinary producer.
+type BuiltInput struct {
+	Root          string
+	Owner, Source manifest.NamedResource
+	Reads         map[string]bool
+}
+
+// RegisterBuilt replaces package resource evidence with authoritative producer-bound documents.
+// Documents MUST be sanitized immutable build output.
+func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
+	root := input.Root
 	l.ensureScopes()
-	sourceRoot := cmp.Or(l.SourceRoot, l.documents.mountedRoot(root), root)
+	sourceRoot := cmp.Or(l.documents.mountedRoot(root), l.SourceRoot, root)
 	l.Admit(sourceRoot)
 	_, packageFile := l.documents.read(root)
-	if l.documents.cache[packageFile].eligible == fileInactive {
+	if packageFile != "" && l.documents.cache[packageFile].eligible == fileInactive {
 		return
 	}
 	rel, _ := filepath.Rel(sourceRoot, root)
 	var inputs, shared []string
-	for _, visit := range l.scopeWalk(graphVisit{root: sourceRoot, dir: filepath.ToSlash(rel), source: manifest.BootstrapSourceID}) {
+	for _, visit := range l.scopeWalk(graphVisit{root: sourceRoot, dir: filepath.ToSlash(rel), source: input.Source, owner: input.Owner}) {
 		for _, file := range []string{visit.coordinate, visit.localCoordinate()} {
 			if file == "" {
 				continue
@@ -124,23 +133,49 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 	slices.Sort(shared)
 	shared = slices.Compact(shared)
 	_, builder := l.documents.read(root)
-	builder = l.fileCoordinate(builder)
+	builder = l.fileCoordinate(cmp.Or(builder, root))
 	records := make([]manifest.DiscoveryRecord, len(docs))
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		record := manifest.DiscoveryRecord{File: builder, Builder: builder, Inputs: inputs}
-		if raw, ok := l.Index.Lookup(id); ok && manifest.KindOf(obj).DiscoverySeed() && manifest.Equal(obj, l.IndexedObject(id, raw).Obj) {
-			record.File, record.Inputs = raw.File, shared
+		record := manifest.DiscoveryRecord{File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
+		if raw, ok := l.Index.Lookup(id); ok {
+			original := l.IndexedObject(id, raw)
+			same := manifest.Equal(obj, original.Obj)
+			if !same && original.Doc != nil {
+				if producer, ok := l.Store.GetObject(input.Owner).(interface {
+					EmissionPolicy() manifest.EmissionPolicy
+				}); ok {
+					doc := manifest.DeepCopyMap(original.Doc)
+					producer.EmissionPolicy().Stamp([]manifest.DocOccurrence{{Document: doc}})
+					projected, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+					same = err == nil && manifest.Equal(obj, projected)
+					original.Obj = projected
+				}
+			}
+			if same {
+				record.File, record.Inputs = raw.File, shared
+				record.Declaration = original.Obj
+			}
 		}
 		record.Refs = discoveryReferences(nil, obj)
+		if id != input.Owner {
+			record.Parent = input.Owner
+			record.Productions = []manifest.Production{{Owner: input.Owner, Source: input.Source, File: record.File}}
+			if record.File != builder {
+				record.Productions[0].Authored = id
+			}
+		}
 		records[i] = record
 	}
 	for id, record := range l.Index.Files() {
+		if id == input.Owner {
+			continue
+		}
 		if record.Path == "" || !l.documents.cache[record.Path].selected {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil && (existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
+		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.Index.Records, id)
@@ -149,6 +184,8 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 	}
 	cached := l.documents.cache[root]
 	cached.built = append([]store.Child{}, docs...)
+	input.Reads = maps.Clone(input.Reads)
+	cached.builtInput = &input
 	l.documents.cache[root] = cached
 	if l.candidates == nil {
 		l.candidates = map[manifest.NamedResource]store.Child{}
@@ -156,11 +193,17 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		if existing := l.Store.GetObject(id); existing != nil && (existing == l.candidates[id].Obj || existing == l.admitted[id]) {
+		if id == input.Owner {
+			continue
+		}
+		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.candidates[id].Obj || existing == l.admitted[id]) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.admitted, id)
 		l.Index.Records[id] = records[i]
+		if records[i].Declaration != nil {
+			child.Obj = records[i].Declaration
+		}
 		l.candidates[id] = child
 	}
 	l.scopes.complete = false
@@ -173,5 +216,10 @@ func (l *Loader) BuiltDocuments(id manifest.NamedResource) []store.Child {
 	if !ok || r.Builder == "" {
 		return nil
 	}
-	return l.documents.cache[filepath.Dir(filepath.Join(l.SourceRoot, filepath.FromSlash(r.Builder)))].built
+	for root, doc := range l.documents.cache {
+		if doc.built != nil && (l.fileCoordinate(root) == r.Builder || l.fileCoordinate(doc.file) == r.Builder) {
+			return doc.built
+		}
+	}
+	return nil
 }

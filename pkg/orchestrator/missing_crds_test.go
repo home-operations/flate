@@ -89,6 +89,7 @@ func crdFixture(t *testing.T, mode string) string {
 	t.Helper()
 	dir := t.TempDir()
 	testutil.GitInit(t, dir)
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [flux/ks.yaml]\n")
 	testutil.WriteFile(t, dir, "flux/ks.yaml", ksYAML("apps", "apps", ""))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources:\n- rs.yaml\n")
 	rs := strings.ReplaceAll(issueResourceSet, "        interval: 1h\n", "        suspend: true\n        interval: 1h\n")

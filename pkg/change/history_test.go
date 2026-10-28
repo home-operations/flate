@@ -19,7 +19,7 @@ import (
 
 func TestRefineHistory_ContributorReplacement(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"empty", "unknown", "positive", "peer", "static", "primary", "exposed_primary"} {
+	for _, mode := range []string{"empty", "unknown", "positive", "peer", "static", "primary", "exposed_primary", "parent_inventory", "parent_unknown"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
@@ -40,7 +40,15 @@ func TestRefineHistory_ContributorReplacement(t *testing.T) {
 				owner: {File: "owner.yaml"}, consumer.Named(): {File: "consumer.yaml"}, target: {Productions: proofs},
 				extra: {Productions: []manifest.Production{{Owner: owner}}},
 			}}
-			changes := []string{"consumer.yaml"}
+			consumerFile := "consumer.yaml"
+			if mode == "parent_inventory" || mode == "parent_unknown" {
+				consumerFile = "apps/consumer.yaml"
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{consumerFile: {Data: []byte("changed")}}})
+				record := index.Records[consumer.Named()]
+				record.File = consumerFile
+				index.Records[consumer.Named()] = record
+			}
+			changes := []string{consumerFile}
 			if mode == "primary" {
 				changes = append(changes, "owner.yaml")
 			}
@@ -54,20 +62,28 @@ func TestRefineHistory_ContributorReplacement(t *testing.T) {
 				}
 			}
 			history := map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{owner: records}
-			if mode == "unknown" {
+			if mode == "unknown" || mode == "parent_unknown" {
 				history[owner] = nil
 			}
-			f.RefineHistory(history, map[manifest.NamedResource]bool{owner: mode != "positive"})
-			assert.Equal(t, f.ShouldReconcile(owner), mode == "unknown" || mode == "positive" || mode == "primary" || mode == "exposed_primary")
+			precise := map[manifest.NamedResource]bool{owner: mode != "positive"}
+			if mode == "parent_inventory" || mode == "parent_unknown" {
+				parent := testutil.KustomizationID("apps", "parent")
+				history[parent] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+					yield(owner, manifest.DiscoveryRecord{Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, Productions: []manifest.Production{{Owner: parent, Source: manifest.BootstrapSourceID}}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps"}}})
+				}
+				precise[parent] = true
+			}
+			f.RefineHistory(history, precise)
+			assert.Equal(t, f.ShouldReconcile(owner), mode == "unknown" || mode == "positive" || mode == "primary" || mode == "exposed_primary" || mode == "parent_unknown")
 			assert.Equal(t, f.ShouldReconcile(peer), mode == "peer")
-			assert.Equal(t, f.ShouldReconcile(extra), mode == "primary" || mode == "exposed_primary")
+			assert.Equal(t, f.ShouldReconcile(extra), mode == "primary" || mode == "exposed_primary" || mode == "parent_unknown")
 			assert.Equal(t, f.ShouldReconcile(consumer.Named()), true)
 			assert.Equal(t, f.ShouldReconcile(target), true)
 			assert.Equal(t, len(index.Records[target].Productions), len(proofs))
 			if mode == "static" {
 				assert.Equal(t, len(f.index.Records[target].Productions), 1)
 			}
-			if mode == "unknown" {
+			if mode == "unknown" || mode == "parent_unknown" {
 				assert.Equal(t, calls, 0)
 			} else {
 				assert.Equal(t, calls, 1)
@@ -305,6 +321,39 @@ func TestRefineHistory_OrderingClosure(t *testing.T) {
 	assert.Equal(t, f.index.Records[consumer.Named()].ContentRoots != nil, true)
 	assert.Diff(t, f.index.Records[consumer.Named()].Refs, []manifest.NamedResource{source})
 	assert.Diff(t, f.keep, map[manifest.NamedResource]role{consumer.Named(): primary, target: kept, producer.Named(): kept, source: kept})
+}
+
+func TestRefineHistory_OrderingReferences(t *testing.T) {
+	t.Parallel()
+	for _, changed := range []string{"consumer.yaml", "target.yaml"} {
+		t.Run(changed, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			source := manifest.BootstrapSourceID
+			target := &manifest.Kustomization{Name: "target", Namespace: "apps"}
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", DependsOn: []kustomizev1.DependencyReference{{Name: target.Name}}}
+			st.AddObjects([]manifest.BaseManifest{target, consumer})
+			st.SetArtifact(source, &store.SourceArtifact{LocalPath: "/repo", FS: fstest.MapFS{"app/cm.yaml": {Data: []byte("unchanged")}}})
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				consumer.Named(): {File: "consumer.yaml"},
+				target.Named():   {File: "target.yaml"},
+			}}
+			f := NewFilter(NewSet([]string{changed}), index, st, "/repo")
+			historyOwner := testutil.KustomizationID("apps", "history-owner")
+			f.RefineHistory(map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{historyOwner: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+				yield(consumer.Named(), manifest.DiscoveryRecord{Refs: []manifest.NamedResource{source, target.Named()}, ContentRoots: map[manifest.NamedResource][]string{source: {"app"}}})
+			}}, nil)
+			assert.Equal(t, f.index.Records[consumer.Named()].ContentRoots != nil, true)
+			assert.Diff(t, f.index.Records[consumer.Named()].Refs, []manifest.NamedResource{source, target.Named()})
+			want := map[manifest.NamedResource]role{}
+			if changed == "consumer.yaml" {
+				want[consumer.Named()], want[source] = primary, kept
+			} else {
+				want[target.Named()] = primary
+			}
+			assert.Diff(t, f.keep, want)
+		})
+	}
 }
 
 func TestAddEmitted_ReplacesHistoricalOrdering(t *testing.T) {

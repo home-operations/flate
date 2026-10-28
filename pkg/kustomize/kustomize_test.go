@@ -6,11 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 
-	"github.com/home-operations/flate/pkg/controllers/base"
-
+	kustomizestate "github.com/home-operations/flate/internal/kustomize"
 	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -150,7 +148,7 @@ func TestRender_UnstampedMetadata(t *testing.T) {
 			rawWant, err := testutil.SplitDocs([]byte(tc.fixture))
 			assert.NoError(t, err)
 			assert.Diff(t, out, rawWant)
-			base.Stamp(ks.EmissionPolicy(), testutil.DocumentOccurrences(out))
+			ks.EmissionPolicy().Stamp(testutil.DocumentOccurrences(out))
 			md := got["metadata"].(map[string]any)
 			labels, _ := md["labels"].(map[string]any)
 			annotations, _ := md["annotations"].(map[string]any)

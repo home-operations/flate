@@ -34,6 +34,11 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	}()
 	o.configureControllers()
 	objects := o.store.Objects()
+	for id, record := range o.index.Records {
+		if record.Declaration != nil && id.KindInfo().Render && o.store.GetObject(id) == nil {
+			objects = append(objects, record.Declaration)
+		}
+	}
 	slices.SortFunc(objects, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	for _, obj := range objects {
 		if err := ctx.Err(); err != nil {
@@ -49,7 +54,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 			_, _, output := reads.GetEmission(id)
 			defer output.Finish()
 			defer reads.Retire()
-			records, canNarrow := o.controllers.PreviousRender(ctx, reads)
+			records, canNarrow := o.controllers.PreviousRender(ctx, obj, reads)
 			narrow[id] = canNarrow
 			if records == nil {
 				return

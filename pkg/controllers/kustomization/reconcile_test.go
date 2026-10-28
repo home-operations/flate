@@ -1052,7 +1052,7 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 	if !ok {
 		t.Fatal("Kustomization not captured")
 	}
-	source, applyIgnore, err := execution.resolveSource(ks)
+	source, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
 	assert.NoError(t, err)
 	if !execution.run.Reads.Valid() {
 		t.Fatal("initial capture is invalid")
@@ -1133,7 +1133,7 @@ func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
 	declaration.checks = 0
 	execution := c.newExecution(ks.Named())
 	defer execution.run.Close()
-	source, applyIgnore, err := execution.resolveSource(ks)
+	source, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
 	assert.NoError(t, err)
 	before := guard.opened.Load()
 	got := execution.render(t.Context(), ks, source, applyIgnore)
@@ -1527,7 +1527,7 @@ func TestReconcile_RequiredPostBuildNotWaived(t *testing.T) {
 					reads := &store.ReadSet{}
 					reads.Init(st, ks.Named(), nil)
 					defer reads.Retire()
-					records, _ := c.PreviousRender(t.Context(), reads)
+					records, _ := c.PreviousRender(t.Context(), ks, reads)
 					return records != nil
 				}
 				if !historyAvailable() {

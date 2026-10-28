@@ -215,8 +215,8 @@ func BenchmarkSelect_CompletedScope(b *testing.B) {
 								_ = failureModel(selected[0])
 								_ = testrunner.Run(selected[0])
 							case "documents", "images":
-								orig := diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable}
-								current := diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable}
+								orig := diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys}
+								current := diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys}
 								if command == "documents" {
 									_, _, _, _ = diff.Compare(orig, current, selectedErr, opts)
 								} else {

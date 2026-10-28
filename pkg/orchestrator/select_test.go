@@ -22,6 +22,9 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/diff"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -640,6 +643,8 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 			})
 		}
 	}
+	t.Run("entry correspondence", testEntryCorrespondence)
+
 }
 
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
@@ -962,6 +967,8 @@ func TestSelect_UnavailabilitySeparatesAncestryOwners(t *testing.T) {
 		t.Fatal("moved producer inherited old ancestry")
 	}
 	assert.Equal(t, selected[1].Unavailable[absent].String(), "old ancestor failed")
+	t.Run("entry correspondence", testEntryCorrespondence)
+
 }
 
 func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
@@ -974,10 +981,15 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 		emptyNamespace, local    bool
 		nonParticipant           bool
 		inferred, labels         bool
+		indexed                  bool
+		failedParent             bool
 		want                     bool
 	}{
 		{name: "typed skipped", reason: store.ReasonSkipped, want: true},
 		{name: "typed unchanged", reason: store.ReasonUnchanged, message: "different words", want: true},
+		{name: "unchanged declaration", reason: store.ReasonUnchanged, indexed: true, want: true},
+		{name: "selected declaration", indexed: true},
+		{name: "failed producer declaration", indexed: true, failedParent: true},
 		{name: "suspended", reason: store.ReasonSuspended},
 		{name: "misleading skip", message: "skipped: external source"},
 		{name: "misleading unchanged", message: "unchanged"},
@@ -1005,9 +1017,22 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 			}
 			run, other := selectedRun(&Result{}), selectedRun(&Result{})
 			run.repoRoot = t.TempDir()
-			run.store.AddObject(obj)
 			run.store.AddObject(&manifest.OCIRepository{Name: source.Name, Namespace: source.Namespace})
-			run.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message})
+			status := store.StatusInfo{Status: store.StatusReady, Reason: tc.reason, Message: tc.message}
+			if tc.indexed {
+				entry := testutil.KustomizationID("apps", "entry")
+				run.index = indexForTest(map[manifest.NamedResource]string{obj.Named(): "external.yaml"})
+				record := run.index.Records[obj.Named()]
+				record.Parent, record.Declaration = entry, obj
+				run.index.Records[obj.Named()] = record
+				if tc.failedParent {
+					status = store.StatusInfo{Status: store.StatusFailed, Message: "producer failed"}
+				}
+				run.store.UpdateStatus(entry, status)
+			} else {
+				run.store.AddObject(obj)
+				run.store.UpdateStatus(obj.Named(), status)
+			}
 			if tc.local {
 				run.store.SetArtifact(source, &store.SourceArtifact{LocalPath: run.repoRoot, FS: fstest.MapFS{"file": {}}})
 			}
@@ -1261,7 +1286,7 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
 }
 
-func TestSelect_OwnerlessDocuments(t *testing.T) {
+func TestSelect_EntryDocuments(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name    string
@@ -1271,9 +1296,9 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 		objects int
 	}{
 		{name: "all", roots: []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, want: []string{"child-hr", "child-ks", "driver-hr", "driver-ks", "foreign", "static"}, objects: 2},
-		{name: "named driver", roots: []manifest.NamedResource{testutil.HelmReleaseID("", "driver-hr")}, want: []string{"child-hr", "driver-hr"}, objects: 1},
-		{name: "mixed kinds", roots: []manifest.NamedResource{testutil.HelmReleaseID("", ""), {Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}, want: []string{"child-hr", "driver-hr"}, objects: 1},
-		{name: "driver kind", roots: []manifest.NamedResource{testutil.KustomizationID("", "")}, want: []string{"child-ks", "driver-ks"}, objects: 1},
+		{name: "named driver", roots: []manifest.NamedResource{testutil.HelmReleaseID("", "driver-hr")}, want: []string{"child-hr"}, objects: 1},
+		{name: "mixed kinds", roots: []manifest.NamedResource{testutil.HelmReleaseID("", ""), {Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}}, want: []string{"child-hr"}, objects: 1},
+		{name: "driver kind", roots: []manifest.NamedResource{testutil.KustomizationID("", "")}, want: []string{"child-ks", "driver-hr", "driver-ks", "foreign", "static"}, objects: 1},
 		{name: "namespace", roots: []manifest.NamedResource{testutil.KustomizationID("apps", ""), testutil.HelmReleaseID("apps", "")}, want: []string{"child-hr", "child-ks", "driver-hr", "driver-ks", "static"}, objects: 2},
 		{name: "labels", roots: []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, labels: map[string]string{"selected": "yes"}, want: []string{"child-ks", "driver-ks", "static"}, objects: 1},
 	} {
@@ -1288,15 +1313,16 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 			document := func(version, kind, namespace, name string) map[string]any {
 				return map[string]any{"apiVersion": version, "kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace}}
 			}
-			run.documents = []map[string]any{
+			entryDocuments := []map[string]any{
 				document("v1", manifest.KindConfigMap, "apps", "static"),
 				document("v1", manifest.KindConfigMap, "other", "foreign"),
 				document("kustomize.toolkit.fluxcd.io/v1", manifest.KindKustomization, "apps", ks.Name),
 				document("helm.toolkit.fluxcd.io/v2", manifest.KindHelmRelease, "apps", hr.Name),
 			}
 			for _, i := range []int{0, 2} {
-				run.documents[i]["metadata"].(map[string]any)["labels"] = map[string]any{"selected": "yes"}
+				entryDocuments[i]["metadata"].(map[string]any)["labels"] = map[string]any{"selected": "yes"}
 			}
+			publishEntryForTest(run, entryDocuments)
 			for _, obj := range []manifest.BaseManifest{ks, hr} {
 				name := "child-ks"
 				if obj == hr {
@@ -1335,17 +1361,17 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 				ks := &manifest.Kustomization{Name: "actual", Namespace: "apps"}
 				run.store.AddObject(ks)
 				run.store.UpdateStatus(ks.Named(), outcome)
-				run.documents = []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": ks.Name, "namespace": ks.Namespace}}}
+				publishEntryForTest(run, []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": manifest.KindKustomization, "metadata": map[string]any{"name": ks.Name, "namespace": ks.Namespace}}})
 				run.Result.Manifests = run.collectManifests()
 				run.Result.Failed = run.store.FailedResources()
 				if outcome.Status == store.StatusFailed {
 					run.Err = &FailuresError{Message: outcome.Message}
 				}
-				selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{ks.Named()}, nil)
+				selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 				if (err != nil) != (outcome.Status == store.StatusFailed) {
 					t.Fatalf("failure attribution: %v", err)
 				}
-				if len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent != nil || len(selected[0].Objects) != 1 {
+				if len(selected[0].Manifests) != 1 || selected[0].Manifests[0].Parent == nil || len(selected[0].Objects) != 1 {
 					t.Fatalf("real driver declaration lost: %+v", selected[0])
 				}
 			})
@@ -1364,7 +1390,7 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 		winner := manifest.DeepCopyMap(original)
 		winner["data"] = map[string]any{"marker": "emitted"}
 		shared := &manifest.ConfigMap{Name: "shared", Namespace: "apps"}
-		run.documents = []map[string]any{declaration, original}
+		publishEntryForTest(run, []map[string]any{declaration, original})
 		run.store.RecordEmitted(ks.Named(), &store.Emission{Children: []store.Child{{Obj: hr, Doc: declaration}, {Obj: shared, Doc: winner}}, Manifests: testutil.DocumentOccurrences([]map[string]any{declaration, winner}), Complete: true}, nil)
 		descendant := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "descendant", "namespace": "apps"}}
 		run.store.RecordEmitted(hr.Named(), &store.Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{descendant}), Complete: true}, nil)
@@ -1401,7 +1427,7 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 			run := selectedRun(&Result{})
 			doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": name, "namespace": "apps"}}
 			unrelated := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unrelated", "namespace": "apps"}}
-			run.documents = []map[string]any{doc, unrelated}
+			publishEntryForTest(run, []map[string]any{doc, unrelated})
 			id := manifest.DocIdentity(doc)
 			run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}}, Readers: map[string][]manifest.FileReader{"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}}}}
 			run.filter = change.NewFilter(change.NewSet([]string{"kustomization.yaml"}), run.index, run.store, "")
@@ -1411,11 +1437,76 @@ func TestSelect_OwnerlessDocuments(t *testing.T) {
 		selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 		assert.NoError(t, err)
 		for i, name := range []string{"removed", "added"} {
-			if len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 1 || manifest.DocIdentity(selected[i].Manifests[0].Documents[0]).Name != name {
+			if len(selected[i].Manifests) != 1 || len(selected[i].Manifests[0].Documents) != 2 || manifest.DocIdentity(selected[i].Manifests[0].Documents[0]).Name != name {
 				t.Fatalf("side %d selected wrong changed documents: %+v", i, selected[i].Manifests)
 			}
 			assert.Equal(t, len(selected[i].Objects), 0)
 			assert.Equal(t, len(selected[i].Counts), 0)
 		}
 	})
+}
+
+func publishEntryForTest(run Rendered, docs []map[string]any) {
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".")
+	run.store.AddObject(entry)
+	children, retained, failures := base.New(run.store, nil).ParseChildren(entry, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
+	run.store.RecordEmitted(entry.Named(), &store.Emission{Children: children, Manifests: retained, Failures: failures, Complete: true}, nil)
+	run.store.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusReady})
+}
+
+func testEntryCorrespondence(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+	for _, names := range [][2]string{{"owner", ""}, {"", "owner"}, {"old", "new"}, {"winner-a", "winner-b"}} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s_to_%s/reverse_%t", names[0], names[1], reverse), func(t *testing.T) {
+				t.Parallel()
+				entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".")
+				runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
+				for i, name := range names {
+					obj := entry.Clone()
+					if name != "" {
+						obj = &manifest.Kustomization{Name: name, Namespace: "apps", Path: "."}
+					}
+					runs[i].store.AddObject(obj)
+					runs[i].entryBinding = discovery.Binding{Producer: obj.Named(), Key: entry.Named(), Source: manifest.BootstrapSourceID, Path: "."}
+					runs[i].store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
+					if i == 0 {
+						docs := []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "root-inventory"}}}
+						runs[i].Result.Manifests = []manifest.DocumentBatch{{Parent: obj, Documents: docs}}
+					} else {
+						runs[i].store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "entry failed"})
+					}
+				}
+				old := runs[0].entryBinding.Producer
+				unrelated := &manifest.Kustomization{Name: old.Name, Namespace: old.Namespace, Path: "./unrelated"}
+				if !old.ReportHidden() && old != runs[1].entryBinding.Producer {
+					runs[1].store.AddObject(unrelated)
+					runs[1].store.UpdateStatus(unrelated.Named(), store.StatusInfo{Status: store.StatusReady})
+					runs[1].Result.Manifests = []manifest.DocumentBatch{{Parent: unrelated, Documents: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "unrelated-output"}}}}}
+				}
+				if reverse {
+					slices.Reverse(runs)
+				}
+				selected, _, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+				failed := 1
+				if reverse {
+					failed = 0
+				}
+				if selected[failed].Unavailable[entry.Named()].String() != "entry failed" {
+					t.Fatalf("entry correspondence read an unrelated status: %+v", selected[failed].Unavailable)
+				}
+				left := diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys}
+				right := diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys}
+				output, _, notes, err := diff.Compare(left, right, nil, diff.Options{Format: diff.FormatJSON})
+				assert.NoError(t, err)
+				if len(notes) != 1 || notes[0].Count != 1 || notes[0].Parent.NamedResource != old {
+					t.Fatalf("withheld inventory attribution=%+v", notes)
+				}
+				if strings.Contains(string(output), "root-inventory") || (!old.ReportHidden() && old != runs[failed].entryBinding.Producer && !strings.Contains(string(output), "unrelated-output")) {
+					t.Fatalf("suppression leaked inventory or hid retargeted owner: %s", output)
+				}
+			})
+		}
+	}
 }

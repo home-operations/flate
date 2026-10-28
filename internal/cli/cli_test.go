@@ -77,6 +77,7 @@ func writeMultiNamespaceFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	k8s := filepath.Join(root, "kubernetes")
+	testutil.WriteFile(t, k8s, "kustomization.yaml", "resources: [flux/apps-a.yaml, flux/apps-b.yaml]\n")
 	for _, tc := range []struct {
 		name      string
 		namespace string
@@ -198,8 +199,11 @@ func TestRun_BuildAll_JSONSingleDocument(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &docs); err != nil {
 		t.Fatalf("build all -o json emitted invalid JSON: %v\n%s", err, stdout)
 	}
-	if len(docs) != 2 {
-		t.Fatalf("expected 2 rendered docs, got %d: %#v", len(docs), docs)
+	if len(docs) != 4 {
+		t.Fatalf("expected 2 rendered ConfigMaps and 2 applied Kustomizations, got %d: %#v", len(docs), docs)
+	}
+	for i, kind := range []string{manifest.KindConfigMap, manifest.KindConfigMap, manifest.KindKustomization, manifest.KindKustomization} {
+		assert.Equal(t, manifest.DocKind(docs[i]), kind)
 	}
 }
 
@@ -878,6 +882,9 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 	for _, side := range []string{"orig", "current"} {
 		t.Run(side, func(t *testing.T) {
 			orig, current := writeFixture(t), writeFixture(t)
+			for _, root := range []string{orig, current} {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/cluster.yaml]\n")
+			}
 			broken := current
 			if side == "orig" {
 				broken = orig
@@ -926,6 +933,7 @@ func TestRun_Diff_OneSidedFailureSuppressed(t *testing.T) {
 
 func TestRun_ConventionalIgnore(t *testing.T) {
 	path := writeFixture(t)
+	testutil.WriteFile(t, path, "kustomization.yaml", "resources: [flux/cluster.yaml]\n")
 	testutil.WriteFile(t, path, "flux/extra.yaml", testutil.KustomizationYAML("apps-extra", "flux-system", "  interval: 10m\n  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 	testutil.WriteFile(t, path, ".krmignore", "flux/extra.yaml\n")
 	stdout, stderr, code := runCLI(t, "get", "ks", "--path", path, "-o", "name")

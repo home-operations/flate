@@ -522,7 +522,7 @@ func recordTestRender(t *testing.T, cache *TreeCache, req RenderRequest, receipt
 	if receipt == nil {
 		t.Fatal("first render returned no receipt")
 	}
-	assert.NoError(t, cache.RecordRender(t.Context(), req.Spec.Named(), receipt, emptyRenderInventory))
+	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: req.Spec.Named(), Receipt: receipt, Records: emptyRenderInventory}))
 	_, stored, hit := readTestRenderFrame(t, cache, receipt.Value().(renderFrame).header.Key)
 	if !hit {
 		t.Fatal("accepted render was not persisted")

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"slices"
+	"strings"
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -390,6 +392,7 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 				values[1] = "fallback"
 			}
 			for side, root := range dirs {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/producer.yaml, flux/consumer.yaml, flux/sibling.yaml]\n")
 				target, key, file := "settings", "VALUE", "generator.env"
 				if side == 1 {
 					switch scenario {
@@ -434,12 +437,23 @@ func TestRenderTrees_ChangedOnlyAndDiff_GeneratedInputs(t *testing.T) {
 					producer := testutil.KustomizationID("flux-system", "producer")
 					consumer := testutil.KustomizationID("flux-system", "consumer")
 					sibling := testutil.KustomizationID("flux-system", "sibling")
-					want := []manifest.NamedResource{producer, consumer}
+					want := []manifest.NamedResource{producer, consumer, rendered.entryBinding.Producer}
 					if scenario == "unrelated" {
-						want = nil
+						want = []manifest.NamedResource{rendered.entryBinding.Producer}
 					}
 					var got []manifest.NamedResource
 					for id, docs := range outputByParent(rendered.Result.Manifests) {
+						if id == rendered.entryBinding.Producer {
+							var declarations []map[string]any
+							for _, name := range []string{"producer", "consumer", "sibling"} {
+								body, err := fs.ReadFile(rendered.cfg.Input.FS, "flux/"+name+".yaml")
+								assert.NoError(t, err)
+								parsed, err := testutil.DecodeDocs(strings.NewReader(string(body)))
+								assert.NoError(t, err)
+								declarations = append(declarations, parsed...)
+							}
+							assert.Diff(t, docs, declarations)
+						}
 						if len(docs) > 0 {
 							got = append(got, id)
 						}

@@ -112,7 +112,10 @@ func (e *Emission) Footprint() iter.Seq2[manifest.NamedResource, manifest.Discov
 	if e == nil || !e.accepted || !e.Complete {
 		return nil
 	}
-	entries, origin := e.entries, e.origin
+	return childFootprint(e.entries, e.origin)
+}
+
+func childFootprint(entries []admission, origin manifest.NamedResource) iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] {
 	return func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 		records := make(map[manifest.NamedResource]manifest.DiscoveryRecord, len(entries))
 		for _, entry := range entries {
@@ -169,6 +172,16 @@ func (e *Emission) Footprint() iter.Seq2[manifest.NamedResource, manifest.Discov
 			}
 		}
 	}
+}
+
+// ChildFootprint projects a complete parsed batch using the supplied discovery evidence.
+// Objects, documents and index records are borrowed and MUST remain immutable.
+func (s *Store) ChildFootprint(parent manifest.NamedResource, children []Child, index *manifest.DiscoveryIndex) iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord] {
+	_, _, assessment := s.GetEmission(parent)
+	defer assessment.Finish()
+	assessment.Children, assessment.family, assessment.origin = children, index, parent
+	entries := s.prepareAdmissions(parent, &assessment, assessment.previous, make(map[manifest.NamedResource]int, len(children)))
+	return childFootprint(entries, parent)
 }
 
 // Finish releases predecessor inventory borrowed by an attempt.
@@ -250,7 +263,7 @@ func (s *Store) ReportHidden(id manifest.NamedResource) bool {
 }
 
 func (sh *shard) reportHiddenLocked(id manifest.NamedResource) bool {
-	if id == manifest.BootstrapSourceID {
+	if id.ReportHidden() {
 		return true
 	}
 	if !sh.cells[id].auxiliary {
@@ -976,9 +989,8 @@ func entriesMatch(children []Child, entries []admission) bool {
 	return true
 }
 
-func (s *Store) prepareChildren(children []Child) []admission {
+func (s *Store) prepareChildren(children []Child, index *manifest.DiscoveryIndex) []admission {
 	prepared := make([]admission, 0, len(children))
-	index := s.index.Load()
 	for _, child := range children {
 		if child.Obj != nil {
 			prepared = append(prepared, admission{child: child, independent: declarationIndependent(index, child.Obj.Named())})
@@ -989,10 +1001,9 @@ func (s *Store) prepareChildren(children []Child) []admission {
 
 func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emission, byID map[manifest.NamedResource]int) []admission {
 	var projections []ArtifactInput
-	var refs, superseded, retained []manifest.NamedResource
 	prepared := next.entries
 	if !next.entriesOwned || !entriesMatch(next.Children, prepared) {
-		prepared = s.prepareChildren(next.Children)
+		prepared = s.prepareChildren(next.Children, next.family)
 	}
 	dynamic := false
 	compacted := prepared[:0]
@@ -1033,6 +1044,7 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 		}
 		return prepared
 	}
+	var refs, superseded, retained []manifest.NamedResource
 	for _, child := range next.Children {
 		if child.Obj != nil {
 			for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
@@ -1048,9 +1060,19 @@ func (s *Store) prepareAdmissions(id manifest.NamedResource, next, prev *Emissio
 		proven[declaration] = append(proven[declaration], target)
 	}
 	binding := s.contributionBinding(id)
+	coverage := next.coverage
+	if next.family != nil && next.family != s.index.Load() {
+		binding = next.binding
+		coverage = nil
+		for target, record := range next.family.Records {
+			if slices.ContainsFunc(record.Productions, func(p manifest.Production) bool { return p.Owner == id && p.Source == binding.source }) {
+				coverage = append(coverage, footprint{id: target, record: record})
+			}
+		}
+	}
 	if next.binding.equal(&binding) {
 		shadowed := prev.shadows(next.binding)
-		for _, f := range next.coverage {
+		for _, f := range coverage {
 			for _, p := range f.record.Productions {
 				if p.Owner != id || p.Source != next.binding.source {
 					continue

@@ -11,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/store"
@@ -359,7 +358,7 @@ func TestRender_UnstampedCommonMetadata(t *testing.T) {
 	if md["labels"] != nil || md["annotations"] != nil {
 		t.Fatal("raw ResourceSet render contains controller stamps")
 	}
-	base.Stamp(rs.EmissionPolicy(), docs)
+	rs.EmissionPolicy().Stamp(docs)
 	labels, _ := md["labels"].(map[string]any)
 	if labels["team"] != "platform" {
 		t.Errorf("commonMetadata.labels not merged: %v", labels)
@@ -389,7 +388,7 @@ func TestRender_UnstampedOwnerLabels(t *testing.T) {
 	if md["labels"] != nil || md["annotations"] != nil {
 		t.Fatal("raw ResourceSet render contains controller stamps")
 	}
-	base.Stamp(rs.EmissionPolicy(), docs)
+	rs.EmissionPolicy().Stamp(docs)
 	labels, _ := md["labels"].(map[string]any)
 	if labels[fluxopv1.OwnerLabelResourceSetName] != "apps" {
 		t.Errorf("owner name label missing: %v", labels)
@@ -1117,7 +1116,7 @@ func TestRender_Steps(t *testing.T) {
 				t.Fatal(err)
 			}
 			names := make([]string, 0, len(docs))
-			base.Stamp(rs.EmissionPolicy(), docs)
+			rs.EmissionPolicy().Stamp(docs)
 			for _, doc := range docs {
 				name, ns := manifest.DocMetadata(doc.Document)
 				if ns != "" {

@@ -28,7 +28,6 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
-	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
 	"github.com/home-operations/flate/pkg/source"
@@ -98,7 +97,7 @@ func TestDetectOrphans(t *testing.T) {
 		root.Named():         {Status: store.StatusFailed, Message: "broken"},
 	}
 
-	orphans := o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot)))
+	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
 
 	if _, ok := orphans[orphan.Named()]; !ok {
 		t.Errorf("expected orphan to be detected")
@@ -117,7 +116,7 @@ func TestDetectOrphans(t *testing.T) {
 		Name: "external", Namespace: "flux-system", Path: "./",
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "external", Namespace: "flux-system"},
 	})
-	assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot))), orphans)
+	assert.Diff(t, o.detectOrphans(failed, o.reportOwnership(o.reportingClaims())), orphans)
 }
 
 // TestDetectOrphans_NonReconcilableKindsIgnored — ConfigMaps and
@@ -149,7 +148,7 @@ func TestDetectOrphans_NonReconcilableKindsIgnored(t *testing.T) {
 		cm.Named():      {Status: store.StatusFailed, Message: "bogus"},
 		foreign.Named(): {Status: store.StatusFailed, Message: "foreign"},
 	}
-	orphans := o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot)))
+	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
 	if len(orphans) != 0 {
 		t.Errorf("orphan detection should skip non-reconcilable kinds; got %+v", orphans)
 	}
@@ -186,7 +185,7 @@ func TestDetectOrphans_ParentFailedIsCascadeNotOrphan(t *testing.T) {
 		parent.Named(): {Status: store.StatusFailed, Message: "kustomize build boom"}, // the build that emitted nothing
 		child.Named():  {Status: store.StatusFailed, Message: "dependencies failed: cluster-apps"},
 	}
-	orphans := o.detectOrphans(failed, o.reportOwnership(loader.Claims(o.store, o.repoRoot)))
+	orphans := o.detectOrphans(failed, o.reportOwnership(o.reportingClaims()))
 	if _, ok := orphans[child.Named()]; ok {
 		t.Errorf("child under a FAILED covering parent is a cascade victim, not an orphan: %+v", orphans)
 	}
@@ -257,8 +256,8 @@ data: {k: v}
 		t.Fatalf("Run: %v", err)
 	}
 
-	if got := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 1 {
-		t.Errorf("expected 1 Kustomization, got %d", got)
+	if got := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 2 {
+		t.Errorf("expected 2 Kustomizations including the entry, got %d", got)
 	}
 	if got := len(o.Store().ListObjects("", manifest.KindConfigMap)); got < 1 {
 		t.Errorf("expected at least 1 ConfigMap after reconcile, got %d", got)
@@ -320,6 +319,7 @@ func TestOrchestrator_CommentedOutKSNotReconciled(t *testing.T) {
 				t.Parallel()
 				dir := t.TempDir()
 				testutil.GitInit(t, dir)
+				testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [kubernetes/flux/cluster-apps.yaml]\n")
 				testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", "  path: ./kubernetes/apps/test\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 				resources := "namespace: network\nresources: [echo.yaml]\n"
 				if enabled {
@@ -427,6 +427,7 @@ func TestOrchestrator_ExplicitRepoRootNoGit(t *testing.T) {
 // cluster-apps renders and emits the CM.
 func TestOrchestrator_SelfSubstituteBareDirNoDeadlock(t *testing.T) {
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [kubernetes/flux/cluster-apps.yaml]\n")
 	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
@@ -634,6 +635,7 @@ func TestOrchestrator_TypedNullErrors(t *testing.T) {
 
 func TestOrchestrator_Render_RSExtensionAttributedToParentKS(t *testing.T) {
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [ks.yaml]\n")
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml", `namespace: flux-system
 resources: [rsip.yaml]
@@ -843,6 +845,7 @@ func keysOf[V any](m map[manifest.NamedResource]V) []manifest.NamedResource {
 
 func TestOrchestrator_ChangedOnlyKeepsSubstituteFromProducer(t *testing.T) {
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [kubernetes/flux/cluster-apps.yaml, kubernetes/flux/cluster-vars.yaml]\n")
 
 	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", testutil.KustomizationYAML("cluster-apps", "flux-system", `  interval: 10m
   path: ./kubernetes/apps
@@ -1158,7 +1161,7 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 				assert.NoError(t, o.bootstrap(t.Context()))
 				assert.Equal(t, o.hrc.Options.DisableChartDigestTracking, disabled)
 				id := testutil.HelmReleaseID("flux-system", "flux-instance")
-				assert.Equal(t, o.store.GetObject(id) == nil, covered)
+				assert.Equal(t, o.store.GetObject(id) == nil, true)
 				_, indexed := o.index.Lookup(id)
 				assert.Equal(t, indexed, true)
 				writeDigestTrackingRelease(t, root, rel, "false")
@@ -1307,6 +1310,7 @@ func TestRenderTrees_InjectedCacheRemainsCallerOwned(t *testing.T) {
 			baseDir, headDir := t.TempDir(), t.TempDir()
 			for _, dir := range []string{baseDir, headDir} {
 				writeSubstitutionCluster(t, dir, "values", "value")
+				testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [flux.yaml, values.yaml]\n")
 				testutil.WriteFile(t, dir, "values.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: values, namespace: apps}\ndata: {VALUE: stable}\n")
 			}
 			configuredRoot := t.TempDir()
@@ -1460,6 +1464,7 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 func TestRenderTrees_ErrorProjectionRetainsCleanup(t *testing.T) {
 	root := t.TempDir()
 	writeSubstitutionCluster(t, root, "values", "value")
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, healthy.yaml, values.yaml]\n")
 	testutil.WriteFile(t, root, "healthy.yaml", substitutionKS("healthy", "healthy", ""))
 	testutil.WriteFile(t, root, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: partial}\n")
@@ -1789,7 +1794,7 @@ func TestRenderTrees_NetworkBootstrapOwnership(t *testing.T) {
 				}
 				testutil.WriteFile(t, root, "kustomization.yaml", "configMapGenerator:\n- name: generated\n  envs: ["+envs+"]\n")
 				runs, err := RenderTrees(ctx, []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root, RepoRoot: root}}, cfg)
-				if (err != nil) != failure || len(runs) != 1 || (runs[0].Orchestrator == nil) != failure {
+				if (err != nil) != failure || len(runs) != 1 || runs[0].Orchestrator == nil || runs[0].Result == nil {
 					t.Fatalf("render result=%+v error=%v", runs, err)
 				}
 				select {

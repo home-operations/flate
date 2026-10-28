@@ -1,6 +1,7 @@
 package store
 
 import (
+	"maps"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -240,4 +241,69 @@ func TestIncomingProductions_RegisteredEvidence(t *testing.T) {
 		})
 	}
 
+}
+
+func TestChildFootprint_MatchesEmission(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"index", "superseded", "foreign", "previous", "retained", "empty"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := projectionSource(t, s, "content")
+			owner := projectionOwner(s, "owner", source)
+			generator := Child{Obj: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}}}}}
+			consumer := Child{Obj: &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "app-api"}}}
+			target := consumer.Obj.(*manifest.Kustomization).SourceID()
+			production := manifest.Production{Owner: owner.Named(), Source: source, File: "consumer.yaml", Path: "/content/consumer.yaml"}
+			decl := manifest.Production{Owner: owner.Named(), Declaration: generator.Obj.Named(), Source: source}
+			if mode == "foreign" {
+				production.Source.Name, decl.Source.Name = "other", "other"
+			}
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				consumer.Obj.Named(): {File: production.File, Path: production.Path, Refs: []manifest.NamedResource{target}, Productions: []manifest.Production{production}},
+				target:               {Productions: []manifest.Production{decl}},
+			}}
+			if mode == "previous" || mode == "retained" {
+				_, _, prior := s.GetEmission(owner.Named())
+				prior.Children, prior.Complete = []Child{generator, consumer}, true
+				if mode == "retained" {
+					retained := *consumer.Obj.(*manifest.Kustomization)
+					retained.Name = "retained"
+					prior.Children = append(prior.Children, Child{Obj: &retained})
+				}
+				s.RecordEmitted(owner.Named(), &prior, nil)
+				prior.Finish()
+			}
+			children := []Child{generator}
+			if mode == "superseded" || mode == "retained" {
+				replacement := *consumer.Obj.(*manifest.Kustomization)
+				replacement.SourceRef.Name = "app-web"
+				children = append(children, Child{Obj: &replacement})
+			}
+			if mode == "empty" {
+				children = nil
+			}
+			prior := s.GetArtifact(owner.Named(), ArtifactContent)
+			prospective := s.ChildFootprint(owner.Named(), children, index)
+			if prospective == nil {
+				t.Fatal("complete batch supplied unavailable history")
+			}
+			before := maps.Collect(prospective)
+			_, predicted := before[target]
+			assert.Equal(t, predicted, mode == "index" || mode == "previous" || mode == "retained")
+			assert.Equal(t, s.GetArtifact(owner.Named(), ArtifactContent), prior)
+			assert.Equal(t, s.index.Load() == nil, true)
+			assert.Diff(t, index.Records[target].Productions, []manifest.Production{decl})
+			assert.Diff(t, index.Records[consumer.Obj.Named()].Refs, []manifest.NamedResource{target})
+			s.SetDiscoveryIndex(index)
+			_, _, next := s.GetEmission(owner.Named())
+			defer next.Finish()
+			next.Children, next.Complete = children, true
+			s.RecordEmitted(owner.Named(), &next, nil)
+			if next.Footprint() == nil {
+				t.Fatal("real emission was not accepted")
+			}
+			assert.Diff(t, maps.Collect(next.Footprint()), before)
+		})
+	}
 }

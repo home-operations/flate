@@ -29,6 +29,8 @@ type Selection struct {
 	// Unavailable contains canonical failure, soft-skip or suspension evidence for
 	// paired producer output, independently of fatal namespace scope.
 	Unavailable map[manifest.NamedResource]store.StatusInfo
+	// ProducerKeys maps actual producers to their paired comparison identities.
+	ProducerKeys map[manifest.NamedResource]manifest.NamedResource
 	// Unrelated contains prepared advisories for failures outside named fatal scope.
 	Unrelated []manifest.Warning
 	// External contains paired external-source skip disclosures, honoring explicit namespace scope.

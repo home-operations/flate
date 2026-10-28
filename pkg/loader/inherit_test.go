@@ -273,7 +273,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 			t.Fatalf("initial projection = %+v, published=%v", candidate, l.Store.GetObject(id))
 		}
 		refs := l.Index.Records[id].Refs
-		assert.Diff(t, refs, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}})
+		assert.Diff(t, refs, []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}, {Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}})
 		file := filepath.Join(root, "app/sibling.yaml")
 		authored := l.authoredObject(file, testutil.KustomizationID("flux-system", "sibling")).Obj.(*manifest.Kustomization)
 		snapshot := authored.Clone()
@@ -291,7 +291,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		assert.Equal(t, l.Store.GetObject(id), manifest.BaseManifest(candidate))
 		assert.Equal(t, l.candidates[sourceID].Obj, manifest.BaseManifest(source))
 		assert.Equal(t, l.Store.GetObject(sourceID), publishedSource)
-		if got := l.Index.Records[id].Refs; len(got) != 1 || len(refs) != 1 || &got[0] != &refs[0] {
+		if got := l.Index.Records[id].Refs; len(got) != 2 || len(refs) != 2 || &got[0] != &refs[0] {
 			t.Fatal("stable projected identity replaced retained references")
 		}
 
@@ -505,9 +505,6 @@ func TestAdmit_GraphProjection(t *testing.T) {
 				if !included {
 					t.Fatalf("inactive cycle enabled %s", ks.Obj.Named())
 				}
-			}
-			if roots := l.StandaloneRoots(root); !included && len(roots) != 1 {
-				t.Fatalf("inactive targets became standalone: %v", roots)
 			}
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 			id := testutil.KustomizationID("apps", "disabled")

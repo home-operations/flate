@@ -229,7 +229,11 @@ func (s *selection) object(id manifest.NamedResource) manifest.BaseManifest {
 	if s.objects == nil {
 		return nil
 	}
-	return s.objects.GetObject(id)
+	if obj := s.objects.GetObject(id); obj != nil {
+		return obj
+	}
+	record, _ := s.filter.index.Lookup(id)
+	return record.Declaration
 }
 
 func (s *selection) productions(id manifest.NamedResource) []manifest.Production {
@@ -249,7 +253,16 @@ func (s *selection) deps(obj manifest.BaseManifest, id manifest.NamedResource, r
 		r, known := s.filter.index.Lookup(id)
 		if known && r.Refs != nil && (s.child.Obj == nil || s.child.Obj.Named() != id) && (r.ContentRoots != nil || r.File == "" && len(r.Productions) == 0) || obj == nil {
 			for _, ref := range r.Refs {
-				if !yield(ref) {
+				orderingOnly := false
+				for declared := range manifest.References(obj, manifest.ReferenceRelations) {
+					if declared.NamedResource == ref {
+						orderingOnly = declared.Ordering
+						if !orderingOnly {
+							break
+						}
+					}
+				}
+				if !orderingOnly && !yield(ref) {
 					return
 				}
 			}
@@ -273,6 +286,9 @@ func (s *selection) deps(obj manifest.BaseManifest, id manifest.NamedResource, r
 
 func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) bool {
 	record, known := s.filter.index.Lookup(id)
+	if obj == nil {
+		obj = s.object(id)
+	}
 	if len(record.ContentRoots) != 0 && s.affectedRoot(id) {
 		s.add(id, primary)
 	}
@@ -313,7 +329,8 @@ func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) b
 		if p.Declaration != (manifest.NamedResource{}) {
 			owner = p.Declaration
 		}
-		if owner != id {
+		unchanged := p.Owner == record.BuilderOwner && unchangedDeclaration(record, obj)
+		if owner != id && !unchanged {
 			state := s.states[owner]
 			state.consumers = append(state.consumers, id)
 			s.states[owner] = state
@@ -328,10 +345,16 @@ func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) b
 	return true
 }
 
+func unchangedDeclaration(record manifest.DiscoveryRecord, obj manifest.BaseManifest) bool {
+	return record.Builder != "" && record.File != record.Builder && record.Declaration != nil && manifest.Equal(record.Declaration, obj)
+}
+
 func (s *selection) admit() role {
 	id := s.child.Obj.Named()
 	r := s.read(id)
-	if r == primary || s.read(s.emitter) == primary || s.affectedRoot(id) || s.filter.hasInputs && s.changedInput(id, id) {
+	record, _ := s.filter.index.Lookup(id)
+	unchanged := unchangedDeclaration(record, s.child.Obj)
+	if r == primary || !unchanged && s.read(s.emitter) == primary || s.affectedRoot(id) || s.filter.hasInputs && s.changedInput(id, id) {
 		return primary
 	}
 	for dep := range s.deps(s.child.Obj, id, true) {
@@ -340,7 +363,7 @@ func (s *selection) admit() role {
 		}
 	}
 	for _, p := range s.productions(id) {
-		if s.read(p.Materializer(id)) == primary || s.read(p.Declaration) == primary || p.Authored != (manifest.NamedResource{}) && s.read(p.Authored) == primary {
+		if (!unchanged || p.Owner != record.BuilderOwner) && s.read(p.Materializer(id)) == primary || s.read(p.Declaration) == primary || p.Authored != (manifest.NamedResource{}) && s.read(p.Authored) == primary {
 			return primary
 		}
 		relative, file := s.coordinates(p)
@@ -631,13 +654,23 @@ func (s *selection) walk() {
 				}
 			}
 		}
+		if s.child.Obj != nil && s.child.Obj.Named() == id && s.filter.objs != nil {
+			for _, p := range s.filter.objs.Productions(id, s.filter.index) {
+				if owner := p.Materializer(id); s.object(owner) != nil {
+					s.add(owner, kept)
+				}
+			}
+		}
 		if state.role != primary {
 			continue
 		}
 		if s.objects != nil && id.KindInfo().Parent && s.observed(id) != primary {
 			_, _, output := s.objects.GetEmission(id)
 			for _, child := range output.Children {
-				s.add(child.Obj.Named(), primary)
+				record, _ := s.filter.index.Lookup(child.Obj.Named())
+				if id != record.BuilderOwner || !unchangedDeclaration(record, child.Obj) {
+					s.add(child.Obj.Named(), primary)
+				}
 			}
 			output.Finish()
 		}

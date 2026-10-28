@@ -890,17 +890,27 @@ func TestAddEmitted_StampedHelmReleasePullsChartSource(t *testing.T) {
 
 func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"ancestor_only", "primary"} {
+	for _, name := range []string{"ancestor_only", "primary", "kept_emitter"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			parent := testutil.KustomizationID("apps", "parent")
 			child := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "new-chart"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "new-chart", Namespace: "apps"}}
-			f := NewFilter(NewSet([]string{"parent.yaml"}), filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}.index(), filtertest.MapLister{}, "")
+			stale := *child
+			stale.Chart.Source.Name = "old-chart"
+			stale.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "old-chart", Namespace: "apps"}
+			competitor := &manifest.Kustomization{Name: "competitor", Namespace: "apps"}
+			index := filterFixture{files: map[manifest.NamedResource]string{parent: "parent.yaml"}}.index()
+			index.Records[child.Named()] = manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: competitor.Named(), Source: manifest.BootstrapSourceID}}}
+			objects := filtertest.MapLister{child.Named(): &stale, competitor.Named(): competitor}
+			f := NewFilter(NewSet([]string{"parent.yaml"}), index, objects, "")
 			if name == "primary" {
 				f.addUngated(child.Named())
 			} else {
 				f.mu.Lock()
 				f.keep[child.Named()] = kept
+				if name == "kept_emitter" {
+					f.keep[parent] = kept
+				}
 				f.mu.Unlock()
 			}
 			assert.Equal(t, f.ShouldReconcile(child.Named()), true)
@@ -908,11 +918,22 @@ func TestAddEmitted_KeptChildUsesIncomingReferences(t *testing.T) {
 
 			added := f.AddEmitted(parent, store.Child{Obj: child}, f.objs)
 
-			assert.Diff(t, added, []manifest.NamedResource{child.ChartSource()})
+			want := []manifest.NamedResource{child.ChartSource()}
+			if name != "primary" {
+				want = append(want, competitor.Named())
+				slices.SortFunc(want, manifest.NamedResource.Compare)
+			}
+			assert.Diff(t, added, want)
+			assert.Equal(t, f.keep[competitor.Named()], kept)
+			assert.Equal(t, f.ShouldReconcile(stale.ChartSource()), false)
 			assert.Equal(t, f.ShouldReconcile(child.ChartSource()), true)
 			sentinel := testutil.KustomizationID("apps", "sentinel")
-			assert.Diff(t, f.AddEmitted(child.Named(), store.Child{Obj: refObj(sentinel)}, f.objs), []manifest.NamedResource{sentinel})
-			assert.Equal(t, f.ShouldReconcile(sentinel), true)
+			var sentinels []manifest.NamedResource
+			if name != "kept_emitter" {
+				sentinels = []manifest.NamedResource{sentinel}
+			}
+			assert.Diff(t, f.AddEmitted(child.Named(), store.Child{Obj: refObj(sentinel)}, f.objs), sentinels)
+			assert.Equal(t, f.ShouldReconcile(sentinel), name != "kept_emitter")
 		})
 	}
 }
@@ -1705,23 +1726,32 @@ func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
 
 func TestFilter_AcceptedChildren(t *testing.T) {
 	t.Parallel()
-	for _, phase := range []string{"initial", "runtime", "unselected"} {
+	for _, phase := range []string{"initial", "runtime", "unselected", "declaration"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			parent := &manifest.ResourceSet{Name: "parent", Namespace: "ns"}
 			child := &manifest.ResourceSet{Name: "child", Namespace: "ns"}
 			leaf := &manifest.RawObject{APIVersion: "v1", Kind: manifest.KindConfigMap, Name: "leaf", Namespace: "ns"}
+			sibling := &manifest.HelmRelease{Name: "sibling", Namespace: "ns"}
+			declaration := &manifest.HelmRelease{Name: "transformed", Namespace: "ns"}
+			transformed := declaration.Clone()
+			transformed.Suspend = true
 			emitter := &manifest.Kustomization{Name: "emitter", Namespace: "ns"}
 			st.AddObjects([]manifest.BaseManifest{parent, emitter})
-			st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
+			st.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: child}, {Obj: sibling}, {Obj: transformed}}, Complete: true}, nil)
 			st.RecordEmitted(child.Named(), &store.Emission{Children: []store.Child{{Obj: leaf}}, Complete: true}, nil)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				parent.Named(): {File: "parent.yaml"}, emitter.Named(): {File: "emitter.yaml"},
+				sibling.Named():     {File: "sibling.yaml", Builder: "parent.yaml", BuilderOwner: parent.Named(), Declaration: sibling, Productions: []manifest.Production{{Owner: parent.Named(), Authored: sibling.Named(), File: "sibling.yaml"}}},
+				transformed.Named(): {File: "transformed.yaml", Builder: "parent.yaml", BuilderOwner: parent.Named(), Declaration: declaration, Productions: []manifest.Production{{Owner: parent.Named(), Authored: transformed.Named(), File: "transformed.yaml"}}},
 			}}
 			file := "emitter.yaml"
-			if phase == "initial" {
+			switch phase {
+			case "initial":
 				file = "parent.yaml"
+			case "declaration":
+				file = "sibling.yaml"
 			}
 			f := NewFilter(NewSet([]string{file}), index, st, "")
 			switch phase {
@@ -1731,8 +1761,10 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 				f.AddEmitted(parent.Named(), store.Child{Obj: child}, f.objs)
 			}
 			for _, obj := range []manifest.BaseManifest{child, leaf} {
-				assert.Equal(t, f.ShouldReconcile(obj.Named()), phase != "unselected")
+				assert.Equal(t, f.ShouldReconcile(obj.Named()), phase == "initial" || phase == "runtime")
 			}
+			assert.Equal(t, f.ShouldReconcile(sibling.Named()), phase == "declaration")
+			assert.Equal(t, f.ShouldReconcile(transformed.Named()), phase == "initial" || phase == "runtime")
 		})
 	}
 }

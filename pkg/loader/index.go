@@ -61,7 +61,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 			r.File = filepath.ToSlash(rel)
 		}
 		if id.KindInfo().Parent {
-			r.Parent, _ = manifest.StrictParent(claims, r.File, id, own[id])
+			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
+				r.Parent = parent
+			}
 		}
 		if id.KindInfo().Structural {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](id); ok {

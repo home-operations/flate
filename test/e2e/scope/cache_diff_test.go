@@ -96,10 +96,7 @@ data:
 							for _, warmth := range warmths {
 								t.Run(warmth, func(t *testing.T) {
 									args := []string{"diff", "all", "--base", "cache-base", "--concurrency", "2",
-										"-o", "diff", "--cache-dir", layout.path}
-									if source == "self" {
-										args = append(args, "--path", "flux")
-									}
+										"-o", "diff", "--cache-dir", layout.path, "--path", "flux"}
 									out, stderr := harness.RequireCLIOK(t, args...)
 									if state == "unchanged" && out != "" {
 										t.Errorf("unchanged stdout must be empty:\n%s\nstderr:\n%s", out, stderr)
@@ -109,7 +106,7 @@ data:
 										t.Errorf("expected greeting removal and addition:\n%s\nstderr:\n%s", out, stderr)
 									}
 									if side, suspended := strings.CutPrefix(state, "suspended_"); suspended {
-										if !strings.Contains(stderr, "suspended on "+side) || !strings.Contains(stderr, "diff suppressed") || out != "" {
+										if !strings.Contains(stderr, "suspended on "+side) || !strings.Contains(stderr, "diff suppressed") || !strings.Contains(out, "suspend: true") || strings.Contains(out, "greeting:") {
 											t.Fatalf("suspension must disclose withheld output without pruning: stdout=%q stderr=%q", out, stderr)
 										}
 									}

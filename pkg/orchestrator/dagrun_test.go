@@ -197,6 +197,7 @@ func renderScalePublications(t *testing.T, workers, producers int) []byte {
 	assert.NoError(t, err)
 	defer o.stop()
 	assert.NoError(t, o.bootstrap(t.Context()))
+	reconcileEntryForTest(t, o)
 	o.configureControllers()
 	o.src.StartLifecycle()
 	o.ksc.StartLifecycle()
@@ -312,6 +313,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 					if err := o.bootstrap(t.Context()); err != nil {
 						t.Fatal(err)
 					}
+					reconcileEntryForTest(t, o)
 					original, ok := o.store.Get[*manifest.Kustomization](child)
 					if !ok || original.Suspend {
 						t.Fatal("active child missing")
@@ -415,6 +417,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 
 func TestDAG_ParallelRenderedReplayConverges(t *testing.T) {
 	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kustomization.yaml", "resources: [flux/source.yaml, flux/ks.yaml]\n")
 	hr := `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: app, namespace: flux-system}

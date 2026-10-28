@@ -208,8 +208,9 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			if st.GetObject(id) == nil || st.GetArtifact(source, store.ArtifactContent) == nil || st.GetObject(source) == nil {
-				t.Fatalf("projected release or source missing: release=%v source=%v", st.GetObject(id), st.GetObject(source))
+			record, indexed := result.Index.Lookup(id)
+			if !indexed || record.Parent != result.Binding.Producer || st.GetObject(id) != nil || st.GetArtifact(source, store.ArtifactContent) == nil || st.GetObject(source) == nil {
+				t.Fatalf("projected release ownership or source missing: record=%+v release=%v source=%v", record, st.GetObject(id), st.GetObject(source))
 			}
 			if !slices.Contains(result.Index.Readers["charts/demo/templates/cm.yaml"], manifest.FileReader{Reader: id, Source: source, Exact: true}) {
 				t.Fatalf("projected chart reader missing after prepared=%t: %+v", prepared, result.Index.Readers)
@@ -571,11 +572,12 @@ func TestResolveEntrySources_Content(t *testing.T) {
 	for _, phase := range []string{"warm", "metadata", "subtree", "mutable"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
-			d := discoverer{}
-			first, err := d.entrySourceView(t.Context(), candidate)
+			d := Admission{aliasViews: map[string]*store.SourceArtifact{}}
+			first, key, err := d.entrySourceView(t.Context(), candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
+			d.aliasViews[key] = first
 			selected := candidate
 			cloned := *bootstrap
 			selected.input = &cloned
@@ -590,7 +592,7 @@ func TestResolveEntrySources_Content(t *testing.T) {
 				cloned.Key = ""
 				cloned.FS = fstest.MapFS{"apps/file": {Data: []byte("selected")}}
 			}
-			got, err := d.entrySourceView(t.Context(), selected)
+			got, _, err := d.entrySourceView(t.Context(), selected)
 			if err != nil {
 				t.Fatal(err)
 			}

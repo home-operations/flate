@@ -28,6 +28,7 @@ func writeNamedScopeFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cluster/ks.yaml, cluster/hr.yaml, cluster/unrelated.yaml, outside.yaml]\n")
 	testutil.WriteFile(t, root, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 0.1.0\n")
 	testutil.WriteFile(t, root, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected-rendered, namespace: apps}\ndata: {greeting: hello}\n")
 	testutil.WriteFile(t, root, "cluster/hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
@@ -331,6 +332,7 @@ func TestRun_NamedScope_AllMatchingNamespaces(t *testing.T) {
 
 func TestRun_NamedScope_ParentChain(t *testing.T) {
 	root := writeNamedScopeFixture(t)
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cluster/ks.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n")
 	body, err := os.ReadFile(filepath.Join(root, "cluster/hr.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -452,6 +454,7 @@ spec:
 
 func TestRun_NamedScope_PrerequisiteSiblings(t *testing.T) {
 	root := writeNamedScopeFixture(t)
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cluster/hr.yaml, cluster/unrelated.yaml, cluster/parent.yaml, outside.yaml]\n")
 	body, err := os.ReadFile(filepath.Join(root, "cluster/ks.yaml"))
 	if err != nil {
 		t.Fatal(err)

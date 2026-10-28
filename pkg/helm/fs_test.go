@@ -845,9 +845,15 @@ spec:
 	trees := kustomize.NewTreeCache(owner, nil, task.NewBounded(2))
 	t.Cleanup(trees.Close)
 	st := store.New()
-	_, err = discovery.Run(t.Context(), discovery.Config{Trees: trees, Path: filepath.Join(root, "cluster"), RepoRoot: root, Store: st})
+	discovered, err := discovery.Run(t.Context(), discovery.Config{Trees: trees, Path: filepath.Join(root, "cluster"), RepoRoot: root, Store: st})
 	assert.NoError(t, err)
-	hr := st.GetObject(testutil.HelmReleaseID("apps", "demo")).(*manifest.HelmRelease)
+	id := testutil.HelmReleaseID("apps", "demo")
+	assert.Equal(t, st.GetObject(id) == nil, true)
+	record, known := discovered.Index.Lookup(id)
+	hr, ok := record.Declaration.(*manifest.HelmRelease)
+	if !known || !ok {
+		t.Fatalf("HelmRelease declaration missing from discovery index: %+v", record)
+	}
 	assert.Equal(t, hr.TracksDigest(), true)
 	artifact := st.GetArtifact(hr.ChartSource(), store.ArtifactContent).(*store.SourceArtifact)
 	assert.Equal(t, artifact.InputAlias, true)

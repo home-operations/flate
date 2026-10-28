@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
@@ -432,7 +431,7 @@ metadata:
 			assert.NoError(t, err)
 			policy := hr.EmissionPolicy()
 			policy.Owner = tc.origin
-			base.Stamp(policy, testutil.DocumentOccurrences(docs))
+			policy.Stamp(testutil.DocumentOccurrences(docs))
 			assert.Diff(t, docs, want)
 		})
 	}

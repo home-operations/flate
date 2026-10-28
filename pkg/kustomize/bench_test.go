@@ -41,7 +41,7 @@ data:
 	for b.Loop() {
 		out, receipt1, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt1, emptyRenderInventory); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -83,7 +83,7 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	ctx := b.Context()
 	_, receipt2, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt2, emptyRenderInventory); recordErr != nil {
+		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
 			b.Fatal(recordErr)
 		}
 	}
@@ -94,7 +94,7 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	for b.Loop() {
 		out, receipt3, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt3, emptyRenderInventory); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt3, Records: emptyRenderInventory}); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -162,7 +162,7 @@ data:
 	for b.Loop() {
 		out, receipt4, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt4, emptyRenderInventory); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt4, Records: emptyRenderInventory}); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -207,7 +207,7 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
 			out, receipt5, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec}, sourcecache.RetryConfig{})
 			if err == nil {
-				if recordErr := cache.RecordRender(ctx, demoSpec.Named(), receipt5, emptyRenderInventory); recordErr != nil {
+				if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt5, Records: emptyRenderInventory}); recordErr != nil {
 					b.Fatal(recordErr)
 				}
 			}

@@ -63,6 +63,8 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 									body, err := os.ReadFile(filepath.Join(root, "ks-a.yaml"))
 									assert.NoError(t, err)
 									testutil.WriteFile(t, root, "clusters/a/ks.yaml", string(body))
+								} else {
+									testutil.WriteFile(t, root, "clusters/a/kustomization.yaml", "resources: []\n")
 								}
 								input, _, err := baseline.AdmitDirectory(t.Context(), root, root)
 								assert.NoError(t, err)
@@ -88,10 +90,8 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 								}
 								inputs[side] = input
 							}
-							var peerMap fstest.MapFS
 							peerReader := &scopedPeerReader{FS: inputs[0].FS}
 							if synthetic {
-								peerMap = inputs[0].FS.(fstest.MapFS)
 								inputs[0].FS = peerReader
 							}
 							cache := cachetest.New(t, "", sourcecache.New)
@@ -111,13 +111,6 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 								}
 								foreign := testutil.KustomizationID("flux-system", "app-b")
 								assert.Equal(t, direct.Store().GetObject(foreign) == nil, true)
-								if missing {
-									if synthetic {
-										peerMap["clusters/a"] = &fstest.MapFile{Mode: fs.ModeDir | 0o755}
-									} else {
-										assert.NoError(t, os.MkdirAll(filepath.Join(roots[0], "clusters/a"), 0o755))
-									}
-								}
 								pairedCfg := directCfg
 								pairedCfg.Path = ""
 								renderedTrees1, err := RenderTrees(t.Context(), []Tree{{Path: filepath.Join(roots[0], "clusters/a"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: pairedCfg.ExternalChanges, Input: pairedCfg.BaseInput, BaseInput: pairedCfg.Input}, {Path: filepath.Join(roots[1], "clusters/a"), ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Input: pairedCfg.Input, BaseInput: pairedCfg.BaseInput, ExternalChanges: pairedCfg.ExternalChanges}}, pairedCfg.Config)
@@ -138,6 +131,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				var old plumbing.Hash
 				for i, value := range []string{"A", "B"} {
 					writeCluster(t, headRoot, value, "same")
+					testutil.WriteFile(t, headRoot, "kustomization.yaml", "resources: [ks-a.yaml, ks-b.yaml, source.yaml]\n")
 					for _, file := range []string{"ks-a.yaml", "ks-b.yaml"} {
 						body, err := os.ReadFile(filepath.Join(headRoot, file))
 						assert.NoError(t, err)
@@ -193,6 +187,18 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 						}
 						assert.Diff(t, configMapNames(rendered.Result), want)
 						for id, docs := range outputByParent(rendered.Result.Manifests) {
+							if id == rendered.entryBinding.Producer {
+								var declarations []map[string]any
+								for _, file := range []string{"ks-a.yaml", "ks-b.yaml", "source.yaml"} {
+									body, err := fs.ReadFile(rendered.cfg.Input.FS, file)
+									assert.NoError(t, err)
+									parsed, err := testutil.DecodeDocs(strings.NewReader(string(body)))
+									assert.NoError(t, err)
+									declarations = append(declarations, parsed...)
+								}
+								assert.Diff(t, docs, declarations)
+								continue
+							}
 							for _, doc := range docs {
 								name, _ := manifest.DocMetadata(doc)
 								value := "same"
@@ -251,7 +257,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				for i, root := range []string{baseRoot, headRoot} {
 					writeCluster(t, root, []string{"A", "B"}[i], "same")
 					files := fstest.MapFS{}
-					for _, file := range []string{"ks-a.yaml", "ks-b.yaml", "apps/app-a/kustomization.yaml", "apps/app-a/cm.yaml", "apps/app-b/kustomization.yaml", "apps/app-b/cm.yaml"} {
+					for _, file := range []string{"kustomization.yaml", "ks-a.yaml", "ks-b.yaml", "apps/app-a/kustomization.yaml", "apps/app-a/cm.yaml", "apps/app-b/kustomization.yaml", "apps/app-b/cm.yaml"} {
 						body, err := os.ReadFile(filepath.Join(root, file))
 						assert.NoError(t, err)
 						files[file] = &fstest.MapFile{Data: body}
@@ -270,6 +276,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				var baseHash plumbing.Hash
 				for i, value := range []string{"A", "B", "C"} {
 					writeCluster(t, headRoot, value, "same")
+					testutil.WriteFile(t, headRoot, "kustomization.yaml", "resources: [ks-a.yaml, ks-b.yaml, source.yaml]\n")
 					body, err := os.ReadFile(filepath.Join(headRoot, "ks-a.yaml"))
 					assert.NoError(t, err)
 					testutil.WriteFile(t, headRoot, "ks-a.yaml", strings.Replace(string(body), "name: flux-system, namespace: flux-system", "name: cluster, namespace: flux-system", 1))
@@ -300,7 +307,7 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 				assert.NoError(t, err)
 				testutil.WriteFile(t, headRoot, "ks-a.yaml", strings.Replace(string(body), "name: flux-system, namespace: flux-system", "name: unavailable, namespace: flux-system", 1))
 				files := fstest.MapFS{}
-				for _, file := range []string{"ks-a.yaml", "ks-b.yaml", "apps/app-b/kustomization.yaml", "apps/app-b/cm.yaml"} {
+				for _, file := range []string{"kustomization.yaml", "ks-a.yaml", "ks-b.yaml", "apps/app-b/kustomization.yaml", "apps/app-b/cm.yaml"} {
 					body, err := os.ReadFile(filepath.Join(headRoot, file))
 					assert.NoError(t, err)
 					files[file] = &fstest.MapFile{Data: body}
@@ -379,6 +386,39 @@ func TestRenderTrees_AdmittedViews(t *testing.T) {
 	}
 }
 
+func TestRenderTrees_EntrySubstitutionSelectsChangedChild(t *testing.T) {
+	t.Parallel()
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	for side, root := range roots {
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [root.yaml, child.yaml]\n")
+		testutil.WriteFile(t, root, "root.yaml", testutil.KustomizationYAML("root", "flux-system", "  path: ./\n  postBuild:\n    substitute: {LOCATION: "+[]string{"before", "after"}[side]+"}\n"))
+		testutil.WriteFile(t, root, "child.yaml", testutil.KustomizationYAML("child", "flux-system", "  path: ./workloads/${LOCATION}\n"))
+		for _, value := range []string{"before", "after"} {
+			testutil.WriteFile(t, root, "workloads/"+value+"/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "workloads/"+value+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\ndata: {value: "+value+"}\n")
+		}
+	}
+	runs, err := RenderTrees(t.Context(), []Tree{
+		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Path: roots[0]},
+		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: roots[1]},
+	}, Config{Concurrency: 2})
+	assert.NoError(t, err)
+	child := testutil.KustomizationID("flux-system", "child")
+	for side, run := range runs {
+		want := []string{"before", "after"}[side]
+		obj, ok := run.store.Get[*manifest.Kustomization](child)
+		if !ok {
+			t.Fatalf("side %d: child declaration missing", side)
+		}
+		assert.Equal(t, obj.Path, "./workloads/"+want)
+		docs := outputByParent(run.Result.Manifests)[child]
+		if len(docs) != 1 {
+			t.Fatalf("side %d: shaped child not rendered: %v", side, docs)
+		}
+		assert.Equal(t, docs[0]["data"].(map[string]any)["value"], any(want))
+	}
+}
+
 type preparationReader struct {
 	fs.FS
 	parsed       atomic.Int64
@@ -416,7 +456,7 @@ func TestRenderTrees_PreparesEachSideOnce(t *testing.T) {
 	assert.NoError(t, err)
 	for side, rendered := range []Rendered{base, head} {
 		assert.Equal(t, readers[side].fingerprints.Load(), int64(2))
-		assert.Equal(t, readers[side].parsed.Load(), int64(3))
+		assert.Equal(t, readers[side].parsed.Load(), int64(14))
 		assert.Diff(t, configMapNames(rendered.Result), map[string]bool{"cfg-a": true})
 		t.Logf("side=%d declaration reads=%d selected evidence reads=%d", side, readers[side].parsed.Load(), readers[side].fingerprints.Load())
 	}
@@ -471,11 +511,11 @@ func TestRenderTrees_JoinsPreparationBeforeDispatch(t *testing.T) {
 		}()
 		<-entered
 		synctest.Wait()
-		assert.Equal(t, readers[0].inputOpens.Load(), int64(7))
+		assert.Equal(t, readers[0].inputOpens.Load(), int64(5))
 		close(release)
 		assert.NoError(t, <-done)
 		for side, reader := range readers {
-			assert.Equal(t, reader.inputOpens.Load(), int64(12))
+			assert.Equal(t, reader.inputOpens.Load(), int64(10))
 			t.Logf("side=%d render input opens=%d", side, reader.inputOpens.Load())
 		}
 	})

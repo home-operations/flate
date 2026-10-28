@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,8 +13,9 @@ import (
 func TestE2E_StaleValuesWarning(t *testing.T) {
 	path := t.TempDir()
 	testutil.CopyTree(t, harness.TestdataPath(t, "stalevalues"), path)
+	testutil.GitInit(t, path)
 
-	bOut, bErr, code := harness.RunCLIBuffers("build", "hr", "--path", path)
+	bOut, bErr, code := harness.RunCLIBuffers("build", "hr", "--path", filepath.Join(path, "cluster"))
 	if code != 0 {
 		t.Fatalf("stale-value detection is advisory and must not fail the render; exit=%d\nstderr:\n%s", code, bErr)
 	}
@@ -29,7 +31,7 @@ func TestE2E_StaleValuesWarning(t *testing.T) {
 		t.Errorf("build warning destination/count: stdout=%s stderr=%s", bOut, bErr)
 	}
 
-	tOut, tErr, code := harness.RunCLIBuffers("test", "hr", "--path", path)
+	tOut, tErr, code := harness.RunCLIBuffers("test", "hr", "--path", filepath.Join(path, "cluster"))
 	if code != 0 {
 		t.Fatalf("stale-value detection must remain advisory; exit=%d stdout=%s stderr=%s", code, tOut, tErr)
 	}

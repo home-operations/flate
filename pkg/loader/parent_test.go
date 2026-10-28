@@ -335,7 +335,7 @@ func TestClaims_DropsExternalSourced(t *testing.T) {
 	if !seen[bootstrap.Named()] || !seen[aliasedKS.Named()] {
 		t.Errorf("local-sourced KS claims must be retained; seen=%v", seen)
 	}
-	if parent, ok := manifest.StrictParent(Claims(s, repoRoot), "kubernetes/other/bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
+	if parent, ok := manifest.StrictParent(Claims(s, repoRoot, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)), "kubernetes/other/bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
 		t.Fatalf("final reporting must retain external-source ownership: parent=%v, found=%t", parent, ok)
 	}
 }
@@ -608,7 +608,7 @@ func TestClaims_SortsLongestFirst(t *testing.T) {
 	s.AddObject(mid)
 	s.AddObject(leaf)
 
-	prefixes := Claims(s, "")
+	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	if len(prefixes) != 3 {
 		t.Fatalf("expected 3 prefixes, got %d", len(prefixes))
 	}
@@ -632,7 +632,7 @@ func TestClaims_EmptyPathClaimsRoot(t *testing.T) {
 	s.AddObject(with)
 	s.AddObject(without)
 
-	prefixes := Claims(s, "")
+	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	if len(prefixes) != 2 || prefixes[0].ID != with.Named() || prefixes[1].ID != without.Named() || prefixes[1].Prefix != "" {
 		t.Fatalf("expected apps and source-root claims; got %+v", prefixes)
 	}
@@ -657,7 +657,7 @@ func TestClaims_EmptyExternalPath(t *testing.T) {
 	if len(prefixes) != 1 || prefixes[0].ID != local.Named() {
 		t.Fatalf("external source root must not claim local files: %+v", prefixes)
 	}
-	if parent, ok := manifest.StrictParent(Claims(s, ""), "bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
+	if parent, ok := manifest.StrictParent(Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization)), "bad.yaml", manifest.NamedResource{}, nil); !ok || parent != external.Named() {
 		t.Fatalf("final reporting must retain external source-root ownership: parent=%v, found=%t", parent, ok)
 	}
 }
@@ -692,7 +692,7 @@ func TestClaims_IncludesSpecComponents(t *testing.T) {
 	}
 	s.AddObject(parent)
 
-	prefixes := Claims(s, root)
+	prefixes := Claims(s, root, s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	assert.Diff(t, prefixes, []manifest.KSClaim{
 		{ID: parent.Named(), Prefix: "apps/shared/observability/"},
 		{ID: parent.Named(), Prefix: "apps/shared/local/"},
@@ -726,7 +726,7 @@ func TestStrictParent_DeepestMatchWins(t *testing.T) {
 	}
 	s.AddObject(root)
 	s.AddObject(leaf)
-	prefixes := Claims(s, "")
+	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	got, ok := manifest.StrictParent(prefixes, "apps/team-a/web/deploy.yaml", manifest.NamedResource{}, nil)
 	if !ok {
 		t.Fatalf("expected a parent match")
@@ -750,7 +750,7 @@ func TestStrictParent_AbsoluteSpecPath(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	prefixes := Claims(s, "")
+	prefixes := Claims(s, "", s.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	hr := testutil.HelmReleaseID("", "flux-instance")
 	parent, ok := manifest.StrictParent(prefixes, "kubernetes/apps/flux-system/flux-operator/instance/helm-release.yaml", hr, nil)
 	if !ok {

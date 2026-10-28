@@ -24,21 +24,18 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "consumer"))
-	if !ok {
-		t.Fatal("consumer missing")
-	}
-	assert.Equal(t, consumer.DependsOn[0].Name, "prod-config")
+	consumer := testutil.KustomizationID("apps", "consumer")
 	assert.Equal(t, res.DependencySubstitutions.Resolve("${PREFIX:-dev-}config"), "prod-config")
-	if _, exists := res.Index.Lookup(consumer.Named()); !exists {
-		t.Fatal("resolved discovery index was not published")
+	if record, exists := res.Index.Lookup(consumer); !exists || record.Parent != res.Binding.Producer || st.GetObject(consumer) != nil {
+		t.Fatalf("prepared consumer ownership = %+v, published=%v", record, st.GetObject(consumer))
 	}
-	for ref := range manifest.References(consumer, manifest.ReferenceRelations) {
-		if ref.Use == "dependsOn" && st.GetObject(ref.NamedResource) == nil {
-			t.Fatalf("discovered dependency target missing: %s", ref.NamedResource)
-		}
+	if _, exists := res.Index.Lookup(testutil.KustomizationID("apps", "prod-config")); !exists {
+		t.Fatal("discovered dependency target missing")
 	}
-	supplier, _ := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "supplier"))
+	supplier, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "supplier"))
+	if !ok {
+		t.Fatal("independent inline supplier missing")
+	}
 	changed := supplier.Clone()
 	changed.PostBuild.Substitute["PREFIX"] = "later-"
 	st.AddObject(changed)
@@ -60,8 +57,11 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		active, ok := st.Get[*manifest.Kustomization](testutil.KustomizationID("apps", "active"))
-		if !ok || active.DependsOn[0].Name != "dev-config" || result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "dev-config" {
+		active := testutil.KustomizationID("apps", "active")
+		if record, indexed := result.Index.Lookup(active); !indexed || record.Parent != result.Binding.Producer || st.GetObject(active) != nil {
+			t.Fatalf("active prepared ownership = %+v, published=%v", record, st.GetObject(active))
+		}
+		if result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "dev-config" {
 			t.Fatal("inactive declaration supplied active substitution")
 		}
 		for _, name := range []string{"inactive-only", "inactive-source"} {

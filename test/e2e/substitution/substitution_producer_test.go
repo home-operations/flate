@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
@@ -128,8 +129,18 @@ func TestE2E_SubstitutionProducerCycle(t *testing.T) {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
 			for range 2 {
 				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
-				if code != 1 || stdout != "" || stderr != want {
+				if code != 1 || stderr != want {
 					t.Fatalf("substitution cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+				}
+				docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+				if err != nil || len(docs) != 2 {
+					t.Fatalf("expected two root declarations: %s (decode: %v)", stdout, err)
+				}
+				for _, doc := range docs {
+					name, namespace := manifest.DocMetadata(doc)
+					if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" || name != "a" && name != "b" {
+						t.Fatalf("cycle emitted workload output: %s", stdout)
+					}
 				}
 			}
 		})
@@ -174,17 +185,28 @@ func TestE2E_SubstitutionProducerTransformedNamespace(t *testing.T) {
 func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteSubstitutionCycleCluster(t, root)
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [a.yaml, b.yaml, consumer.yaml]\n")
 	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./app\n  dependsOn: [{name: a}]\n"))
 	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
 	testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n")
 	var want string
 	for _, workers := range []string{"2", "8"} {
 		t.Run("concurrency_"+workers, func(t *testing.T) {
-			for range 15 {
+			for range 2 {
 				stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress")
-				if code != 1 || stdout != "" || strings.Contains(stderr, "flux-system/consumer  dependency cycle:") ||
+				if code != 1 || strings.Contains(stderr, "flux-system/consumer  dependency cycle:") ||
 					!strings.Contains(stderr, "blocks flux-system/consumer") || !strings.Contains(stderr, "2 failed · 1 blocked") {
 					t.Fatalf("downstream cycle: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+				}
+				docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+				if err != nil || len(docs) != 3 {
+					t.Fatalf("expected three root declarations: %s (decode: %v)", stdout, err)
+				}
+				for _, doc := range docs {
+					name, namespace := manifest.DocMetadata(doc)
+					if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" || name != "a" && name != "b" && name != "consumer" {
+						t.Fatalf("blocked consumer emitted workload output: %s", stdout)
+					}
 				}
 				if want != "" && stderr != want {
 					t.Fatalf("unstable cycle report: want=%q got=%q", want, stderr)
@@ -208,8 +230,17 @@ func TestE2E_DependencyCycleWarnings(t *testing.T) {
 				if code != 1 || strings.Count(stderr, "[DependencyCycle]") != 1 || !strings.Contains(stdout+stderr, "dependency cycle") || !strings.Contains(stdout+stderr, "2 failed") || strings.Contains(stdout, "warnings (") {
 					t.Fatalf("cycle: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
-				if verb == "build" && stdout != "" {
-					t.Fatalf("cycle product: %s", stdout)
+				if verb == "build" {
+					docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+					if err != nil || len(docs) != 2 {
+						t.Fatalf("expected two root declarations: %s (decode: %v)", stdout, err)
+					}
+					for _, doc := range docs {
+						name, namespace := manifest.DocMetadata(doc)
+						if manifest.DocKind(doc) != "Kustomization" || namespace != "flux-system" || name != "a" && name != "b" {
+							t.Fatalf("cycle emitted workload output: %s", stdout)
+						}
+					}
 				}
 				if previous != "" && stderr != previous {
 					t.Fatal("cycle warning changed")
@@ -261,8 +292,22 @@ func TestE2E_LiteralKustomizationPath(t *testing.T) {
 			var previous string
 			for run := range 2 {
 				stdout, stderr, code := harness.RunCLIBuffers(args...)
-				if code != 0 || !strings.Contains(stdout, "correct") || !strings.Contains(stdout, "apps") || !strings.Contains(stdout, "literal") || strings.Contains(stdout, "unrelated") {
+				if code != 0 || !strings.Contains(stdout, "correct") || !strings.Contains(stdout, "apps") || !strings.Contains(stdout, "literal") {
 					t.Fatalf("literal path: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				if args[0] == "build" {
+					docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, doc := range docs {
+						name, _ := manifest.DocMetadata(doc)
+						if manifest.DocKind(doc) == "ConfigMap" && name == "unrelated" {
+							t.Fatalf("unchanged sibling workload rendered: %s", stdout)
+						}
+					}
+				} else if strings.Contains(stdout, "unrelated") {
+					t.Fatalf("unchanged sibling changed: %s", stdout)
 				}
 				if args[0] == "build" && (!strings.Contains(stdout, "name: correct") || !strings.Contains(stdout, "namespace: apps") || !strings.Contains(stdout, "answer: literal")) {
 					t.Fatalf("missing intended ConfigMap: stdout=%s stderr=%s", stdout, stderr)

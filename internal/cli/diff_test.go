@@ -103,6 +103,17 @@ metadata: {name: demo, namespace: apps}
 spec:
 `+chart+"  values: {greeting: hello}\n")
 				}
+				resources := []string{"flux/cluster.yaml", "flux/source.yaml"}
+				if tc.other {
+					resources = append(resources, "flux/other.yaml")
+				}
+				if source == "skipped" {
+					resources = append(resources, "flux/oci.yaml")
+				}
+				if source != "absent" {
+					resources = append(resources, "flux/hr.yaml")
+				}
+				testutil.WriteFile(t, path, "kustomization.yaml", "resources: ["+strings.Join(resources, ", ")+"]\n")
 				return path
 			}
 			orig := write(tc.orig, "before")
@@ -187,6 +198,7 @@ spec:
 func TestRun_Diff_OneSidedSkipSuppressed_Kustomization(t *testing.T) {
 	orig, current, failed := writeFixture(t), writeFixture(t), writeFixture(t)
 	for _, path := range []string{orig, current, failed} {
+		testutil.WriteFile(t, path, "kustomization.yaml", "resources: [flux/source.yaml, flux/cluster.yaml]\n")
 		testutil.WriteFile(t, path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
@@ -259,6 +271,7 @@ spec:
 	t.Run("moved HelmRelease", func(t *testing.T) {
 		orig, current := writeFixture(t), writeFixture(t)
 		for _, path := range []string{orig, current} {
+			testutil.WriteFile(t, path, "kustomization.yaml", "resources: [flux/source.yaml, flux/cluster.yaml, flux/other.yaml]\n")
 			testutil.WriteFile(t, path, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}
@@ -311,6 +324,9 @@ data:
 
 func TestRun_DiffJSON(t *testing.T) {
 	orig, current := writeFixture(t), writeFixture(t)
+	for _, root := range []string{orig, current} {
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/cluster.yaml, flux/broken.yaml]\n")
+	}
 	testutil.WriteFile(t, orig, "apps/kustomization.yaml", "resources: [cm.yaml, removed.yaml]\n")
 	testutil.WriteFile(t, orig, "apps/removed.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed, namespace: apps}\n")
 	testutil.WriteFile(t, current, "apps/kustomization.yaml", "resources: [cm.yaml, added.yaml]\n")
@@ -338,11 +354,12 @@ func TestRun_DiffJSON(t *testing.T) {
 		rows = append(rows, []any{c["name"], c["status"], c["old"] != nil, c["new"] != nil})
 	}
 	assert.Diff(t, rows, []any{
+		[]any{"broken", "changed", true, true},
 		[]any{"added", "added", false, true},
 		[]any{"hello", "changed", true, true},
 		[]any{"removed", "removed", true, false},
 	})
-	if len(got.Changes) != 3 || len(got.Suppressed) != 1 {
+	if len(got.Changes) != 4 || len(got.Suppressed) != 1 {
 		t.Fatalf("unexpected changes or suppressions: %s", stdout)
 	}
 	assert.Equal(t, got.Suppressed[0]["side"], any("current"))
@@ -432,6 +449,11 @@ spec:
       sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
 `+refs+`  values: {message: `+message+`, unused: stale}
 `)
+				resources := []string{"flux/cluster.yaml", "flux/source.yaml", "flux/hr.yaml"}
+				if tc.kind == "Secret" {
+					resources = append(resources, "flux/vso.yaml")
+				}
+				testutil.WriteFile(t, path, "kustomization.yaml", "resources: ["+strings.Join(resources, ", ")+"]\n")
 				return path
 			}
 			// Different intervals select both trees without changing chart output.
@@ -477,12 +499,32 @@ spec:
 					if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 						t.Fatal(err)
 					}
-					assert.Equal(t, len(got.Changes) > 0, tc.change)
+					assert.Equal(t, len(got.Changes) > 0, tc.change || tc.verb == "ks")
+					if tc.verb == "ks" {
+						if len(got.Changes) != 1 || got.Changes[0]["kind"] != manifest.KindHelmRelease || got.Changes[0]["name"] != "demo" || len(got.Suppressed) != 0 {
+							t.Fatalf("KS entry lost its applied HelmRelease declaration: %s", stdout)
+						}
+						old := got.Changes[0]["old"].(map[string]any)["spec"].(map[string]any)
+						current := got.Changes[0]["new"].(map[string]any)["spec"].(map[string]any)
+						assert.Equal(t, old["interval"], any("5m"))
+						assert.Equal(t, current["interval"], any("10m"))
+						assert.Equal(t, old["valuesFrom"], nil)
+						assert.Diff(t, current["valuesFrom"], []any{map[string]any{"kind": "ConfigMap", "name": "extra-values"}})
+					}
 				} else if tc.change {
 					for _, want := range []string{"-  message: before", "+  message: after"} {
 						if !strings.Contains(stdout, want) {
 							t.Errorf("available change %q missing: %s", want, stdout)
 						}
+					}
+				} else if tc.verb == "ks" {
+					for _, want := range []string{"--- HelmRelease apps/demo", "-  interval: 5m", "+  interval: 10m", "+  valuesFrom:", "name: extra-values"} {
+						if !strings.Contains(stdout, want) {
+							t.Fatalf("applied HelmRelease change lost %q: %s", want, stdout)
+						}
+					}
+					if strings.Contains(stdout, "ConfigMap apps/") {
+						t.Fatalf("KS selection included chart workload: %s", stdout)
 					}
 				} else if code == 0 {
 					assert.Equal(t, stdout, "")
@@ -495,6 +537,8 @@ spec:
 func writeCustomSourceDiffFixture(t *testing.T, sourceURL string) (current, orig string) {
 	t.Helper()
 	current = t.TempDir()
+	testutil.WriteFile(t, current, "kustomization.yaml", "resources: [flux]\n")
+	testutil.WriteFile(t, current, "flux/kustomization.yaml", "resources: [cluster.yaml, second.yaml]\n")
 	testutil.WriteFile(t, current, "flux/cluster.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: home-kubernetes, namespace: gitops-system}
@@ -651,6 +695,7 @@ func TestRun_DiffKS_PathOrigRepositoryIdentity(t *testing.T) {
 				testutil.WriteFile(t, orig, app+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {greeting: hola}\n")
 			}
 			for _, dir := range []string{current, orig} {
+				testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [cluster.yaml, second.yaml, external.yaml]\n")
 				testutil.WriteFile(t, dir, "flux/external.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: unrelated, namespace: beta}
@@ -750,6 +795,7 @@ func TestRun_DiffKS_PathOrigCurrentOnlySource(t *testing.T) {
 func TestRun_DiffKS_NamedExternalSourceDisclosure(t *testing.T) {
 	current, orig := writeCustomSourceDiffFixture(t, "ssh://git@github.com/example/home-ops.git")
 	for _, dir := range []string{current, orig} {
+		testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [cluster.yaml, second.yaml, external.yaml]\n")
 		for _, rel := range []string{"flux/cluster.yaml", "flux/second.yaml"} {
 			data, err := os.ReadFile(filepath.Join(dir, rel))
 			if err != nil {
@@ -831,6 +877,9 @@ func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
 		for _, mode := range []string{"both-failed", "both-suspended", "path-only", "path-content"} {
 			t.Run(workers+"/"+mode, func(t *testing.T) {
 				orig, current := writeFixture(t), writeFixture(t)
+				for _, root := range []string{orig, current} {
+					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/cluster.yaml]\n")
+				}
 				switch mode {
 				case "both-failed":
 					testutil.WriteFile(t, orig, "apps/kustomization.yaml", "resources: [cm.yaml, missing-before.yaml]\n")
@@ -868,16 +917,20 @@ func TestRun_Diff_ProducerDispositionAndPath(t *testing.T) {
 					t.Fatalf("JSON %q: %v", stdout, err)
 				}
 				switch mode {
-				case "both-failed", "both-suspended":
+				case "both-failed":
 					if len(out.Changes) != 0 || len(out.Suppressed) != 1 || out.Suppressed[0].Side != "both" || out.Suppressed[0].Count != 0 {
 						t.Fatalf("unavailable producer disclosure: %s", stdout)
 					}
+				case "both-suspended":
+					if len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization || out.Changes[0].Name != "apps" || out.Changes[0].Status != diff.StatusChanged || len(out.Suppressed) != 1 || out.Suppressed[0].Side != "both" || out.Suppressed[0].Count != 0 {
+						t.Fatalf("suspended workload or applied declaration disclosure: %s", stdout)
+					}
 				case "path-only":
-					if len(out.Changes) != 0 || len(out.Suppressed) != 0 {
-						t.Fatalf("path-only move became a change: %s", stdout)
+					if len(out.Changes) != 1 || out.Changes[0].Kind != manifest.KindKustomization || out.Changes[0].Name != "apps" || out.Changes[0].Status != diff.StatusChanged || len(out.Suppressed) != 0 {
+						t.Fatalf("path-only move changed workload output or lost its applied declaration: %s", stdout)
 					}
 				case "path-content":
-					if len(out.Changes) != 1 || out.Changes[0].Status != diff.StatusChanged || out.Changes[0].Parent.Path != "moved" {
+					if len(out.Changes) != 2 || out.Changes[0].Kind != manifest.KindKustomization || out.Changes[1].Status != diff.StatusChanged || out.Changes[1].Parent.Path != "moved" {
 						t.Fatalf("content move did not pair with current path: %s", stdout)
 					}
 				}

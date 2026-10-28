@@ -84,7 +84,7 @@ func (f *Filter) RefineHistory(history map[manifest.NamedResource]iter.Seq2[mani
 				}
 			}
 		}
-		for _, records := range accepted {
+		for owner, records := range accepted {
 			for id, record := range records {
 				current := index.Records[id]
 				if current.Refs == nil {
@@ -99,8 +99,10 @@ func (f *Filter) RefineHistory(history map[manifest.NamedResource]iter.Seq2[mani
 				} else {
 					current.ContentRoots = maps.Clone(current.ContentRoots)
 				}
-				for source, roots := range record.ContentRoots {
-					current.ContentRoots[source] = append(slices.Clone(current.ContentRoots[source]), roots...)
+				if owner == id || !replace[id] {
+					for source, roots := range record.ContentRoots {
+						current.ContentRoots[source] = append(slices.Clone(current.ContentRoots[source]), roots...)
+					}
 				}
 				index.Records[id] = current
 			}
@@ -132,7 +134,7 @@ func (f *Filter) RefineHistory(history map[manifest.NamedResource]iter.Seq2[mani
 						claim += "/"
 					}
 					index.Claims[claim] = append(index.Claims[claim], id)
-					if prefix != "" {
+					if prefix != "" && record.Declaration == nil {
 						index.Readers[prefix] = append(index.Readers[prefix], manifest.FileReader{Reader: id, Source: source})
 					}
 				}

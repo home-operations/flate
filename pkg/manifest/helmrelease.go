@@ -76,8 +76,11 @@ func (h *HelmChart) sourceInputs(files []string) (string, []string) {
 	return h.Name, files
 }
 
-// RepoFullName returns the source namespace-name display label.
+// RepoFullName returns the source name prefixed by its namespace when present.
 func (h HelmChart) RepoFullName() string {
+	if h.Source.Namespace == "" {
+		return h.Source.Name
+	}
 	return h.Source.Namespace + "-" + h.Source.Name
 }
 

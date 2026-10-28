@@ -157,7 +157,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 						return sourcecache.ProducerResult{}, readErr
 					}
 					if attr := duplicateProducers(memFS, subDir, subPath, data); attr != "" {
-						return sourcecache.ProducerResult{}, fmt.Errorf("%w\n%s", built, attr)
+						return sourcecache.ProducerResult{}, fmt.Errorf("%w\n%s\nselect an individual overlay with -p", built, attr)
 					}
 				}
 				return sourcecache.ProducerResult{}, built
@@ -259,7 +259,10 @@ func renderKey(req RenderRequest, root string, ignore any) string {
 	}
 	var spec any
 	if req.Spec != nil {
-		spec = req.Spec.Content(nil)
+		prepared := *req.Spec
+		prepared.KustomizationSpec = req.Spec.KustomizationSpec
+		prepared.DependsOn = nil
+		spec = prepared.Content(nil)
 	}
 	return manifest.Fingerprint(struct {
 		Spec        any
@@ -299,4 +302,23 @@ func (c *TreeCache) sourceRootFor(ctx context.Context, artifact *store.SourceArt
 	})
 	actual, _ := c.sourceRoots.LoadOrStore(key, load)
 	return actual.(func() (*sourceRoot, error))()
+}
+
+// RenderInputs returns source-relative observed paths and whether each read excludes descendants.
+func RenderInputs(receipt *manifest.RenderReceipt) map[string]bool {
+	if receipt == nil {
+		return nil
+	}
+	frame := receipt.Value().(renderFrame)
+	inputs := make(map[string]bool, len(frame.header.Reads.Files)+len(frame.header.Reads.Dirs)+len(frame.header.Reads.Nodes))
+	for _, item := range frame.header.Reads.Files {
+		inputs[item.Path] = true
+	}
+	for _, item := range frame.header.Reads.Nodes {
+		inputs[item.Path] = item.Kind == kindFile
+	}
+	for _, item := range frame.header.Reads.Dirs {
+		inputs[item.Path] = false
+	}
+	return inputs
 }

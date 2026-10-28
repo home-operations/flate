@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
@@ -146,8 +147,18 @@ spec:
 			t.Fatalf("partial generation lost accepted %s output:\n%s\n%s", name, stdout, stderr)
 		}
 	}
-	if strings.Contains(stdout, "name: generated-c") || strings.Contains(stdout, "name: accepted-c") {
-		t.Fatalf("failed output acquired content:\n%s", stdout)
+	docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range docs {
+		name, _ := manifest.DocMetadata(doc)
+		if name == "generated-c" && manifest.DocKind(doc) == "ExternalArtifact" || name == "accepted-c" {
+			t.Fatalf("failed output acquired content:\n%s", stdout)
+		}
+	}
+	if !strings.Contains(stdout, "name: generated-c") {
+		t.Fatalf("root declaration missing the failed output reference:\n%s", stdout)
 	}
 	again, _, againCode := harness.RunCLIBuffers(args...)
 	if againCode != code || again != stdout {

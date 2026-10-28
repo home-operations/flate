@@ -3,6 +3,7 @@ package change_test
 import (
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -36,8 +37,8 @@ spec:
   artifacts: [{name: generated, copy: [{from: '@repo/app/', to: '@artifact/app/'}]}]
 `)
 				testutil.WriteFile(t, root, "entry/consumer.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  sourceRef: {kind: ExternalArtifact, name: generated}\n"))
-				testutil.WriteFile(t, root, "entry/unrelated.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: independent}\n"))
-				testutil.WriteFile(t, root, "entry/independent.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: independent, namespace: apps}\nspec: {url: https://example.test/independent.git}\n")
+				testutil.WriteFile(t, root, "independent/unrelated.yaml", testutil.KustomizationYAML("unrelated", "apps", "  path: ./unrelated\n  sourceRef: {kind: GitRepository, name: independent}\n"))
+				testutil.WriteFile(t, root, "independent/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: independent, namespace: apps}\nspec: {url: https://example.test/independent.git}\n")
 			}
 			root := t.TempDir()
 			write(root, "before")
@@ -62,7 +63,7 @@ spec:
 				assert.NoError(t, err)
 			}
 			assert.Diff(t, changes.Paths(), []string{"entry/source.yaml"})
-			for _, file := range []string{"entry/generator.yaml", "entry/consumer.yaml", "entry/unrelated.yaml"} {
+			for _, file := range []string{"entry/generator.yaml", "entry/consumer.yaml", "independent/unrelated.yaml"} {
 				before, err := fs.ReadFile(inputs.BaseInput.FS, file)
 				assert.NoError(t, err)
 				after, err := fs.ReadFile(inputs.Source.FS, file)
@@ -75,15 +76,16 @@ spec:
 			consumer := testutil.KustomizationID("apps", "consumer")
 			for side, source := range []*store.SourceArtifact{inputs.BaseInput, inputs.Source} {
 				st := store.New()
-				result, err := discovery.Run(t.Context(), discovery.Config{Input: source, Store: st})
+				st.AddObject(&manifest.Kustomization{Name: "independent-owner", Namespace: "apps", Path: "./independent"})
+				result, err := discovery.Run(t.Context(), discovery.Config{Input: source, Path: filepath.Join(source.LocalPath, "entry"), Store: st})
 				assert.NoError(t, err)
 				record, ok := result.Index.Lookup(generator)
 				if !ok || !slices.Contains(record.Refs, input) || st.GetObject(generator) == nil || st.GetObject(consumer) == nil {
 					t.Fatalf("side %d: missing real generator/input/consumer evidence: %+v", side, record)
 				}
-				assert.Diff(t, st.Productions(output, result.Index), []manifest.Production{{Owner: generator, Declaration: generator, Authored: generator, Source: manifest.BootstrapSourceID, File: "entry/generator.yaml"}})
+				assert.Diff(t, st.Productions(output, result.Index), []manifest.Production{{Owner: result.Binding.Producer, Declaration: generator, Authored: generator, Source: manifest.BootstrapSourceID, File: "entry/generator.yaml"}})
 				owners, ancestors := result.Index.OwnersOfFile("entry/source.yaml")
-				assert.Diff(t, owners, []manifest.NamedResource(nil))
+				assert.Diff(t, owners, []manifest.NamedResource{result.Binding.Producer})
 				assert.Diff(t, ancestors, []manifest.NamedResource(nil))
 				filter := change.NewFilter(changes, result.Index, st, "")
 				for _, id := range []manifest.NamedResource{input, generator, consumer} {

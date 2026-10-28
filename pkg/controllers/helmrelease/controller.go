@@ -141,7 +141,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 			Detail:   stale,
 		})
 	}
-	base.Stamp(hr.EmissionPolicy(), docs)
+	hr.EmissionPolicy().Stamp(docs)
 
 	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
@@ -151,9 +151,9 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
 }
 
-// PreviousRender prepares captured values and admitted charts without runtime effects, and reports whether they can narrow selection.
-func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
-	hr, ok := reads.GetDeclaration(reads.ID()).(*manifest.HelmRelease)
+// PreviousRender prepares the immutable candidate with captured values and admitted charts without runtime effects.
+func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
+	hr, ok := obj.(*manifest.HelmRelease)
 	if !ok || ctx.Err() != nil {
 		return nil, false
 	}

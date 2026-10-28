@@ -21,6 +21,7 @@ import (
 // name is an input expression, so discovery cannot supply a producer edge.
 func BenchmarkDirtyRerun_DynamicEmissionChain(b *testing.B) {
 	root := b.TempDir()
+	testutil.WriteFile(b, root, "kustomization.yaml", "resources: [source.yaml, consumer.yaml, release.yaml, sets.yaml]\n")
 	testutil.WriteFile(b, root, "source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata: {name: flux-system, namespace: flux-system}

@@ -86,7 +86,7 @@ data:
 		Chart: manifest.HelmChart{Name: "mychart", Source: manifest.NamedResource{Name: "chart-repo", Namespace: "flux-system", Group: manifest.SourceDomain, Kind: manifest.KindGitRepository}},
 	}
 
-	out, _, err := cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, helm.RenderOptions{Options: helm.Options{}, Sources: cliSources})
+	out, _, err := testutil.RenderMaps(cli.Template(context.Background(), hr, map[string]any{"greeting": "hello"}, helm.RenderOptions{Options: helm.Options{}, Sources: cliSources}))
 	if err != nil {
 		t.Fatalf("Template via resolver: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	var workers sync.WaitGroup
 	for i := range reads {
 		workers.Go(func() {
-			outputs[i], _, failures[i] = client.Template(t.Context(), releases[i], nil, helm.RenderOptions{Sources: helm.NewSources(&reads[i])})
+			outputs[i], _, failures[i] = testutil.RenderMaps(client.Template(t.Context(), releases[i], nil, helm.RenderOptions{Sources: helm.NewSources(&reads[i])}))
 		})
 	}
 	<-entered
@@ -151,7 +151,7 @@ func TestSourceResolver_OverlappingCapturedInputs(t *testing.T) {
 	var successor store.ReadSet
 	successor.Init(st, releases[0].Named(), nil)
 	defer successor.Retire()
-	output, _, err := client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)})
+	output, _, err := testutil.RenderMaps(client.Template(t.Context(), releases[0], nil, helm.RenderOptions{Sources: helm.NewSources(&successor)}))
 	if err != nil || len(output) != 1 || output[0]["metadata"].(map[string]any)["name"] != "replacement" || output[0]["data"].(map[string]any)["greeting"] != "replacement" || !successor.Valid() {
 		t.Fatalf("successor: err=%v output=%s", err, output)
 	}

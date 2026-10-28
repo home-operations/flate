@@ -167,7 +167,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 			synthetic = append(synthetic, child)
 		}
 	}
-	attempt.Children, attempt.Manifests = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
+	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(hr, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Children = append(attempt.Children, synthetic...)
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(id, &attempt, nil); err != nil {

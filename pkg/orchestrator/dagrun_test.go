@@ -51,7 +51,8 @@ func TestDAG_KeepBeforeLateDataPublication(t *testing.T) {
 			c.Configure(base.Options{Filter: filter, Index: index})
 			c.StartLifecycle()
 			childDocs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": child.Name}, "spec": map[string]any{"path": "./child", "postBuild": map[string]any{"substituteFrom": []any{map[string]any{"kind": manifest.KindConfigMap, "name": data.Name}}}}}}
-			children, retained := c.ParseChildren(parent, childDocs, manifest.ParseDocOptions{})
+			children, retained, failures := c.ParseChildren(parent, testutil.DocumentOccurrences(childDocs), manifest.ParseDocOptions{})
+			assert.Equal(t, len(failures), 0)
 			assert.Equal(t, len(children), 1)
 			assert.Equal(t, children[0].Obj.Named(), child)
 			blocked, release := make(chan []manifest.NamedResource, 1), make(chan struct{})
@@ -340,7 +341,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						if id != child || !ok || info.String() != "resolving dependencies" || !publication.CompareAndSwap(0, 1) {
 							return
 						}
-						docs, err := manifest.DecodeDocs(strings.NewReader(strings.Replace(ksYAML("child", "child", "gate"), "spec:\n", "spec:\n  suspend: true\n", 1)))
+						docs, err := testutil.DecodeDocs(strings.NewReader(strings.Replace(ksYAML("child", "child", "gate"), "spec:\n", "spec:\n  suspend: true\n", 1)))
 						if err != nil {
 							t.Error(err)
 							return
@@ -353,7 +354,7 @@ func TestDAG_SuspensionAfterRefresh(t *testing.T) {
 						}
 						_, _, next := o.store.GetEmission(gate)
 						defer next.Finish()
-						next.Children, next.Manifests, next.Complete = children, retained, true
+						next.Children, next.Manifests, next.Complete = children, testutil.DocumentOccurrences(retained), true
 						o.store.RecordEmitted(gate, &next, nil)
 					}, false)
 					t.Cleanup(unsub)
@@ -475,8 +476,8 @@ data:
 	ksArt := o.store.GetArtifact(testutil.KustomizationID("flux-system", "apps"), store.ArtifactContent).(*store.Emission)
 	var childDoc map[string]any
 	for _, doc := range ksArt.Manifests {
-		if manifest.DocKind(doc) == manifest.KindHelmRelease {
-			childDoc = doc
+		if manifest.DocKind(doc.Document) == manifest.KindHelmRelease {
+			childDoc = doc.Document
 		}
 	}
 	if childDoc == nil {
@@ -491,8 +492,8 @@ data:
 	hrArt := o.store.GetArtifact(hrID, store.ArtifactContent).(*store.Emission)
 	retained := make([]map[string]any, len(hrArt.Manifests))
 	for i, doc := range hrArt.Manifests {
-		retained[i] = manifest.DeepCopyMap(doc)
-		if name, ns := manifest.DocMetadata(doc); name == "bare" && ns != hrID.Namespace {
+		retained[i] = manifest.DeepCopyMap(doc.Document)
+		if name, ns := manifest.DocMetadata(doc.Document); name == "bare" && ns != hrID.Namespace {
 			t.Fatalf("bare chart namespace = %q, want %q", ns, hrID.Namespace)
 		}
 	}
@@ -501,12 +502,12 @@ data:
 		t.Fatal("bare chart child lost release namespace identity")
 	}
 	o.store.DeleteObject(bare)
-	publishDocuments(o.ksc.Controller, testutil.KustomizationID("flux-system", "apps"), ksArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"})
-	_, replay := publishDocuments(o.hrc.Controller, hrID, hrArt.Manifests, manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace})
+	publishDocuments(o.ksc.Controller, testutil.KustomizationID("flux-system", "apps"), testutil.DocumentMaps(ksArt.Manifests), manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: "flux-system"})
+	_, replay := publishDocuments(o.hrc.Controller, hrID, testutil.DocumentMaps(hrArt.Manifests), manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: hrID.Namespace})
 	if o.store.GetObject(bare) == nil {
 		t.Fatal("replay lost release namespace identity")
 	}
-	next, err := manifest.DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"))
+	next, err := testutil.DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next, namespace: other}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

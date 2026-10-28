@@ -1,6 +1,7 @@
 package kustomization
 
 import (
+	"github.com/home-operations/flate/internal/testutil"
 	"testing"
 
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -48,7 +49,7 @@ func TestKustomizationFingerprint_StableAcrossLabelStamping(t *testing.T) {
 // post-patch values.
 func TestKustomizationFingerprint_DifferentOnSpecChange(t *testing.T) {
 	t.Parallel()
-	docs, err := manifest.SplitDocs([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+	docs, err := testutil.SplitDocs([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: apps, namespace: flux-system}
 spec: {path: ./apps, targetNamespace: apps, postBuild: {substitute: {VALUE: initial}}}

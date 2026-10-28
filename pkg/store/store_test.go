@@ -818,14 +818,14 @@ func TestStore_SetArtifact_DistinctPointerDedup(t *testing.T) {
 	makeArt := func() *Emission {
 		return &Emission{
 
-			Manifests: []map[string]any{
+			Manifests: testutil.DocumentOccurrences([]map[string]any{
 				{
 					"apiVersion": "v1",
 					"kind":       "ConfigMap",
 					"metadata":   map[string]any{"name": "cm-1", "namespace": "default"},
 					"data":       map[string]any{"k": "v"},
 				},
-			},
+			}),
 		}
 	}
 
@@ -871,12 +871,12 @@ func TestStore_SetArtifact_DifferentContent(t *testing.T) {
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(_ manifest.NamedResource, _ any) { events++ }, false)
 
-	s.SetArtifact(id, &Emission{Manifests: []map[string]any{
+	s.SetArtifact(id, &Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-1"}},
-	}})
-	s.SetArtifact(id, &Emission{Manifests: []map[string]any{
+	})})
+	s.SetArtifact(id, &Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{
 		{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cm-2"}},
-	}})
+	})})
 
 	assert.Equal(t, events, 2) // distinct content fires each time
 }

@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/home-operations/flate/internal/testutil"
+
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -119,7 +121,8 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 				for _, warning := range warnings {
 					runState.run.Reads.AddWarning(warning)
 				}
-				attempt.Children, attempt.Manifests = c.ParseChildren(c.Store.GetObject(id), docs, manifest.ParseDocOptions{})
+				children, retained := testutil.ParseChildren(c, c.Store.GetObject(id), testutil.DocumentMaps(docs), manifest.ParseDocOptions{})
+				attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(retained)
 				attempt.Complete = true
 				runState.run.Emit(id, &attempt, nil)
 			})
@@ -224,7 +227,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 			if updated.Fingerprint == accepted.Fingerprint {
 				t.Fatal("changed provider replayed stale content")
 			}
-			assert.Diff(t, updated.Manifests[0]["data"], map[string]any{"value": "current"})
+			assert.Diff(t, updated.Manifests[0].Document["data"], map[string]any{"value": "current"})
 			accepted = updated
 			broken := *a
 			broken.DefaultValues = fluxopv1.ResourceSetInput{"value": {Raw: []byte("invalid")}}

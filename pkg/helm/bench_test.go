@@ -71,7 +71,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
-		if len(out) == 0 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
+		if len(out) == 0 || out[0].Document["metadata"].(map[string]any)["name"] != "demo-cm" {
 			b.Fatalf("missing rendered name")
 		}
 	}
@@ -102,7 +102,7 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
-		if len(out) == 0 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
+		if len(out) == 0 || out[0].Document["metadata"].(map[string]any)["name"] != "demo-cm" {
 			b.Fatalf("missing rendered name")
 		}
 	}
@@ -130,7 +130,7 @@ func BenchmarkTemplate_Cold(b *testing.B) {
 		if closeErr != nil {
 			b.Fatal(closeErr)
 		}
-		if len(docs) != 64 || docs[0]["data"].(map[string]any)["marker"] != "fresh" {
+		if len(docs) != 64 || docs[0].Document["data"].(map[string]any)["marker"] != "fresh" {
 			b.Fatal("cold render omitted documents")
 		}
 	}
@@ -170,7 +170,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			if !hasRenderField(first, "greeting", "pinned") || !hasRenderField(first, "replicas", "3") {
+			if len(first) == 0 || !hasRenderField(first[0].Document, "greeting", "pinned") || !hasRenderField(first[0].Document, "replicas", "3") {
 				b.Fatal(first)
 			}
 			second, receipt4, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
@@ -192,7 +192,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 				if loaded.record == nil {
 					b.Fatal("warm render did not use persisted output")
 				}
-				witness := manifest.DeepCopyMap(first[0])
+				witness := manifest.DeepCopyMap(first[0].Document)
 				witness["cacheWitness"] = "selected source values persisted hit"
 				output := encodedRender(b, []map[string]any{witness})
 				_, _, _, err := owner.Blob(b.Context(), sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted}, sourcecache.Policy{}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
@@ -209,7 +209,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 					}
 				}
 
-				if err != nil || len(out) != 1 || out[0]["cacheWitness"] != witness["cacheWitness"] {
+				if err != nil || len(out) != 1 || out[0].Document["cacheWitness"] != witness["cacheWitness"] {
 					b.Fatalf("persisted output witness missing: %v", err)
 				}
 				b.Log("verified selected source values persisted hit")
@@ -331,7 +331,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		if err != nil {
 			b.Fatalf("Template: %v", err)
 		}
-		if len(out) == 0 || out[0]["metadata"].(map[string]any)["name"] != "demo-cm" {
+		if len(out) == 0 || out[0].Document["metadata"].(map[string]any)["name"] != "demo-cm" {
 			b.Fatalf("missing rendered name")
 		}
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -525,14 +526,14 @@ func TestRS_EmissionGrouping(t *testing.T) {
 				slices.Reverse(ids)
 			}
 			for _, id := range ids {
-				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
+				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
 			}
 			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: docs})
 			second := manifest.DeepCopyMap(doc)
 			second["metadata"].(map[string]any)["name"] = "second"
 			for _, ordered := range [][]map[string]any{{doc, second}, {second, doc}} {
 				entries, authoritative := parseChildrenForTest(b.Named(), ordered, manifest.ParseDocOptions{})
-				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: authoritative, Complete: true}, nil)
+				s.RecordEmitted(b.Named(), &store.Emission{Children: entries, Manifests: testutil.DocumentOccurrences(authoritative), Complete: true}, nil)
 				if got := outputByParent(o.collectManifests())[parent]; len(got) != 2 || resourceset.DedupKey(got[0]) != resourceset.DedupKey(ordered[0]) {
 					t.Fatalf("authoritative document order lost: %v", got)
 				}
@@ -542,9 +543,9 @@ func TestRS_EmissionGrouping(t *testing.T) {
 			changed, changedDocs := parseChildrenForTest(parent, []map[string]any{unequal}, manifest.ParseDocOptions{})
 			for _, id := range ids {
 				if id == a.Named() {
-					s.RecordEmitted(id, &store.Emission{Children: children, Manifests: docs, Complete: true}, nil)
+					s.RecordEmitted(id, &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(docs), Complete: true}, nil)
 				} else {
-					s.RecordEmitted(id, &store.Emission{Children: changed, Manifests: changedDocs, Complete: true}, nil)
+					s.RecordEmitted(id, &store.Emission{Children: changed, Manifests: testutil.DocumentOccurrences(changedDocs), Complete: true}, nil)
 				}
 			}
 			assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: changedDocs})
@@ -1586,8 +1587,9 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 				if id == ownerA {
 					input = append([]map[string]any{docA, version, omitted, explicit, namespaceA, malformed}, incomplete...)
 				}
-				children, authoritative := parseChildrenForTest(id, input, manifest.ParseDocOptions{})
-				assert.Diff(t, authoritative, input)
+				parent := &manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace}
+				children, authoritative, failures := (&base.Controller{}).ParseChildren(parent, testutil.DocumentOccurrences(input), manifest.ParseDocOptions{})
+				assert.Diff(t, testutil.DocumentMaps(authoritative), input)
 				mixedChildren := 0
 				for i, child := range children {
 					if child.Obj.Named().Namespace == "" && manifest.KindOf(child.Obj).Namespaced() {
@@ -1603,7 +1605,7 @@ func TestRSRawSink_DeterministicCollisionWinner(t *testing.T) {
 				if id == ownerA {
 					assert.Equal(t, mixedChildren, 2)
 				}
-				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Complete: true}, nil)
+				s.RecordEmitted(id, &store.Emission{Children: children, Manifests: authoritative, Failures: failures, Complete: true}, nil)
 				_, _, admitted := s.GetEmission(id)
 				admitted.Finish()
 				mixedChildren = 0
@@ -1919,7 +1921,7 @@ spec:
 `
 			}
 			testutil.WriteFile(t, root, "apps/rs.yaml", resources)
-			want, err := manifest.DecodeDocs(strings.NewReader(`apiVersion: v1
+			want, err := testutil.DecodeDocs(strings.NewReader(`apiVersion: v1
 kind: ConfigMap
 metadata: {name: foo}
 data: {marker: aaa-omitted}
@@ -1996,8 +1998,9 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 		}
 		o := renderedSingleton3[0].Orchestrator
 		result := renderedSingleton3[0].Result
-		assert.NoError(t, err)
-		assert.Equal(t, len(result.Failed), 0)
+		if !errors.Is(err, manifest.ErrFlux) || len(result.Failed) != 1 {
+			t.Fatalf("required malformed output = %v, failures=%v", err, result.Failed)
+		}
 		effective := manifest.NamedResource{Group: "apps", Kind: "Deployment", Namespace: "flux-system", Name: "raw"}
 		if child := o.Store().GetObject(effective); child == nil {
 			t.Fatalf("missing effective child %s", effective)

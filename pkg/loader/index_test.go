@@ -130,7 +130,7 @@ func snapshotIndexForTest(index *manifest.DiscoveryIndex) manifest.DiscoveryInde
 	for file, ids := range snapshot.Readers {
 		snapshot.Readers[file] = slices.Clone(ids)
 	}
-	snapshot.Errors = maps.Clone(index.Errors)
+
 	return snapshot
 }
 

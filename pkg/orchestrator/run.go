@@ -167,7 +167,8 @@ func (o *Orchestrator) collectManifests() []manifest.DocumentBatch {
 				selected[target] = !parentAttributed || !manifest.KindOf(child.Obj).Render && o.store.EmissionOwner(target) == id
 			}
 		}
-		for _, doc := range attempt.Manifests {
+		for _, occurrence := range attempt.Manifests {
+			doc := occurrence.Document
 			target := resourceset.DedupKey(doc)
 			apiVersion := manifest.DocAPIVersion(doc)
 			identifiable := apiVersion != "" && target.Kind != "" && target.Name != "" && target.Group != manifest.KustomizeDomain

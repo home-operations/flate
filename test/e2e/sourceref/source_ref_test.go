@@ -187,7 +187,7 @@ patches:
 			testutil.WriteFile(t, root, "unrelated/broken.yaml", "invalid: [\n")
 			out, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 				"--concurrency", concurrency, "--cache-dir", t.TempDir())
-			docs, err := manifest.DecodeDocs(strings.NewReader(out))
+			docs, err := testutil.DecodeDocs(strings.NewReader(out))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -309,7 +309,7 @@ spec:
 					t.Fatal(err)
 				}
 				l.Admit(root)
-				decodeError := l.Index.Errors["apps/extra.yaml"]
+				decodeError := l.EntryFailure(t.Context(), root)
 				if !errors.Is(decodeError, manifest.ErrInput) {
 					t.Fatalf("expected working-tree decode error, got %v", decodeError)
 				}
@@ -477,7 +477,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 				if secondError != nil {
 					t.Fatal(secondError)
 				}
-				secondError = secondLoader.Index.Errors[secondPath+"/extra.yaml"]
+				secondError = secondLoader.EntryFailure(t.Context(), root)
 				if !errors.Is(secondError, manifest.ErrInput) {
 					t.Fatalf("expected second consumer's decode error, got %v", secondError)
 				}
@@ -496,7 +496,7 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 					t.Fatal(err)
 				}
 				heldLoader.Admit(root)
-				heldError := heldLoader.Index.Errors[heldPath+"/extra.yaml"]
+				heldError := heldLoader.EntryFailure(t.Context(), root)
 				if !errors.Is(heldError, manifest.ErrInput) {
 					t.Fatal("expected held consumer's decode error")
 				}
@@ -578,7 +578,7 @@ spec:
 				t.Fatal(err)
 			}
 			l.Admit(root)
-			heldError := l.Index.Errors["broken/cm.yaml"]
+			heldError := l.EntryFailure(t.Context(), root)
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected working-tree decode error, got %v", heldError)
 			}
@@ -600,7 +600,7 @@ spec:
 				})
 			}
 			st := store.New()
-			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
+			_, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
 			})
 			for _, namespace := range []string{"alpha", "beta"} {
@@ -635,8 +635,8 @@ spec:
 				if err != nil || string(current) != "metadata: {name: broken\n" {
 					t.Fatalf("beta lost malformed working-tree bytes: %q, %v", current, err)
 				}
-				if discoveryError != nil || !errors.Is(res.Index.Errors["broken/cm.yaml"], manifest.ErrInput) {
-					t.Fatalf("expected retained working-tree error, got %v", discoveryError)
+				if discoveryError != nil {
+					t.Fatalf("incidental working-tree error failed discovery: %v", discoveryError)
 				}
 			} else if discoveryError != nil {
 				t.Fatalf("expected alpha's error to be discarded, got %v", discoveryError)
@@ -646,7 +646,6 @@ spec:
 }
 
 func TestE2E_SourceRef_HeldErrorRetainedByEmptyPath(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	repo := testutil.GitInit(t, root)
 	if _, err := repo.CreateRemote(&config.RemoteConfig{
@@ -686,23 +685,11 @@ spec:
 	harness.MutateFile(t, filepath.Join(root, "apps/cm.yaml"), "value: pinned", "value: newer")
 	testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 	testutil.WriteFile(t, root, "apps/cm.yaml", "metadata: {name: broken\n")
-	l := loader.New(store.New())
-	l.SourceRoot = root
-	if _, err := l.Load(t.Context(), root); err != nil {
-		t.Fatal(err)
+	_, stderr, code := harness.RunCLIBuffers("build", "ks", "b-z", "--path", filepath.Join(root, "flux"),
+		"--concurrency", "2", "--cache-dir", t.TempDir())
+	if code != 1 || !strings.Contains(stderr, "apps/cm.yaml") || !strings.Contains(stderr, "b-z") {
+		t.Fatalf("expected empty-path owner failure: exit=%d stderr=%s", code, stderr)
 	}
-	l.Admit(root)
-	wantError := l.Index.Errors["apps/cm.yaml"]
-	if !errors.Is(wantError, manifest.ErrInput) {
-		t.Fatalf("expected a working-tree decode error, got %v", wantError)
-	}
-	res, err := discovery.Run(t.Context(), discovery.Config{
-		Path: filepath.Join(root, "flux"), Store: store.New(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	assert.Equal(t, res.Index.Errors["apps/cm.yaml"].Error(), wantError.Error())
 }
 
 func TestE2E_SourceRef_HeldErrorSurvivesNamespaceInheritance(t *testing.T) {
@@ -784,7 +771,7 @@ spec:
 				t.Fatal(err)
 			}
 			l.Admit(root)
-			heldError := l.Index.Errors["held/broken.yaml"]
+			heldError := l.EntryFailure(t.Context(), root)
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
 			}
@@ -803,7 +790,7 @@ spec:
 					code, transport.calls.Load(), out, cmp.Diff("", stderr))
 			}
 			st := store.New()
-			res, discoveryError := discovery.Run(t.Context(), discovery.Config{
+			_, discoveryError := discovery.Run(t.Context(), discovery.Config{
 				Path: filepath.Join(root, "flux"), Store: st,
 			})
 			id := testutil.KustomizationID("shifted", "a-held")
@@ -824,8 +811,8 @@ spec:
 				if discoveryError != nil || !ok || art.LocalRoot != root || art.LocalPath == root {
 					t.Fatalf("expected genuine inherited source pin without a held error: error=%v artifact=%+v", discoveryError, art)
 				}
-			} else if discoveryError != nil || !errors.Is(res.Index.Errors["held/broken.yaml"], manifest.ErrInput) {
-				t.Fatalf("expected discovery to retain the decode error, got %v", discoveryError)
+			} else if discoveryError != nil {
+				t.Fatalf("incidental decode error failed discovery: %v", discoveryError)
 			}
 		})
 	}
@@ -919,7 +906,7 @@ spec:
 				t.Fatal(err)
 			}
 			l.Admit(root)
-			heldError := l.Index.Errors["apps/broken/extra.yaml"]
+			heldError := l.EntryFailure(t.Context(), root)
 			if !errors.Is(heldError, manifest.ErrInput) {
 				t.Fatalf("expected held consumer's decode error, got %v", heldError)
 			}
@@ -936,11 +923,11 @@ spec:
 			}
 			if tt.survivorName != "" {
 				st := store.New()
-				res, err := discovery.Run(t.Context(), discovery.Config{
+				_, err := discovery.Run(t.Context(), discovery.Config{
 					Path: filepath.Join(root, "flux"), Store: st,
 				})
-				if err != nil || !errors.Is(res.Index.Errors["apps/broken/extra.yaml"], manifest.ErrInput) {
-					t.Fatalf("expected retained working-tree diagnostic, got %v", err)
+				if err != nil {
+					t.Fatalf("incidental working-tree diagnostic failed discovery: %v", err)
 				}
 				id := testutil.KustomizationID("flux-system", tt.survivorName)
 				ks, ok := st.Get[*manifest.Kustomization](id)

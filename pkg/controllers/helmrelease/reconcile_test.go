@@ -129,8 +129,8 @@ metadata: {name: issuer}
 				t.Fatalf("chart documents = %d", len(art.Manifests))
 			}
 			for i, doc := range art.Manifests {
-				retained[i] = manifest.DeepCopyMap(doc)
-				name, ns := manifest.DocMetadata(doc)
+				retained[i] = manifest.DeepCopyMap(doc.Document)
+				name, ns := manifest.DocMetadata(doc.Document)
 				want := hr.ReleaseNamespace()
 				switch name {
 				case "cluster":
@@ -142,7 +142,7 @@ metadata: {name: issuer}
 					t.Fatalf("%s namespace = %q, want %q", name, ns, want)
 				}
 				identityNamespace := want
-				if st.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: identityNamespace, Name: name}) == nil {
+				if st.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc.Document), manifest.DocKind(doc.Document)).Group, Kind: manifest.DocKind(doc.Document), Namespace: identityNamespace, Name: name}) == nil {
 					t.Fatalf("chart child %s/%s missing", identityNamespace, name)
 				}
 			}
@@ -150,12 +150,12 @@ metadata: {name: issuer}
 			if !tc.disable {
 				version += "+ff3d3e14728f"
 			}
-			if got := renderedConfigMapValue(art.Manifests, "version"); got != version {
+			if got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "version"); got != version {
 				t.Fatalf("rendered chart version = %q, want %s", got, version)
 			}
 			for _, doc := range art.Manifests {
-				if name, _ := manifest.DocMetadata(doc); name == "podinfo" {
-					md := doc["metadata"].(map[string]any)
+				if name, _ := manifest.DocMetadata(doc.Document); name == "podinfo" {
+					md := doc.Document["metadata"].(map[string]any)
 					labels := md["labels"].(map[string]any)
 					if got := labels["helm.sh/chart"]; got != "podinfo-"+strings.ReplaceAll(version, "+", "_") {
 						t.Fatalf("rendered chart label = %v", got)
@@ -191,10 +191,10 @@ metadata: {name: issuer}
 			if current.Fingerprint != art.Fingerprint || !authority.Valid() || repeatedEvents.Load() != 0 {
 				t.Fatalf("unchanged output authority changed: valid=%t events=%d", authority.Valid(), repeatedEvents.Load())
 			}
-			assert.Diff(t, current.Manifests, retained)
+			assert.Diff(t, testutil.DocumentMaps(current.Manifests), retained)
 			authority.Retire()
 
-			if delta := cmp.Diff(retained, art.Manifests); delta != "" {
+			if delta := cmp.Diff(retained, testutil.DocumentMaps(art.Manifests)); delta != "" {
 				t.Fatalf("replay changed retained documents (-want +got):\n%s", delta)
 			}
 			if st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: hr.ReleaseNamespace(), Name: "podinfo"}) == nil {
@@ -237,7 +237,7 @@ metadata: {name: issuer}
 			if !tc.disable {
 				version += "+abcdef123456"
 			}
-			if got := renderedConfigMapValue(updated.Manifests, "version"); got != version {
+			if got := renderedConfigMapValue(testutil.DocumentMaps(updated.Manifests), "version"); got != version {
 				t.Fatalf("changed digest version = %q", got)
 			}
 			if art.Fingerprint == updated.Fingerprint {
@@ -455,7 +455,7 @@ data: {greeting: hi}
 					st.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Reason: "", Message: ""})
 					var retained *store.Emission
 					if site.retained {
-						retained = &store.Emission{Fingerprint: "prior", Manifests: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}}}
+						retained = &store.Emission{Fingerprint: "prior", Manifests: testutil.DocumentOccurrences([]map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "prior"}}})}
 						st.SetArtifact(id, retained)
 					}
 					replacement := manifest.DeepCopyMap(doc)
@@ -483,7 +483,7 @@ data: {greeting: hi}
 							return
 						}
 						if site.parent {
-							publishDocuments(c, parent.Named(), []map[string]any{replacement}, manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
+							publishDocuments(c, parent.Named(), testutil.DocumentOccurrences([]map[string]any{replacement}), manifest.ParseDocOptions{WipeSecrets: false, DefaultNamespace: ""})
 						} else {
 							fresh := hr.Clone()
 							fresh.Suspend = suspended
@@ -606,7 +606,8 @@ data:
 			publish := func(doc map[string]any) {
 				_, _, next := st.GetEmission(parent.Named())
 				defer next.Finish()
-				next.Children, next.Manifests = c.ParseChildren(parent, []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+				children, retained := testutil.ParseChildren(c, parent, []map[string]any{doc}, manifest.ParseDocOptions{DefaultNamespace: "apps"})
+				next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
 				next.Complete = true
 				c.Emit(parent.Named(), &next, nil)
 			}
@@ -659,7 +660,7 @@ data:
 			if emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint == "" || !emission.OutputReads.Valid() {
 				t.Fatalf("accepted B emission = %+v; want complete output with current provenance and a content key", emission)
 			}
-			if got := renderedConfigMapValue(emission.Manifests, "output"); got != "B" {
+			if got := renderedConfigMapValue(testutil.DocumentMaps(emission.Manifests), "output"); got != "B" {
 				t.Fatalf("rendered output = %q, want B", got)
 			}
 			current, ok := st.Get[*manifest.HelmRelease](id)
@@ -743,9 +744,9 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 		t.Fatal("initial two-document render did not settle")
 	}
 	for i, doc := range initial.Manifests {
-		name, namespace := manifest.DocMetadata(doc)
+		name, namespace := manifest.DocMetadata(doc.Document)
 		want := []string{"app-first", "app-second"}[i]
-		labels := doc["metadata"].(map[string]any)["labels"].(map[string]any)
+		labels := doc.Document["metadata"].(map[string]any)["labels"].(map[string]any)
 		assert.Equal(t, labels["helm.toolkit.fluxcd.io/name"], any(hr.Name))
 		if name != want || namespace != hr.Namespace || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: name}) == nil {
 			t.Fatalf("rendered identity = %s/%s, want %s/%s", namespace, name, hr.Namespace, want)
@@ -780,14 +781,14 @@ func TestReconcile_SyntheticChartReplayContent(t *testing.T) {
 	st.AddObject(&fresh)
 	valuesRun := reconcile()
 	withValues := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-	if valuesRun.Outcome() == schedule.Blocked || valuesRun.Reused || withValues.Fingerprint == after.Fingerprint || renderedConfigMapValue(withValues.Manifests, "value") != "second" || len(withValues.Manifests) != 2 {
+	if valuesRun.Outcome() == schedule.Blocked || valuesRun.Reused || withValues.Fingerprint == after.Fingerprint || renderedConfigMapValue(testutil.DocumentMaps(withValues.Manifests), "value") != "second" || len(withValues.Manifests) != 2 {
 		t.Fatal("changed consumed values reused stale output")
 	}
 	st.SetArtifact(chart, &store.SourceArtifact{Kind: manifest.KindHelmChart, Key: "chart-two", FS: os.DirFS(secondDir), LocalPath: secondDir})
 	sourceRun := reconcile()
 	withSource := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-	if sourceRun.Outcome() == schedule.Blocked || sourceRun.Reused || withSource.Fingerprint == withValues.Fingerprint || renderedConfigMapValue(withSource.Manifests, "source") != "two" || len(withSource.Manifests) != 2 {
-		t.Fatalf("changed chart content: unresolved=%t reused=%t fingerprint=%q previous=%q source=%q documents=%d", sourceRun.Outcome() == schedule.Blocked, sourceRun.Reused, withSource.Fingerprint, withValues.Fingerprint, renderedConfigMapValue(withSource.Manifests, "source"), len(withSource.Manifests))
+	if sourceRun.Outcome() == schedule.Blocked || sourceRun.Reused || withSource.Fingerprint == withValues.Fingerprint || renderedConfigMapValue(testutil.DocumentMaps(withSource.Manifests), "source") != "two" || len(withSource.Manifests) != 2 {
+		t.Fatalf("changed chart content: unresolved=%t reused=%t fingerprint=%q previous=%q source=%q documents=%d", sourceRun.Outcome() == schedule.Blocked, sourceRun.Reused, withSource.Fingerprint, withValues.Fingerprint, renderedConfigMapValue(testutil.DocumentMaps(withSource.Manifests), "source"), len(withSource.Manifests))
 	}
 }
 
@@ -869,8 +870,8 @@ func TestReconcile_MutableChartAndSourceValuesReplay(t *testing.T) {
 			t.Fatalf("documents=%d, want 2", len(output.Manifests))
 		}
 		for i, doc := range output.Manifests {
-			name, namespace := manifest.DocMetadata(doc)
-			data, _ := doc["data"].(map[string]any)
+			name, namespace := manifest.DocMetadata(doc.Document)
+			data, _ := doc.Document["data"].(map[string]any)
 			wantName := []string{"app-first", "app-second"}[i]
 			if name != wantName || namespace != hr.Namespace || data["value"] != value || data["source"] != source {
 				t.Fatalf("document=%v, want %s/%s value=%s source=%s", doc, hr.Namespace, wantName, value, source)

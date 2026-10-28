@@ -3,6 +3,7 @@ package kustomize
 import (
 	"context"
 	"fmt"
+	"github.com/home-operations/flate/internal/testutil"
 	"io"
 	"net/http"
 	"reflect"
@@ -135,9 +136,9 @@ func TestRender_RemoteValidationSlots(t *testing.T) {
 						input := memoryTree(t, map[string]string{
 							"kustomization.yaml": fmt.Sprintf("resources:\n- https://example.invalid%s\n- git::https://example.invalid/base.git//app?ref=main\n- https://example.invalid/shared\n", path),
 						})
-						out, _, err := Render(t.Context(), c, RenderRequest{
+						out, _, err := testutil.RenderMaps(Render(t.Context(), c, RenderRequest{
 							Source: &store.SourceArtifact{FS: input}, Spec: demoSpec, HeldSlot: held, Label: fmt.Sprintf("/source-%d", index),
-						}, sourcecache.RetryConfig{})
+						}, sourcecache.RetryConfig{}))
 						results <- result{out: out, err: err}
 					}
 					if mode == "standalone" {

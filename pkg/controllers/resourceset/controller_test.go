@@ -63,10 +63,10 @@ func hasRenderedDoc(art *store.Emission, kind, name string) bool {
 		return false
 	}
 	for _, doc := range art.Manifests {
-		if k, _ := doc["kind"].(string); k != kind {
+		if k, _ := doc.Document["kind"].(string); k != kind {
 			continue
 		}
-		md, _ := doc["metadata"].(map[string]any)
+		md, _ := doc.Document["metadata"].(map[string]any)
 		if n, _ := md["name"].(string); n == name {
 			return true
 		}
@@ -249,12 +249,12 @@ spec: {}
 	}
 	before := make([]map[string]any, len(art.Manifests))
 	for i, doc := range art.Manifests {
-		before[i] = manifest.DeepCopyMap(doc)
-		name, ns := manifest.DocMetadata(doc)
+		before[i] = manifest.DeepCopyMap(doc.Document)
+		name, ns := manifest.DocMetadata(doc.Document)
 		want := rs.Namespace
 		if name == "explicit" {
 			want = "other"
-		} else if manifest.DocKind(doc) == "ClusterRole" {
+		} else if manifest.DocKind(doc.Document) == "ClusterRole" {
 			want = ""
 		}
 		authored := ""
@@ -264,14 +264,14 @@ spec: {}
 		if ns != authored {
 			t.Fatalf("rendered namespace = %q, want authored absence", ns)
 		}
-		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc), manifest.DocKind(doc)).Group, Kind: manifest.DocKind(doc), Namespace: want, Name: name}) == nil {
+		if s.GetObject(manifest.NamedResource{Group: schema.FromAPIVersionAndKind(manifest.DocAPIVersion(doc.Document), manifest.DocKind(doc.Document)).Group, Kind: manifest.DocKind(doc.Document), Namespace: want, Name: name}) == nil {
 			t.Fatalf("missing effective child %s/%s", want, name)
 		}
 	}
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("repeat reconcile: %+v", info)
 	}
-	if delta := cmp.Diff(before, art.Manifests); delta != "" {
+	if delta := cmp.Diff(before, testutil.DocumentMaps(art.Manifests)); delta != "" {
 		t.Fatalf("replay mutated output (-want +got):\n%s", delta)
 	}
 
@@ -279,7 +279,7 @@ spec: {}
 
 func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 	t.Parallel()
-	for _, fault := range []string{"template", "provider export", "provider resolution"} {
+	for _, fault := range []string{"template", "provider export", "provider resolution", "typed child"} {
 		t.Run(fault, func(t *testing.T) {
 			t.Parallel()
 			c, s := newController(t)
@@ -308,6 +308,10 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 				changed := *rs
 				changed.ResourcesTemplate = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: << .nonexistent.field >>}\n"
 				s.AddObject(&changed)
+			case "typed child":
+				changed := *rs
+				changed.ResourcesTemplate += "---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: invalid}\nspec: {interval: []}\n"
+				s.AddObject(&changed)
 			case "provider export":
 				changed := *provider
 				changed.DefaultValues = fluxopv1.ResourceSetInput{"value": {Raw: []byte("invalid json")}}
@@ -319,6 +323,16 @@ func TestReconcile_RenderError_MarksFailed(t *testing.T) {
 			}
 			if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusFailed {
 				t.Fatalf("status = %+v, want Failed", info)
+			}
+			if fault == "typed child" {
+				failed := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+				_, replayed := failed.Replay(artifact.Fingerprint)
+				if failed.Complete || failed.Footprint() != nil || replayed || len(failed.Failures) != 1 || len(failed.Manifests) != 2 || !hasRenderedDoc(failed, "ConfigMap", "output") {
+					t.Fatalf("invalid child retained successful publication: %+v", failed)
+				}
+				if s.GetObject(manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: rs.Namespace, Name: "invalid"}) != nil {
+					t.Fatal("invalid generated child was admitted")
+				}
 			}
 		})
 	}

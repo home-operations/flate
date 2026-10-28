@@ -12,12 +12,14 @@ import (
 	"testing/fstest"
 	"testing/synctest"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/home-operations/flate/internal/testutil"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
+
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -138,7 +140,7 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 							_, _, next := execution.Reads.GetEmission(id)
 							defer next.Finish()
 							s.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusPending, Reason: "", Message: "rendering"})
-							next.Manifests = []map[string]any{{"value": input.Data["value"]}}
+							next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"value": input.Data["value"]}})
 							next.Complete = true
 							renders.Add(1)
 							execution.Emit(obj.Named(), &next, nil)
@@ -183,10 +185,10 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 					if !ok {
 						t.Fatal("promoted consumer has no rendered emission")
 					}
-					outputBytes, err := json.Marshal(output.Manifests)
+					outputBytes, err := json.Marshal(testutil.DocumentMaps(output.Manifests))
 					assert.NoError(t, err)
 					assert.Equal(t, string(outputBytes), `[{"value":"promoted"}]`)
-					assert.Diff(t, output.Manifests, []map[string]any{{"value": "promoted"}})
+					assert.Diff(t, testutil.DocumentMaps(output.Manifests), []map[string]any{{"value": "promoted"}})
 					if mode.source {
 						want := []string{source.Named().String(), parent.Named().String(), emitter.Named().String(), target.Named().String(), consumer.Named().String()}
 						slices.Sort(want)

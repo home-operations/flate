@@ -120,7 +120,7 @@ func TestParseDoc_AuthoritativeSanitation(t *testing.T) {
 				if changed {
 					retained := DeepCopyMap(authoritative)
 					ReleaseDoc(doc)
-					next, err := DecodeDocs(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: next}\n"))
+					next, err := decodeDocMaps(strings.NewReader("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: next}\n"))
 					assert.NoError(t, err)
 					ReleaseDoc(next[0])
 					assert.Diff(t, authoritative, retained)

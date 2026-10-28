@@ -429,9 +429,9 @@ func TestRender_NamespaceIdentity(t *testing.T) {
 			})
 			ks := parsedKS(t, ksDoc(map[string]any{"targetNamespace": tc.authored})).Clone()
 			ks.TargetNamespace = tc.namespace
-			out, _, err := Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{
+			out, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{
 				Source: localSource(t, root), SubPath: ".", Spec: ks,
-			}, sourcecache.RetryConfig{})
+			}, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			docs := out
 			assert.Equal(t, len(docs), 3)

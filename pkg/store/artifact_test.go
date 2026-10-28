@@ -8,6 +8,7 @@ import (
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -122,7 +123,7 @@ func TestSetArtifact_EmissionAuthority(t *testing.T) {
 	id := ownerID("artifact")
 	events := 0
 	s.AddListener(EventArtifactUpdated, func(manifest.NamedResource, any) { events++ }, false)
-	first := &Emission{Manifests: []map[string]any{{"value": "same"}}, inputHead: inputStamp{generation: 1}}
+	first := &Emission{Manifests: testutil.DocumentOccurrences([]map[string]any{{"value": "same"}}), inputHead: inputStamp{generation: 1}}
 	s.SetArtifact(id, first)
 	equal := *first
 	equal.revision = 2

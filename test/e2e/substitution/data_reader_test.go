@@ -155,7 +155,7 @@ func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
 				if code != 0 || strings.Contains(stdout, "..PLACEHOLDER_VALUE..") {
 					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 				}
-				docs, err := manifest.DecodeDocs(strings.NewReader(stdout))
+				docs, err := testutil.DecodeDocs(strings.NewReader(stdout))
 				if err != nil {
 					t.Fatal(err)
 				}

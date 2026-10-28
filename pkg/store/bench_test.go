@@ -95,7 +95,7 @@ func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
 			},
 		})
 	}
-	art := &Emission{Manifests: manifests}
+	art := &Emission{Manifests: testutil.DocumentOccurrences(manifests)}
 	s.SetArtifact(id, art)
 
 	b.ReportAllocs()
@@ -128,7 +128,7 @@ func BenchmarkSetArtifact_DistinctDedup(b *testing.B) {
 			},
 		})
 	}
-	art := &Emission{Manifests: manifests}
+	art := &Emission{Manifests: testutil.DocumentOccurrences(manifests)}
 	s.SetArtifact(id, art)
 	// Distinct-pointer twin with shared sub-slice — matches the
 	// re-emit shape where docs are decoded into fresh outer

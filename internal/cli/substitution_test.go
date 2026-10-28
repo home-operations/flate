@@ -36,7 +36,7 @@ func substitutionReference(kind string, optional bool) string {
 
 func substitutionOutput(t *testing.T, output string) string {
 	t.Helper()
-	docs, err := manifest.SplitDocs([]byte(output))
+	docs, err := testutil.SplitDocs([]byte(output))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	if strings.Contains(out, "private-fixture-value") {
 		t.Fatal("supplied collision values emitted")
 	}
-	docs, err := manifest.SplitDocs([]byte(out))
+	docs, err := testutil.SplitDocs([]byte(out))
 	if err != nil {
 		t.Fatal(err)
 	}

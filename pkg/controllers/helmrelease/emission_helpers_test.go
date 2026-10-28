@@ -7,14 +7,14 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func publishDocuments(c *Controller, id manifest.NamedResource, docs []map[string]any, opts manifest.ParseDocOptions) ([]store.Child, []map[string]any) {
+func publishDocuments(c *Controller, id manifest.NamedResource, docs []manifest.DocOccurrence, opts manifest.ParseDocOptions) ([]store.Child, []manifest.DocOccurrence) {
 	if c.Store.GetObject(id) == nil {
 		c.Store.AddObject(&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Name: id.Name, Namespace: id.Namespace})
 	}
-	children, retained := c.ParseChildren(c.Store.GetObject(id), docs, opts)
+	children, retained, failures := c.ParseChildren(c.Store.GetObject(id), docs, opts)
 	_, _, next := c.Store.GetEmission(id)
 	defer next.Finish()
-	next.Children, next.Manifests, next.Complete = children, retained, true
+	next.Children, next.Manifests, next.Failures, next.Complete = children, retained, failures, true
 	c.Emit(id, &next, nil)
 	return children, retained
 }

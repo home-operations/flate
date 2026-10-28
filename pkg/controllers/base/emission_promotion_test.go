@@ -52,7 +52,7 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 							_, _, next := execution.Reads.GetEmission(obj.Named())
 							defer next.Finish()
 							next.Complete = true
-							next.Manifests = []map[string]any{{"value": rendered}}
+							next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"value": rendered}})
 							return execution.Emit(obj.Named(), &next, nil)
 						})
 						return execution.Valid()
@@ -91,7 +91,7 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 				if !ok {
 					t.Fatal("missing selected output")
 				}
-				assert.Diff(t, output.Manifests, []map[string]any{{"value": "late consumer reconciled\n"}})
+				assert.Diff(t, testutil.DocumentMaps(output.Manifests), []map[string]any{{"value": "late consumer reconciled\n"}})
 			}
 		})
 	}

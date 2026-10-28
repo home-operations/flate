@@ -20,7 +20,7 @@ import (
 
 func builtObjectsForTest(t *testing.T, data string) []store.Child {
 	t.Helper()
-	docs, err := manifest.DecodeDocs(strings.NewReader(data))
+	docs, err := testutil.DecodeDocs(strings.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,11 +112,11 @@ spec:
 	selectedFile := "entry/selected.yaml"
 	independentFile := "entry/independent/invalid.yaml"
 	for _, file := range []string{selectedFile, independentFile} {
-		if err := l.Index.Errors[file]; !errors.Is(err, manifest.ErrInput) {
+		if err := retainedErrorsForTest(l)[file]; !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("raw error for %s = %v, want ErrInput", file, err)
 		}
 	}
-	independentError := l.Index.Errors[independentFile]
+	independentError := retainedErrorsForTest(l)[independentFile]
 	selected := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "selected"}
 	if _, exists := l.Index.Lookup(selected); exists {
 		t.Fatal("invalid selected resource produced a raw record")
@@ -135,10 +135,10 @@ spec:
 	}
 	docs := builtObjectsForTest(t, string(data))
 	l.RegisterBuilt(entry, docs)
-	if err := l.Index.Errors[selectedFile]; err != nil {
+	if err := retainedErrorsForTest(l)[selectedFile]; err != nil {
 		t.Fatalf("selected raw error survived successful built registration: %v", err)
 	}
-	if !errors.Is(l.Index.Errors[independentFile], independentError) {
+	if !errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
 		t.Fatal("successful built registration replaced an unselected raw error")
 	}
 	if st.GetObject(rawSource) != nil {
@@ -177,8 +177,8 @@ spec:
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if l.Index.Errors[selectedFile] != nil || !errors.Is(l.Index.Errors[independentFile], independentError) {
-		t.Fatalf("admission and finalization changed replacement errors: %v", l.Index.Errors)
+	if retainedErrorsForTest(l)[selectedFile] != nil || !errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
+		t.Fatalf("admission and finalization changed replacement errors: %v", retainedErrorsForTest(l))
 	}
 	admitForTest(st, root)
 	for _, dir := range []string{entry, filepath.Join(entry, "independent")} {
@@ -186,7 +186,7 @@ spec:
 			t.Fatal(err)
 		}
 	}
-	independentError = l.Index.Errors[independentFile]
+	independentError = retainedErrorsForTest(l)[independentFile]
 	if !errors.Is(independentError, manifest.ErrInput) {
 		t.Fatalf("reloaded independent raw error = %v, want ErrInput", independentError)
 	}
@@ -194,8 +194,8 @@ spec:
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if l.Index.Errors[selectedFile] != nil || !errors.Is(l.Index.Errors[independentFile], independentError) {
-		t.Fatalf("remount and finalization changed replacement errors: %v", l.Index.Errors)
+	if retainedErrorsForTest(l)[selectedFile] != nil || !errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
+		t.Fatalf("remount and finalization changed replacement errors: %v", retainedErrorsForTest(l))
 	}
 	var generated manifest.NamedResource
 	for _, child := range docs {
@@ -380,7 +380,7 @@ spec:
 		t.Fatal(err)
 	}
 	selectedFile := filepath.ToSlash(filepath.Join(root, "selected.yaml"))
-	if err := l.Index.Errors[selectedFile]; !errors.Is(err, manifest.ErrInput) {
+	if err := retainedErrorsForTest(l)[selectedFile]; !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("absolute raw error = %v, want ErrInput", err)
 	}
 	selected := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "selected"}
@@ -402,7 +402,7 @@ spec:
 		t.Fatalf("deletion patch did not leave only the retained ConfigMap: %v", docs)
 	}
 	l.RegisterBuilt(root, docs)
-	if err := l.Index.Errors[selectedFile]; err != nil {
+	if err := retainedErrorsForTest(l)[selectedFile]; err != nil {
 		t.Fatalf("deleted resource raw error survived successful built registration: %v", err)
 	}
 	admit := func(obj manifest.BaseManifest) bool { return l.AdmitsRoot(obj.Named(), "") }
@@ -413,8 +413,8 @@ spec:
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if len(l.Index.Errors) != 0 {
-		t.Fatalf("deleted resource raw errors resurrected: %v", l.Index.Errors)
+	if len(retainedErrorsForTest(l)) != 0 {
+		t.Fatalf("deleted resource raw errors resurrected: %v", retainedErrorsForTest(l))
 	}
 	if _, exists := l.Index.Lookup(selected); exists || st.GetObject(selected) != nil {
 		t.Fatal("deleted raw resource resurrected")

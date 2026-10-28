@@ -189,7 +189,7 @@ func TestE2E_MissingCRDs_Policy(t *testing.T) {
 					t.Fatalf("build warning destination/count: stdout=%s stderr=%s", built, builtErr)
 				}
 				if tc.kind == manifest.KindCustomResourceDefinition && tc.supplied != "" {
-					docs, err := manifest.DecodeDocs(strings.NewReader(built))
+					docs, err := testutil.DecodeDocs(strings.NewReader(built))
 					if err != nil {
 						t.Fatal(err)
 					}

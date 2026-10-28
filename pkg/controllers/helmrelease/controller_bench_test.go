@@ -72,7 +72,7 @@ func BenchmarkHelmReleaseEmission_Children(b *testing.B) {
 			st := store.New()
 			c := &Controller{Controller: base.New(st, nil)}
 			parent := testutil.HelmReleaseID("apps", "parent")
-			docs := []map[string]any{tc.doc}
+			docs := testutil.DocumentOccurrences([]map[string]any{tc.doc})
 			b.ReportAllocs()
 			for b.Loop() {
 				publishDocuments(c, parent, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets, DefaultNamespace: ""})

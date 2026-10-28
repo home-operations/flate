@@ -3,6 +3,7 @@ package base
 import (
 	"slices"
 
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -14,7 +15,7 @@ type emissionProducer interface {
 // ParseChildren selects output and retains authoritative sanitized child documents.
 // Producer namespace policy overrides opts.DefaultNamespace; raw parents use that default.
 // The returned objects and maps MUST remain immutable after publication.
-func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []map[string]any, opts manifest.ParseDocOptions) ([]store.Child, []map[string]any) {
+func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []manifest.DocOccurrence, opts manifest.ParseDocOptions) ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
 	var policy manifest.EmissionPolicy
 	if producer, ok := parent.(emissionProducer); ok {
 		policy = producer.EmissionPolicy()
@@ -25,50 +26,45 @@ func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []map[stri
 		}
 	}
 	children := make([]store.Child, 0, len(docs))
-	retained := false
-	var visible []map[string]any
+	visible := docs
+	filtered := false
+	var failures []manifest.DocOccurrence
 	for i, doc := range docs {
-		output, child := policy.SelectDocument(doc, c.SkipKinds)
-		if !output {
-			if visible == nil {
-				visible = make([]map[string]any, i, len(docs))
-				copy(visible, docs[:i])
+		output, admit := policy.SelectDocument(doc.Document, c.SkipKinds)
+		outcome := doc
+		changed := false
+		if admit {
+			var child store.Child
+			child, outcome, changed = loader.Prepare(doc, opts)
+			if obj := child.Obj; outcome.Err == nil && obj != nil {
+				if policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
+					child.Obj = obj.WithNamespace(policy.Namespace)
+				}
+				if child.Obj.Named() != parent.Named() {
+					children = append(children, child)
+				}
 			}
 		}
-		if !child {
-			continue
+		if outcome.Err != nil {
+			failures = append(failures, outcome)
 		}
-		obj, authoritative, changed, err := manifest.ParseDoc(doc, opts)
-		if changed {
-			if !retained {
-				docs = slices.Clone(docs)
-				retained = true
-			}
-			docs[i] = authoritative
+		output = output && outcome.Document != nil
+		if !filtered && (!output || changed || doc.Err == nil && outcome.Err != nil) {
+			visible = make([]manifest.DocOccurrence, 0, len(docs))
+			visible = append(visible, docs[:i]...)
+			filtered = true
 		}
-		if visible != nil && output {
-			visible = append(visible, authoritative)
+		if filtered && output {
+			visible = append(visible, outcome)
 		}
-		if err != nil || obj == nil {
-			continue
-		}
-		if policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
-			obj = obj.WithNamespace(policy.Namespace)
-		}
-		if obj.Named() == parent.Named() {
-			continue
-		}
-		children = append(children, store.Child{Obj: obj, Doc: authoritative})
 	}
-	if visible != nil {
-		docs = visible
-	}
-	return children, docs
+	return children, visible, failures
 }
 
 // Emit extends changed-only selection before the single coherent publication.
 func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
-	original := next
+	children := next.Children
+	cloned := false
 	if next.Reads.Valid() {
 		for i, child := range next.Children {
 			if child.Obj == nil || child.Obj.Named() == id {
@@ -76,10 +72,9 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, paylo
 			}
 			obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
 			if obj != child.Obj {
-				if next == original {
-					cloned := *next
-					cloned.Children = slices.Clone(next.Children)
-					next = &cloned
+				if !cloned {
+					next.Children = slices.Clone(children)
+					cloned = true
 				}
 				next.Children[i].Obj = obj
 			}
@@ -87,12 +82,8 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, paylo
 		}
 	}
 	c.Store.RecordEmitted(id, next, payloads)
-	if next != original {
-		children := original.Children
-		*original = *next
-		if !next.Complete {
-			original.Children = children
-		}
+	if cloned && !next.Complete {
+		next.Children = children
 	}
 	if next.Complete {
 		if info, ok := c.Store.GetStatus(id); ok && info.Status == store.StatusPending {

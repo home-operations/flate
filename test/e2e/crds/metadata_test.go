@@ -74,7 +74,7 @@ spec:
 	first, _ := harness.RequireCLIOK(t, args...)
 	second, _ := harness.RequireCLIOK(t, args...)
 	assert.Equal(t, second, first)
-	docs, err := manifest.DecodeDocs(strings.NewReader(first))
+	docs, err := testutil.DecodeDocs(strings.NewReader(first))
 	assert.NoError(t, err)
 	seen := map[string]bool{}
 	for _, doc := range docs {

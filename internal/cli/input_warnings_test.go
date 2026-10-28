@@ -6,7 +6,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func TestRun_TestAll_IncompleteInputCoverage(t *testing.T) {
@@ -54,7 +53,7 @@ func TestRun_ChangedOnly_IncompleteInputCoverage(t *testing.T) {
 				t.Errorf("single run has comparison labels: stdout=%s stderr=%s", stdout, stderr)
 			}
 			if verb == "build" {
-				docs, err := manifest.SplitDocs([]byte(stdout))
+				docs, err := testutil.SplitDocs([]byte(stdout))
 				assert.NoError(t, err)
 				assert.Diff(t, docs, []map[string]any{{
 					"apiVersion": "v1", "kind": "ConfigMap",
@@ -85,7 +84,7 @@ func TestRun_BuildAll_FullTreeIncompleteInputCoverage(t *testing.T) {
 	if code != 0 || strings.Contains(stdout+stderr, "input coverage is incomplete") {
 		t.Fatalf("full build failed or reported changed-only uncertainty: code=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
-	docs, err := manifest.SplitDocs([]byte(stdout))
+	docs, err := testutil.SplitDocs([]byte(stdout))
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 2)
 	if !strings.Contains(stdout, "name: unchanged") || !strings.Contains(stdout, "name: stable-") ||

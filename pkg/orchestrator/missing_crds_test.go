@@ -144,7 +144,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 	if !ok || len(art.Manifests) != 2 {
 		t.Fatalf("ResourceSet artifact=%+v status=%+v present=%t inventory=%t", art, info, o.store.GetObject(id) != nil, o.store.HasInventory(id))
 	}
-	docs, err := manifest.DecodeDocs(strings.NewReader(issueResourceSet))
+	docs, err := testutil.DecodeDocs(strings.NewReader(issueResourceSet))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,8 +166,10 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 	}
 	slices.SortFunc(want, func(a, b map[string]any) int { return strings.Compare(manifest.DocKind(a), manifest.DocKind(b)) })
 	got := slices.Clone(art.Manifests)
-	slices.SortFunc(got, func(a, b map[string]any) int { return strings.Compare(manifest.DocKind(a), manifest.DocKind(b)) })
-	assert.Diff(t, got, want)
+	slices.SortFunc(got, func(a, b manifest.DocOccurrence) int {
+		return strings.Compare(manifest.DocKind(a.Document), manifest.DocKind(b.Document))
+	})
+	assert.Diff(t, testutil.DocumentMaps(got), want)
 }
 
 func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
@@ -558,10 +560,10 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			}
 			names := []string{}
 			for _, doc := range raw {
-				name, ns := manifest.DocMetadata(doc)
+				name, ns := manifest.DocMetadata(doc.Document)
 				names = append(names, name)
 				assert.Equal(t, ns, "")
-				assert.Equal(t, doc["spec"].(map[string]any)["value"].(string), name)
+				assert.Equal(t, doc.Document["spec"].(map[string]any)["value"].(string), name)
 			}
 			slices.Sort(names)
 			slices.Sort(wantNames)

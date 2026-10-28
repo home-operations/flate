@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/go-git/go-git/v5/config"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
@@ -840,7 +842,7 @@ spec: {url: 'https://fixture.invalid/other'}
 					t.Fatalf("healthy named sibling failed: exit=%d\n%s\n%s", code, stdout, stderr)
 				}
 			} else {
-				want := "decode"
+				want := "entry monitoring/blackbox-exporter.yaml"
 				if tc.graph {
 					want = "kustomize build monitoring"
 				}
@@ -880,7 +882,7 @@ fieldSpecs:
 	if first != second {
 		t.Fatal("projected bootstrap output changed between runs")
 	}
-	docs, err := manifest.SplitDocs([]byte(first))
+	docs, err := testutil.SplitDocs([]byte(first))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -956,7 +958,7 @@ spec: {url: https://must-not-run.invalid/charts}
 	if build != second {
 		t.Fatal("direct build output changed between runs")
 	}
-	docs, err := manifest.SplitDocs([]byte(build))
+	docs, err := testutil.SplitDocs([]byte(build))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -976,7 +978,7 @@ spec: {url: https://must-not-run.invalid/charts}
 	}
 	owned, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
-	ownedDocs, err := manifest.SplitDocs([]byte(owned))
+	ownedDocs, err := testutil.SplitDocs([]byte(owned))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1035,7 +1037,7 @@ spec: {url: https://must-not-run.invalid/charts}
 		if out != warm {
 			t.Fatal("excluded dependency output changed on a cache hit")
 		}
-		docs, err := manifest.SplitDocs([]byte(out))
+		docs, err := testutil.SplitDocs([]byte(out))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1066,7 +1068,7 @@ func TestE2E_SelectedKustomizeRootNestedOwner(t *testing.T) {
 		t.Fatal("selected entry output changed between runs")
 	}
 	t.Logf("full selected entry output:\n%s", out)
-	docs, err := manifest.SplitDocs([]byte(out))
+	docs, err := testutil.SplitDocs([]byte(out))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1250,6 +1252,217 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 					t.Fatalf("ownerless image diff (-want +got):\n%s", difference)
 				}
 			}
+		})
+	}
+}
+
+func TestE2E_AuthoritativeManifestFailures(t *testing.T) {
+	const release = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: invalid, namespace: flux-system}
+spec:
+  interval: []
+  suspend: true
+  chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system}}}
+`
+	for _, tc := range []struct {
+		name, document, patch, extra, producer, symptom string
+		failed                                          bool
+	}{
+		{name: "typed release", document: release, producer: "Kustomization/flux-system/owner", symptom: "cannot unmarshal", failed: true},
+		{name: "typed kustomization", document: testutil.KustomizationYAML("invalid", "flux-system", "  interval: []\n  path: ./child\n  sourceRef: {kind: GitRepository, name: flux-system}\n"), producer: "Kustomization/flux-system/owner", symptom: "cannot unmarshal", failed: true},
+		{name: "generated release", document: "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: generator, namespace: flux-system}\nspec:\n  resourcesTemplate: |\n    " + strings.ReplaceAll(strings.TrimSpace(release), "\n", "\n    ") + "\n", producer: "ResourceSet/flux-system/generator", symptom: "cannot unmarshal", failed: true},
+		{name: "patch-created release", document: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: invalid, namespace: flux-system}\n", patch: "patches:\n- target: {kind: ConfigMap, name: invalid}\n  patch: |-\n    - op: replace\n      path: /apiVersion\n      value: helm.toolkit.fluxcd.io/v2\n    - op: replace\n      path: /kind\n      value: HelmRelease\n    - op: add\n      path: /spec\n      value: {interval: [], suspend: true}\n", producer: "Kustomization/flux-system/owner", symptom: "cannot unmarshal", failed: true},
+		{name: "required syntax", document: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: broken}\nbroken: [\n", producer: "Kustomization/flux-system/owner", symptom: "did not find expected", failed: true},
+		{name: "repaired raw release", document: release, patch: "patches:\n- target: {kind: HelmRelease, name: invalid}\n  patch: |-\n    - op: replace\n      path: /spec/interval\n      value: 10m\n"},
+		{name: "incidental malformed and scalar", document: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\n", extra: "configMapGenerator:\n- name: settings\n  files: [settings.yaml]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.GitInit(t, dir)
+			testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [drivers.yaml]\n")
+			testutil.WriteFile(t, dir, "flux/drivers.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./app\n  sourceRef: {kind: GitRepository, name: flux-system}\n")+"---\n"+testutil.KustomizationYAML("healthy", "flux-system", "  path: ./healthy\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources: [child.yaml]\n"+tc.patch+tc.extra)
+			testutil.WriteFile(t, dir, "app/child.yaml", tc.document)
+			testutil.WriteFile(t, dir, "app/unrelated.yaml", "broken: [\n")
+			testutil.WriteFile(t, dir, "app/settings.yaml", "just scalar content\n")
+			testutil.WriteFile(t, dir, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, dir, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent-output}\n")
+			args := []string{"build", "all", "--path", filepath.Join(dir, "flux"), "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			want := 0
+			if tc.failed {
+				want = 1
+			}
+			if code != want || !strings.Contains(stdout, "independent-output") {
+				t.Fatalf("exit=%d want=%d\n%s\n%s", code, want, stdout, stderr)
+			}
+			producer := strings.SplitN(tc.producer, "/", 2)
+			if tc.failed && (!strings.Contains(stderr, producer[0]) || !strings.Contains(stderr, producer[1]) || strings.Count(stderr, tc.symptom) != 1) {
+				t.Fatalf("unstable or unowned failure:\n%s", stderr)
+			}
+			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			assert.Equal(t, nextCode, code)
+			assert.Equal(t, nextOut, stdout)
+			assert.Equal(t, nextErr, stderr)
+		})
+	}
+}
+
+func TestE2E_UnreadableManifestScope(t *testing.T) {
+	for _, owned := range []bool{true, false} {
+		name := "unowned nested census"
+		if owned {
+			name = "owned with independent sibling"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.GitInit(t, dir)
+			testutil.WriteFile(t, dir, "flux/kustomization.yaml", "resources: [drivers.yaml]\n")
+			drivers := testutil.KustomizationYAML("sibling", "flux-system", "  path: ./healthy\n  sourceRef: {kind: GitRepository, name: flux-system}\n")
+			if owned {
+				drivers += "---\n" + testutil.KustomizationYAML("owner", "flux-system", "  path: ./incidental/nested\n  sourceRef: {kind: GitRepository, name: flux-system}\n")
+			}
+			testutil.WriteFile(t, dir, "flux/drivers.yaml", drivers)
+			testutil.WriteFile(t, dir, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, dir, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent-output}\n")
+			builder := "resources: [unreadable.yaml]\n"
+			if !owned {
+				builder = "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n" + builder
+			}
+			testutil.WriteFile(t, dir, "incidental/nested/kustomization.yaml", builder)
+			assert.NoError(t, os.Symlink("missing.yaml", filepath.Join(dir, "incidental/nested/unreadable.yaml")))
+			args := []string{"build", "all", "--path", dir, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			want := 0
+			if owned {
+				want = 1
+			}
+			if code != want || !strings.Contains(stdout, "independent-output") {
+				t.Fatalf("exit=%d want=%d\n%s\n%s", code, want, stdout, stderr)
+			}
+			if owned {
+				if !strings.Contains(stderr, "flux-system/owner") || !strings.Contains(stderr, "unreadable.yaml") {
+					t.Fatalf("file failure lost its owner: %s", stderr)
+				}
+			} else if strings.Contains(stderr, "unreadable.yaml") {
+				t.Fatalf("incidental failure acquired authority: %s", stderr)
+			}
+			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			assert.Equal(t, nextCode, code)
+			assert.Equal(t, nextOut, stdout)
+			assert.Equal(t, nextErr, stderr)
+		})
+	}
+}
+
+func TestE2E_UnownedMalformedEntryAuthority(t *testing.T) {
+	for _, unreadable := range []bool{false, true} {
+		name := "malformed"
+		if unreadable {
+			name = "unreadable"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			testutil.GitInit(t, dir)
+			testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+			testutil.WriteFile(t, dir, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, dir, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: healthy-output}\n")
+			testutil.WriteFile(t, dir, "pkgdir/bad.yaml", "broken: [\n")
+			if unreadable {
+				assert.NoError(t, os.Remove(filepath.Join(dir, "pkgdir/bad.yaml")))
+				assert.NoError(t, os.Symlink("missing.yaml", filepath.Join(dir, "pkgdir/bad.yaml")))
+				testutil.WriteFile(t, dir, "pkgdir/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [bad.yaml]\n")
+			}
+			for _, tc := range []struct {
+				name, path string
+				failed     bool
+			}{
+				{name: "incidental nested file", path: dir},
+				{name: "explicit package entry", path: filepath.Join(dir, "pkgdir"), failed: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					args := []string{"build", "all", "--path", tc.path, "--no-progress", "--concurrency", "2", "--cache-dir", t.TempDir()}
+					stdout, stderr, code := harness.RunCLIBuffers(args...)
+					if tc.failed {
+						want := "entry pkgdir/bad.yaml: document 1"
+						if unreadable {
+							want = "bad.yaml"
+						}
+						if code != 1 || !strings.Contains(stderr, want) || strings.Contains(stderr, "flux-system/owner") {
+							t.Fatalf("explicit entry lost its input failure: exit=%d\n%s\n%s", code, stdout, stderr)
+						}
+					} else if code != 0 || !strings.Contains(stdout, "healthy-output") || strings.Contains(stderr, "bad.yaml") {
+						t.Fatalf("incidental file failed independent authority: exit=%d\n%s\n%s", code, stdout, stderr)
+					}
+					nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+					assert.Equal(t, nextCode, code)
+					assert.Equal(t, nextOut, stdout)
+					assert.Equal(t, nextErr, stderr)
+				})
+			}
+		})
+	}
+}
+
+func TestE2E_Diff_MalformedManifestTransitions(t *testing.T) {
+	for _, tc := range []struct{ name, side string }{
+		{name: "malformed to valid", side: "orig"},
+		{name: "valid to malformed", side: "current"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			orig, current := t.TempDir(), t.TempDir()
+			for _, dir := range []string{orig, current} {
+				testutil.GitInit(t, dir)
+				testutil.WriteFile(t, dir, "flux/ks.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./app\n  sourceRef: {kind: GitRepository, name: flux-system}\n")+"---\n"+testutil.KustomizationYAML("healthy", "flux-system", "  path: ./healthy\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
+				testutil.WriteFile(t, dir, "app/kustomization.yaml", "resources: [child.yaml]\n")
+				interval := "10m"
+				if tc.side == "orig" && dir == orig || tc.side == "current" && dir == current {
+					interval = "[]"
+				}
+				testutil.WriteFile(t, dir, "app/child.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: child, namespace: flux-system}\nspec: {interval: "+interval+", suspend: true, chart: {spec: {chart: charts/demo, sourceRef: {kind: GitRepository, name: flux-system}}}}\n")
+				testutil.WriteFile(t, dir, "healthy/kustomization.yaml", "resources: [cm.yaml]\n")
+				value := "old"
+				if dir == current {
+					value = "new"
+				}
+				testutil.WriteFile(t, dir, "healthy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: independent-output}\ndata: {value: "+value+"}\n")
+			}
+			cache := t.TempDir()
+			args := []string{"diff", "all", "--path", filepath.Join(current, "flux"), "--path-orig", filepath.Join(orig, "flux"), "--concurrency", "2", "--no-progress", "--cache-dir", cache, "-o", "json"}
+			stdout, stderr, code := harness.RunCLIBuffers(args...)
+			if code != 1 || !strings.Contains(stderr, "✗  "+tc.side+" snapshot: Kustomization  flux-system/owner") {
+				t.Fatalf("snapshot failure lost its owner: exit=%d\n%s\n%s", code, stdout, stderr)
+			}
+			if strings.Count(stderr, "snapshot: Kustomization  flux-system/owner") != 1 {
+				t.Fatalf("corrected side inherited failure:\n%s", stderr)
+			}
+			var result struct {
+				Changes    []struct{ Name string }
+				Suppressed []struct {
+					Parent       struct{ Name string }
+					Side, Reason string
+				}
+			}
+			if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Changes) != 1 || result.Changes[0].Name != "independent-output" || len(result.Suppressed) != 2 {
+				t.Fatalf("healthy diff or suppression lost:\n%s\n%s", stdout, stderr)
+			}
+			for _, note := range result.Suppressed {
+				if note.Parent.Name == "owner" {
+					if note.Side != tc.side || !strings.Contains(note.Reason, "cannot unmarshal") {
+						t.Fatalf("owner failure belongs to the wrong snapshot:\n%s", stdout)
+					}
+				} else if note.Parent.Name != "child" || note.Side != "both" || !strings.Contains(note.Reason, "suspended on") {
+					t.Fatalf("unexpected descendant suppression:\n%s", stdout)
+				}
+			}
+			nextOut, nextErr, nextCode := harness.RunCLIBuffers(args...)
+			assert.Equal(t, nextCode, code)
+			assert.Equal(t, nextOut, stdout)
+			assert.Equal(t, nextErr, stderr)
 		})
 	}
 }

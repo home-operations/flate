@@ -38,7 +38,7 @@ var errUncacheableRender = errors.New("uncacheable helm render")
 
 // Template renders a HelmRelease and returns independently owned documents.
 // The immutable receipt may be persisted after complete accepted publication.
-func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) ([]map[string]any, *manifest.RenderReceipt, error) {
+func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
 	prepared, err := c.prepareTemplate(ctx, hr, hrValues, input)
 	if err != nil {
 		return nil, nil, err
@@ -50,7 +50,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			return nil, nil, err
 		}
 	}
-	render := func(ctx context.Context, cacheErr error) ([]map[string]any, *manifest.RenderReceipt, error) {
+	render := func(ctx context.Context, cacheErr error) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
 		err := c.decodeChart(ctx, &loaded)
 		if err != nil {
 			return nil, nil, err
@@ -118,12 +118,12 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 
 		skipTests := opts.SkipTests || hr.Test == nil || !hr.Test.Enable
 		out := releaseManifest(relV1, opts, disableHooks, skipTests)
-		docs, err := manifest.SplitDocs([]byte(out))
+		docs, err := manifest.DecodeDocs(strings.NewReader(out), manifest.RequiredDocuments)
 		if err != nil {
 			return nil, nil, err
 		}
 		var receipt *manifest.RenderReceipt
-		if key != "" && utf8.ValidString(out) && validChartTemplates(loaded.chart) {
+		if key != "" && manifest.DocumentFailure(docs) == nil && utf8.ValidString(out) && validChartTemplates(loaded.chart) {
 			payload, err := manifest.EncodeRender(docs)
 			if err != nil {
 				return nil, nil, err
@@ -131,18 +131,14 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			frame := renderFrame{header: renderHeader{Key: key, Analysis: loaded.analysis}, binding: prepared.binding, chart: loaded.chart, output: payload}
 			receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 		}
-		docs, err = normalizeLists(docs)
-		if err != nil {
-			return nil, nil, err
-		}
-		return docs, receipt, nil
+		return normalizeLists(docs), receipt, nil
 	}
 	if key == "" || loaded.valuesErr != nil || capabilityErr != nil {
 		return render(ctx, nil)
 	}
 	// Callback state MUST share one allocation to preserve cache-hit allocation counts.
 	var result struct {
-		docs     []map[string]any
+		docs     []manifest.DocOccurrence
 		produced *renderRecord
 		receipt  *manifest.RenderReceipt
 	}
@@ -233,8 +229,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 		return render(ctx, err)
 	}
-	docs, err := normalizeLists(result.docs)
-	return docs, result.receipt, err
+	return normalizeLists(result.docs), result.receipt, nil
 }
 
 type templateRequest struct {
@@ -281,35 +276,39 @@ func (c *Client) prepareTemplate(ctx context.Context, hr *manifest.HelmRelease, 
 	return templateRequest{loaded: loaded, caps: caps, capabilityErr: capabilityErr, key: key, values: hrValues, binding: binding}, nil
 }
 
-func normalizeLists(docs []map[string]any) ([]map[string]any, error) {
-	var out []map[string]any
+func normalizeLists(docs []manifest.DocOccurrence) []manifest.DocOccurrence {
+	var out []manifest.DocOccurrence
 	for i, doc := range docs {
-		if _, selected := doc["items"]; !selected {
+		if _, selected := doc.Document["items"]; !selected || doc.Err != nil {
 			if out != nil {
 				out = append(out, doc)
 			}
 			continue
 		}
 		if out == nil {
-			out = make([]map[string]any, 0, len(docs))
+			out = make([]manifest.DocOccurrence, 0, len(docs))
 			out = append(out, docs[:i]...)
 		}
-		data, err := yamlv4.Marshal(doc)
+		data, err := yamlv4.Marshal(doc.Document)
 		if err != nil {
-			return nil, fmt.Errorf("%w: encode helm list: %w", manifest.ErrInput, err)
+			doc.Err = fmt.Errorf("%w: encode helm list: %w", manifest.ErrInput, err)
+			out = append(out, doc)
+			continue
 		}
 		infos, err := resource.NewLocalBuilder().ContinueOnError().Unstructured().Flatten().Stream(bytes.NewReader(data), "").Do().Infos()
 		if err != nil {
-			return nil, fmt.Errorf("%w: normalize helm list: %w", manifest.ErrInput, err)
+			doc.Err = fmt.Errorf("%w: normalize helm list: %w", manifest.ErrInput, err)
+			out = append(out, doc)
+			continue
 		}
 		for _, info := range infos {
-			out = append(out, info.Object.(*unstructured.Unstructured).Object)
+			out = append(out, manifest.DocOccurrence{Document: info.Object.(*unstructured.Unstructured).Object, Ordinal: doc.Ordinal})
 		}
 	}
 	if out == nil {
-		return docs, nil
+		return docs
 	}
-	return out, nil
+	return out
 }
 
 func validChartTemplates(ch *chart.Chart) bool {
@@ -329,9 +328,12 @@ func validChartTemplates(ch *chart.Chart) bool {
 func validateCRDs(ch *chart.Chart) error {
 	crds := ch.CRDObjects()
 	for _, crd := range crds {
-		docs, err := manifest.DecodeDocs(crdReader(crd))
+		docs, err := manifest.DecodeDocs(crdReader(crd), manifest.RequiredDocuments)
 		for _, doc := range docs {
-			manifest.ReleaseDoc(doc)
+			manifest.ReleaseDoc(doc.Document)
+		}
+		if err == nil {
+			err = manifest.DocumentFailure(docs)
 		}
 		if err == nil {
 			continue
@@ -341,9 +343,12 @@ func validateCRDs(ch *chart.Chart) error {
 		for i, crd := range crds {
 			readers[i] = crdReader(crd)
 		}
-		docs, fullErr := manifest.DecodeDocs(io.MultiReader(readers...))
+		docs, fullErr := manifest.DecodeDocs(io.MultiReader(readers...), manifest.RequiredDocuments)
 		for _, doc := range docs {
-			manifest.ReleaseDoc(doc)
+			manifest.ReleaseDoc(doc.Document)
+		}
+		if fullErr == nil {
+			fullErr = manifest.DocumentFailure(docs)
 		}
 		if fullErr != nil {
 			return fullErr

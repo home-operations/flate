@@ -98,7 +98,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 					t.Helper()
 					identity.Kind, identity.LocalPath, identity.FS = manifest.KindOCIRepository, dir, held
 					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &identity)
-					out, receipt1, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+					out, receipt1, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
 					if err == nil {
 						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt1, emptyRenderInventory); recordErr != nil {
 							t.Fatal(recordErr)
@@ -127,7 +127,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 						t.Fatal("render did not cache values under its effective fingerprint")
 					}
 					key := computeTemplateKey(loaded, merged.merged, opts, hr)
-					repeated, receipt2, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+					repeated, receipt2, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
 					if err == nil {
 						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt2, emptyRenderInventory); recordErr != nil {
 							t.Fatal(recordErr)
@@ -167,7 +167,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 				assert.Diff(t, hr, original)
 				for _, revision := range []string{"6.14.0@" + next, "invalid"} {
 					st.SetArtifact(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "podinfo"}, &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: held, LocalPath: dir, Digest: next, Revision: revision})
-					_, receipt3, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+					_, receipt3, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
 					if err == nil {
 						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt3, emptyRenderInventory); recordErr != nil {
 							t.Fatal(recordErr)
@@ -192,7 +192,7 @@ func TestTemplateCache_OCIIdentity(t *testing.T) {
 		resolver := &changingChartReader{sourceReader: st, artifacts: []*store.SourceArtifact{first, second}}
 		cli := NewClient(cachetest.New(t, "", cache.New))
 		cliSources := NewSources(resolver)
-		out, receipt4, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		out, receipt4, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
 			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt4, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -304,7 +304,7 @@ data:
 
 		var record renderRecord
 		assert.NoError(t, decodeTestRecord(data, &record))
-		docs, err := manifest.DecodeRender(record.Output)
+		docs, err := testutil.DecodeRender(record.Output)
 		assert.NoError(t, err)
 		return docs
 	}
@@ -330,7 +330,7 @@ data:
 		t.Fatalf("cold lookup: got %v, want not found", err)
 	}
 	t.Log("direct cold lookup: not found")
-	cold, receipt5, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	cold, receipt5, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 	if err == nil {
 		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt5, emptyRenderInventory); recordErr != nil {
 			t.Fatal(recordErr)
@@ -345,7 +345,7 @@ data:
 	}
 	assert.Diff(t, readBlob(t, owner, key), cold)
 	t.Log("direct cold publication: exact constructed documents")
-	second, receipt6, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	second, receipt6, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 	if err == nil {
 		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt6, emptyRenderInventory); recordErr != nil {
 			t.Fatal(recordErr)
@@ -356,7 +356,7 @@ data:
 	assert.Diff(t, second, cold)
 	marked := append(slices.Clone(cold), map[string]any{"witness": "persisted-subchart-hit"})
 	writeBlob(t, owner, key, marked)
-	warm, receipt7, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	warm, receipt7, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 	if err == nil {
 		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt7, emptyRenderInventory); recordErr != nil {
 			t.Fatal(recordErr)
@@ -372,7 +372,7 @@ data:
 	reopenedKey := keyFor(t, cli, cliSources)
 	_, _, _, lookupErr := owner.Blob(t.Context(), reopenedKey, cache.Policy{MaxAge: cache.Forever}, nil)
 	t.Logf("fresh-owner direct lookup: %v", lookupErr)
-	reopened, receipt8, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	reopened, receipt8, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 	if err == nil {
 		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt8, emptyRenderInventory); recordErr != nil {
 			t.Fatal(recordErr)
@@ -384,7 +384,7 @@ data:
 		t.Fatalf("fresh owner/client rerendered unchanged subcharts: marker absent=%v, fresh bytes equal cold=%v", !hasRenderField(reopened, "witness", "persisted-subchart-hit"), reflect.DeepEqual(reopened, cold))
 	}
 	writeBlob(t, owner, reopenedKey, cold)
-	restored, receipt9, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	restored, receipt9, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 	if err == nil {
 		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt9, emptyRenderInventory); recordErr != nil {
 			t.Fatal(recordErr)
@@ -430,7 +430,7 @@ data:
 			if !errors.Is(err, errdef.ErrNotFound) {
 				t.Fatalf("edited child lookup: got %v, want not found", err)
 			}
-			out, receipt10, err := next.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: nextSources})
+			out, receipt10, err := testutil.RenderMaps(next.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: nextSources}))
 			if err == nil {
 				if recordErr := next.RecordRender(t.Context(), (hr).Named(), receipt10, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -467,7 +467,7 @@ func TestTemplateCache_NonOCITrackingMode(t *testing.T) {
 			var key string
 			for _, disabled := range []bool{false, true} {
 				opts := Options{DisableChartDigestTracking: disabled}
-				out, receipt11, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+				out, receipt11, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
 				if err == nil {
 					if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt11, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -690,7 +690,7 @@ func TestTemplateCache_TemplateIntegration(t *testing.T) {
 			input := RenderOptions{Sources: sources}
 			prepared, err := cli.prepareTemplate(t.Context(), hr, values, input)
 			assert.NoError(t, err)
-			docs, receipt, err := cli.Template(t.Context(), hr, values, input)
+			docs, receipt, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 			assert.NoError(t, err)
 			if len(docs) != 1 || receipt == nil {
 				t.Fatalf("fresh render %s returned %d documents and receipt %v", marker, len(docs), receipt)
@@ -705,7 +705,7 @@ func TestTemplateCache_TemplateIntegration(t *testing.T) {
 			if frame.chart != nil || frame.encoded != nil {
 				t.Fatal("fresh receipt retained noncompact backing")
 			}
-			again, reused, err := cli.Template(t.Context(), hr, values, input)
+			again, reused, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 			assert.NoError(t, err)
 			assert.Diff(t, docs, again)
 			cached := reused.Value().(renderFrame)
@@ -743,7 +743,7 @@ items:
 			owner := cachetest.New(t, root, cache.New)
 			cli := NewClient(owner)
 			sources := localChartResolver(t, "chart-repo", "flux-system", dir)
-			first, receipt, firstErr := cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: sources})
+			first, receipt, firstErr := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: sources}))
 			if tc.invalid {
 				if !errors.Is(firstErr, manifest.ErrInput) || first != nil {
 					t.Fatalf("cold invalid list = %#v, %v", first, firstErr)
@@ -763,7 +763,7 @@ items:
 				assert.NoError(t, loaded.valuesErr)
 				key := cache.BlobKey{Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()), Render: cache.RenderAccepted}
 				if tc.invalid {
-					raw, err := manifest.SplitDocs([]byte(tc.input))
+					raw, err := testutil.SplitDocs([]byte(tc.input))
 					assert.NoError(t, err)
 					record := renderRecord{Output: encodedRender(t, raw), Analysis: loaded.analyze()}
 					_, _, _, err = owner.Blob(t.Context(), key, cache.Policy{}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
@@ -777,9 +777,9 @@ items:
 				var record renderRecord
 				assert.NoError(t, readTestRecord(r, &record))
 
-				raw, err := manifest.DecodeRender(record.Output)
+				raw, err := testutil.DecodeRender(record.Output)
 				assert.NoError(t, err)
-				wantRaw, err := manifest.SplitDocs([]byte(tc.input))
+				wantRaw, err := testutil.SplitDocs([]byte(tc.input))
 				assert.NoError(t, err)
 				assert.Diff(t, raw, wantRaw)
 				values := map[string]any{"fail": true}
@@ -790,7 +790,7 @@ items:
 				assert.NoError(t, err)
 				assert.NoError(t, owner.Close())
 				fresh := NewClient(cachetest.New(t, root, cache.New))
-				out, _, err := fresh.Template(t.Context(), newHR(), values, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				out, _, err := testutil.RenderMaps(fresh.Template(t.Context(), newHR(), values, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 				if tc.invalid {
 					if !errors.Is(err, manifest.ErrInput) || err.Error() != firstErr.Error() || out != nil {
 						t.Fatalf("persisted invalid list = %#v, %v; cold = %v", out, err, firstErr)
@@ -824,7 +824,7 @@ items:
 					wg.Go(func() {
 						<-start
 						var err error
-						outputs[i], _, err = cli.Template(t.Context(), newHR(), map[string]any{"probe": probe}, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+						outputs[i], _, err = testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"probe": probe}, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 						assert.NoError(t, err)
 					})
 				}
@@ -833,7 +833,7 @@ items:
 				assert.Equal(t, len(probe), 1)
 				assert.Diff(t, outputs[0], outputs[1])
 				outputs[0][0]["data"].(map[string]any)["action"] = "mutated"
-				again, _, err := cli.Template(t.Context(), newHR(), map[string]any{"probe": probe}, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+				again, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"probe": probe}, RenderOptions{Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 				assert.NoError(t, err)
 				assert.Diff(t, again, outputs[1])
 				assert.Equal(t, len(probe), 1)
@@ -869,10 +869,10 @@ items:
 					values["unused"] = func() {}
 				}
 				var key string
-				out, _, err := cli.Template(t.Context(), hr, values, RenderOptions{Sources: cliSources, Admit: func(value string) (bool, error) {
+				out, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Sources: cliSources, Admit: func(value string) (bool, error) {
 					key = value
 					return false, nil
-				}})
+				}}))
 				assert.Equal(t, key != "", keyed)
 				assert.Equal(t, len(probe), i+1)
 				if len(out) != 0 || err == nil || !strings.HasPrefix(err.Error(), "helm template default/demo: ") || !strings.Contains(err.Error(), want) {
@@ -896,7 +896,7 @@ items:
 		for range 2 {
 			cli := NewClient(cachetest.New(t, root, cache.New))
 			cliSources := localChartResolver(t, "chart-repo", "flux-system", dir)
-			docs, receipt12, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: cliSources})
+			docs, receipt12, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Sources: cliSources}))
 			if err == nil {
 				if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt12, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -916,7 +916,7 @@ items:
 				var record renderRecord
 				assert.NoError(t, readTestRecord(r, &record))
 
-				decoded, err := manifest.DecodeRender(record.Output)
+				decoded, err := testutil.DecodeRender(record.Output)
 				assert.NoError(t, err)
 				assert.Equal(t, len(decoded), 0)
 			}
@@ -959,7 +959,7 @@ extra: {sequence: [{value: original}]}
 			st.SetArtifact(newHR().ChartSource(), &store.SourceArtifact{FS: input})
 			resolver := NewSources(st)
 			cliSources := resolver
-			first, receipt13, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Options: Options{}, Sources: cliSources})
+			first, receipt13, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Options: Options{}, Sources: cliSources}))
 			if err == nil {
 				if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt13, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -972,7 +972,7 @@ extra: {sequence: [{value: original}]}
 			canonical, err := loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 			assert.NoError(t, err)
 			beforeReads := reads["mychart/templates/configmap.yaml"]
-			second, receipt14, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Options: Options{}, Sources: cliSources})
+			second, receipt14, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Options: Options{}, Sources: cliSources}))
 			if err == nil {
 				if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt14, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -984,13 +984,13 @@ extra: {sequence: [{value: original}]}
 			}
 			assert.Diff(t, second, first)
 			admittedKey := ""
-			blocked, receipt15, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{
+			blocked, receipt15, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{
 				Sources: cliSources,
 				Admit: func(key string) (bool, error) {
 					admittedKey = key
 					return true, nil
 				},
-			})
+			}))
 			if err == nil {
 				if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt15, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -1009,7 +1009,7 @@ extra: {sequence: [{value: original}]}
 			assert.NoError(t, err)
 			assert.Equal(t, warm.chart == canonical.chart, true)
 			assert.Equal(t, warm.fingerprint, canonical.fingerprint)
-			third, receipt16, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "different"}, RenderOptions{Options: Options{}, Sources: cliSources})
+			third, receipt16, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"greeting": "different"}, RenderOptions{Options: Options{}, Sources: cliSources}))
 			if err == nil {
 				if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt16, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -1043,7 +1043,7 @@ extra: {sequence: [{value: original}]}
 			cliSources = resolver
 			loaded, err = loadDecodedChart(t.Context(), cli, newHR(), cliSources)
 			assert.NoError(t, err)
-			out, receipt17, err := cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources})
+			out, receipt17, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources}))
 			if err == nil {
 				if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt17, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -1057,7 +1057,7 @@ extra: {sequence: [{value: original}]}
 				}
 				out[0]["data"].(map[string]any)["greeting"] = "mutated"
 				out[0]["extra"].(map[string]any)["sequence"].([]any)[0].(map[string]any)["value"] = "mutated"
-				again, receipt18, err := cli.Template(t.Context(), newHR(), values, RenderOptions{Sources: cliSources})
+				again, receipt18, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), values, RenderOptions{Sources: cliSources}))
 				if err == nil {
 					if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt18, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1068,7 +1068,7 @@ extra: {sequence: [{value: original}]}
 				assert.Diff(t, again, first)
 				fresh := NewClient(cachetest.New(t, root, cache.New))
 				var receipt19 *manifest.RenderReceipt
-				again, receipt19, err = fresh.Template(t.Context(), newHR(), values, RenderOptions{Sources: cliSources})
+				again, receipt19, err = testutil.RenderMaps(fresh.Template(t.Context(), newHR(), values, RenderOptions{Sources: cliSources}))
 				if err == nil {
 					if recordErr := fresh.RecordRender(t.Context(), (newHR()).Named(), receipt19, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1080,7 +1080,7 @@ extra: {sequence: [{value: original}]}
 				initial, err := cli.describeChart(t.Context(), newHR(), cliSources)
 				assert.NoError(t, err)
 				var receipt20 *manifest.RenderReceipt
-				_, receipt20, err = cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources})
+				_, receipt20, err = testutil.RenderMaps(cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources}))
 				if err == nil {
 					if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt20, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1106,7 +1106,7 @@ extra: {sequence: [{value: original}]}
 				assert.Equal(t, cache.AcquisitionIdentity(r) != initial.record.identity, true)
 
 				var receipt21 *manifest.RenderReceipt
-				_, receipt21, err = cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources})
+				_, receipt21, err = testutil.RenderMaps(cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources}))
 				if err == nil {
 					if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt21, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1135,7 +1135,7 @@ extra: {sequence: [{value: original}]}
 					})
 					assert.NoError(t, err)
 
-					out, receipt22, err := cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources})
+					out, receipt22, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), alternate, RenderOptions{Options: Options{}, Sources: cliSources}))
 					if err == nil {
 						if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt22, emptyRenderInventory); recordErr != nil {
 							t.Fatal(recordErr)
@@ -1172,7 +1172,7 @@ extra: {sequence: [{value: original}]}
 
 				beforeRecovery, err := cli.describeChart(t.Context(), newHR(), cliSources)
 				assert.NoError(t, err)
-				recovered, receipt23, err := cli.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources})
+				recovered, receipt23, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources}))
 				if err == nil {
 					if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt23, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1186,7 +1186,7 @@ extra: {sequence: [{value: original}]}
 				if afterRecovery.record == beforeRecovery.record || afterRecovery.record == nil {
 					t.Fatal("recovered generation did not replace the typed record")
 				}
-				recoveredOutput, err := manifest.DecodeRender(afterRecovery.record.Output)
+				recoveredOutput, err := testutil.DecodeRender(afterRecovery.record.Output)
 				assert.NoError(t, err)
 				assert.Diff(t, recoveredOutput, first)
 				r, _, _, err = cli.cache.Blob(t.Context(), recoveryKey, cache.Policy{MaxAge: cache.Forever}, nil)
@@ -1194,11 +1194,11 @@ extra: {sequence: [{value: original}]}
 				var replacement renderRecord
 				assert.NoError(t, readTestRecord(r, &replacement))
 
-				decoded, err := manifest.DecodeRender(replacement.Output)
+				decoded, err := testutil.DecodeRender(replacement.Output)
 				assert.NoError(t, err)
 				assert.Diff(t, decoded, first)
 				var receipt24 *manifest.RenderReceipt
-				again, receipt24, err = cli.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources})
+				again, receipt24, err = testutil.RenderMaps(cli.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources}))
 				if err == nil {
 					if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt24, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1209,7 +1209,7 @@ extra: {sequence: [{value: original}]}
 				assert.Diff(t, again, first)
 				reopened := NewClient(cachetest.New(t, root, cache.New))
 				var receipt25 *manifest.RenderReceipt
-				again, receipt25, err = reopened.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources})
+				again, receipt25, err = testutil.RenderMaps(reopened.Template(t.Context(), newHR(), recoveryValues, RenderOptions{Sources: cliSources}))
 				if err == nil {
 					if recordErr := reopened.RecordRender(t.Context(), (newHR()).Named(), receipt25, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1227,7 +1227,7 @@ extra: {sequence: [{value: original}]}
 			assert.Equal(t, warm.chart == loaded.chart, true)
 			assert.Equal(t, warm.fingerprint, loaded.fingerprint)
 			values["greeting"] = "changed"
-			_, receipt26, err := cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources})
+			_, receipt26, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), values, RenderOptions{Options: Options{}, Sources: cliSources}))
 			if err == nil {
 				if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt26, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -1243,7 +1243,7 @@ extra: {sequence: [{value: original}]}
 				if err == nil {
 					t.Fatal("backing removal did not prevent chart reads")
 				}
-				repeated, receipt27, err := cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Sources: cliSources})
+				repeated, receipt27, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"greeting": "hi"}, RenderOptions{Sources: cliSources}))
 				if err == nil {
 					if recordErr := cli.RecordRender(t.Context(), (newHR()).Named(), receipt27, emptyRenderInventory); recordErr != nil {
 						t.Fatal(recordErr)
@@ -1294,7 +1294,7 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 	cli, cliSources := newClient()
 	for _, disable := range []bool{false, true, false, true, false} {
 		opts := Options{DisableChartDigestTracking: disable}
-		out, receipt28, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
+		out, receipt28, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
 		if err == nil {
 			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt28, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1312,7 +1312,7 @@ func TestTemplateCache_ChartDigestTrackingOptions(t *testing.T) {
 			t.Fatalf("disable=%v returned incompatible output:\n%s", disable, out)
 		}
 		freshClient, freshSources := newClient()
-		fresh, receipt29, err := freshClient.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: freshSources})
+		fresh, receipt29, err := testutil.RenderMaps(freshClient.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: freshSources}))
 		if err == nil {
 			if recordErr := freshClient.RecordRender(t.Context(), (hr).Named(), receipt29, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1347,7 +1347,7 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 			hr := newHR()
 			if fault == "lookup" || fault == "read" {
 				for range 2 {
-					_, receipt30, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+					_, receipt30, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 					if err == nil {
 						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt30, emptyRenderInventory); recordErr != nil {
 							t.Fatal(recordErr)
@@ -1379,7 +1379,7 @@ func TestTemplateCache_StorageFailures(t *testing.T) {
 				assert.NoError(t, os.RemoveAll(root))
 			}
 			for range 2 {
-				out, receipt31, err := cli.Template(t.Context(), hr, nil, RenderOptions{Sources: cliSources})
+				out, receipt31, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Sources: cliSources}))
 				if err == nil {
 					err = cli.RecordRender(t.Context(), (hr).Named(), receipt31, emptyRenderInventory)
 				}
@@ -1447,7 +1447,7 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 			hr := newHR()
 			hr.Install = &helmv2.Install{DisableHooks: state.install}
 			hr.Upgrade = &helmv2.Upgrade{DisableHooks: state.upgrade}
-			out, receipt32, err := warm.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: warmSources})
+			out, receipt32, err := testutil.RenderMaps(warm.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: warmSources}))
 			if err == nil {
 				if recordErr := warm.RecordRender(t.Context(), (hr).Named(), receipt32, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -1461,7 +1461,7 @@ func TestTemplateCache_ActionHookPolicy(t *testing.T) {
 			freshHR := newHR()
 			freshHR.Install = &helmv2.Install{DisableHooks: state.install}
 			freshHR.Upgrade = &helmv2.Upgrade{DisableHooks: state.upgrade}
-			uncached, receipt33, err := fresh.Template(t.Context(), freshHR, nil, RenderOptions{Options: opts, Sources: freshSources})
+			uncached, receipt33, err := testutil.RenderMaps(fresh.Template(t.Context(), freshHR, nil, RenderOptions{Options: opts, Sources: freshSources}))
 			if err == nil {
 				if recordErr := fresh.RecordRender(t.Context(), (freshHR).Named(), receipt33, emptyRenderInventory); recordErr != nil {
 					t.Fatal(recordErr)
@@ -1504,7 +1504,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 	owner := cachetest.New(t, cacheRoot, cache.New)
 	cli := NewClient(owner)
 	cliSources := NewSources(st)
-	first, receipt34, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+	first, receipt34, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 	if err == nil {
 		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt34, emptyRenderInventory); recordErr != nil {
 			t.Fatal(recordErr)
@@ -1525,7 +1525,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		owner := cachetest.New(t, cacheRoot, cache.New)
 		cli := NewClient(owner)
 		cliSources := NewSources(st)
-		first, receipt35, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		first, receipt35, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
 			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt35, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1548,7 +1548,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 
 		var record renderRecord
 		assert.NoError(t, decodeTestRecord(data, &record))
-		decoded, err := manifest.DecodeRender(record.Output)
+		decoded, err := testutil.DecodeRender(record.Output)
 		assert.NoError(t, err)
 		assert.Diff(t, decoded, first)
 		cached := append(slices.Clone(first), map[string]any{"witness": "persistent hit witness"})
@@ -1560,7 +1560,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 
 		fresh := NewClient(cachetest.New(t, cacheRoot, cache.New))
 		freshSources := NewSources(st)
-		hit, receipt36, err := fresh.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: freshSources})
+		hit, receipt36, err := testutil.RenderMaps(fresh.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: freshSources}))
 		if err == nil {
 			if recordErr := fresh.RecordRender(t.Context(), (hr).Named(), receipt36, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1587,7 +1587,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		owner := cachetest.New(t, cacheRoot, cache.New)
 		cli := NewClient(owner)
 		cliSources := NewSources(st)
-		first, receipt37, err := cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		first, receipt37, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
 			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt37, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1611,7 +1611,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 
 		var record renderRecord
 		assert.NoError(t, decodeTestRecord(data, &record))
-		decoded, err := manifest.DecodeRender(record.Output)
+		decoded, err := testutil.DecodeRender(record.Output)
 		assert.NoError(t, err)
 		assert.Diff(t, decoded, first)
 		if record.Analysis == nil {
@@ -1622,7 +1622,7 @@ func TestTemplateCache_SourceRootValuesFiles(t *testing.T) {
 		st.SetArtifact(sourceHR.ChartSource(), artifact)
 		fresh := NewClient(cachetest.New(t, cacheRoot, cache.New))
 		freshSources := NewSources(st)
-		out, receipt38, err := fresh.Template(t.Context(), sourceHR, nil, RenderOptions{Options: Options{}, Sources: freshSources})
+		out, receipt38, err := testutil.RenderMaps(fresh.Template(t.Context(), sourceHR, nil, RenderOptions{Options: Options{}, Sources: freshSources}))
 		if err == nil {
 			if recordErr := fresh.RecordRender(t.Context(), (sourceHR).Named(), receipt38, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1657,7 +1657,7 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 		} else {
 			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
 		}
-		out, receipt39, err := c.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		out, receipt39, err := testutil.RenderMaps(c.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
 			if recordErr := c.RecordRender(t.Context(), (hr).Named(), receipt39, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1672,7 +1672,7 @@ func (c *Client) assertSourceValuesChanges(t *testing.T, hr *manifest.HelmReleas
 		if !hasRenderField(out, "marker", want) {
 			t.Fatal(out)
 		}
-		repeated, receipt40, err := c.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
+		repeated, receipt40, err := testutil.RenderMaps(c.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
 			if recordErr := c.RecordRender(t.Context(), (hr).Named(), receipt40, emptyRenderInventory); recordErr != nil {
 				t.Fatal(recordErr)
@@ -1705,7 +1705,7 @@ func TestSources_SelectedRevision(t *testing.T) {
 			var reads store.ReadSet
 			reads.Init(st, hr.Named(), nil)
 			defer reads.Close()
-			_, _, err := client.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(&reads)})
+			_, _, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, RenderOptions{Sources: NewSources(&reads)}))
 			assert.NoError(t, err)
 			next := *artifact
 			next.Revision = "6.16.0"

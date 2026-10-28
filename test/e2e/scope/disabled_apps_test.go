@@ -29,7 +29,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 				if code != 0 || strings.Contains(stderr, "dial tcp") {
 					t.Fatalf("nested build exit=%d output=%s stderr=%s", code, out, stderr)
 				}
-				docs, err := manifest.SplitDocs([]byte(out))
+				docs, err := testutil.SplitDocs([]byte(out))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -91,7 +91,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("shared active target exit=%d stderr=%s", code, stderr)
 		}
-		docs, err := manifest.SplitDocs([]byte(out))
+		docs, err := testutil.SplitDocs([]byte(out))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 				if code != 0 || first != second {
 					t.Fatal("identical inputs changed output bytes")
 				}
-				docs, err := manifest.SplitDocs([]byte(first))
+				docs, err := testutil.SplitDocs([]byte(first))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -212,7 +212,7 @@ func TestE2E_DisabledAppDiffSides(t *testing.T) {
 		}
 		checkBuild := func(t *testing.T, out, namespace, value string) {
 			t.Helper()
-			docs, err := manifest.SplitDocs([]byte(out))
+			docs, err := testutil.SplitDocs([]byte(out))
 			assert.NoError(t, err)
 			var identities []manifest.NamedResource
 			for _, doc := range docs {

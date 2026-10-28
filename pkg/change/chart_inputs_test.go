@@ -143,7 +143,6 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 			}
 			r, _ := l.Index.Lookup(source.Named())
 			assert.Equal(t, len(r.Inputs), 0)
-			assert.Equal(t, len(l.Index.Errors), 0)
 			assert.Equal(t, len(l.Index.Records[release.Named()].Inputs), 0)
 			assert.Equal(t, observed.opens[path.Join(location, "templates/cm.yaml")], 0)
 			assert.Equal(t, observed.directories[location] <= 1, true)

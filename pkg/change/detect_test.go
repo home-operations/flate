@@ -790,7 +790,7 @@ func TestCollectInputs_ParseFailureDrain(t *testing.T) {
 	}
 	f, err := probe.Open("input.yaml")
 	assert.NoError(t, err)
-	_, err = manifest.DecodeDocs(f)
+	_, err = testutil.DecodeDocs(f)
 	assert.NoError(t, f.Close())
 	if err == nil || probeReads != 1 {
 		t.Fatalf("malformed fixture must stop before the later read: reads=%d error=%v", probeReads, err)

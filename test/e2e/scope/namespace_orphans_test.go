@@ -77,7 +77,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			if code != wantCode {
 				t.Errorf("build exit=%d want=%d stderr=%s", code, wantCode, stderr)
 			}
-			docs, err := manifest.SplitDocs([]byte(out))
+			docs, err := testutil.SplitDocs([]byte(out))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -135,7 +135,7 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 							}
 							raw := make(map[string]string)
 							for body := range strings.SplitSeq(out, "---\n") {
-								docs, err := manifest.SplitDocs([]byte(body))
+								docs, err := testutil.SplitDocs([]byte(body))
 								if err != nil {
 									t.Fatal(err)
 								}
@@ -204,7 +204,7 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			}
 			buildArgs := append([]string{"build", "all", "-o", "yaml"}, flags...)
 			build, _ := harness.RequireCLIOK(t, buildArgs...)
-			docs, err := manifest.SplitDocs([]byte(build))
+			docs, err := testutil.SplitDocs([]byte(build))
 			if err != nil {
 				t.Fatal(err)
 			}

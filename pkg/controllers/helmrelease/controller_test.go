@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/internal/filtertest"
 	"os"
 	"slices"
 	"strings"
@@ -13,6 +12,8 @@ import (
 	"testing/fstest"
 	"testing/synctest"
 	"time"
+
+	"github.com/home-operations/flate/internal/filtertest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -321,8 +322,8 @@ func TestMaterializeHelmChartSource_SharedSourceCompletes(t *testing.T) {
 						}
 						authored := false
 						for _, doc := range retained.Manifests {
-							if manifest.DocKind(doc) == manifest.KindHelmChart {
-								name, namespace := manifest.DocMetadata(doc)
+							if manifest.DocKind(doc.Document) == manifest.KindHelmChart {
+								name, namespace := manifest.DocMetadata(doc.Document)
 								if name == source.Name {
 									t.Fatal("synthetic C leaked to output")
 								}
@@ -518,10 +519,10 @@ data:
 	if !ok {
 		t.Fatal("HelmRelease artifact was not written")
 	}
-	if got := renderedConfigMapValue(art.Manifests, "kept"); got != "kept-value" {
+	if got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "kept"); got != "kept-value" {
 		t.Fatalf("rendered kept = %q, want kept-value", got)
 	}
-	if got := renderedConfigMapValue(art.Manifests, "fallback"); got != "fallback" {
+	if got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "fallback"); got != "fallback" {
 		t.Fatalf("rendered fallback = %q, want fallback", got)
 	}
 	assert.Diff(t, st.Warnings(), []manifest.Warning{
@@ -639,10 +640,10 @@ data:
 	if !ok {
 		t.Fatal("HelmRelease artifact was not written")
 	}
-	if got := renderedConfigMapValue(art.Manifests, "kept"); got != "kept-value" {
+	if got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "kept"); got != "kept-value" {
 		t.Fatalf("rendered kept = %q, want kept-value", got)
 	}
-	if got := renderedConfigMapValue(art.Manifests, "fallback"); got != "fallback" {
+	if got := renderedConfigMapValue(testutil.DocumentMaps(art.Manifests), "fallback"); got != "fallback" {
 		t.Fatalf("rendered fallback = %q, want fallback", got)
 	}
 	invalid := hr.Clone()

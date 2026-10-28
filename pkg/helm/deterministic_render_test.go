@@ -57,9 +57,9 @@ data:
 			`{{ now | durationRound }}|{{ now | dateModify "-2h" | durationRound }}|` +
 			`{{ values (dict "z" "first" "a" "last" "m" "middle") | join "," }}`,
 	}
-	first, _, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	first, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 	assert.NoError(t, err)
-	second, _, err := cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	second, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 	assert.NoError(t, err)
 	assert.Diff(t, second, first)
 	for _, docs := range [][]map[string]any{first, second} {
@@ -91,7 +91,7 @@ data:
 `)
 	cli := NewClient(cachetest.New(t, "", sourcecache.New))
 
-	out, _, err := cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+	out, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), nil, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 	if err == nil {
 		t.Error("invalid mustToDate rendered successfully")
 	}
@@ -109,7 +109,7 @@ func TestTemplate_EncryptAESDecryptRoundTrip(t *testing.T) {
 	for _, plaintext := range []string{"", "hello", strings.Repeat("a", 16), "Unicode: βé"} {
 		t.Run(plaintext, func(t *testing.T) {
 			t.Parallel()
-			out, _, err := cli.Template(t.Context(), newHR(), map[string]any{"plaintext": plaintext}, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)})
+			out, _, err := testutil.RenderMaps(cli.Template(t.Context(), newHR(), map[string]any{"plaintext": plaintext}, RenderOptions{Options: Options{}, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
 			if err != nil {
 				t.Fatal(err)
 			}

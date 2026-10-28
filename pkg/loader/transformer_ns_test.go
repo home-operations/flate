@@ -220,8 +220,8 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 					if st.GetObject(removed) != nil || indexed != (version == 0) {
 						t.Fatalf("removed declaration: store=%t index=%t version=%d", st.GetObject(removed) != nil, indexed, version)
 					}
-					if (len(l.Index.Errors) != 0) != (version == 0) {
-						t.Fatalf("decode errors after mount version %d: %v", version, l.Index.Errors)
+					if (len(retainedErrorsForTest(l)) != 0) != (version == 0) {
+						t.Fatalf("decode errors after mount version %d: %v", version, retainedErrorsForTest(l))
 					}
 				}
 				l.Admit(root)

@@ -58,13 +58,14 @@ func BenchmarkEmit_Children(b *testing.B) {
 				{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "config", "namespace": "apps"}, "data": map[string]any{"key": "value"}},
 				{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child", "sourceRef": map[string]any{"kind": "GitRepository", "name": "repo"}}},
 			}
+			outcomes := testutil.DocumentOccurrences(docs)
 			b.ReportAllocs()
 			for b.Loop() {
 				owner := &manifest.RawObject{APIVersion: parent.KindInfo().APIVersion(), Kind: parent.Kind, Namespace: parent.Namespace, Name: parent.Name}
 				c.Store.AddObject(owner)
-				children, visible := c.ParseChildren(owner, docs, manifest.ParseDocOptions{DefaultNamespace: parent.Namespace})
+				children, visible, failures := c.ParseChildren(owner, outcomes, manifest.ParseDocOptions{DefaultNamespace: parent.Namespace})
 				_, _, next := st.GetEmission(parent)
-				next.Children, next.Manifests, next.Complete = children, visible, true
+				next.Children, next.Manifests, next.Failures, next.Complete = children, visible, failures, true
 				c.Emit(parent, &next, nil)
 				next.Finish()
 			}

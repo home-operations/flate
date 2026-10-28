@@ -132,7 +132,7 @@ func TestReconcile_StrictSubstitutionClassification(t *testing.T) {
 	t.Cleanup(trees.Close)
 	c := New(st, tasks, trees, false)
 	c.Configure(Options{StrictSubstitutions: true}, sourcecache.RetryConfig{})
-	docs, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n")))
+	docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", "  {path: app, postBuild: {substituteStrategy: Always}}\n")))
 	if err != nil {
 		t.Fatal(err)
 	}

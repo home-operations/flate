@@ -159,7 +159,7 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 			if !w.proceed(check) {
 				return false
 			}
-			if !entry.IsDir() && !isManifestFile(entry.Name()) {
+			if v.entryResources && entry.IsDir() || !entry.IsDir() && !isManifestFile(entry.Name()) {
 				continue
 			}
 			child := v

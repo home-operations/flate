@@ -477,7 +477,7 @@ func TestReadyExpr_CapturedSpec(t *testing.T) {
 		t.Run(fmt.Sprintf("same=%v", same), func(t *testing.T) {
 			t.Parallel()
 			s := store.New()
-			docs, err := manifest.SplitDocs([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+			docs, err := testutil.SplitDocs([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata: {name: dep, namespace: ns, labels: {version: old}, annotations: {revision: old}}
 spec: {path: ./old}
@@ -562,7 +562,7 @@ func (d *countedDocument) RenderDocument() (map[string]any, error) {
 
 func TestReadyExpr_ProjectionError(t *testing.T) {
 	t.Parallel()
-	docs, err := manifest.SplitDocs([]byte(`apiVersion: helm.toolkit.fluxcd.io/v2
+	docs, err := testutil.SplitDocs([]byte(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: dep, namespace: ns}
 spec: {chartRef: {kind: OCIRepository, name: chart}, values: {version: old}}

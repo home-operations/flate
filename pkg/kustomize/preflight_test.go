@@ -187,12 +187,12 @@ func TestRender_RemotePreflightDoesNotMutateSource(t *testing.T) {
 		"child/kustomization.yaml": child,
 	})
 
-	_, _, err := Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
+	_, _, err := testutil.RenderMaps(Render(context.Background(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, src), Label: src, ApplyIgnore: false, SubPath: ".", Spec: parsedKS(t, map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   map[string]any{"name": "apps", "namespace": "flux-system"},
 		"spec":       map[string]any{"path": "."},
-	})}, sourcecache.RetryConfig{})
+	})}, sourcecache.RetryConfig{}))
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestPreflight_UppercaseAndMixedCaseScheme(t *testing.T) {
 			original := http.DefaultTransport
 			http.DefaultTransport = srv.Client().Transport
 			t.Cleanup(func() { http.DefaultTransport = original })
-			out, _, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{})
+			out, _, err := testutil.RenderMaps(Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: ".", Spec: demoSpec}, sourcecache.RetryConfig{}))
 			if err != nil || !hasRenderField(out, "name", "remote") {
 				t.Fatalf("render: %s, %v", out, err)
 			}
@@ -477,7 +477,7 @@ func TestPreflightRemoteResources_ReachableInputs(t *testing.T) {
 				spec.Components = []string{"../component"}
 			}
 			before := manifest.Fingerprint(spec)
-			out, _, err := Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: tc.subpath, Spec: spec}, sourcecache.RetryConfig{})
+			out, _, err := testutil.RenderMaps(Render(t.Context(), cache, RenderRequest{Source: localSource(t, root), Label: root, SubPath: tc.subpath, Spec: spec}, sourcecache.RetryConfig{}))
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("error=%v, want %q", err, tc.wantErr)

@@ -67,8 +67,8 @@ func TestController_RemoteValidationSlots(t *testing.T) {
 		if len(artifact.Manifests) != 1 {
 			t.Fatalf("missing rendered artifact for %s", id)
 		}
-		name, _ := manifest.DocMetadata(artifact.Manifests[0])
+		name, _ := manifest.DocMetadata(artifact.Manifests[0].Document)
 		assert.Equal(t, name, "remote-"+id.Name)
-		assert.Equal(t, manifest.DocKind(artifact.Manifests[0]), "ConfigMap")
+		assert.Equal(t, manifest.DocKind(artifact.Manifests[0].Document), "ConfigMap")
 	}
 }

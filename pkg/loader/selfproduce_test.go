@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -420,9 +421,9 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 		wantOpens int
 	}{
 		{name: "cached_file", present: true, preload: true},
-		{name: "unscanned_file", present: true, wantOpens: 4},
+		{name: "unscanned_file", present: true, wantOpens: 1},
 		{name: "absent"},
-		{name: "stat_permission", statError: fs.ErrPermission, wantOpens: 4},
+		{name: "stat_permission", statError: fs.ErrPermission, wantOpens: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -447,8 +448,12 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 				assert.NoError(t, err)
 				input.opens = 0
 			}
-			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
-				t.Fatal(err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), dir))
+			if tc.statError != nil {
+				failed := l.documents.cache[filepath.Join(dir, input.missing)].objects
+				if len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist) {
+					t.Fatalf("unreadable resource = %+v", failed)
+				}
 			}
 			if err := l.FinalizeIndex(t.Context(), dir); err != nil {
 				t.Fatal(err)

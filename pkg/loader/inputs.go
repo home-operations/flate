@@ -87,6 +87,7 @@ func cloneInputObjects(objects []parsedObject) []parsedObject {
 	cloned := slices.Clone(objects)
 	for i := range cloned {
 		cloned[i].Doc = manifest.DeepCopyMap(cloned[i].Doc)
+		cloned[i].outcome.Document = cloned[i].Doc
 	}
 	return cloned
 }

@@ -127,7 +127,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	sourceContent := struct {
 		Input       store.ArtifactInput
 		ApplyIgnore bool
-		Output      []map[string]any
+		Output      []manifest.DocOccurrence
 	}{Input: source.Input(store.ArtifactContent), ApplyIgnore: applyIgnore}
 	var attempt store.Emission
 	defer attempt.Finish()
@@ -176,19 +176,20 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 		if ks.PostBuild != nil {
 			vars = manifest.VarsMap(ks.PostBuild.Substitute)
 		}
-		for i, doc := range docs {
-			if manifest.HasSubstituteDisabled(doc) {
+		for i, occurrence := range docs {
+			doc := occurrence.Document
+			if occurrence.Err != nil || manifest.HasSubstituteDisabled(doc) {
 				continue
 			}
 			substituted, sErr := substituteDoc(doc, vars, c.strictSubstitutions)
 			if sErr != nil {
 				return fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, id.NamespacedName(), sErr)
 			}
-			docs[i] = substituted
+			docs[i].Document = substituted
 		}
 	}
 
-	attempt.Children, attempt.Manifests = c.ParseChildren(ks, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
+	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(ks, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
 	if err := c.run.Emit(id, &attempt, nil); err != nil {
 		return err

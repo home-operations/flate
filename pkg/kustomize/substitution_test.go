@@ -54,7 +54,7 @@ func TestSubstitute_StrictOperators(t *testing.T) {
 
 func TestPrepare_LayersAndImmutability(t *testing.T) {
 	t.Parallel()
-	docs, err := manifest.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", `  path: ./app
+	docs, err := testutil.SplitDocs([]byte(testutil.KustomizationYAML("consumer", "apps", `  path: ./app
   postBuild:
     substitute: {VALUE: inline}
     substituteFrom: [{kind: ConfigMap, name: first}, {kind: ConfigMap, name: second}]

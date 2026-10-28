@@ -2,7 +2,6 @@ package loader
 
 import (
 	"context"
-	"maps"
 	"path/filepath"
 	"slices"
 
@@ -82,19 +81,6 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string) error {
 	for file, doc := range l.documents.cache {
 		doc.terminal = l.terminalInput(file)
 		l.documents.cache[file] = doc
-	}
-	for _, file := range slices.Sorted(maps.Keys(l.Index.Errors)) {
-		path := filepath.Join(repoRoot, filepath.FromSlash(file))
-		if l.documents.cache[path].eligible == fileInactive {
-			delete(l.Index.Errors, file)
-			continue
-		}
-		origin, _ := filepath.Rel(repoRoot, l.documents.localPath(path))
-		origin = filepath.ToSlash(origin)
-		if origin != file {
-			l.Index.Errors[origin] = l.Index.Errors[file]
-			delete(l.Index.Errors, file)
-		}
 	}
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)

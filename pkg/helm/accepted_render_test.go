@@ -96,7 +96,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		assert.Equal(t, sources.calls.Load(), 0)
 		assert.Equal(t, counted.opens.Load(), 0)
 	})
-	docs, receipt, err := client.Template(t.Context(), hr, nil, input)
+	docs, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 	assert.NoError(t, err)
 	if receipt == nil {
 		t.Fatal("successful raw template supplied no receipt")
@@ -110,7 +110,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	original := bytes.Clone(frame.output)
 	docs[0]["metadata"].(map[string]any)["name"] = "mutated"
 	assert.Equal(t, bytes.Equal(receipt.Value().(renderFrame).output, original), true)
-	raw, err := manifest.DecodeRender(frame.output)
+	raw, err := testutil.DecodeRender(frame.output)
 	assert.NoError(t, err)
 	assert.Equal(t, hasRenderField(raw, "name", "original"), true)
 	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
@@ -254,7 +254,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			assert.NoError(t, json.Unmarshal([]byte(`{"dependsOn":[{"name":"before"}],"valuesFrom":[{"kind":"ConfigMap","name":"before"}],"healthCheckExprs":[{"apiVersion":"v1","kind":"Pod","current":"true"}]}`), &current.HelmReleaseSpec))
 			before := current.Clone()
 			options := RenderOptions{Sources: input.Sources, SkipKinds: []string{"Skipped"}}
-			_, pending, err := renderer.Template(t.Context(), current, nil, options)
+			_, pending, err := testutil.RenderMaps(renderer.Template(t.Context(), current, nil, options))
 			assert.NoError(t, err)
 			current.CommonMetadata.Annotations["policy"], options.SkipKinds[0] = "after", "Different"
 			current.DependsOn[0].Name, current.ValuesFrom[0].Name, current.HealthCheckExprs[0].Current = "after", "after", "false"
@@ -275,12 +275,12 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			t.Parallel()
 			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			original := RenderOptions{Sources: input.Sources}
-			_, first, err := renderer.Template(t.Context(), hr, nil, original)
+			_, first, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, original))
 			assert.NoError(t, err)
 			assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), first, maps.All(records)))
 			changed := original
 			changed.WipeSecrets = true
-			_, pending, err := renderer.Template(t.Context(), hr, nil, changed)
+			_, pending, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, changed))
 			assert.NoError(t, err)
 			if pending == nil {
 				t.Fatal("raw successor supplied no receipt")
@@ -341,7 +341,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			}
 			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
 			initialKey := storedKey()
-			_, pending, err = renderer.Template(t.Context(), hr, nil, RenderOptions{Sources: input.Sources})
+			_, pending, err = testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, RenderOptions{Sources: input.Sources}))
 			assert.NoError(t, err)
 			resident := pending.Value().(renderFrame)
 			if resident.accepted == nil || resident.acceptedKey == "" || resident.identity == "" {
@@ -384,7 +384,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			for range previous {
 				t.Fatal("changed complete-empty frame retained children")
 			}
-			_, borrowedReceipt, err := renderer.Template(t.Context(), hr, nil, RenderOptions{Sources: input.Sources})
+			_, borrowedReceipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, RenderOptions{Sources: input.Sources}))
 			assert.NoError(t, err)
 			foreign := accepting
 			foreign.Namespace = "foreign"
@@ -456,7 +456,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 					t.Fatal("incompatible emission policy borrowed history")
 				}
 				changed.Admit = nil
-				out, _, err := isolated.Template(t.Context(), hr, nil, changed)
+				out, _, err := testutil.RenderMaps(isolated.Template(t.Context(), hr, nil, changed))
 				assert.NoError(t, err)
 				assert.Diff(t, out, raw)
 			})
@@ -503,7 +503,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	client := NewClient(owner)
 	input := RenderOptions{Sources: NewSources(st)}
 	for range 2 {
-		_, receipt, err := client.Template(t.Context(), hr, nil, input)
+		_, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 		assert.NoError(t, err)
 		assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), receipt, emptyRenderInventory))
 	}
@@ -525,7 +525,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	if _, _, err := client.Template(t.Context(), hr, nil, input); !errors.Is(err, manifest.ErrInput) {
+	if _, _, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input)); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("replaced OCI generation escaped version validation: %v", err)
 	}
 	if _, complete := client.PreviousRender(t.Context(), hr, nil, input); complete {
@@ -534,7 +534,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	changed := *artifact
 	changed.Revision = "invalid"
 	st.SetArtifact(hr.ChartSource(), &changed)
-	if _, _, err := client.Template(t.Context(), hr, nil, input); !errors.Is(err, manifest.ErrInput) {
+	if _, _, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input)); !errors.Is(err, manifest.ErrInput) {
 		t.Fatalf("changed OCI revision borrowed resident validation: %v", err)
 	}
 }
@@ -569,7 +569,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
-			_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
+			_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
 			assert.NoError(t, err)
 			assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, emptyRenderInventory))
 			if _, complete := renderer.PreviousRender(t.Context(), hr, nil, input); !complete {
@@ -616,7 +616,7 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	}
 	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
-	payload, err := manifest.EncodeRender([]map[string]any{{"value": "original"}})
+	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
 	assert.NoError(t, err)
 	frame := renderFrame{header: renderHeader{Key: "oversized-accepted", Analysis: &chartAnalysis{Version: "0.1.0"}}, output: payload}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)

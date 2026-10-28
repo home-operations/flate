@@ -118,3 +118,26 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 		t.Fatalf("invalid keys not classified/sorted: %v", err)
 	}
 }
+
+func TestPrepare_EntrySubstitutionContext(t *testing.T) {
+	t.Parallel()
+	owner := testutil.KustomizationID("flux-system", "sync")
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner).WithNamespace("sources").(*manifest.Kustomization)
+	entry.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "vars"}}}
+	st := store.New()
+	st.AddObject(&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}})
+	_, err := Prepare(entry, values.NewStoreProvider(st, true))
+	if err == nil || !strings.Contains(err.Error(), owner.String()) || !strings.Contains(err.Error(), `entry path "clusters/test"`) || strings.Contains(err.Error(), entry.Named().String()) {
+		t.Fatalf("substituteFrom lost context: %v", err)
+	}
+	entry.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ENABLED": "yes"}}
+	prepared, err := Prepare(entry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
+	err = Shape(prepared, documents, true)
+	if !errors.Is(err, manifest.ErrInvalidSubstituteReference) || !strings.Contains(err.Error(), owner.String()) || strings.Contains(err.Error(), entry.Named().String()) {
+		t.Fatalf("shape lost copied provenance or sentinel: %v", err)
+	}
+}

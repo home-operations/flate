@@ -213,9 +213,9 @@ func TestBarWriter_ProgressLifecycle(t *testing.T) {
 			w := &barWriter{out: out}
 			m := newBarModel(false)
 			a, b := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b")
-			m.events.publish(a, store.StatusPending, time.Now())
-			m.events.publish(a, store.StatusReady, time.Now())
-			m.events.publish(b, store.StatusPending, time.Now())
+			m.events.publish(a, store.StatusPending, time.Now(), a.Name)
+			m.events.publish(a, store.StatusReady, time.Now(), a.Name)
+			m.events.publish(b, store.StatusPending, time.Now(), b.Name)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			completed, finish, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -307,7 +307,7 @@ func TestBarWriter_CaptureTail(t *testing.T) {
 	st := store.New()
 	listener, stop := w.progress(t.Context())
 	unsub := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-		listener(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, id, payload.(store.StatusInfo))
+		listener(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, manifest.DiagnosticFor(id, st.GetObject(id)), payload.(store.StatusInfo))
 	}, false)
 	cleanup := sync.OnceFunc(func() { unsub(); stop() })
 	captured := os.Stderr
@@ -345,19 +345,32 @@ func TestProgressEvents_TreeIdentity(t *testing.T) {
 	base := manifest.TreeID{Cluster: "clusters/a", Side: manifest.TreeBase}
 	head := manifest.TreeID{Cluster: "clusters/a", Side: manifest.TreeHead}
 	other := manifest.TreeID{Cluster: "clusters/b", Side: manifest.TreeHead}
-	m.events.observe(base, id, store.StatusInfo{Status: store.StatusReady})
-	m.events.observe(head, id, store.StatusInfo{Status: store.StatusPending})
-	m.events.observe(other, id, store.StatusInfo{Status: store.StatusFailed})
-	m.events.observe(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, id, store.StatusInfo{Status: store.StatusPending})
+	m.events.observe(base, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusReady})
+	m.events.observe(head, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusPending})
+	m.events.observe(other, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusFailed})
+	m.events.observe(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusPending})
 	m.drainEvents()
 	assert.Equal(t, m.total, 4)
 	assert.Equal(t, m.done, 2)
 	assert.Diff(t, m.inflightLabels(), []string{"clusters/a/current:shared", "shared"})
-	m.events.observe(head, id, store.StatusInfo{Status: store.StatusReady})
+	m.events.observe(head, manifest.DiagnosticFor(id, nil), store.StatusInfo{Status: store.StatusReady})
 	m.drainEvents()
 	assert.Equal(t, m.total, 4)
 	assert.Equal(t, m.done, 3)
 	assert.Diff(t, m.inflightLabels(), []string{"shared"})
+	owner := testutil.KustomizationID("flux-system", "sync")
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner)
+	subject := manifest.DiagnosticFor(entry.Named(), entry)
+	m.events.observe(manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, subject, store.StatusInfo{Status: store.StatusPending})
+	m.drainEvents()
+	if _, ok := m.inflight[entry.Named()]; !ok {
+		t.Fatal("progress keyed by display instead of raw ID")
+	}
+	labels := m.inflightLabels()
+	if !slices.Contains(labels, subject.String()) {
+		t.Fatalf("progress labels=%v", labels)
+	}
+
 }
 
 type progressLogWriter struct {
@@ -442,13 +455,13 @@ func TestProgressEvents_ConcurrentDrain(t *testing.T) {
 		go func() {
 			<-start
 			id := testutil.KustomizationID("ns", name)
-			events.publish(id, store.StatusPending, first)
-			events.publish(id, store.StatusReady, first.Add(time.Second))
+			events.publish(id, store.StatusPending, first, id.Name)
+			events.publish(id, store.StatusReady, first.Add(time.Second), id.Name)
 			firstDone <- struct{}{}
 			<-overlap
 			id.Name += "-next"
-			events.publish(id, store.StatusPending, first.Add(2*time.Second))
-			events.publish(id, store.StatusFailed, first.Add(3*time.Second))
+			events.publish(id, store.StatusPending, first.Add(2*time.Second), id.Name)
+			events.publish(id, store.StatusFailed, first.Add(3*time.Second), id.Name)
 			secondDone <- struct{}{}
 		}()
 	}

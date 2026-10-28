@@ -33,9 +33,12 @@ type Missing struct {
 
 // Model is the partitioned, deterministic view the renderer consumes.
 type Model struct {
-	Context string
-	Primary []Primary
-	Missing []Missing
+	// Subjects overrides group context; an empty non-nil map retains ordinary snapshot identities.
+	Subjects map[manifest.NamedResource]manifest.DiagnosticIdentity
+	Names    *Names
+	Context  string
+	Primary  []Primary
+	Missing  []Missing
 	// Blocked is the count of distinct derived (cascaded) failures. It is the
 	// verdict's "N blocked" figure — distinct resources, not the sum of the
 	// per-root Blocks/RequiredBy lists, which can overlap when one resource
@@ -64,10 +67,11 @@ type Warning struct {
 
 // ReportGroup contains one cluster's diagnostics and optional test roster.
 type ReportGroup struct {
-	Cluster string
-	Models  []Model
-	Test    *TestReport
-	Names   Names
+	Cluster  string
+	Subjects map[manifest.NamedResource]manifest.DiagnosticIdentity
+	Models   []Model
+	Test     *TestReport
+	Names    Names
 }
 
 // Report coordinates the invocation's results, warnings and summaries.
@@ -111,9 +115,30 @@ func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
 			inventory[w.Group] = append(inventory[w.Group], w.Warning.Resource)
 		}
 	}
-	names := PrepareNames(clusters, inventory)
+	var subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity
+	for i, group := range r.Groups {
+		if len(group.Subjects) != 0 {
+			if subjects == nil {
+				subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
+			}
+			subjects[i] = group.Subjects
+		}
+	}
+	names := PrepareNames(clusters, inventory, subjects)
 	for i := range r.Groups {
 		r.Groups[i].Names = names[i]
+		for j, model := range r.Groups[i].Models {
+			if model.Subjects != nil {
+				if subjects == nil {
+					subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
+				}
+				previous := subjects[i]
+				subjects[i] = model.Subjects
+				prepared := PrepareNames(clusters, inventory, subjects)[i]
+				r.Groups[i].Models[j].Names = &prepared
+				subjects[i] = previous
+			}
+		}
 	}
 	for i, w := range r.Warnings {
 		r.Warnings[i].prefix = ""
@@ -123,7 +148,23 @@ func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
 		if w.Warning.Resource == (manifest.NamedResource{}) {
 			r.Warnings[i].prefix = names[w.Group].Prefix
 		} else {
-			r.Warnings[i].Subject = names[w.Group].Subjects[w.Warning.Resource]
+			prepared := manifest.DiagnosticFor(w.Warning.Resource, nil)
+			if len(subjects) > w.Group {
+				if subject, ok := subjects[w.Group][w.Warning.Resource]; ok {
+					prepared = subject
+				}
+			}
+			if w.Warning.Subject.ID != (manifest.NamedResource{}) && w.Warning.Subject != prepared {
+				if subjects == nil {
+					subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
+				}
+				previous := subjects[w.Group]
+				subjects[w.Group] = map[manifest.NamedResource]manifest.DiagnosticIdentity{w.Warning.Resource: w.Warning.Subject}
+				r.Warnings[i].Subject = PrepareNames(clusters, inventory, subjects)[w.Group].Subjects[w.Warning.Resource]
+				subjects[w.Group] = previous
+			} else {
+				r.Warnings[i].Subject = names[w.Group].Subjects[w.Warning.Resource]
+			}
 		}
 	}
 	return names
@@ -143,7 +184,11 @@ func (e Encoder) Report(r Report, results Encoder) error {
 		}
 		var failed, blocked int
 		for _, m := range g.Models {
-			failures = append(failures, m.failuresBlock(g.Names, e.Color))
+			labels := g.Names
+			if m.Names != nil {
+				labels = *m.Names
+			}
+			failures = append(failures, m.failuresBlock(labels, e.Color))
 			failed += len(m.Primary) + len(m.Missing)
 			blocked += m.Blocked
 		}

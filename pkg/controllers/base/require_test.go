@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestRequire_Classifications(t *testing.T) {
@@ -74,7 +75,7 @@ func TestRequire_Classifications(t *testing.T) {
 				if !ok || failure.Parent != id || !slices.Equal(failure.Failed, want) || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("failed gate = %#v, want sorted dependencies %v", err, want)
 				}
-				if failure.Reasons[failed.NamedResource] != "render failed" || mode == "force" && failure.Reasons[pending.NamedResource] != "not ready" {
+				if failure.Reasons[failed.NamedResource].Message != "render failed" || mode == "force" && failure.Reasons[pending.NamedResource].Message != "not ready" {
 					t.Fatalf("failure reasons = %v", failure.Reasons)
 				}
 			}
@@ -285,10 +286,10 @@ func TestRequire_MultiplePredicates(t *testing.T) {
 					if !ok || !slices.Equal(failed.Failed, []manifest.NamedResource{obj.Named()}) || len(failed.Reasons) != 1 {
 						t.Fatalf("failed identities were lost or duplicated: %v", err)
 					}
-					if reason != "" && reason != failed.Reasons[obj.Named()] {
-						t.Fatalf("registration order changed diagnostic: %q vs %q", reason, failed.Reasons[obj.Named()])
+					if reason != "" && reason != failed.Reasons[obj.Named()].Message {
+						t.Fatalf("registration order changed diagnostic: %q vs %q", reason, failed.Reasons[obj.Named()].Message)
 					}
-					reason = failed.Reasons[obj.Named()]
+					reason = failed.Reasons[obj.Named()].Message
 				case schedule.Blocked:
 					blocked, ok := errors.AsType[*depwait.ErrBlocked](err)
 					if !ok || !slices.Equal(blocked.Deps, []manifest.NamedResource{obj.Named()}) {
@@ -588,6 +589,62 @@ func TestRequire_MaterializerPurpose(t *testing.T) {
 			info, _ := st.GetStatus(consumer.Named())
 			if !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) {
 				t.Fatalf("settlement lost gate purpose: %+v", info)
+			}
+		})
+	}
+}
+
+func TestExecution_SyntheticDependencyReasons(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"gate", "declaration", "data"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", testutil.KustomizationID("flux-system", "sync"))
+			child := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+			st.AddObject(owner)
+			if mode != "declaration" {
+				st.AddObject(child)
+			}
+			status := store.StatusFailed
+			if mode == "declaration" {
+				status = store.StatusReady
+			}
+			if mode == "data" {
+				status = store.StatusPending
+			}
+			st.UpdateStatus(owner.Named(), store.StatusInfo{Status: status, Message: "root failure"})
+			if mode == "declaration" {
+				st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{child.Named(): {Productions: []manifest.Production{{Owner: owner.Named()}}}}})
+			}
+			run := controllertest.NewExecution(base.New(st, task.NewBounded(2)), child.Named())
+			defer run.Close()
+			var err error
+			switch mode {
+			case "gate":
+				err = run.Require(t.Context(), []manifest.DependencyRef{{NamedResource: owner.Named()}}, manifest.DrainForce)
+			case "data":
+				err = run.AwaitData(t.Context(), base.DataWait{Inputs: []depwait.DataDependency{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "missing", Input: values.Input{Materializers: []manifest.NamedResource{owner.Named()}}}}, Resume: func(context.Context, manifest.DrainLevel, []manifest.NamedResource) error {
+					t.Error("failed input resumed")
+					return nil
+				}}, manifest.DrainForce)
+			case "declaration":
+				run.Dispatch(t.Context(), manifest.DrainForce, struct{}{}, func(struct{}, context.Context, *manifest.Kustomization, manifest.DrainLevel) error {
+					t.Error("missing declaration reconciled")
+					return nil
+				})
+				info, _ := st.GetStatus(child.Named())
+				if !info.IsDependencyFailure() || !slices.Equal(info.BlockedBy(), []manifest.NamedResource{owner.Named()}) {
+					t.Fatalf("declaration failure=%+v", info)
+				}
+				if !strings.Contains(info.String(), `entry path "clusters/test"`) || strings.Contains(info.String(), owner.Named().String()) {
+					t.Fatalf("declaration context=%s", info.String())
+				}
+				return
+			}
+			failed, ok := errors.AsType[*manifest.DependencyFailedError](err)
+			if !ok || !slices.Contains(failed.Failed, owner.Named()) || failed.Reasons[owner.Named()].Subject.Resource != testutil.KustomizationID("flux-system", "sync") || strings.Contains(err.Error(), owner.Named().String()) {
+				t.Fatalf("%s lost raw/display context: %#v %v", mode, failed, err)
 			}
 		})
 	}

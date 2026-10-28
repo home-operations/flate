@@ -10,10 +10,39 @@ import (
 )
 
 // Classification retains one dependency's readiness decision.
+// Successful decisions MUST not carry an expanded DiagnosticReason.
 type Classification struct {
 	Kind    schedule.Kind
+	Subject *manifest.DiagnosticIdentity
 	Message string
+	Causes  []manifest.DiagnosticReason
 	Err     error
+}
+
+// DiagnosticReason returns captured failure context for the raw dependency id.
+// id MUST be the raw dependency passed to Classify.
+func (c Classification) DiagnosticReason(id manifest.NamedResource) manifest.DiagnosticReason {
+	if c.Kind != schedule.DependencyFailed {
+		return manifest.DiagnosticReason{}
+	}
+	subject := manifest.DiagnosticFor(id, nil)
+	if c.Subject != nil {
+		subject = *c.Subject
+	}
+	return manifest.DiagnosticReason{Subject: subject, Message: c.Message, Causes: c.Causes}
+}
+
+func failedClassification(id manifest.NamedResource, obj manifest.BaseManifest, message string, info *store.Observation) Classification {
+	reason := manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(id, obj), Message: message}
+	if info != nil {
+		reason = info.DependencyReason(reason.Subject)
+	}
+	result := Classification{Kind: schedule.DependencyFailed, Message: reason.Message, Causes: reason.Causes}
+	if reason.Subject.Resource != reason.Subject.ID || reason.Subject.Path != "" {
+		subject := reason.Subject
+		result.Subject = &subject
+	}
+	return result
 }
 
 // Classify resolves readiness and required content from one captured snapshot.
@@ -38,7 +67,7 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 			var failMsg string
 			ready, failMsg = w.tryReadyExpr(dep, obj, info.Conditions)
 			if failMsg != "" {
-				return Classification{Kind: schedule.DependencyFailed, Message: failMsg}
+				return failedClassification(id, obj, failMsg, nil)
 			}
 		}
 		if !present && existence != nil && existence.Promote(ctx, reads, id) {
@@ -46,7 +75,7 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 			continue
 		}
 		if dep.UnknownArtifactRoot && level >= manifest.DrainCascade && obj == nil && w.Store.GetArtifact(id, store.ArtifactContent) == nil {
-			return Classification{Err: fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, id)}
+			return Classification{Err: fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, manifest.DiagnosticFor(id, obj))}
 		}
 		if present && ready {
 			return w.artifactReady(dep, level)
@@ -70,15 +99,15 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 		}
 		if info.Status == store.StatusFailed {
 			if w.Materializer && info.IsDependencyFailure() {
-				return Classification{Kind: schedule.DependencyFailed, Message: "declaration not emitted"}
+				return failedClassification(id, obj, "declaration not emitted", nil)
 			}
-			return Classification{Kind: schedule.DependencyFailed, Message: info.String()}
+			return failedClassification(id, obj, "", &info)
 		}
 		if hasExpr && level >= manifest.DrainCascade {
-			return Classification{Kind: schedule.DependencyFailed, Message: "readyExpr timeout: context deadline exceeded"}
+			return failedClassification(id, obj, "readyExpr timeout: context deadline exceeded", nil)
 		}
 		if !hasExpr && level >= manifest.DrainForce {
-			return Classification{Kind: schedule.DependencyFailed, Message: "not ready"}
+			return failedClassification(id, obj, "not ready", nil)
 		}
 		return Classification{Kind: schedule.Blocked}
 	}
@@ -93,14 +122,15 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 		return Classification{Kind: schedule.Terminal}
 	}
 	id := dep.NamedResource
+	obj := w.Store.GetObject(id)
 	label := "source"
 	if dep.ChartSource {
 		label = "chart source"
 	}
 	if info, ok := w.Store.GetStatus(id); ok && info.Outcome() == store.OutcomeSkipped {
-		return Classification{Err: fmt.Errorf("%w: %s %s skipped: %s", manifest.ErrSourceSkipped, label, id, info.String())}
+		return Classification{Err: fmt.Errorf("%w: %s %s skipped: %s", manifest.ErrSourceSkipped, label, manifest.DiagnosticFor(id, obj), info.String())}
 	}
-	if descriptor, ok := w.Store.GetObject(id).(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
+	if descriptor, ok := obj.(existenceOnly); ok && descriptor.ExistenceOnly() && !dep.ArtifactOnly {
 		return Classification{Kind: schedule.Terminal}
 	}
 	art, _ := w.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
@@ -108,12 +138,12 @@ func (w *Waiter) artifactReady(dep manifest.DependencyRef, level manifest.DrainL
 		return Classification{Kind: schedule.Terminal}
 	}
 	if dep.ArtifactOnly {
-		return Classification{Err: fmt.Errorf("%w: source %s has no readable content", manifest.ErrInput, id)}
+		return Classification{Err: fmt.Errorf("%w: source %s has no readable content", manifest.ErrInput, manifest.DiagnosticFor(id, obj))}
 	}
 	if level >= manifest.DrainCascade {
-		message := fmt.Sprintf("%s %s artifact content unavailable", label, id)
+		message := fmt.Sprintf("%s %s artifact content unavailable", label, manifest.DiagnosticFor(id, obj))
 		if !dep.ChartSource && art == nil {
-			message = fmt.Sprintf("source %s artifact not found", id)
+			message = fmt.Sprintf("source %s artifact not found", manifest.DiagnosticFor(id, obj))
 		}
 		return Classification{Err: fmt.Errorf("%w: %s", manifest.ErrObjectNotFound, message)}
 	}

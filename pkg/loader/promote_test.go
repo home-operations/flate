@@ -474,7 +474,7 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 	}
 	l.RegisterBuilt(BuiltInput{Root: entry, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "shared"}
-	if _, ok := l.Index.Lookup(id); ok || l.BuiltDocuments(id) != nil {
+	if _, ok := l.Index.Lookup(id); ok || l.PromotionDocuments(id) != nil {
 		t.Fatal("empty output retained raw resource evidence")
 	}
 	l.RegisterBuilt(BuiltInput{Root: filepath.Join(root, "entry/independent"), Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, nil)

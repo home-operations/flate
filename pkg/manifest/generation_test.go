@@ -44,6 +44,14 @@ func TestGeneratedObjects_ChartTemplate(t *testing.T) {
 				if got := objects[0].Named(); got != (NamedResource{Group: SourceDomain, Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}) {
 					t.Fatalf("generated identity=%s, upstream=%+v", got, ref)
 				}
+				subject := DiagnosticFor(objects[0].Named(), objects[0])
+				if subject.ID != objects[0].Named() || subject.Resource != projected.Named() {
+					t.Fatalf("pre-emission diagnostic = %+v", subject)
+				}
+				copied := objects[0].WithNamespace("another-source-namespace")
+				if got := DiagnosticFor(copied.Named(), copied); got.Resource != projected.Named() {
+					t.Fatalf("namespace moved real owner: %+v", got)
+				}
 				var labels, annotations map[string]string
 				if chart, ok := objects[0].(*HelmChartSource); ok {
 					labels, annotations = chart.Labels, chart.Annotations

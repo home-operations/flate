@@ -130,10 +130,13 @@ func (r *OCIRepositoryRef) Pinned() bool { return r != nil && r.Digest != "" }
 // Provider, SecretRef, CertSecretRef, ProxySecretRef, Verify, Insecure,
 // Suspend etc. to the top level.
 type OCIRepository struct {
-	Name        string            `json:"name"      yaml:"name"`
-	Namespace   string            `json:"namespace" yaml:"namespace"`
-	Labels      map[string]string `json:"-" yaml:"-"`
-	Annotations map[string]string `json:"-" yaml:"-"`
+	diagnosticOwner NamedResource
+	diagnosticPath  string
+	hasDiagnostic   bool
+	Name            string            `json:"name"      yaml:"name"`
+	Namespace       string            `json:"namespace" yaml:"namespace"`
+	Labels          map[string]string `json:"-" yaml:"-"`
+	Annotations     map[string]string `json:"-" yaml:"-"`
 
 	sourcev1.OCIRepositorySpec `json:",inline" yaml:",inline"`
 }
@@ -180,7 +183,9 @@ func (o *OCIRepository) Named() NamedResource {
 func (o *OCIRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
 	spec := o.OCIRepositorySpec
 	spec.URL = "file://" + root
-	return NewOCIRepository(sourcev1.OCIRepository{Name: o.Name, Namespace: o.Namespace, Labels: o.Labels, Annotations: o.Annotations, Spec: spec}), nil
+	out := NewOCIRepository(sourcev1.OCIRepository{Name: o.Name, Namespace: o.Namespace, Labels: o.Labels, Annotations: o.Annotations, Spec: spec})
+	out.diagnosticOwner, out.diagnosticPath, out.hasDiagnostic = o.diagnosticOwner, o.diagnosticPath, o.hasDiagnostic
+	return out, nil
 }
 
 // Content returns the source inputs that define the selected OCI content.
@@ -214,7 +219,10 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 }
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
-func (o *OCIRepository) ProjectionCompatible(BaseManifest) bool { return true }
+func (o *OCIRepository) ProjectionCompatible(previous BaseManifest) bool {
+	p := previous.(*OCIRepository)
+	return o.diagnosticOwner == p.diagnosticOwner && o.diagnosticPath == p.diagnosticPath && o.hasDiagnostic == p.hasDiagnostic
+}
 
 // Suspended reports whether reconciliation is paused on this resource.
 func (o *OCIRepository) Suspended() bool { return o.Suspend }

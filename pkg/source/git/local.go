@@ -12,7 +12,6 @@ import (
 	"github.com/go-git/go-git/v5/storage/filesystem"
 
 	"github.com/home-operations/flate/pkg/manifest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -142,5 +141,5 @@ func failedLocal(artifacts map[manifest.NamedResource]*store.SourceArtifact) map
 }
 
 func localError(repo *manifest.GitRepository, err error) error {
-	return fmt.Errorf("%w: resolve local %s: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
+	return fmt.Errorf("%w: resolve local %s: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 }

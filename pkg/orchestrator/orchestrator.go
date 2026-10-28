@@ -82,7 +82,7 @@ type Config struct {
 	// HelmClient must borrow Cache; both remain caller-owned when supplied.
 	HelmClient *helm.Client
 	// StatusListener receives concurrent tree-qualified store events and must not block.
-	StatusListener func(manifest.TreeID, manifest.NamedResource, store.StatusInfo)
+	StatusListener func(manifest.TreeID, manifest.DiagnosticIdentity, store.StatusInfo)
 	// Concurrency caps the number of active reconcile bodies running
 	// in parallel. <= 0 means unbounded (every Kustomization / HR
 	// reconciles on its own goroutine). Background watch loops are
@@ -129,9 +129,11 @@ type Orchestrator struct {
 	repoRoot string
 
 	// index is immutable after discovery.
-	index        *manifest.DiscoveryIndex
-	entryBinding discovery.Binding
-	admission    *discovery.Admission
+	index          *manifest.DiscoveryIndex
+	entryDiscovery *discovery.Result
+	entryBinding   discovery.Binding
+	entryFailure   error
+	admission      *discovery.Admission
 
 	// orphans retain skipped failures for the completed result.
 	orphans map[manifest.NamedResource]string
@@ -192,7 +194,7 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 			if st.ReportHidden(id) {
 				return
 			}
-			cfg.StatusListener(tree.ID, id, value.(store.StatusInfo))
+			cfg.StatusListener(tree.ID, manifest.DiagnosticFor(id, st.GetObject(id)), value.(store.StatusInfo))
 		}, false)
 	}
 	trees := kustomize.NewTreeCache(cfg.Cache, &o.inputs, ts)
@@ -277,6 +279,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
+	o.entryDiscovery = res
 	o.entryBinding = res.Binding
 	o.admission = res.Admission
 	o.dependencySubstitutions = res.DependencySubstitutions

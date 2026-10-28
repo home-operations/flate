@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"runtime"
 	"slices"
@@ -458,6 +459,12 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 		}
 		final, diagnostic = errors.Join(final, groupErr), errors.Join(diagnostic, remainder)
 		for j, side := range group.sides {
+			if len(side.Subjects) != 0 {
+				if g.Subjects == nil {
+					g.Subjects = make(map[manifest.NamedResource]manifest.DiagnosticIdentity)
+				}
+				maps.Copy(g.Subjects, side.Subjects)
+			}
 			var model output.Model
 			if !req.test || named && group.err != nil {
 				model = failureModel(side)
@@ -472,12 +479,20 @@ func finishSelected(req selectedRequest, inv *selectedInvocation, payload select
 				context = []string{"orig snapshot", "current snapshot"}[j]
 			}
 			model.Context = context
+			model.Subjects = side.Subjects
 			g.Models = append(g.Models, model)
 			for _, warning := range side.ClusterWarnings {
 				report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i})
 			}
 			for _, warning := range selectedWarnings(side) {
 				report.Warnings = append(report.Warnings, output.Warning{Warning: warning, Group: i, Context: context})
+			}
+		}
+		if len(g.Subjects) != 0 {
+			for j := range g.Models {
+				if g.Models[j].Subjects == nil {
+					g.Models[j].Subjects = map[manifest.NamedResource]manifest.DiagnosticIdentity{}
+				}
 			}
 		}
 		if i < len(payload.warnings) {

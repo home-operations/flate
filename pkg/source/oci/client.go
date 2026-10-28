@@ -27,16 +27,15 @@ import (
 const dockerConfigJSONKey = ".dockerconfigjson"
 
 func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, selected *auth.Credential, policy cache.Policy) (registryAcquisition, error) {
+	owner := manifest.DiagnosticFor(repo.Named(), repo)
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
-		return registryAcquisition{}, err
+		return registryAcquisition{}, fmt.Errorf("%s: %w", owner.Label(), err)
 	}
 	client, err := remote.NewRepository(reference)
 	if err != nil {
-		return registryAcquisition{}, fmt.Errorf("oras: %w", err)
+		return registryAcquisition{}, fmt.Errorf("%s: oras: %w", owner.Label(), err)
 	}
-	owner := repo.Named()
-	owner.Name = repo.Namespace + "/" + repo.Name
 	resolved, err := source.ResolveTransport(f.secrets, owner, []source.TransportInput{
 		{Reference: repo.CertSecretRef, Use: source.TransportCert},
 		{Reference: repo.ProxySecretRef, Use: source.TransportProxy},
@@ -56,11 +55,11 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 	cred := *selected
 	if cred == auth.EmptyCredential && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
 		if repo.SecretRef != nil {
-			missing := source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "no credentials for the source registry")
+			missing := source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "no credentials for the source registry")
 			_, err := f.registryFallback(ctx, repo, missing, policy)
 			return registryAcquisition{}, err
 		}
-		return registryAcquisition{}, source.MissingSecretErr(repo.Named(), "", "provider authentication unavailable offline")
+		return registryAcquisition{}, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "provider authentication unavailable offline")
 	}
 	var credentials any
 	if cred != auth.EmptyCredential {
@@ -81,22 +80,22 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OC
 		return loadCredentials(ctx, f.RegistryConfig, hostname)
 	}
 	if f.secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
+		return nil, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", manifest.DiagnosticFor(repo.Named(), repo).Label())
 	}
 	sec := f.secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found"), policy)
+		return f.registryFallback(ctx, repo, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "not found"), policy)
 	}
 	configJSON, _, err := sec.Value(dockerConfigJSONKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
+		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 	}
 	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), policy)
+		return f.registryFallback(ctx, repo, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), policy)
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s parse .dockerconfigjson: %w", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
+		return nil, fmt.Errorf("%w: %s parse .dockerconfigjson: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 	}
 	// ORAS normalizes Docker Hub's credential key while its callback expects the
 	// canonical Docker server address. Reconcile these in the same memory store.
@@ -131,7 +130,7 @@ func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepo
 			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, configErr)
 		}
 		slog.Debug("oci: secretRef unresolvable, using registry config",
-			"id", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), "registry", ref.Registry)
+			"id", manifest.DiagnosticFor(repo.Named(), repo).Label(), "registry", ref.Registry)
 		selected, err := loadCredentials(ctx, f.RegistryConfig, ref.Host())
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)

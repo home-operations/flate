@@ -256,8 +256,8 @@ data: {k: v}
 		t.Fatalf("Run: %v", err)
 	}
 
-	if got := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 2 {
-		t.Errorf("expected 2 Kustomizations including the entry, got %d", got)
+	if got := len(o.Store().ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)); got != 1 {
+		t.Errorf("expected one discovered Kustomization, got %d", got)
 	}
 	if got := len(o.Store().ListObjects("", manifest.KindConfigMap)); got < 1 {
 		t.Errorf("expected at least 1 ConfigMap after reconcile, got %d", got)
@@ -1152,6 +1152,9 @@ func TestOrchestrator_BootstrapChartDigestTracking(t *testing.T) {
 				if !covered {
 					rel = "flux/hr.yaml"
 					testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: []\n")
+				}
+				if !covered {
+					testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [ks.yaml, hr.yaml, active.yaml]\n")
 				}
 				writeDigestTrackingRelease(t, root, rel, "true")
 				o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, Input: input}, Config{Concurrency: 2,

@@ -35,6 +35,7 @@ type barModel struct {
 	startedAt time.Time
 	finished  bool // set on finishMsg → View renders empty so the bar vanishes
 	events    *progressEvents
+	labels    map[manifest.NamedResource]string
 
 	// first records each id's first-seen time — drives in-flight ordering.
 	first    map[manifest.NamedResource]time.Time
@@ -48,6 +49,7 @@ type barModel struct {
 
 type progressEvent struct {
 	id         manifest.NamedResource
+	label      string
 	status     store.Status
 	observedAt time.Time
 	next       *progressEvent
@@ -57,8 +59,8 @@ type progressEvents struct {
 	head atomic.Pointer[progressEvent]
 }
 
-func (e *progressEvents) publish(id manifest.NamedResource, status store.Status, observedAt time.Time) {
-	event := &progressEvent{id: id, status: status, observedAt: observedAt}
+func (e *progressEvents) publish(id manifest.NamedResource, status store.Status, observedAt time.Time, label string) {
+	event := &progressEvent{id: id, label: label, status: status, observedAt: observedAt}
 	for {
 		head := e.head.Load()
 		event.next = head
@@ -90,6 +92,7 @@ func newBarModel(color bool) barModel {
 		width:     80,
 		startedAt: time.Now(),
 		events:    &progressEvents{},
+		labels:    map[manifest.NamedResource]string{},
 		first:     map[manifest.NamedResource]time.Time{},
 		inflight:  map[manifest.NamedResource]struct{}{},
 		printed:   map[manifest.NamedResource]store.Status{},
@@ -121,6 +124,7 @@ func (m barModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *barModel) drainEvents() {
 	for event := m.events.take(); event != nil; event = event.next {
+		m.labels[event.id] = event.label
 		m.track(event.id, event.status, event.observedAt)
 	}
 }
@@ -175,6 +179,9 @@ func (m barModel) inflightLabels() []string {
 	names := make([]string, len(ids))
 	for i, id := range ids {
 		names[i] = id.Name
+		if label := m.labels[id]; label != "" {
+			names[i] = label
+		}
 	}
 	return names
 }

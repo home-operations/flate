@@ -190,10 +190,14 @@ data:
 			if applied {
 				testutil.WriteFile(t, root, "cluster/vars-ks.yaml", testutil.KustomizationYAML("vars", "flux-system", "  path: ./cluster/vars\n  sourceRef: {kind: GitRepository, name: flux-system}\n"))
 			}
+			wantValues := []string{"a: base-value", "b: null"}
+			if applied {
+				wantValues[1] = "b: patch-value"
+			}
 			var previous string
 			for range 2 {
 				out := harness.RunCLIStdout(t, "build", "ks", "app", "--path", filepath.Join(root, "cluster"), "--concurrency", "2", "--no-progress")
-				for _, want := range []string{"a: base-value", "b: patch-value"} {
+				for _, want := range wantValues {
 					if !strings.Contains(out, want) {
 						t.Fatalf("missing %q in app output:\n%s", want, out)
 					}

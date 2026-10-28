@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
@@ -23,20 +24,32 @@ type Kustomization struct {
 
 	kustomizev1.KustomizationSpec `json:",inline" yaml:",inline"`
 
-	projection *atomic.Pointer[kustomizationProjection]
+	projection      *atomic.Pointer[kustomizationProjection]
+	diagnosticOwner NamedResource
+	diagnosticPath  string
+	hasDiagnostic   bool
+	standalone      bool
 
 	Labels      map[string]string `json:"-" yaml:"-"`
 	Annotations map[string]string `json:"-" yaml:"-"`
 }
 
 // NewEntryKustomization constructs an internal producer for an admitted literal entry.
-func NewEntryKustomization(source NamedResource, path string) *Kustomization {
+func NewEntryKustomization(source NamedResource, path string, applier NamedResource) *Kustomization {
 	return &Kustomization{
-		Name: entryProducerID.Name, Namespace: entryProducerID.Namespace,
-		Path:       path,
+		Name: cmp.Or(NormalizeClaimBase(path), "."), Namespace: internalKustomizationNamespace,
+		Path:            path,
+		diagnosticOwner: applier, diagnosticPath: path, hasDiagnostic: true,
 		SourceRef:  kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name, Namespace: source.Namespace},
 		projection: new(atomic.Pointer[kustomizationProjection]),
 	}
+}
+
+// NewPackageKustomization constructs an internal producer for standalone package documents.
+func NewPackageKustomization(source NamedResource, path string) *Kustomization {
+	root := NewEntryKustomization(source, path, NamedResource{})
+	root.standalone = true
+	return root
 }
 
 // GetLabels returns the Kustomization's metadata.labels.
@@ -62,7 +75,8 @@ func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (k *Kustomization) ProjectionCompatible(previous BaseManifest) bool {
-	return k.TargetNamespace == previous.(*Kustomization).TargetNamespace
+	p := previous.(*Kustomization)
+	return k.TargetNamespace == p.TargetNamespace && k.diagnosticOwner == p.diagnosticOwner && k.diagnosticPath == p.diagnosticPath && k.hasDiagnostic == p.hasDiagnostic && k.standalone == p.standalone
 }
 
 // Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
@@ -78,7 +92,7 @@ func (k *Kustomization) equal(other *Kustomization) bool {
 	if k == other {
 		return true
 	}
-	return k != nil && other != nil && k.Name == other.Name && k.Namespace == other.Namespace &&
+	return k != nil && other != nil && k.Name == other.Name && k.Namespace == other.Namespace && k.diagnosticOwner == other.diagnosticOwner && k.diagnosticPath == other.diagnosticPath && k.hasDiagnostic == other.hasDiagnostic && k.standalone == other.standalone &&
 		reflect.DeepEqual(&k.KustomizationSpec, &other.KustomizationSpec) &&
 		reflect.DeepEqual(k.Labels, other.Labels) && reflect.DeepEqual(k.Annotations, other.Annotations)
 }
@@ -203,8 +217,9 @@ func (k *Kustomization) Content(source any) any {
 	return struct {
 		Source          any
 		Name, Namespace string
+		Standalone      bool
 		Spec            *kustomizev1.KustomizationSpec
-	}{source, k.Name, k.Namespace, &k.KustomizationSpec}
+	}{source, k.Name, k.Namespace, k.standalone, &k.KustomizationSpec}
 }
 
 type kustomizationProjection struct {

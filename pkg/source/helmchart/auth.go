@@ -31,20 +31,19 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 	var authErr error
 	if r.SecretRef != nil {
 		if secrets == nil {
-			return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired", manifest.ErrMissingSecret, source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name))
+			return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired", manifest.ErrMissingSecret, manifest.DiagnosticFor(r.Named(), r).Label())
 		}
 		sec := secrets(r.Namespace, r.SecretRef.Name)
 		if sec == nil {
-			authErr = source.MissingSecretErr(r.Named(), r.SecretRef.Name, "not found")
+			authErr = source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r), r.SecretRef.Name, "not found")
 		} else {
-			prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(sec, r.Named(), r.SecretRef.Name)
+			prepared.username, prepared.password, authErr = source.BasicAuthFromSecret(sec, manifest.DiagnosticFor(r.Named(), r), r.SecretRef.Name)
 		}
 		if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 			return nil, authErr
 		}
 	}
-	owner := r.Named()
-	owner.Name = source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name)
+	owner := manifest.DiagnosticFor(r.Named(), r)
 	resolved, err := source.ResolveTransport(secrets, owner, []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		return nil, err
@@ -69,7 +68,7 @@ func (r *httpRepository) localCredentials(ctx context.Context) error {
 	}
 	config, err := repo.LoadFile(cmp.Or(os.Getenv("HELM_REPOSITORY_CONFIG"), helmpath.ConfigPath("repositories.yaml")))
 	if errors.Is(err, os.ErrNotExist) {
-		return source.MissingSecretErr(r.Named(), "", "no local Helm repository login")
+		return source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r.HelmRepository), "", "no local Helm repository login")
 	}
 	if err != nil {
 		return fmt.Errorf("%w: load Helm repository login: %w", manifest.ErrInput, err)
@@ -83,7 +82,7 @@ func (r *httpRepository) localCredentials(ctx context.Context) error {
 			return nil
 		}
 	}
-	return source.MissingSecretErr(r.Named(), "", "no local Helm repository login")
+	return source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r.HelmRepository), "", "no local Helm repository login")
 }
 
 // repositoryURLEqual follows Helm v4.3.1 internal/urlutil.Equal, target first.

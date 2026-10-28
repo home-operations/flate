@@ -16,7 +16,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func resolveTLS(secrets SecretGetter, owner manifest.NamedResource, input TransportInput) (*tls.Config, [3]string, any, error) {
+func resolveTLS(secrets SecretGetter, owner manifest.DiagnosticIdentity, input TransportInput) (*tls.Config, [3]string, any, error) {
 	ref := input.Reference
 	sec, err := resolveSecretRef(secrets, owner, input.Use.label(), ref)
 	if err != nil {
@@ -29,14 +29,14 @@ func resolveTLS(secrets SecretGetter, owner manifest.NamedResource, input Transp
 	for i, key := range []string{"tls.crt", "tls.key", "ca.crt"} {
 		value, _, err := sec.Value(key)
 		if err != nil {
-			return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, ref.Name, input.Use.label(), err)
+			return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", owner.Label(), owner.ID.Namespace, ref.Name, input.Use.label(), err)
 		}
 		material[i] = value
 	}
 	if input.CAFallback {
 		caFile, _, err := sec.Value("caFile")
 		if err != nil {
-			return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, ref.Name, input.Use.label(), err)
+			return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", owner.Label(), owner.ID.Namespace, ref.Name, input.Use.label(), err)
 		}
 		material[2] = cmp.Or(material[2], caFile)
 	}
@@ -51,7 +51,7 @@ func resolveTLS(secrets SecretGetter, owner manifest.NamedResource, input Transp
 		return nil, [3]string{}, nil, MissingSecretErr(owner, ref.Name, "TLS material unavailable")
 	}
 	if err != nil {
-		return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, ref.Name, input.Use.label(), err)
+		return nil, [3]string{}, nil, fmt.Errorf("%s: secret %s/%s (%s): %w", owner.Label(), owner.ID.Namespace, ref.Name, input.Use.label(), err)
 	}
 	return cfg, material, [2]any{sec.Data, sec.StringData}, nil
 }

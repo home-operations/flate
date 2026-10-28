@@ -56,4 +56,4 @@ const ValuePlaceholderPrefix = "..PLACEHOLDER_"
 // KustomizeBuilderFilenames is the upstream list of recognized root filenames.
 var KustomizeBuilderFilenames = konfig.RecognizedKustomizationFileNames()
 
-var entryProducerID = NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "\x00", Name: "entry"}
+const internalKustomizationNamespace = "\x00"

@@ -1,7 +1,6 @@
 package manifest
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"strings"
@@ -68,17 +67,27 @@ type DependencyFailedError struct {
 	Parent NamedResource
 	// Failed is the ordered list of dependency IDs that failed.
 	Failed []NamedResource
-	// Reasons maps each failed ID to its underlying message.
-	Reasons map[NamedResource]string
+	// Reasons maps each raw dependency to its captured diagnostic tree.
+	Reasons map[NamedResource]DiagnosticReason
+	// Subject is the captured parent display identity.
+	Subject DiagnosticIdentity
 }
 
 func (e *DependencyFailedError) Error() string {
 	if len(e.Failed) == 0 {
-		return fmt.Sprintf("%s: dependencies failed", e.Parent.String())
+		subject := e.Subject
+		if subject.ID == (NamedResource{}) {
+			subject = DiagnosticFor(e.Parent, nil)
+		}
+		return fmt.Sprintf("%s: dependencies failed", subject)
 	}
 	parts := make([]string, 0, len(e.Failed))
 	for _, f := range e.Failed {
-		parts = append(parts, f.String()+": "+cmp.Or(e.Reasons[f], "unknown error"))
+		reason := e.Reasons[f]
+		if reason.Subject.ID == (NamedResource{}) {
+			reason.Subject = DiagnosticFor(f, nil)
+		}
+		parts = append(parts, reason.String())
 	}
 	return "dependencies failed: " + strings.Join(parts, "; ")
 }

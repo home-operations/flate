@@ -132,3 +132,34 @@ func TestClassify_BootstrapArtifactRequirement(t *testing.T) {
 		})
 	}
 }
+
+func TestClassify_SyntheticArtifactContext(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"unavailable", "unreadable", "skipped"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			chart := &manifest.HelmChartSource{Name: "chart", Namespace: "sources"}
+			repo := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
+			st := store.New()
+			st.AddObject(repo)
+			status := store.StatusInfo{Status: store.StatusReady}
+			if mode == "skipped" {
+				status.Reason = store.ReasonSkipped
+				status.Message = "material unavailable"
+			}
+			st.UpdateStatus(repo.Named(), status)
+			waiter := Waiter{Store: st}
+			result := waiter.Classify(t.Context(), manifest.DependencyRef{NamedResource: repo.Named(), Artifact: true, ArtifactOnly: mode == "unreadable"}, manifest.DrainCascade)
+			sentinel := manifest.ErrObjectNotFound
+			if mode == "unreadable" {
+				sentinel = manifest.ErrInput
+			}
+			if mode == "skipped" {
+				sentinel = manifest.ErrSourceSkipped
+			}
+			if !errors.Is(result.Err, sentinel) || !strings.Contains(result.Err.Error(), chart.Named().String()) || strings.Contains(result.Err.Error(), repo.Named().String()) {
+				t.Fatalf("artifact context or sentinel lost: %+v", result)
+			}
+		})
+	}
+}

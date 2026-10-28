@@ -33,8 +33,7 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 	if err != nil {
 		return bucketAcquisition{}, err
 	}
-	owner := b.Named()
-	owner.Name = b.Namespace + "/" + b.Name
+	owner := manifest.DiagnosticFor(b.Named(), b)
 	resolved, err := source.ResolveTransport(f.secrets, owner, []source.TransportInput{
 		{Reference: b.ProxySecretRef, Use: source.TransportProxy},
 		{Reference: b.CertSecretRef, Use: source.TransportCert},
@@ -54,7 +53,7 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 	}
 	if b.STS != nil || b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric && (b.Provider != sourcev1.BucketProviderAmazon || material == nil && authErr == nil) {
 		if authErr == nil {
-			authErr = source.MissingSecretErr(b.Named(), "", "provider authentication unavailable offline")
+			authErr = source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), "", "provider authentication unavailable offline")
 		}
 		return bucketAcquisition{}, authErr
 	}
@@ -99,7 +98,7 @@ func (r bucketAcquisition) machineCredentials(ctx context.Context) (*credentials
 		}
 		return credentials.NewStatic(value.AccessKeyID, value.SecretAccessKey, value.SessionToken, value.SignerType), nil
 	}
-	return nil, source.MissingSecretErr(r.bucket.Named(), "", "no machine AWS credentials")
+	return nil, source.MissingSecretErr(manifest.DiagnosticFor(r.bucket.Named(), r.bucket), "", "no machine AWS credentials")
 }
 
 func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {
@@ -107,22 +106,22 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 		return credentials.NewStaticV4("", "", ""), nil
 	}
 	if f.secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name))
+		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", manifest.DiagnosticFor(b.Named(), b).Label())
 	}
 	sec := f.secrets(b.Namespace, b.SecretRef.Name)
 	if sec == nil {
-		return nil, source.MissingSecretErr(b.Named(), b.SecretRef.Name, "not found")
+		return nil, source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), b.SecretRef.Name, "not found")
 	}
 	access, _, err := sec.Value("accesskey")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), b.Namespace, b.SecretRef.Name, err)
+		return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(b.Named(), b).Label(), b.Namespace, b.SecretRef.Name, err)
 	}
 	secret, _, err := sec.Value("secretkey")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), b.Namespace, b.SecretRef.Name, err)
+		return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(b.Named(), b).Label(), b.Namespace, b.SecretRef.Name, err)
 	}
 	if access == "" || secret == "" || manifest.HasValuePlaceholder(access) || manifest.HasValuePlaceholder(secret) {
-		return nil, source.MissingSecretErr(b.Named(), b.SecretRef.Name, "missing accesskey/secretkey")
+		return nil, source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), b.SecretRef.Name, "missing accesskey/secretkey")
 	}
 	return credentials.NewStaticV4(access, secret, ""), nil
 }

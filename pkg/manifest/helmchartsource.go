@@ -13,10 +13,13 @@ import (
 // spec.chartRef. Distinct from the inline HelmChart projection that
 // lives next to HelmRelease.
 type HelmChartSource struct {
-	Name        string            `json:"name"      yaml:"name"`
-	Namespace   string            `json:"namespace" yaml:"namespace"`
-	Labels      map[string]string `json:"-" yaml:"-"`
-	Annotations map[string]string `json:"-" yaml:"-"`
+	diagnosticOwner NamedResource
+	diagnosticPath  string
+	hasDiagnostic   bool
+	Name            string            `json:"name"      yaml:"name"`
+	Namespace       string            `json:"namespace" yaml:"namespace"`
+	Labels          map[string]string `json:"-" yaml:"-"`
+	Annotations     map[string]string `json:"-" yaml:"-"`
 
 	sourcev1.HelmChartSpec `json:",inline" yaml:",inline"`
 }
@@ -68,7 +71,10 @@ func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 }
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
-func (h *HelmChartSource) ProjectionCompatible(BaseManifest) bool { return true }
+func (h *HelmChartSource) ProjectionCompatible(previous BaseManifest) bool {
+	p := previous.(*HelmChartSource)
+	return h.diagnosticOwner == p.diagnosticOwner && h.diagnosticPath == p.diagnosticPath && h.hasDiagnostic == p.hasDiagnostic
+}
 
 func parseHelmChartSource(doc map[string]any) (*HelmChartSource, error) {
 	var cr sourcev1.HelmChart

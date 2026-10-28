@@ -34,9 +34,7 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 			return ok && cmp.Or(sibling.Builder, sibling.File) == cmp.Or(record.Builder, record.File) && d.loader.AdmitsRoot(obj.Named(), record.Path)
 		}
 		opts := loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, WipeSecrets: d.cfg.WipeSecrets, Admit: admit}
-		if record.Path == "" {
-			opts.Documents = d.loader.BuiltDocuments(id)
-		}
+		opts.Documents = d.loader.PromotionDocuments(id)
 		if !loader.Promote(ctx, d.cfg.Store, id, opts) {
 			slog.Debug("discovery: orphan promotion failed", "id", id.String())
 		}

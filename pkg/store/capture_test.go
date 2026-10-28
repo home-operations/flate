@@ -874,6 +874,10 @@ func TestReadSet_MatchesMutableArtifact(t *testing.T) {
 	if !current.Matches(&before) {
 		t.Fatal("the same mutable artifact was treated as different material")
 	}
+	st.SetArtifact(source.Named(), artifact.WithReads(&ReadSet{}))
+	if !before.Valid() || !current.Matches(&before) {
+		t.Fatal("refreshing registrations replaced the acquired mutable material")
+	}
 	st.SetArtifact(source.Named(), &SourceArtifact{LocalPath: artifact.LocalPath, FS: artifact.FS})
 	var replacement ReadSet
 	replacement.Init(st, ownerID("consumer"), nil)

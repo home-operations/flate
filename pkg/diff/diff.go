@@ -29,6 +29,7 @@ type Doc struct {
 
 // Options tunes Compare and RenderDocs behavior.
 type Options struct {
+	subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
 	// StripAttrs lists annotation/label keys removed from each
 	// manifest's metadata (and pod-template metadata) before the diff
 	// is computed. Cuts chart-bump noise — annotations like
@@ -85,7 +86,7 @@ func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 		lines, lineErr := output.PrepareLines(prepared)
 		err = lineErr
 		if err == nil {
-			names := output.PrepareNames([]string{""}, [][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)})
+			names := output.PrepareNames([]string{""}, [][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)}, nil)
 			output.NameLines(lines, names[0])
 			err = encoder.Lines(lines)
 		}
@@ -93,7 +94,7 @@ func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 			out = buf.Bytes()
 		}
 	case FormatJSON:
-		out, err = renderJSON(publicChanges(prepared), opts.Suppressed)
+		out, err = renderJSON(publicChanges(prepared), opts.Suppressed, prepared.Subjects)
 	case FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea:
 		report, nativeErr := prepared.Native()
 		err = nativeErr
@@ -119,5 +120,5 @@ func prepareDocs(docs []Doc) []diffprep.Doc {
 }
 
 func prepareOptions(opts Options) diffprep.Options {
-	return diffprep.Options{StripAttrs: opts.StripAttrs, StripFields: opts.StripFields, Normalize: opts.Normalize}
+	return diffprep.Options{StripAttrs: opts.StripAttrs, StripFields: opts.StripFields, Normalize: opts.Normalize, Subjects: opts.subjects}
 }

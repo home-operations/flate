@@ -42,7 +42,11 @@ func (n NamedResource) IsCRD() bool {
 
 // ReportHidden reports whether the identity is internal to reconciliation reports.
 func (n NamedResource) ReportHidden() bool {
-	return n == entryProducerID || n == BootstrapSourceID
+	return n.internalKustomization() || n == BootstrapSourceID
+}
+
+func (n NamedResource) internalKustomization() bool {
+	return n.Group == FluxKustomizeDomain && n.Kind == KindKustomization && n.Namespace == internalKustomizationNamespace
 }
 
 // Resolve applies forced, authored and fallback namespace precedence without changing other fields.
@@ -54,7 +58,7 @@ func Resolve(id NamedResource, forced, fallback string) NamedResource {
 // NamespacedName returns "namespace/name", or just "name" when
 // cluster-scoped.
 func (n NamedResource) NamespacedName() string {
-	if n.Namespace == "" || n == entryProducerID {
+	if n.Namespace == "" || n.internalKustomization() {
 		return n.Name
 	}
 	return n.Namespace + "/" + n.Name

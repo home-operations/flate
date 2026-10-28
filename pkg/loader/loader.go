@@ -250,6 +250,9 @@ func (l *Loader) kustomizations() []store.Child {
 	objects := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
 	out := make([]store.Child, 0, len(objects))
 	for _, obj := range objects {
+		if _, _, applies := obj.SourcePath(); !applies {
+			continue
+		}
 		_, doc, emission := l.Store.GetEmission(obj.Named())
 		emission.Finish()
 		out = append(out, store.Child{Obj: obj, Doc: doc})
@@ -400,7 +403,8 @@ func (l *Loader) loadFile(path string) (int, error) {
 		}
 		info := manifest.KindOf(obj)
 		if !info.Tracked {
-			if len(manifest.ProducerTargets(obj)) != 0 {
+			_, _, hasPath := obj.SourcePath()
+			if hasPath || len(manifest.ProducerTargets(obj)) != 0 {
 				l.recordObject(obj, path)
 			}
 			continue

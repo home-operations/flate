@@ -552,7 +552,7 @@ func TestStore_UpdateStatus_Idempotent(t *testing.T) { //nolint:tparallel // Sub
 
 func TestStatusInfo_Outcome(t *testing.T) {
 	t.Parallel()
-	failure := &dependencyFailure{ids: []manifest.NamedResource{testutil.HelmReleaseID("", "dep")}}
+	failure := newDependencyFailure(&manifest.DependencyFailedError{Failed: []manifest.NamedResource{testutil.HelmReleaseID("", "dep")}})
 	for _, tc := range []struct {
 		name        string
 		info        StatusInfo
@@ -1254,7 +1254,9 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 							assert.Equal(t, ok, true)
 							assert.Equal(t, status.Status, StatusReady)
 							assert.Equal(t, status.Message, id.Group)
-							assert.Diff(t, s.GetArtifact(id, ArtifactContent), Artifact(&SourceArtifact{URL: id.Group}))
+							if diff := cmp.Diff(Artifact(&SourceArtifact{URL: id.Group}), s.GetArtifact(id, ArtifactContent), cmpopts.IgnoreFields(SourceArtifact{}, "material")); diff != "" {
+								t.Errorf("artifact mismatch (-want +got):\n%s", diff)
+							}
 							owners := testutil.Owners(s.Productions(id, nil))
 							assert.Equal(t, len(owners), 1)
 							assert.Equal(t, owners[0].Group, id.Group)
@@ -1284,7 +1286,9 @@ func TestStore_ShardedConcurrentDifferentKinds(t *testing.T) {
 						status, ok := s.GetStatus(id)
 						assert.Equal(t, ok, true)
 						assert.Equal(t, status.Message, id.Group)
-						assert.Diff(t, s.GetArtifact(id, ArtifactContent), Artifact(&SourceArtifact{URL: id.Group}))
+						if diff := cmp.Diff(Artifact(&SourceArtifact{URL: id.Group}), s.GetArtifact(id, ArtifactContent), cmpopts.IgnoreFields(SourceArtifact{}, "material")); diff != "" {
+							t.Errorf("artifact mismatch (-want +got):\n%s", diff)
+						}
 						var observation Observation
 						_, observation = s.Snapshot(id, true)
 						conds = observation.Conditions

@@ -61,7 +61,7 @@ func TestNamedResource_ReportHidden(t *testing.T) {
 		want bool
 	}{
 		{"bootstrap", BootstrapSourceID, true},
-		{"internal entry", NewEntryKustomization(BootstrapSourceID, ".").Named(), true},
+		{"internal entry", NewEntryKustomization(BootstrapSourceID, ".", NamedResource{}).Named(), true},
 		{"authored entry label", NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "entry"}, false},
 		{"chart", NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: "apps", Name: "chart"}, false},
 		{"foreign chart", NamedResource{Group: "foreign.example", Kind: KindHelmChart, Namespace: "apps", Name: "chart"}, false},

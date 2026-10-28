@@ -598,12 +598,15 @@ func (r *ReadSet) RequireData(id manifest.NamedResource) { r.input(id).required 
 
 // CarryWarnings reuses advisories after the caller verifies an equal consumed projection.
 func (r *ReadSet) CarryWarnings(previous RenderedOutput) {
-	r.warnings = append(r.warnings, previous.warnings...)
+	for _, warning := range previous.warnings {
+		r.AddWarning(warning)
+	}
 }
 
 // AddWarning retains a render advisory in this execution's accepted bundle.
 func (r *ReadSet) AddWarning(warning manifest.Warning) {
 	warning.Detail = slices.Clone(warning.Detail)
+	warning.Related = slices.Clone(warning.Related)
 	r.warnings = append(r.warnings, warning)
 }
 

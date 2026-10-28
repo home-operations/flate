@@ -19,6 +19,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
@@ -412,7 +413,7 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 	}
 	results, _, _ = Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: selected.Group, Kind: selected.Kind, Name: selected.Name}}, nil)
 	assert.Diff(t, results[0].Causes, map[manifest.NamedResource][]manifest.NamedResource{missing: {selected}})
-	assert.Diff(t, results[0].Unrelated, []manifest.Warning{{Resource: other, Category: manifest.WarnUnrelatedFailure, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
+	assert.Diff(t, results[0].Unrelated, []manifest.Warning{{Resource: other, Subject: manifest.DiagnosticFor(other, nil), Related: []manifest.NamedResource{missing}, Category: manifest.WarnUnrelatedFailure, Message: "other blocked", Detail: []string{"blocked by " + missing.String()}}})
 	selected.Name = "healthy"
 	run.store.AddObject(&manifest.Kustomization{Name: selected.Name, Namespace: selected.Namespace})
 	c := testutil.KustomizationID("flux-system", "c")
@@ -1059,7 +1060,7 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 				for i, res := range selected {
 					var want []manifest.Warning
 					if tc.want && i == externalSide {
-						want = []manifest.Warning{{Resource: obj.Named(), Category: manifest.WarnExternalSource,
+						want = []manifest.Warning{{Resource: obj.Named(), Subject: manifest.DiagnosticFor(obj.Named(), obj), Related: []manifest.NamedResource{source}, Category: manifest.WarnExternalSource,
 							Message: "external source " + source.String() + " is outside the local tree; not rendered"}}
 					}
 					assert.Diff(t, res.External, want)
@@ -1104,7 +1105,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 				t.Fatalf("selected rows: %+v, want %s", selected, id)
 			}
 			if i == 1 {
-				if diff := cmp.Diff(objects, selected[0].Objects, cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
+				if diff := cmp.Diff(objects, selected[0].Objects, cmpopts.IgnoreUnexported(manifest.HelmRelease{}, manifest.OCIRepository{}, manifest.HelmChartSource{})); diff != "" {
 					t.Fatal(diff)
 				}
 				assert.Diff(t, selected[0].ChartVersions, versions)
@@ -1261,6 +1262,7 @@ func TestSelect_SourceWarningAttribution(t *testing.T) {
 			if warning.Category == raw.Category {
 				modules++
 				want := raw
+				want.Subject = manifest.DiagnosticFor(raw.Resource, nil)
 				want.Count = 1
 				assert.Diff(t, warning, want)
 			}
@@ -1288,6 +1290,40 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 
 func TestSelect_EntryDocuments(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		owner manifest.NamedResource
+	}{
+		{name: "path only"},
+		{name: "Kustomization", owner: testutil.KustomizationID("flux-system", "sync")},
+		{name: "FluxInstance", owner: manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: "FluxInstance", Namespace: "flux-system", Name: "flux"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			run := selectedRun(&Result{})
+			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", tc.owner)
+			run.store.AddObject(entry)
+			run.store.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusReady})
+			run.entryBinding = discovery.Binding{Producer: entry.Named(), Key: entry.Named()}
+			docs := []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings"}}}
+			run.Result.Manifests = []manifest.DocumentBatch{{Parent: entry, Documents: docs}}
+			selected, err, remainder := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+			assert.NoError(t, err)
+			assert.NoError(t, remainder)
+			res := selected[0]
+			assert.Diff(t, res.Subjects, map[manifest.NamedResource]manifest.DiagnosticIdentity{
+				entry.Named(): {ID: entry.Named(), Resource: tc.owner, Path: "clusters/test"},
+			})
+			assert.Equal(t, len(res.Objects)+len(res.Statuses)+len(res.Counts), 0)
+			assert.Equal(t, len(res.Failed)+len(res.Blocked)+len(res.Warnings), 0)
+			if len(res.Manifests) != 1 {
+				t.Fatalf("selected batches: %+v", res.Manifests)
+			}
+			assert.Equal(t, res.Manifests[0].Parent, manifest.BaseManifest(entry))
+			assert.Diff(t, res.Manifests[0].Documents, docs)
+			assert.Diff(t, res.ProducerKeys, map[manifest.NamedResource]manifest.NamedResource{entry.Named(): entry.Named()})
+		})
+	}
 	for _, tc := range []struct {
 		name    string
 		roots   []manifest.NamedResource
@@ -1428,6 +1464,9 @@ func TestSelect_EntryDocuments(t *testing.T) {
 			doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": name, "namespace": "apps"}}
 			unrelated := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unrelated", "namespace": "apps"}}
 			publishEntryForTest(run, []map[string]any{doc, unrelated})
+			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", testutil.KustomizationID("apps", name))
+			run.store.AddObject(entry)
+			run.entryBinding = discovery.Binding{Producer: entry.Named(), Key: entry.Named()}
 			id := manifest.DocIdentity(doc)
 			run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}}, Readers: map[string][]manifest.FileReader{"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}}}}
 			run.filter = change.NewFilter(change.NewSet([]string{"kustomization.yaml"}), run.index, run.store, "")
@@ -1441,13 +1480,45 @@ func TestSelect_EntryDocuments(t *testing.T) {
 				t.Fatalf("side %d selected wrong changed documents: %+v", i, selected[i].Manifests)
 			}
 			assert.Equal(t, len(selected[i].Objects), 0)
+			assert.Equal(t, len(selected[i].Statuses), 0)
 			assert.Equal(t, len(selected[i].Counts), 0)
+			id := runs[i].entryBinding.Producer
+			assert.Equal(t, selected[i].Manifests[0].Parent.Named(), id)
+			assert.Diff(t, selected[i].ProducerKeys, map[manifest.NamedResource]manifest.NamedResource{id: id})
+			assert.Diff(t, selected[i].Subjects, map[manifest.NamedResource]manifest.DiagnosticIdentity{
+				id: {ID: id, Resource: testutil.KustomizationID("apps", name), Path: "."},
+			})
 		}
 	})
 }
 
+func TestSelect_EntryBatchSubjects(t *testing.T) {
+	t.Parallel()
+	run := selectedRun(nil)
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", testutil.KustomizationID("apps", "captured"))
+	replacement := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", testutil.KustomizationID("apps", "replacement"))
+	ordinary := &manifest.Kustomization{Name: "ordinary", Namespace: "apps"}
+	run.store.AddObject(replacement)
+	run.store.AddObject(ordinary)
+	side := selectionSide{run: run, result: &selection.Selection{
+		Objects: []manifest.BaseManifest{ordinary},
+		Manifests: []manifest.DocumentBatch{
+			{Parent: entry},
+			{Parent: ordinary},
+			{},
+		},
+	}}
+	side.prepareSubjects()
+	assert.Diff(t, side.result.Subjects, map[manifest.NamedResource]manifest.DiagnosticIdentity{
+		entry.Named(): {ID: entry.Named(), Resource: testutil.KustomizationID("apps", "captured"), Path: "clusters/test"},
+	})
+	assert.Equal(t, side.result.Manifests[0].Parent, manifest.BaseManifest(entry))
+	assert.Equal(t, side.result.Manifests[1].Parent, manifest.BaseManifest(ordinary))
+	assert.Equal(t, side.result.Manifests[2].Parent, nil)
+}
+
 func publishEntryForTest(run Rendered, docs []map[string]any) {
-	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".")
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 	run.store.AddObject(entry)
 	children, retained, failures := base.New(run.store, nil).ParseChildren(entry, testutil.DocumentOccurrences(docs), manifest.ParseDocOptions{})
 	run.store.RecordEmitted(entry.Named(), &store.Emission{Children: children, Manifests: retained, Failures: failures, Complete: true}, nil)
@@ -1461,7 +1532,7 @@ func testEntryCorrespondence(t *testing.T) {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s_to_%s/reverse_%t", names[0], names[1], reverse), func(t *testing.T) {
 				t.Parallel()
-				entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".")
+				entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 				runs := []Rendered{selectedRun(&Result{}), selectedRun(&Result{})}
 				for i, name := range names {
 					obj := entry.Clone()
@@ -1496,8 +1567,8 @@ func testEntryCorrespondence(t *testing.T) {
 				if selected[failed].Unavailable[entry.Named()].String() != "entry failed" {
 					t.Fatalf("entry correspondence read an unrelated status: %+v", selected[failed].Unavailable)
 				}
-				left := diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys}
-				right := diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys}
+				left := diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys}
+				right := diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys}
 				output, _, notes, err := diff.Compare(left, right, nil, diff.Options{Format: diff.FormatJSON})
 				assert.NoError(t, err)
 				if len(notes) != 1 || notes[0].Count != 1 || notes[0].Parent.NamedResource != old {
@@ -1508,5 +1579,33 @@ func testEntryCorrespondence(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSelect_SyntheticFailureContext(t *testing.T) {
+	t.Parallel()
+	for _, owner := range []manifest.NamedResource{{}, testutil.KustomizationID("flux-system", "sync"), {Group: "fluxcd.controlplane.io", Kind: "FluxInstance", Namespace: "flux-system", Name: "flux"}} {
+		t.Run(owner.String(), func(t *testing.T) {
+			t.Parallel()
+			run := selectedRun(&Result{})
+			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner)
+			authored := &manifest.Kustomization{Name: "entry", Namespace: "apps"}
+			run.store.AddObject(entry)
+			run.store.AddObject(authored)
+			run.store.UpdateFailure(entry.Named(), fmt.Errorf("%w: invalid package", manifest.ErrInput))
+			run.store.UpdateFailure(authored.Named(), fmt.Errorf("%w: authored failure", manifest.ErrInput))
+			run.Result.Failed = run.store.FailedResources()
+			run.Err = run.aggregateFailures(run.Result.Failed)
+			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+			if err == nil || strings.Contains(err.Error(), entry.Named().String()) || !strings.Contains(err.Error(), `entry path "clusters/test"`) || !strings.Contains(err.Error(), authored.Named().String()) {
+				t.Fatalf("selected diagnostic=%v", err)
+			}
+			if owner != (manifest.NamedResource{}) && !strings.Contains(err.Error(), owner.String()) {
+				t.Fatalf("real owner lost: %v", err)
+			}
+			if len(selected[0].Failed) != 2 || len(selected[0].Objects) != 1 || selected[0].Objects[0].Named() != authored.Named() {
+				t.Fatalf("display changed selection: %+v", selected[0])
+			}
+		})
 	}
 }

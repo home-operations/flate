@@ -12,6 +12,10 @@ type Warning struct {
 	// warning is render-global (not tied to one object), e.g. an empty --path
 	// scan or a --path/--path-orig misconfiguration.
 	Resource NamedResource
+	// Subject is the captured display context; it never participates in deduplication.
+	Subject DiagnosticIdentity
+	// Related retains ordered raw references mentioned by the payload.
+	Related []NamedResource
 	// Category is a stable machine-readable code (one of the Warn* constants).
 	// Consumers switch/filter on this; it never carries free text.
 	Category string
@@ -111,6 +115,7 @@ func CompareWarning(a, b Warning) int {
 	return cmp.Or(
 		cmp.Compare(a.Category, b.Category),
 		a.Resource.Compare(b.Resource),
+		slices.CompareFunc(a.Related, b.Related, NamedResource.Compare),
 		cmp.Compare(a.Message, b.Message),
 		slices.Compare(a.Detail, b.Detail),
 	)

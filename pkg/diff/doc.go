@@ -53,8 +53,8 @@
 //			pair, errors.Join(pair[0].Err, pair[1].Err),
 //			[]manifest.NamedResource{{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization}, {Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease}}, nil)
 //		out, warnings, suppressed, err := diff.Compare(
-//			diff.Snapshot{Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys},
-//			diff.Snapshot{Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys},
+//			diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, Unavailable: selected[0].Unavailable, ProducerKeys: selected[0].ProducerKeys},
+//			diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, Unavailable: selected[1].Unavailable, ProducerKeys: selected[1].ProducerKeys},
 //			selectedErr,
 //			diff.Options{
 //				StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields,

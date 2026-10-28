@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -61,8 +62,8 @@ func TestRun_SmallTree(t *testing.T) {
 		if _, ok := filesForTest(res.Index)[id]; !ok {
 			t.Errorf("SourceFiles missing %s", id)
 		}
-		if st.GetObject(id) != nil {
-			t.Errorf("prepared child published before entry emission: %s", id)
+		if st.GetObject(id) == nil {
+			t.Errorf("discovery-only root omitted Kustomization %s", id)
 		}
 	}
 
@@ -205,8 +206,8 @@ spec: {target: {name: values}}
 		t.Fatal("foreign HelmRelease borrowed the real declaration record")
 	}
 	orphan := testutil.HelmReleaseID("apps", "orphan")
-	if record, ok := res.Index.Lookup(orphan); !ok || record.Parent != res.Binding.Producer || st.GetObject(orphan) != nil {
-		t.Error("standalone declaration lacks entry ownership")
+	if record, ok := res.Index.Lookup(orphan); !ok || record.Parent != (manifest.NamedResource{}) || st.GetObject(orphan) == nil {
+		t.Error("standalone declaration was not promoted as a static root")
 	}
 }
 
@@ -324,13 +325,17 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		if err != nil || string(got) != body {
 			t.Fatalf("admitted alias bytes = %q, %v", got, err)
 		}
-		assert.Diff(t, input, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"ks.yaml": {Data: []byte(body)}}})
+		if diff := cmp.Diff(&store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"ks.yaml": {Data: []byte(body)}}}, input, cmpopts.IgnoreFields(store.SourceArtifact{}, "material")); diff != "" {
+			t.Errorf("admitted input mismatch (-want +got):\n%s", diff)
+		}
 		aliasCopy := *alias
 		aliasCopy.FS = nil
 		aliasCopy.ContentFingerprint = nil
 		return aliasCopy
 	}
-	assert.Diff(t, run(scan), run(root))
+	if diff := cmp.Diff(run(root), run(scan), cmpopts.IgnoreFields(store.SourceArtifact{}, "material")); diff != "" {
+		t.Errorf("scan coordinate mismatch (-want +got):\n%s", diff)
+	}
 }
 
 func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
@@ -874,10 +879,10 @@ data: {value: fixture}
 			}
 			standalone := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "demo", Name: "standalone"}
 			record, indexed := res.Index.Lookup(standalone)
-			if !indexed || st.GetObject(standalone) != nil {
+			if !indexed || st.GetObject(standalone) == nil || res.Binding != (discovery.Binding{}) {
 				t.Fatalf("standalone ConfigMap ownership = %+v, published=%v", record, st.GetObject(standalone))
 			}
-			assert.Diff(t, testutil.Owners(st.Productions(standalone, res.Index)), []manifest.NamedResource{res.Binding.Producer})
+			assert.Equal(t, len(testutil.Owners(st.Productions(standalone, res.Index))), 0)
 		})
 	}
 }

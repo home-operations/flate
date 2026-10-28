@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"strings"
 	"testing"
 	"time"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -85,6 +88,45 @@ func TestFetch_OCIBranch(t *testing.T) {
 	}
 }
 
+func TestFetch_TransientOCIDiagnostic(t *testing.T) {
+	t.Parallel()
+	repo := ociRepo("oci://registry.example/charts")
+	repo.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+	hc := helmChart(repo.Name, "app", "1.0.0")
+	s := store.New()
+	s.AddObject(repo)
+	s.AddObject(hc)
+	synthetic := hc.OCIRepository(repo)
+	ordinary := manifest.NewOCIRepository(sourcev1.OCIRepository{
+		Name: synthetic.Name, Namespace: synthetic.Namespace,
+		Spec: sourcev1.OCIRepositorySpec{URL: "oci://registry.example/ordinary", Suspend: true,
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "1.0.0"}, Interval: &metav1.Duration{Duration: time.Minute}},
+	})
+	s.AddObject(ordinary)
+	reads := new(store.ReadSet)
+	reads.Init(s, hc.Named(), nil)
+	defer reads.Close()
+	network := newTestNetwork(t)
+	f := New(&oci.Fetcher{Network: network}, Config{Network: network})
+	_, err := f.Fetch(t.Context(), hc, reads, cache.Policy{})
+	missing, ok := errors.AsType[*source.MissingSecretError](err)
+	if !ok || missing.Owner != synthetic.Named() || missing.Subject.Resource != hc.Named() {
+		t.Fatalf("temporary source failure lost its owner: %v", err)
+	}
+	if s.GetObject(missing.Owner) != ordinary {
+		t.Fatal("temporary transport replaced the authored source")
+	}
+	live := *missing
+	live.Subject = manifest.DiagnosticFor(missing.Owner, s.GetObject(missing.Owner))
+	if live.Subject.Resource != ordinary.Named() || live.Error() == err.Error() {
+		t.Fatalf("live lookup unexpectedly recovered temporary attribution: %v", &live)
+	}
+	if !strings.Contains(err.Error(), "HelmChart "+hc.Named().NamespacedName()) || strings.Contains(err.Error(), "OCIRepository") || !strings.Contains(live.Error(), "OCIRepository") {
+		t.Fatalf("captured=%v; report-time lookup=%v", err, &live)
+	}
+	t.Logf("captured=%v; report-time lookup=%v", err, &live)
+}
+
 func TestFetch_OCIAmbientContinuation(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []error{nil, context.Canceled, context.DeadlineExceeded} {
@@ -95,8 +137,14 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			repo := ociRepo("oci://fixture/charts")
-			hc := helmChart(repo.Name, "chart", "1.0.0")
-			missing, _ := errors.AsType[*source.MissingSecretError](source.MissingSecretErr(repo.Named(), "auth", "not found"))
+			release := &manifest.HelmRelease{Name: "release", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Namespace: repo.Namespace, Name: repo.Name}}}}}
+			children, generateErr := release.GeneratedObjects()
+			if generateErr != nil {
+				t.Fatal(generateErr)
+			}
+			hc := children[0].(*manifest.HelmChartSource)
+			synthetic := hc.OCIRepository(repo)
+			missing, _ := errors.AsType[*source.MissingSecretError](source.MissingSecretErr(manifest.DiagnosticFor(synthetic.Named(), synthetic), "auth", "not found"))
 			calls := 0
 			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
 				calls++
@@ -112,6 +160,9 @@ func TestFetch_OCIAmbientContinuation(t *testing.T) {
 			wrapped, ok := errors.AsType[*source.MissingSecretError](err)
 			if !ok || wrapped.RetryAmbient == nil || calls != 0 {
 				t.Fatalf("prepare = %v; calls=%d", err, calls)
+			}
+			if wrapped.Owner != synthetic.Named() || wrapped.Subject.Resource != release.Named() || !errors.Is(err, manifest.ErrMissingSecret) {
+				t.Fatalf("retry wrapper lost captured identity: %+v", wrapped)
 			}
 			artifact, err := wrapped.RetryAmbient(t.Context())
 			if !errors.Is(err, failure) || calls != 1 {

@@ -22,7 +22,7 @@ type DataDependency struct {
 // Availability describes whether captured data is usable, absent, or still producible.
 type Availability struct {
 	Kind    schedule.Kind
-	Message string
+	Reason  manifest.DiagnosticReason
 	Blocked []manifest.NamedResource
 	Failed  []manifest.NamedResource
 	Omit    bool
@@ -46,9 +46,9 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 		if cl.Kind == schedule.DependencyFailed && !dep.Optional && !dep.AllowMissing && !dep.Input.Private && (!dep.Input.Generated || dep.Input.Offline) {
 			if status, _ := w.Store.GetStatus(producer); status.Status != store.StatusFailed || w.blocksParent(producer) {
 				if status.Status == store.StatusFailed {
-					cl.Message = "not ready"
+					cl.Message, cl.Causes = "not ready", nil
 				}
-				return Availability{Kind: cl.Kind, Message: cl.Message, Failed: []manifest.NamedResource{producer}}
+				return Availability{Kind: cl.Kind, Reason: cl.DiagnosticReason(producer), Failed: []manifest.NamedResource{producer}}
 			}
 		}
 	}
@@ -63,22 +63,22 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 		if allowed {
 			return Availability{Kind: schedule.Terminal, Omit: true}
 		}
-		return Availability{Kind: schedule.DependencyFailed, Message: "dependency not found"}
+		return Availability{Kind: schedule.DependencyFailed, Reason: manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)), Message: "dependency not found"}}
 	}
 	if allowed && !dep.Input.Offline {
 		return Availability{Kind: schedule.Terminal, Omit: true}
 	}
 	cl := w.Classify(ctx, dep.DependencyRef, level)
 	if cl.Kind == schedule.Blocked {
-		return Availability{Kind: cl.Kind, Message: cl.Message, Blocked: []manifest.NamedResource{dep.NamedResource}}
+		return Availability{Kind: cl.Kind, Reason: cl.DiagnosticReason(dep.NamedResource), Blocked: []manifest.NamedResource{dep.NamedResource}}
 	}
 	if allowed {
 		return Availability{Kind: schedule.Terminal, Omit: true}
 	}
 	if cl.Kind == schedule.Terminal {
-		cl = Classification{Kind: schedule.DependencyFailed, Message: "dependency not found"}
+		return Availability{Kind: schedule.DependencyFailed, Reason: manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(dep.NamedResource, w.Store.GetObject(dep.NamedResource)), Message: "dependency not found"}}
 	}
-	return Availability{Kind: cl.Kind, Message: cl.Message}
+	return Availability{Kind: cl.Kind, Reason: cl.DiagnosticReason(dep.NamedResource)}
 }
 
 func (w *Waiter) blocksParent(id manifest.NamedResource) bool {

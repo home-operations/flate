@@ -41,10 +41,18 @@ func Prepare(left, right []Doc, opts Options) Prepared {
 			dst, dstChart, dstPos = &p.New, &p.NewChart, &p.NewPos
 		}
 		if *dst != nil {
+			parent := d.Parent.String()
+			subjects := opts.Subjects[0]
+			if side == SideCurrent {
+				subjects = opts.Subjects[1]
+			}
+			if subject, ok := subjects[d.Parent.NamedResource]; ok {
+				parent = subject.String()
+			}
 			warnings = append(warnings, manifest.Warning{
 				Resource: resource, Category: manifest.WarnDuplicateDocument,
 				Message: "duplicate document shadows an earlier document",
-				Detail: []string{"side: " + string(side), "parent: " + d.Parent.String(),
+				Detail: []string{"side: " + string(side), "parent: " + parent,
 					"parent path: " + d.Parent.Path, "apiVersion: " + manifest.DocAPIVersion(original.Manifest)},
 			})
 		}
@@ -69,5 +77,5 @@ func Prepare(left, right []Doc, opts Options) Prepared {
 		)
 	})
 	slices.SortFunc(warnings, manifest.CompareWarning)
-	return Prepared{Pairs: out, Warnings: warnings, leftCopied: leftCopied, rightCopied: rightCopied}
+	return Prepared{Pairs: out, Warnings: warnings, Subjects: opts.Subjects, leftCopied: leftCopied, rightCopied: rightCopied}
 }

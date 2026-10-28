@@ -18,11 +18,11 @@ func TestResolveTransport_Identity(t *testing.T) {
 	getter := func(_, _ string) *manifest.Secret { return secret }
 	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
 	inputs := []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "tls"}, Use: TransportCert}}
-	first, err := ResolveTransport(getter, owner, inputs)
+	first, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), inputs)
 	assert.NoError(t, err)
 	firstIdentity := manifest.Fingerprint(first.Identity(nil))
 	secret = &manifest.Secret{StringData: map[string]any{"ca.crt": ca, "unused": "second"}}
-	second, err := ResolveTransport(getter, owner, inputs)
+	second, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), inputs)
 	assert.NoError(t, err)
 	if manifest.Fingerprint(first.Identity(nil)) == manifest.Fingerprint(second.Identity(nil)) {
 		t.Fatal("full certificate Secret identity lost an unused key")
@@ -46,14 +46,14 @@ func TestResolveTransport_ProxySnapshot(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"}
-	anonymous, err := ResolveTransport(nil, owner, nil)
+	anonymous, err := ResolveTransport(nil, manifest.DiagnosticFor(owner, nil), nil)
 	assert.NoError(t, err)
 	if anonymous.Identity(nil) != nil {
 		t.Fatal("anonymous material gained an acquisition identity")
 	}
 	t.Setenv("HTTP_PROXY", "http://first.invalid:8080")
 	t.Setenv("NO_PROXY", "bypass.invalid")
-	material, err := ResolveTransport(nil, owner, nil)
+	material, err := ResolveTransport(nil, manifest.DiagnosticFor(owner, nil), nil)
 	assert.NoError(t, err)
 	t.Setenv("HTTP_PROXY", "http://second.invalid:8080")
 	t.Setenv("NO_PROXY", "other.invalid")
@@ -68,7 +68,7 @@ func TestResolveTransport_ProxySnapshot(t *testing.T) {
 	getter := func(_, _ string) *manifest.Secret {
 		return &manifest.Secret{StringData: map[string]any{"address": "http://explicit.invalid", "username": "user", "password": "password"}}
 	}
-	explicit, err := ResolveTransport(getter, owner, []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "proxy"}, Use: TransportProxy}})
+	explicit, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{{Reference: &manifest.LocalObjectReference{Name: "proxy"}, Use: TransportProxy}})
 	assert.NoError(t, err)
 	selected, err = explicit.ProxyURL(&url.URL{Scheme: "http", Host: "other.invalid"})
 	assert.NoError(t, err)
@@ -97,7 +97,7 @@ func TestResolveTransport_InputOrder(t *testing.T) {
 			}
 			owner := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "ns", Name: "repo"}
 			ref := &manifest.LocalObjectReference{Name: "creds"}
-			_, err := ResolveTransport(getter, owner, []TransportInput{
+			_, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{
 				{Reference: ref, Use: tc.first}, {Reference: ref, Use: tc.second},
 			})
 			if !errors.Is(err, manifest.ErrInput) || !strings.Contains(err.Error(), tc.wantLabel) || !strings.Contains(err.Error(), tc.wantError) {
@@ -159,7 +159,7 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 			if tc.cert {
 				use = TransportCert
 			}
-			material, err := ResolveTransport(getter, owner, []TransportInput{{Reference: ref, Use: use, OptionalTLS: tc.optional}})
+			material, err := ResolveTransport(getter, manifest.DiagnosticFor(owner, nil), []TransportInput{{Reference: ref, Use: use, OptionalTLS: tc.optional}})
 			if tc.success {
 				assert.NoError(t, err)
 				if material.config != nil || material.Certificate() != [3]string{} {

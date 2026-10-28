@@ -68,12 +68,6 @@ func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, r
 	return a.inner.Fetch(ctx, typed, reads, policy)
 }
 
-// QualifiedName returns the canonical "<Kind> <namespace>/<name>" error identity.
-// Cache slots and auth scopes use a distinct namespace-name representation.
-func QualifiedName(kind, namespace, name string) string {
-	return kind + " " + namespace + "/" + name
-}
-
 // SecretGetter resolves a Secret CR by namespace + name. Fetchers
 // that read authentication, TLS, or proxy material from a Flux
 // spec.*SecretRef accept one of these so they don't need a

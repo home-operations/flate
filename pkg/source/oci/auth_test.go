@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"oras.land/oras-go/v2/errdef"
@@ -109,9 +110,9 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				if !ok {
 					t.Fatalf("expected MissingSecretError; got %T", err)
 				}
-				assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "ns/repo"})
+				assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"})
 				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
-				assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/ns/repo: secret ns/missing not found")
+				assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/repo: secret ns/missing not found")
 			}
 		})
 	}
@@ -174,7 +175,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material, err := source.ResolveTransport(fInputs.secrets, repo.Named(), []source.TransportInput{{Reference: repo.CertSecretRef, Use: source.TransportCert}})
+	material, err := source.ResolveTransport(fInputs.secrets, manifest.DiagnosticFor(repo.Named(), repo), []source.TransportInput{{Reference: repo.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1357,5 +1358,87 @@ func TestFetcher_ProviderRegistryMatching(t *testing.T) {
 				t.Fatalf("actual-registry continuation: %v", err)
 			}
 		})
+	}
+}
+
+func TestFetcher_SyntheticCredentialContext(t *testing.T) {
+	t.Parallel()
+	for _, generated := range []bool{false, true} {
+		for _, material := range []string{"auth absent", "auth wiped", "auth malformed", "cert absent", "cert wiped", "cert malformed", "proxy absent", "proxy wiped", "proxy malformed", "provider"} {
+			t.Run(fmt.Sprintf("generated=%t/%s", generated, material), func(t *testing.T) {
+				t.Parallel()
+				chart := &manifest.HelmChartSource{Name: "chart", Namespace: "sources"}
+				chart.Chart = "app"
+				expected := chart.Named()
+				if generated {
+					release := &manifest.HelmRelease{Name: "release", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "app", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: "charts", Namespace: "sources"}}}}}
+					children, err := release.GeneratedObjects()
+					if err != nil {
+						t.Fatal(err)
+					}
+					chart = children[0].(*manifest.HelmChartSource)
+					expected = release.Named()
+				}
+				repo := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
+				var sec *manifest.Secret
+				ref := &manifest.LocalObjectReference{Name: "material"}
+				missing := !strings.HasSuffix(material, "malformed")
+				switch {
+				case strings.HasPrefix(material, "auth"):
+					repo.SecretRef = ref
+					if material == "auth wiped" {
+						sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": manifest.ValuePlaceholder("config")}}
+					}
+					if material == "auth malformed" {
+						sec = &manifest.Secret{StringData: map[string]any{".dockerconfigjson": "{"}}
+					}
+				case strings.HasPrefix(material, "cert"):
+					repo.CertSecretRef = ref
+					if material == "cert wiped" {
+						sec = &manifest.Secret{StringData: map[string]any{"ca.crt": manifest.ValuePlaceholder("ca")}}
+					}
+					if material == "cert malformed" {
+						sec = &manifest.Secret{StringData: map[string]any{"ca.crt": "invalid"}}
+					}
+				case strings.HasPrefix(material, "proxy"):
+					repo.ProxySecretRef = ref
+					if material == "proxy wiped" {
+						sec = &manifest.Secret{StringData: map[string]any{"address": manifest.ValuePlaceholder("proxy")}}
+					}
+					if material == "proxy malformed" {
+						sec = &manifest.Secret{StringData: map[string]any{"address": "http://invalid/%"}}
+					}
+				default:
+					repo.Provider = "aws"
+				}
+				config := filepath.Join(t.TempDir(), "config.json")
+				testutil.WriteFileAt(t, config, "{}")
+				op := &operation{Fetcher: &Fetcher{Network: newTestNetwork(t), RegistryConfig: config}, secrets: func(namespace, name string) *manifest.Secret {
+					if namespace != "sources" || name != ref.Name {
+						t.Fatalf("Secret lookup %s/%s used display owner", namespace, name)
+					}
+					return sec
+				}}
+				_, err := op.newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+				label := expected.Kind + " " + expected.NamespacedName()
+				if material == "provider" {
+					label = expected.String()
+				}
+				if err == nil || !strings.Contains(err.Error(), label) || strings.Contains(err.Error(), "OCIRepository") {
+					t.Fatalf("early diagnostic=%v, owner=%s", err, expected)
+				}
+				if errors.Is(err, manifest.ErrMissingSecret) != missing {
+					t.Fatalf("material classification changed: %v", err)
+				}
+				if failure, ok := errors.AsType[*source.MissingSecretError](err); ok {
+					if failure.Owner != repo.Named() || failure.Subject.Resource != expected {
+						t.Fatalf("raw/display owner=%+v", failure)
+					}
+					if material != "provider" && failure.Secret.Namespace != "sources" {
+						t.Fatalf("Secret identity=%s", failure.Secret)
+					}
+				}
+			})
+		}
 	}
 }

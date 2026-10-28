@@ -45,7 +45,7 @@ import (
 func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 	t.Parallel()
 	authored := testutil.KustomizationID("apps", "owner")
-	internal := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".").Named()
+	internal := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
 	other := testutil.KustomizationID("apps", "other")
 	for _, pair := range [][2]manifest.NamedResource{{authored, internal}, {internal, authored}} {
 		t.Run(pair[0].NamespacedName(), func(t *testing.T) {
@@ -292,8 +292,8 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 			selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 				[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 			body, _, _, err := diff.Compare(
-				diff.Snapshot{Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
-				diff.Snapshot{Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
+				diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+				diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
 				selectedErr, diff.Options{Format: diff.FormatJSON})
 			if err != nil {
 				t.Fatal(err)
@@ -307,7 +307,8 @@ func TestRenderTrees_ChangedOnlyAndDiff(t *testing.T) {
 			assert.Equal(t, len(output.Changes), 2)
 			changes := slices.DeleteFunc(output.Changes, func(change diff.Change) bool {
 				if change.Name == "render-values" {
-					assert.Equal(t, change.Parent.NamedResource, head.entryBinding.Producer)
+					assert.Equal(t, change.Parent.NamedResource, manifest.NamedResource{})
+					assert.Equal(t, change.Parent.Path, ".")
 					assert.Equal(t, change.Status, diff.StatusChanged)
 					return true
 				}
@@ -510,8 +511,8 @@ spec:
 	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
-		diff.Snapshot{Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
-		diff.Snapshot{Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
+		diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})
 	assert.NoError(t, err)
 	var output struct {
@@ -577,8 +578,8 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 	selected, selectedErr, _ := Select([]Rendered{base, head}, err,
 		[]manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
 	body, _, _, err := diff.Compare(
-		diff.Snapshot{Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
-		diff.Snapshot{Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
+		diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+		diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
 		selectedErr, diff.Options{Format: diff.FormatJSON})
 	if err != nil {
 		t.Fatal(err)
@@ -1026,7 +1027,7 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 							inputs[i] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: input}
 						}
 						cfg := treeConfig{CacheDir: root, Concurrency: workers, HeadOnly: headOnly,
-							StatusListener: func(id manifest.TreeID, _ manifest.NamedResource, _ store.StatusInfo) {
+							StatusListener: func(id manifest.TreeID, _ manifest.DiagnosticIdentity, _ store.StatusInfo) {
 								inputs[id.Side].FS.(*joinedTreeFS).armed.Store(true)
 							}, BaseInput: inputs[0], Input: inputs[1], ExternalChanges: change.NewSet(nil)}
 						if tc.injected {
@@ -1264,5 +1265,71 @@ func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
 				assert.Equal(t, interval, any([]string{"1h", "2h"}[side]))
 			})
 		}
+	}
+}
+
+func TestProjectEntryReaders_ZeroBinding(t *testing.T) {
+	t.Parallel()
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
+	index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"root.yaml": {{Reader: entry, Source: manifest.BootstrapSourceID}}}}
+	for _, pair := range [][2]discovery.Binding{{{}, {Producer: entry}}, {{Producer: entry}, {}}, {{}, {}}} {
+		assert.Equal(t, projectEntryReaders(index, pair[0], pair[1]), index)
+	}
+}
+
+func TestRenderTrees_EntryQualificationTransitions(t *testing.T) {
+	for _, pair := range [][2]string{{"discovery", "discovery"}, {"discovery", "package"}, {"package", "discovery"}, {"authored", "discovery"}, {"discovery", "authored"}} {
+		t.Run(pair[0]+" to "+pair[1], func(t *testing.T) {
+			var trees []Tree
+			for side, qualification := range pair {
+				root := t.TempDir()
+				testutil.WriteFile(t, root, "Taskfile.yaml", "version: '3'\ntasks: {build: {cmds: [true]}}\n")
+				for _, name := range []string{"a", "b"} {
+					testutil.WriteFile(t, root, "clusters/"+name+"/ks.yaml", testutil.KustomizationYAML(name, "apps", "  path: ./workload/"+name+"\n"))
+					testutil.WriteFile(t, root, "workload/"+name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+					testutil.WriteFile(t, root, "workload/"+name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+"}\ndata: {side: '"+fmt.Sprint(side)+"'}\n")
+				}
+				if qualification == "package" {
+					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [clusters/a/ks.yaml, clusters/b/ks.yaml]\n")
+				}
+				if qualification == "authored" {
+					assert.NoError(t, os.Remove(filepath.Join(root, "Taskfile.yaml")))
+					testutil.WriteFile(t, root, "owner.yaml", testutil.KustomizationYAML("root-owner", "apps", "  path: ./\n"))
+				}
+				trees = append(trees, Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, Path: root, RepoRoot: root})
+			}
+			var previous []byte
+			for range 2 {
+				runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+				assert.NoError(t, err)
+				assert.Equal(t, len(runs), 2)
+				for side, run := range runs {
+					qualified := pair[side] != "discovery"
+					assert.Equal(t, run.entryBinding != (discovery.Binding{}), qualified)
+					assert.Diff(t, configMapNames(run.Result), map[string]bool{"a": true, "b": true})
+				}
+				selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, len(selected), 2)
+				for side, selection := range selected {
+					wantKeys := 0
+					if pair[side] != "discovery" {
+						wantKeys = 1
+					}
+					assert.Equal(t, len(selection.ProducerKeys), wantKeys)
+					assert.Equal(t, len(selection.Unavailable), 0)
+				}
+				body, _, notes, err := diff.Compare(
+					diff.Snapshot{Subjects: selected[0].Subjects, Manifests: selected[0].Manifests, ProducerKeys: selected[0].ProducerKeys, Unavailable: selected[0].Unavailable},
+					diff.Snapshot{Subjects: selected[1].Subjects, Manifests: selected[1].Manifests, ProducerKeys: selected[1].ProducerKeys, Unavailable: selected[1].Unavailable},
+					nil, diff.Options{Format: diff.FormatJSON})
+				assert.NoError(t, err)
+				assert.Equal(t, len(notes), 0)
+				if previous != nil {
+					assert.Equal(t, string(body), string(previous))
+				}
+				previous = body
+			}
+		})
 	}
 }

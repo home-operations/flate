@@ -164,13 +164,11 @@ func TestFetcher_SecretReferences(t *testing.T) {
 					t.Fatalf("expected MissingSecretError; got %T", err)
 				}
 				owner := b.Named()
-				if tc.ref != "auth" {
-					owner.Name = "ns/b"
-				}
+
 				assert.Equal(t, missing.Owner, owner)
 				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tc.secret})
 				if tc.ref != "auth" && tc.data == nil {
-					assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": Bucket ns/ns/b: secret ns/missing not found")
+					assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": Bucket ns/b: secret ns/missing not found")
 				}
 			}
 		})

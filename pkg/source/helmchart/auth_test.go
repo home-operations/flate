@@ -54,7 +54,7 @@ func TestHelmRepoTransport_CertSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareHTTP: %v", err)
 	}
-	material, err := source.ResolveTransport(fInputs.secrets, r.Named(), []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
+	material, err := source.ResolveTransport(fInputs.secrets, manifest.DiagnosticFor(r.Named(), r), []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,9 +88,9 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected MissingSecretError; got %T", err)
 	}
-	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "ns", Name: "HelmRepository ns/charts"})
+	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "ns", Name: "charts"})
 	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
-	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": HelmRepository ns/HelmRepository ns/charts: secret ns/tls not found")
+	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": HelmRepository ns/charts: secret ns/tls not found")
 	if prepared != nil {
 		t.Error("repository should be nil on error")
 	}
@@ -141,7 +141,7 @@ func TestHelmRepoTransport_ProxySnapshot(t *testing.T) {
 	}
 	for i, password := range []string{"first", "second"} {
 		t.Setenv("http_proxy", "http://proxy:"+password+"@proxy.invalid:8080")
-		material, err := source.ResolveTransport(nil, r.Named(), nil)
+		material, err := source.ResolveTransport(nil, manifest.DiagnosticFor(r.Named(), r), nil)
 		assert.NoError(t, err)
 		expected, err := f.network.HTTPTransport(source.HTTPTransportConfig{DisableCompression: true, Material: material})
 		if err != nil {

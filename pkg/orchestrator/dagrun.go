@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
@@ -36,6 +37,16 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 	changed := slices.Collect(d.o.store.Sweep())
 	if !quiescent || len(changed) != 0 || ctx.Err() != nil {
 		return changed
+	}
+	if d.o.entryBinding == (discovery.Binding{}) && d.o.entryFailure == nil {
+		root, binding, err := d.o.admission.BindEntry(ctx, d.o.store)
+		d.o.entryFailure = err
+		if root != nil {
+			d.o.entryBinding = binding
+			d.o.ksc.KeepEmitted(manifest.NamedResource{}, store.Child{Obj: root}, nil)
+			d.o.store.AddObject(root)
+			return slices.Collect(d.o.store.Sweep())
+		}
 	}
 	d.o.classifyCompleted()
 	return slices.Collect(d.o.store.Sweep())
@@ -73,7 +84,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	sched.Seed(o.seedNodes())
 	err := sched.Run(ctx)
 
-	return errors.Join(err, o.finalize())
+	return errors.Join(err, o.entryFailure, o.finalize())
 }
 
 func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
@@ -85,11 +96,15 @@ func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
 }
 
 func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
+	observeEntry := o.entryBinding == (discovery.Binding{})
 	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		obj, _ := payload.(manifest.BaseManifest)
 		if obj == nil {
 			sched.OnArrival(id, false)
 			return
+		}
+		if observeEntry {
+			o.admission.AddApplication(o.store, obj)
 		}
 		sched.OnArrival(id, o.schedulable(obj))
 	}, false)

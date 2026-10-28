@@ -2,6 +2,7 @@ package depwait
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/schedule"
@@ -57,7 +58,7 @@ func TestClassify_CoreStates(t *testing.T) {
 		manifest.DrainCascade: {Kind: schedule.Blocked},
 		manifest.DrainForce:   {Kind: schedule.DependencyFailed, Message: "not ready"},
 	} {
-		if got := w.Classify(t.Context(), statusless, level); got != want {
+		if got := w.Classify(t.Context(), statusless, level); !reflect.DeepEqual(got, want) {
 			t.Errorf("statusless@%v: got %+v, want %+v", level, got, want)
 		}
 	}
@@ -96,7 +97,7 @@ func TestClassify_CoreStates(t *testing.T) {
 					} else if allow && group == "apiextensions.k8s.io" {
 						want = Classification{Kind: schedule.Terminal}
 					}
-					if got := w.Classify(t.Context(), dep, level); got != want {
+					if got := w.Classify(t.Context(), dep, level); !reflect.DeepEqual(got, want) {
 						t.Fatalf("missing CRD at %v: %+v, want %+v", level, got, want)
 					}
 				}
@@ -166,32 +167,46 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
 	s.AddObject(&manifest.Kustomization{Name: a.Name, Namespace: a.Namespace})
 	s.AddObject(&manifest.Kustomization{Name: b.Name, Namespace: b.Namespace})
-	failure := &manifest.DependencyFailedError{Parent: a, Failed: []manifest.NamedResource{b}, Reasons: map[manifest.NamedResource]string{b: "not ready"}}
+	failure := &manifest.DependencyFailedError{Parent: a, Failed: []manifest.NamedResource{b}, Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{b: {Subject: manifest.DiagnosticFor(b, nil), Message: "not ready"}}}
 	s.UpdateFailure(a, failure)
 	w := Waiter{Store: s, Parent: b}
 	ref := manifest.DependencyRef{NamedResource: a}
 	first := w.Classify(t.Context(), ref, manifest.DrainForce)
-	if first != (Classification{Kind: schedule.DependencyFailed, Message: failure.Error()}) {
+	if first.Kind != schedule.DependencyFailed || first.DiagnosticReason(a).String() != a.String()+": "+failure.Error() {
 		t.Fatalf("derived failure: %+v", first)
 	}
 	w.Materializer = true
-	if got := w.Classify(t.Context(), ref, manifest.DrainForce); got != (Classification{Kind: schedule.DependencyFailed, Message: "declaration not emitted"}) {
+	if got := w.Classify(t.Context(), ref, manifest.DrainForce); got.Kind != schedule.DependencyFailed || got.Message != "declaration not emitted" {
 		t.Fatalf("materializer recursively expanded its own consumer failure: %+v", got)
 	}
 	w.Materializer = false
-	nested := &manifest.DependencyFailedError{Parent: b, Failed: []manifest.NamedResource{a}, Reasons: map[manifest.NamedResource]string{a: first.Message}}
+	nested := &manifest.DependencyFailedError{Parent: b, Failed: []manifest.NamedResource{a}, Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{a: first.DiagnosticReason(a)}}
 	s.UpdateFailure(b, nested)
 	w.Parent = a
 	next := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: b}, manifest.DrainForce)
-	if next != (Classification{Kind: schedule.DependencyFailed, Message: nested.Error()}) {
+	if next.Kind != schedule.DependencyFailed || next.DiagnosticReason(b).String() != b.String()+": "+nested.Error() {
 		t.Fatalf("nested failure lost its cause: %+v", next)
 	}
-	if got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: b}, manifest.DrainForce); got != next {
+	if got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: b}, manifest.DrainForce); !reflect.DeepEqual(got, next) {
 		t.Fatalf("unchanged failure changed: %+v", got)
 	}
 	s.UpdateStatus(a, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "leaf failure"})
 	if got := w.Classify(t.Context(), ref, manifest.DrainForce); got.Message != "leaf failure" {
 		t.Fatalf("direct failure lost its reason: %+v", got)
+	}
+	owner := testutil.KustomizationID("flux-system", "sync")
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner)
+	s.AddObject(entry)
+	s.UpdateStatus(entry.Named(), store.StatusInfo{Status: store.StatusFailed, Message: "entry failure"})
+	captured := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: entry.Named()}, manifest.DrainForce)
+	s.AddObject(manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", a))
+	reason := captured.DiagnosticReason(entry.Named())
+	if captured.Kind != schedule.DependencyFailed || reason.Subject.ID != entry.Named() || reason.Subject.Resource != owner || reason.Subject.Path != "clusters/test" || reason.Message != "entry failure" {
+		t.Fatalf("classification lost captured entry context: %+v", reason)
+	}
+	reason.Subject.Resource.Name = "mutated"
+	if captured.DiagnosticReason(entry.Named()).Subject.Resource != owner {
+		t.Fatal("exposed reason changed the captured subject")
 	}
 }
 
@@ -234,7 +249,10 @@ func TestClassify_OrdinaryPromotion(t *testing.T) {
 			}
 			w := Waiter{Store: st, Existence: promotion}
 			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: data.Named()}, manifest.DrainCascade)
-			if promotion.calls != 1 || got != tc.want {
+			if tc.want.Kind == schedule.DependencyFailed && got.DiagnosticReason(data.Named()).Subject != manifest.DiagnosticFor(data.Named(), data) {
+				t.Fatal("classification lost the captured dependency subject")
+			}
+			if promotion.calls != 1 || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("promotion calls=%d Classification=%+v, want %+v", promotion.calls, got, tc.want)
 			}
 		})

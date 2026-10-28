@@ -101,7 +101,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		}
 		child := owner
 		child.Name = "child"
-		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/red"}}}}
+		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Application: `{"kind":"Kustomization","spec":{"path":"./entry"}}`, Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/red"}}}}
 		assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: maps.All(records)}))
 		fresh := newTestTreeCache(t, cacheDir)
 		previous, complete := fresh.PreviousRender(t.Context(), req, owner)

@@ -559,7 +559,7 @@ func TestController_MissingSecretWaitsForRender(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			f := &fakeFetcher{err: src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ca", "not found")}
+			f := &fakeFetcher{err: src.MissingSecretErr(manifest.DiagnosticFor(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, nil), "ca", "not found")}
 			c, st := newConfiguredController(t,
 				map[string]src.Fetcher{manifest.KindOCIRepository: f},
 				FetchOptions{AllowMissingSecrets: tt.allowMissing})
@@ -622,7 +622,7 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 				detail = "missing username/password"
 			}
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: &metav1.Duration{Duration: time.Hour}}
-			fetchErr := src.MissingSecretErr(repo.Named(), secret.Name, detail)
+			fetchErr := src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), secret.Name, detail)
 			if tt.plain {
 				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrMissingSecret, secret.Name, detail)
 			}
@@ -701,7 +701,7 @@ func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ *s
 	if f.rendered {
 		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
 	}
-	missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ghcr-creds", "not found"))
+	missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, nil), "ghcr-creds", "not found"))
 	missing.RetryAmbient = func(_ context.Context) (*store.SourceArtifact, error) {
 		f.fallbackCalls++
 		f.fallbackRetry = policy
@@ -783,8 +783,8 @@ func TestController_AmbientPolicy(t *testing.T) {
 			{name: "success allowed", allow: true},
 			{name: "rejected", failure: &fetcherr.ResponseError{StatusCode: 401}},
 			{name: "rejected allowed", allow: true, failure: &fetcherr.ResponseError{StatusCode: 401}},
-			{name: "unavailable", failure: src.MissingSecretErr(repo.Named(), "", "no machine credentials")},
-			{name: "unavailable allowed", allow: true, failure: src.MissingSecretErr(repo.Named(), "", "no machine credentials")},
+			{name: "unavailable", failure: src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "no machine credentials")},
+			{name: "unavailable allowed", allow: true, failure: src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "no machine credentials")},
 			{name: "acquisition error", failure: &fs.PathError{Op: "open", Path: "repositories.yaml", Err: fs.ErrPermission}},
 			{name: "acquisition error allowed", allow: true, failure: &fs.PathError{Op: "open", Path: "repositories.yaml", Err: fs.ErrPermission}},
 			{name: "timeout", failure: context.DeadlineExceeded},
@@ -794,7 +794,7 @@ func TestController_AmbientPolicy(t *testing.T) {
 		} {
 			t.Run(repo.Named().Kind+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
-				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(repo.Named(), "auth", "not found"))
+				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"))
 				calls := 0
 				failure := tt.failure
 				if failure != nil {
@@ -863,8 +863,8 @@ func TestPendingSource_AmbientContextError(t *testing.T) {
 		t.Run(cause.Error(), func(t *testing.T) {
 			t.Parallel()
 			repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
-			failure := errors.Join(src.MissingSecretErr(repo.Named(), "", "unavailable"), cause)
-			missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(repo.Named(), "auth", "not found"))
+			failure := errors.Join(src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "unavailable"), cause)
+			missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found"))
 			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) { return nil, failure }
 			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
 			st.AddObject(repo)
@@ -1139,7 +1139,7 @@ func TestController_AmbientSettlementExactlyOnce(t *testing.T) {
 			t.Run(fmt.Sprintf("secret=%q/level=%d", secret, level), func(t *testing.T) {
 				t.Parallel()
 				repo := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "ssh://git@fixture/repo"}
-				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(repo.Named(), secret, "credentials unavailable"))
+				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), secret, "credentials unavailable"))
 				calls := 0
 				missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
 					calls++
@@ -1161,5 +1161,24 @@ func TestController_AmbientSettlementExactlyOnce(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestController_SyntheticCredentialSkip(t *testing.T) {
+	t.Parallel()
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "sources"}
+	repo := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts", SecretRef: &manifest.LocalObjectReference{Name: "auth"}})
+	failure := src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "auth", "not found")
+	fetcher := &fakeFetcher{err: failure, secret: "auth"}
+	controller, st := newConfiguredController(t, map[string]src.Fetcher{manifest.KindOCIRepository: fetcher}, FetchOptions{AllowMissingSecrets: true})
+	st.AddObject(repo)
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: controller.Tasks, Store: st, ID: repo.Named(), ReconcileNode: controller.ReconcileNode})
+	warnings := st.Warnings()
+	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "sources", Name: "auth"}
+	if info.Outcome() != store.OutcomeSkipped || !strings.Contains(info.String(), chart.Named().Kind+" "+chart.Named().NamespacedName()) || len(warnings) != 1 {
+		t.Fatalf("skip lost display or outcome: %+v %+v", info, warnings)
+	}
+	if warnings[0].Resource != repo.Named() || warnings[0].Subject.Resource != chart.Named() || !slices.Equal(warnings[0].Related, []manifest.NamedResource{secret}) || st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
+		t.Fatalf("skip lost raw provenance: %+v", warnings)
 	}
 }

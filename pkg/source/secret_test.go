@@ -39,12 +39,12 @@ func TestSecretLookup_References(t *testing.T) {
 	other.Namespace = "other"
 	s.AddObject(&other)
 	assert.Equal(t, secrets("other", "shared"), &other)
-	username, password, err := BasicAuthFromSecret(secrets("ns", "shared"), owner, "shared")
+	username, password, err := BasicAuthFromSecret(secrets("ns", "shared"), manifest.DiagnosticFor(owner, nil), "shared")
 	assert.NoError(t, err)
 	assert.Equal(t, username, "alice")
 	assert.Equal(t, password, "first")
 	ref := &manifest.LocalObjectReference{Name: "shared"}
-	material, err := ResolveTransport(secrets, owner, []TransportInput{
+	material, err := ResolveTransport(secrets, manifest.DiagnosticFor(owner, nil), []TransportInput{
 		{Reference: ref, Use: TransportCert}, {Reference: ref, Use: TransportProxy},
 	})
 	assert.NoError(t, err)
@@ -59,15 +59,14 @@ func TestSecretLookup_References(t *testing.T) {
 
 func TestMissingSecretErr(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ kind, name, want string }{
-		{manifest.KindOCIRepository, "r", "flux error: missing secret: OCIRepository ns/r: secret ns/ghcr-creds not found"},
-		{manifest.KindOCIRepository, "ns/r", "flux error: missing secret: OCIRepository ns/ns/r: secret ns/ghcr-creds not found"},
-		{manifest.KindHelmRepository, "HelmRepository ns/r", "flux error: missing secret: HelmRepository ns/HelmRepository ns/r: secret ns/ghcr-creds not found"},
+	for _, tc := range []struct{ name, secret, want string }{
+		{name: "Secret material", secret: "ghcr-creds", want: "flux error: missing secret: OCIRepository ns/r: secret ns/ghcr-creds not found"},
+		{name: "source material", want: "flux error: missing secret: OCIRepository.input.example/ns/r: not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			owner := manifest.NamedResource{Group: "input.example", Kind: tc.kind, Namespace: "ns", Name: tc.name}
-			err := MissingSecretErr(owner, "ghcr-creds", "not found")
+			owner := manifest.NamedResource{Group: "input.example", Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}
+			err := MissingSecretErr(manifest.DiagnosticFor(owner, nil), tc.secret, "not found")
 			if got := err.Error(); got != tc.want {
 				t.Errorf("Error() = %q, want %q", got, tc.want)
 			}
@@ -78,11 +77,14 @@ func TestMissingSecretErr(t *testing.T) {
 			if !ok {
 				t.Fatal("errors.AsType did not recover *MissingSecretError through a wrap")
 			}
-			wantSecret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"}
+			var wantSecret manifest.NamedResource
+			if tc.secret != "" {
+				wantSecret = manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tc.secret}
+			}
 			if mse.Secret != wantSecret {
 				t.Errorf("recovered Secret = %v, want %v", mse.Secret, wantSecret)
 			}
-			wantOwner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "ns", Name: tc.name}
+			wantOwner := manifest.NamedResource{Group: owner.Group, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}
 			if mse.Owner != wantOwner || owner.Group != "input.example" {
 				t.Errorf("recovered Owner = %v, want %v; input = %v", mse.Owner, wantOwner, owner)
 			}
@@ -141,7 +143,7 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 				t.Fatal(parseErr)
 			}
 			sec := obj.(*manifest.Secret)
-			username, password, err := BasicAuthFromSecret(sec, owner, "creds")
+			username, password, err := BasicAuthFromSecret(sec, manifest.DiagnosticFor(owner, nil), "creds")
 			if tc.username != "" {
 				if err != nil || username != tc.username || password != tc.password {
 					t.Fatal("valid credentials were not preserved")
@@ -193,12 +195,12 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 	defer reads.Close()
 	lookup := SecretLookup(&reads)
 	effective := lookup(owner.Namespace, supplied.Name)
-	username, password, err := BasicAuthFromSecret(effective, owner, supplied.Name)
+	username, password, err := BasicAuthFromSecret(effective, manifest.DiagnosticFor(owner, nil), supplied.Name)
 	assert.NoError(t, err)
 	assert.Equal(t, username, "repository")
 	assert.Equal(t, password, "filled")
 	ref := &manifest.LocalObjectReference{Name: supplied.Name}
-	material, err := ResolveTransport(lookup, owner, []TransportInput{{Reference: ref, Use: TransportSecret, OptionalTLS: true, CAFallback: true}, {Reference: ref, Use: TransportProxy}})
+	material, err := ResolveTransport(lookup, manifest.DiagnosticFor(owner, nil), []TransportInput{{Reference: ref, Use: TransportSecret, OptionalTLS: true, CAFallback: true}, {Reference: ref, Use: TransportProxy}})
 	assert.NoError(t, err)
 	assert.Equal(t, material.Certificate()[2], ca)
 	assert.Diff(t, material.ProxyComponents(), [3]string{"http://proxy.invalid", "repository", "filled"})

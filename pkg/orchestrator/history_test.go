@@ -517,6 +517,7 @@ func TestBuildChangeFilter_PreviousRenderNarrowing(t *testing.T) {
 	for _, mode := range []string{"literal", "substitute_from", "helm_values_from"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
+			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [emitter.yaml, consumer.yaml]\n")
 			postBuild := "  postBuild:\n    substitute: {ROOT: apps/red}\n"
 			if mode == "substitute_from" {
 				postBuild = "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: supplied}]\n"
@@ -526,6 +527,7 @@ func TestBuildChangeFilter_PreviousRenderNarrowing(t *testing.T) {
 			testutil.WriteFile(t, root, "producers/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "producers/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: target, namespace: apps}\ndata: {value: rendered}\n")
 			if mode == "helm_values_from" {
+				testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [emitter.yaml, consumer.yaml, charts.yaml, supplied.yaml]\n")
 				testutil.WriteFile(t, root, "flux/emitter.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: emitter, namespace: apps}
@@ -705,6 +707,7 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 				t.Skip("requires a clean VCS-stamped build for positive persistence")
 			}
 			root, cacheDir := t.TempDir(), t.TempDir()
+			testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [emitter.yaml]\n")
 			testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\n")

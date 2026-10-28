@@ -276,6 +276,7 @@ func TestE2E_DependsOnProducedTarget(t *testing.T) {
 
 func verifyProducedDependencyEdit(t *testing.T, root string, intervalOnly bool) {
 	t.Helper()
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [consumer.yaml, producer.yaml, unrelated.yaml]\n")
 	oldValue, newValue := "VALUE: before", "VALUE: after"
 	if intervalOnly {
 		oldValue, newValue = "interval: 1h", "interval: 2h"
@@ -354,8 +355,8 @@ func verifyProducedDependencyEdit(t *testing.T, root string, intervalOnly bool) 
 					assert.Equal(t, change.Namespace, "apps")
 					assert.Equal(t, change.Name, "consumer")
 					assert.Equal(t, change.Status, "changed")
-					assert.Equal(t, change.Parent.Kind, manifest.KindKustomization)
-					assert.Equal(t, change.Parent.Name, "entry")
+					assert.Equal(t, change.Parent.Kind, "")
+					assert.Equal(t, change.Parent.Name, "")
 					assert.Equal(t, change.Parent.Path, "flux")
 					expected := manifest.DeepCopyMap(change.Old)
 					assert.Equal(t, expected["spec"].(map[string]any)["interval"], any("1h"))

@@ -21,6 +21,7 @@ const (
 
 // Snapshot contains immutable selected batches and producer availability.
 type Snapshot struct {
+	Subjects    map[manifest.NamedResource]manifest.DiagnosticIdentity
 	Manifests   []manifest.DocumentBatch
 	Unavailable map[manifest.NamedResource]store.StatusInfo
 	// ProducerKeys maps actual producers to their paired comparison identities.
@@ -29,10 +30,11 @@ type Snapshot struct {
 
 // Suppression discloses withheld producer output.
 type Suppression struct {
-	Parent Parent
-	Side   Side
-	Count  int
-	Reason string
+	Parent  Parent
+	Subject manifest.DiagnosticIdentity
+	Side    Side
+	Count   int
+	Reason  string
 }
 
 // String renders the suppression as a human-readable sentence.
@@ -41,7 +43,14 @@ func (s Suppression) String() string {
 	if s.Count == 1 {
 		noun = "object"
 	}
-	label := s.Parent.KindLabel() + " " + s.Parent.NamespacedName()
+	parent := s.Parent.NamedResource
+	if s.Subject.ID != (manifest.NamedResource{}) {
+		parent = s.Subject.Resource
+	}
+	label := parent.KindLabel() + " " + parent.NamespacedName()
+	if s.Subject.Path != "" {
+		label = s.Subject.String()
+	}
 	reason := strings.Join(strings.Fields(s.Reason), " ")
 	if s.Side == SideBoth {
 		return fmt.Sprintf("%s: %d %s withheld; diff suppressed (%s)",
@@ -52,27 +61,46 @@ func (s Suppression) String() string {
 }
 
 type suppressionPlan struct {
-	note          Suppression
+	parent        Parent
+	side          Side
+	count         int
+	reason        string
 	discloseEmpty bool
 }
 
-func selectedSuppressionPlans(left, right map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]suppressionPlan {
-	plans := make(map[manifest.NamedResource]suppressionPlan, len(left)+len(right))
+func selectedSuppressionPlans(left, right Snapshot) map[manifest.NamedResource]suppressionPlan {
+	plans := make(map[manifest.NamedResource]suppressionPlan, len(left.Unavailable)+len(right.Unavailable))
 	add := func(id manifest.NamedResource) {
-		if plan, ok := planSuppression(left[id], right[id]); ok {
-			plan.note.Parent = Parent{NamedResource: id}
+		if plan, ok := planSuppression(left.Unavailable[id], right.Unavailable[id]); ok {
+			plan.parent = Parent{NamedResource: id}
 			plans[id] = plan
 		}
 	}
-	for id := range left {
+	for id := range left.Unavailable {
 		add(id)
 	}
-	for id := range right {
-		if _, ok := left[id]; !ok {
+	for id := range right.Unavailable {
+		if _, ok := left.Unavailable[id]; !ok {
 			add(id)
 		}
 	}
 	return plans
+}
+
+func (s Snapshot) subject(key manifest.NamedResource) manifest.DiagnosticIdentity {
+	if subject, ok := s.Subjects[key]; ok {
+		return subject
+	}
+	var subject manifest.DiagnosticIdentity
+	for id, comparison := range s.ProducerKeys {
+		if comparison == key && (subject.ID == (manifest.NamedResource{}) || id.Compare(subject.ID) < 0) {
+			subject = manifest.DiagnosticFor(id, nil)
+			if captured, ok := s.Subjects[id]; ok {
+				subject = captured
+			}
+		}
+	}
+	return subject
 }
 
 func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
@@ -84,29 +112,29 @@ func planSuppression(left, right store.StatusInfo) (suppressionPlan, bool) {
 	plan := suppressionPlan{}
 	switch {
 	case lf && rf:
-		plan.note.Side = SideBoth
-		plan.note.Reason = "failed on both sides: orig: " + left.String() + "; current: " + right.String()
+		plan.side = SideBoth
+		plan.reason = "failed on both sides: orig: " + left.String() + "; current: " + right.String()
 		plan.discloseEmpty = true
 	case ls && rs:
-		plan.note.Side = SideBoth
-		plan.note.Reason = "suspended on orig; suspended on current"
+		plan.side = SideBoth
+		plan.reason = "suspended on orig; suspended on current"
 		plan.discloseEmpty = true
 	case ls && ru || rs && lu:
-		plan.note.Side = SideBoth
-		plan.note.Reason = unavailableReason(left, SideOrig) + "; " + unavailableReason(right, SideCurrent)
+		plan.side = SideBoth
+		plan.reason = unavailableReason(left, SideOrig) + "; " + unavailableReason(right, SideCurrent)
 		plan.discloseEmpty = true
 	case lu && !ru:
-		plan.note.Side = SideOrig
-		plan.note.Reason = left.String()
+		plan.side = SideOrig
+		plan.reason = left.String()
 		if ls {
-			plan.note.Reason = "suspended on orig"
+			plan.reason = "suspended on orig"
 			plan.discloseEmpty = true
 		}
 	case ru && !lu:
-		plan.note.Side = SideCurrent
-		plan.note.Reason = right.String()
+		plan.side = SideCurrent
+		plan.reason = right.String()
 		if rs {
-			plan.note.Reason = "suspended on current"
+			plan.reason = "suspended on current"
 			plan.discloseEmpty = true
 		}
 	default:
@@ -125,7 +153,7 @@ func unavailableReason(info store.StatusInfo, side Side) string {
 // Suppress withholds unavailable producer batches on both comparison sides.
 // Producer identity excludes paths; counts measure withheld document entries.
 func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.DocumentBatch, []Suppression) {
-	plans := selectedSuppressionPlans(orig.Unavailable, current.Unavailable)
+	plans := selectedSuppressionPlans(orig, current)
 	keep := func(snapshot Snapshot, side Side) []manifest.DocumentBatch {
 		out := make([]manifest.DocumentBatch, 0, len(snapshot.Manifests))
 		for _, batch := range snapshot.Manifests {
@@ -143,9 +171,9 @@ func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.Docu
 				out = append(out, batch)
 				continue
 			}
-			plan.note.Parent = objectParent(batch.Parent)
-			if plan.note.Side == SideBoth || plan.note.Side != side {
-				plan.note.Count += len(batch.Documents)
+			plan.parent = objectParent(batch.Parent)
+			if plan.side == SideBoth || plan.side != side {
+				plan.count += len(batch.Documents)
 			}
 			plans[key] = plan
 		}
@@ -153,10 +181,20 @@ func Suppress(orig, current Snapshot) ([]manifest.DocumentBatch, []manifest.Docu
 	}
 	l, r := keep(orig, SideOrig), keep(current, SideCurrent)
 	suppressed := slices.Grow([]Suppression(nil), len(plans))
-	for _, plan := range plans {
-		if plan.note.Count > 0 || plan.discloseEmpty {
-			suppressed = append(suppressed, plan.note)
+	for key, plan := range plans {
+		if plan.count == 0 && !plan.discloseEmpty {
+			continue
 		}
+		note := Suppression{Parent: plan.parent, Side: plan.side, Count: plan.count, Reason: plan.reason}
+		if plan.side == SideOrig {
+			note.Subject = orig.subject(key)
+		} else {
+			note.Subject = current.subject(key)
+			if plan.side == SideBoth && note.Subject.ID == (manifest.NamedResource{}) {
+				note.Subject = orig.subject(key)
+			}
+		}
+		suppressed = append(suppressed, note)
 	}
 	slices.SortFunc(suppressed, func(a, b Suppression) int {
 		return a.Parent.Compare(b.Parent.NamedResource)

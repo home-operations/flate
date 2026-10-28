@@ -216,7 +216,7 @@ func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
 	if !errors.Is(err, manifest.ErrObjectNotFound) {
 		t.Fatalf("err = %v, want ErrObjectNotFound for a missing version", err)
 	}
-	if !strings.HasPrefix(err.Error(), source.QualifiedName(manifest.KindHelmRepository, repo.Namespace, repo.Name)) {
+	if !strings.HasPrefix(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
 		t.Fatalf("failure identity: %v", err)
 	}
 }

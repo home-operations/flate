@@ -129,7 +129,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			t.Skip("requires a clean VCS-stamped build for positive persistence")
 		}
 		child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
-		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/blue"}}}}
+		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Application: `{"kind":"Kustomization","spec":{"path":"./entry"}}`, Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/blue"}}}}
 		assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
 		fresh := NewClient(cachetest.New(t, root, cache.New))
 		previous, complete := fresh.PreviousRender(t.Context(), hr, nil, input)

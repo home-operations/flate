@@ -219,6 +219,7 @@ func TestE2E_SubstitutionCycleDownstream(t *testing.T) {
 
 func TestE2E_DependencyCycleWarnings(t *testing.T) {
 	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/a.yaml, flux/b.yaml]\n")
 	for _, pair := range []struct{ name, peer string }{{"a", "b"}, {"b", "a"}} {
 		testutil.WriteFile(t, root, "flux/"+pair.name+".yaml", testutil.KustomizationYAML(pair.name, "flux-system", "  path: ./"+pair.name+"\n  dependsOn: [{name: "+pair.peer+"}]\n"))
 	}

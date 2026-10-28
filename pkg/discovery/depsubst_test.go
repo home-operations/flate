@@ -26,8 +26,8 @@ func TestRun_DependencySubstitutionsSnapshot(t *testing.T) {
 	}
 	consumer := testutil.KustomizationID("apps", "consumer")
 	assert.Equal(t, res.DependencySubstitutions.Resolve("${PREFIX:-dev-}config"), "prod-config")
-	if record, exists := res.Index.Lookup(consumer); !exists || record.Parent != res.Binding.Producer || st.GetObject(consumer) != nil {
-		t.Fatalf("prepared consumer ownership = %+v, published=%v", record, st.GetObject(consumer))
+	if record, exists := res.Index.Lookup(consumer); !exists || record.Parent != (manifest.NamedResource{}) || st.GetObject(consumer) == nil {
+		t.Fatalf("discovery-only consumer ownership = %+v, published=%v", record, st.GetObject(consumer))
 	}
 	if _, exists := res.Index.Lookup(testutil.KustomizationID("apps", "prod-config")); !exists {
 		t.Fatal("discovered dependency target missing")
@@ -58,8 +58,8 @@ func TestRun_DependsOnPreservesAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		active := testutil.KustomizationID("apps", "active")
-		if record, indexed := result.Index.Lookup(active); !indexed || record.Parent != result.Binding.Producer || st.GetObject(active) != nil {
-			t.Fatalf("active prepared ownership = %+v, published=%v", record, st.GetObject(active))
+		if record, indexed := result.Index.Lookup(active); !indexed || record.Parent != (manifest.NamedResource{}) || st.GetObject(active) == nil {
+			t.Fatalf("discovery-only active ownership = %+v, published=%v", record, st.GetObject(active))
 		}
 		if result.DependencySubstitutions.Resolve("${PREFIX:-dev-}config") != "dev-config" {
 			t.Fatal("inactive declaration supplied active substitution")

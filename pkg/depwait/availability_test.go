@@ -69,7 +69,7 @@ func TestAvailable_OptionalMaterializerAbsence(t *testing.T) {
 			for required := range reads.Required() {
 				t.Fatalf("availability made %s a required failure cause", required)
 			}
-			if got.Kind == schedule.DependencyFailed && got.Message != "dependency not found" {
+			if got.Kind == schedule.DependencyFailed && got.Reason.Message != "dependency not found" {
 				t.Fatalf("materializer failure became target cause: %+v", got)
 			}
 		})

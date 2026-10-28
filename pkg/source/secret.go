@@ -14,6 +14,8 @@ import (
 type MissingSecretError struct {
 	// Owner is the source requiring unavailable material.
 	Owner manifest.NamedResource
+	// Subject is captured before unavailable material can be reported.
+	Subject manifest.DiagnosticIdentity
 	// Secret identifies the unavailable Secret; zero denotes source-only material.
 	Secret manifest.NamedResource
 	// Detail is the human reason ("not found", "missing username/password").
@@ -24,35 +26,36 @@ type MissingSecretError struct {
 
 // Error identifies the source and its unavailable Secret material.
 func (e *MissingSecretError) Error() string {
-	if e.Secret == (manifest.NamedResource{}) {
-		return fmt.Sprintf("%s: %s: %s", manifest.ErrMissingSecret, e.Owner, e.Detail)
+	subject := e.Subject
+	if subject.ID == (manifest.NamedResource{}) {
+		subject = manifest.DiagnosticFor(e.Owner, nil)
 	}
-	return fmt.Sprintf("%s: %s %s/%s: secret %s/%s %s",
-		manifest.ErrMissingSecret, e.Owner.Kind, e.Owner.Namespace, e.Owner.Name,
-		e.Secret.Namespace, e.Secret.Name, e.Detail)
+	if e.Secret == (manifest.NamedResource{}) {
+		return fmt.Sprintf("%s: %s: %s", manifest.ErrMissingSecret, subject, e.Detail)
+	}
+	return fmt.Sprintf("%s: %s: secret %s/%s %s", manifest.ErrMissingSecret, subject.Label(), e.Secret.Namespace, e.Secret.Name, e.Detail)
 }
 
 // Unwrap keeps errors.Is(err, manifest.ErrMissingSecret) working.
 func (e *MissingSecretError) Unwrap() error { return manifest.ErrMissingSecret }
 
-// MissingSecretErr builds a *MissingSecretError for a source-group owner.
-func MissingSecretErr(owner manifest.NamedResource, secretRef, reason string) error {
-	owner.Group = manifest.SourceDomain
-	missing := &MissingSecretError{Owner: owner, Detail: reason}
+// MissingSecretErr captures unavailable material with raw and display identities.
+func MissingSecretErr(owner manifest.DiagnosticIdentity, secretRef, reason string) error {
+	missing := &MissingSecretError{Owner: owner.ID, Subject: owner, Detail: reason}
 	if secretRef != "" {
-		missing.Secret = manifest.NamedResource{Kind: manifest.KindSecret, Namespace: owner.Namespace, Name: secretRef}
+		missing.Secret = manifest.NamedResource{Kind: manifest.KindSecret, Namespace: owner.ID.Namespace, Name: secretRef}
 	}
 	return missing
 }
 
 // An unwired getter is configuration failure; missing material retains the
 // source and Secret identities for the existing whole-source skip policy.
-func resolveSecretRef(secrets SecretGetter, owner manifest.NamedResource, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
+func resolveSecretRef(secrets SecretGetter, owner manifest.DiagnosticIdentity, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
 	if secrets == nil {
-		return nil, fmt.Errorf("%s %s references %s but no source.SecretGetter is wired",
-			owner.Kind, owner.Name, field)
+		return nil, fmt.Errorf("%s references %s but no source.SecretGetter is wired",
+			owner.Label(), field)
 	}
-	sec := secrets(owner.Namespace, ref.Name)
+	sec := secrets(owner.ID.Namespace, ref.Name)
 	if sec == nil {
 		return nil, MissingSecretErr(owner, ref.Name, "not found")
 	}
@@ -61,14 +64,14 @@ func resolveSecretRef(secrets SecretGetter, owner manifest.NamedResource, field 
 
 // BasicAuthFromSecret rejects malformed credentials and reports absent or wiped
 // credentials through MissingSecretError.
-func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.NamedResource, secretRef string) (username, password string, err error) {
+func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.DiagnosticIdentity, secretRef string) (username, password string, err error) {
 	username, _, err = sec.Value("username")
 	if err != nil {
-		return "", "", fmt.Errorf("%s: secret %s/%s: %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, secretRef, err)
+		return "", "", fmt.Errorf("%s: secret %s/%s: %w", owner.Label(), owner.ID.Namespace, secretRef, err)
 	}
 	password, _, err = sec.Value("password")
 	if err != nil {
-		return "", "", fmt.Errorf("%s: secret %s/%s: %w", QualifiedName(owner.Kind, owner.Namespace, owner.Name), owner.Namespace, secretRef, err)
+		return "", "", fmt.Errorf("%s: secret %s/%s: %w", owner.Label(), owner.ID.Namespace, secretRef, err)
 	}
 	if username == "" || password == "" || manifest.HasValuePlaceholder(username) || manifest.HasValuePlaceholder(password) {
 		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")

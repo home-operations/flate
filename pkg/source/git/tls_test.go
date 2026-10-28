@@ -579,7 +579,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 					assert.Equal(t, missing.Owner, repo.Named())
 					assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
 				} else {
-					if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/tls") || !strings.Contains(err.Error(), source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name)) {
+					if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/tls") || !strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
 						t.Fatalf("missing input context: %v", err)
 					}
 					if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {
@@ -674,9 +674,9 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.wantInput)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.wantMissing)
-				secret, owner := "ns/creds", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name)
+				secret, owner := "ns/creds", manifest.DiagnosticFor(repo.Named(), repo).Label()
 				if tc.proxyRead {
-					secret, owner = "ns/proxy", "GitRepository g"
+					secret, owner = "ns/proxy", "GitRepository ns/g"
 				}
 				if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), owner) {
 					t.Fatalf("wrong selected error context: %v", err)

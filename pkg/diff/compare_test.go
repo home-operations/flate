@@ -66,6 +66,53 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 	}
 }
 
+func TestCompare_SuppressionSubject(t *testing.T) {
+	t.Parallel()
+	for _, applier := range []manifest.NamedResource{{}, {Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "flux-system", Name: "cluster"}} {
+		for _, side := range []Side{SideOrig, SideCurrent, SideBoth} {
+			t.Run(string(side)+"/"+applier.Name, func(t *testing.T) {
+				t.Parallel()
+				root := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "cluster", applier)
+				subject := manifest.DiagnosticFor(root.Named(), root)
+				key := manifest.NamedResource{Name: "paired-layer"}
+				failed := Snapshot{
+					Subjects:     map[manifest.NamedResource]manifest.DiagnosticIdentity{root.Named(): subject},
+					Unavailable:  map[manifest.NamedResource]store.StatusInfo{key: {Status: store.StatusFailed, Message: "missing input"}},
+					ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{root.Named(): key},
+				}
+				healthy := selectedSnapshot(hrParent, hrDocs(1), store.StatusInfo{})
+				healthy.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{hrParent.NamedResource: key}
+				orig, current := healthy, failed
+				switch side {
+				case SideOrig:
+					orig, current = failed, healthy
+				case SideBoth:
+					orig = failed
+				}
+				out, _, notes, err := Compare(orig, current, nil, Options{Format: FormatJSON})
+				if err != nil || len(notes) != 1 || notes[0].Subject != subject || notes[0].Side != side {
+					t.Fatalf("suppression lost captured subject: notes=%+v err=%v", notes, err)
+				}
+				wantParent, wantCount := hrParent, 1
+				if side == SideBoth {
+					wantParent, wantCount = Parent{NamedResource: key}, 0
+				}
+				if notes[0].Parent != wantParent || notes[0].Count != wantCount || !bytes.Contains([]byte(notes[0].String()), []byte(subject.String())) {
+					t.Fatalf("suppression changed execution identity or lost its label: %+v", notes[0])
+				}
+				var rendered struct{ Suppressed []Suppression }
+				if err := json.Unmarshal(out, &rendered); err != nil || len(rendered.Suppressed) != 1 || rendered.Suppressed[0].Parent != (Parent{NamedResource: subject.Resource, Path: subject.Path}) {
+					t.Fatalf("JSON lost display attribution: %s; err=%v", out, err)
+				}
+				images, imageNotes, err := CompareImages(orig, current, nil, true)
+				if err != nil || len(images) != 0 || !slices.Equal(imageNotes, notes) {
+					t.Fatalf("images lost suppression context: images=%v notes=%+v err=%v", images, imageNotes, err)
+				}
+			})
+		}
+	}
+}
+
 func TestCompare_UnavailableProducerPolicy(t *testing.T) {
 	t.Parallel()
 	failedOrig := store.StatusInfo{Status: store.StatusFailed, Message: "orig build failed"}
@@ -385,5 +432,45 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 	out, _, _, err = Compare(left, right, nil, Options{Format: FormatDiff})
 	if err != nil || bytes.Contains(out, []byte("Kustomization")) || !bytes.Contains(out, []byte("Deployment apps/changed")) {
 		t.Fatalf("ownerless heading = %q, err = %v", out, err)
+	}
+}
+
+func TestCompare_EntryParentDisplay(t *testing.T) {
+	t.Parallel()
+	for _, applier := range []manifest.NamedResource{{}, {Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "cluster"}} {
+		t.Run(applier.Name, func(t *testing.T) {
+			t.Parallel()
+			root := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "cluster", applier)
+			subject := manifest.DiagnosticFor(root.Named(), root)
+			parent := Parent{NamedResource: root.Named(), Path: "cluster"}
+			before := cmDoc(parent, manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "changed"}, "before", "")
+			after := cmDoc(parent, manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "changed"}, "after", "")
+			left := selectedSnapshot(parent, []Doc{before, before}, store.StatusInfo{})
+			right := selectedSnapshot(parent, []Doc{after, after}, store.StatusInfo{})
+			left.Subjects = map[manifest.NamedResource]manifest.DiagnosticIdentity{root.Named(): subject}
+			right.Subjects = left.Subjects
+			out, warnings, _, err := Compare(left, right, nil, Options{Format: FormatJSON})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result struct{ Changes []Change }
+			if err := json.Unmarshal(out, &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Changes) != 1 || result.Changes[0].Parent != (Parent{NamedResource: subject.Resource, Path: subject.Path}) || bytes.Contains(out, []byte(`\u0000`)) {
+				t.Fatalf("JSON leaked execution attribution: %s", out)
+			}
+			if len(warnings) != 2 {
+				t.Fatalf("duplicate warnings lost: %+v", warnings)
+			}
+			for _, warning := range warnings {
+				if !slices.Contains(warning.Detail, "parent: "+subject.String()) {
+					t.Fatalf("warning lost captured parent: %+v", warning)
+				}
+			}
+			if left.Manifests[0].Parent.Named() != root.Named() || right.Manifests[0].Parent.Named() != root.Named() {
+				t.Fatal("display projection changed raw snapshot parents")
+			}
+		})
 	}
 }

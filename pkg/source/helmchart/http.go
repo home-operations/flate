@@ -89,7 +89,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		return cache.ProducerResult{Descriptor: desc}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name), err)
+		return nil, fmt.Errorf("%s: %w", manifest.DiagnosticFor(r.Named(), r).Label(), err)
 	}
 	input := cache.NameBlob(source.HelmChartArchiveFilename, generation)
 	artifact := &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Content: cache.AcquisitionIdentity(input), Key: id,

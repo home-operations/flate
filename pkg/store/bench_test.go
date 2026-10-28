@@ -71,16 +71,10 @@ func BenchmarkListObjects_Sorted(b *testing.B) {
 // short-circuit ahead of DeepEqual so the SAME-pointer re-set (the
 // shape this bench drives — fetchers cache their own SourceArtifact
 // and re-publish it on every tick) skips reflection entirely.
-//
-// The bench keeps the same name + shape as the Phase 0 baseline so
-// the delta in PR descriptions is apples-to-apples. The
-// distinct-pointer dedup path (KS / HR re-emit with re-decoded
-// maps) is measured by BenchmarkSetArtifact_DistinctDedup below.
-func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
+func BenchmarkRecordEmitted_SamePointer(b *testing.B) {
 	s := New()
 	id := testutil.KustomizationID("flux-system", "apps")
-	// Build a rendered-style artifact with realistic shape so DeepEqual
-	// has actual work to do (not a one-field comparison).
+	s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	manifests := make([]map[string]any, 0, 20)
 	for i := range 20 {
 		manifests = append(manifests, map[string]any{
@@ -95,25 +89,20 @@ func BenchmarkSetArtifact_DeepEqual(b *testing.B) {
 			},
 		})
 	}
-	art := &Emission{Manifests: testutil.DocumentOccurrences(manifests)}
-	s.SetArtifact(id, art)
+	art := &Emission{Manifests: testutil.DocumentOccurrences(manifests), Complete: true}
+	s.RecordEmitted(id, art, nil)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		s.SetArtifact(id, art)
+		s.RecordEmitted(id, art, nil)
 	}
 }
 
-// BenchmarkSetArtifact_DistinctDedup measures the KS / HR re-emit
-// dedup path: a fresh-pointer artifact with byte-identical content.
-// Item 7's pointer-identity short-circuit can't help here (pointers
-// differ); reflect.DeepEqual still runs. Companion to
-// BenchmarkSetArtifact_DeepEqual which measures the same-pointer
-// fast path.
-func BenchmarkSetArtifact_DistinctDedup(b *testing.B) {
+func BenchmarkRecordEmitted_DistinctDedup(b *testing.B) {
 	s := New()
 	id := testutil.KustomizationID("flux-system", "apps")
+	s.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace})
 	manifests := make([]map[string]any, 0, 20)
 	for i := range 20 {
 		manifests = append(manifests, map[string]any{
@@ -128,17 +117,14 @@ func BenchmarkSetArtifact_DistinctDedup(b *testing.B) {
 			},
 		})
 	}
-	art := &Emission{Manifests: testutil.DocumentOccurrences(manifests)}
-	s.SetArtifact(id, art)
-	// Distinct-pointer twin with shared sub-slice — matches the
-	// re-emit shape where docs are decoded into fresh outer
-	// structs but their backing maps survive across reconciles.
-	twin := &Emission{Manifests: art.Manifests}
+	art := &Emission{Manifests: testutil.DocumentOccurrences(manifests), Complete: true}
+	s.RecordEmitted(id, art, nil)
+	twin := &Emission{Manifests: art.Manifests, Complete: true}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		s.SetArtifact(id, twin)
+		s.RecordEmitted(id, twin, nil)
 	}
 }
 

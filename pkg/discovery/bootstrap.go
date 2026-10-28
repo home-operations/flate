@@ -130,6 +130,13 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		}
 	}
 	if allowMissing {
+		addReferences := func(obj, witness manifest.BaseManifest) {
+			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+				if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
+					add(ref.NamedResource, witness)
+				}
+			}
+		}
 		for kind := range manifest.Kinds() {
 			if !kind.Runnable {
 				continue
@@ -139,12 +146,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 				if _, _, hasPath := obj.SourcePath(); hasPath {
 					witness = obj
 				}
-				for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-					if ref.Group != manifest.SourceDomain || ref.Use != "source" && ref.Use != "artifact" {
-						continue
-					}
-					add(ref.NamedResource, witness)
-				}
+				addReferences(obj, witness)
 			}
 		}
 		if d.loader != nil {
@@ -152,11 +154,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 				if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil || !d.loader.AdmitsRoot(id, record.Path) {
 					continue
 				}
-				for _, ref := range record.Refs {
-					if ref.Group == manifest.SourceDomain {
-						add(ref, nil)
-					}
-				}
+				addReferences(d.loader.IndexedObject(id, record).Obj, nil)
 			}
 		}
 	}
@@ -196,7 +194,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		}
 		synthetic := obj == nil
 		if synthetic {
-			obj, _ = id.DecodeIdentity()
+			obj, _ = id.BindLocal(bootstrap.LocalPath)
 		}
 		behavior, ok := obj.(entrySource)
 		if !ok {

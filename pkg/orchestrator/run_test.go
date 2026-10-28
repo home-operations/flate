@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"path/filepath"
 	"testing"
 
@@ -94,11 +95,7 @@ metadata: {name: excluded-source, namespace: apps}
 spec: {url: https://example.test/excluded.git}
 `)
 	st := store.New()
-	hr := &manifest.HelmRelease{
-		Name: "consumer", Namespace: "apps",
-		Chart:      manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}},
-		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}},
-	}
+	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindGitRepository, Name: "chart", Namespace: "apps", APIVersion: manifest.SourceDomain + "/v1"}}}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "selected"}}}}
 	st.AddObject(hr)
 	selected := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 	excluded := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "excluded"}

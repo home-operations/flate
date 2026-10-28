@@ -3,18 +3,23 @@ package helm
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestTemplate_HistoryPolicyProjection(t *testing.T) {
@@ -56,15 +61,15 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		{"rollback", `{"rollback":{"timeout":"5m"}}`, true},
 		{"uninstall", `{"uninstall":{"timeout":"5m"}}`, true},
 		{"wait strategy", `{"waitStrategy":{"name":"poller"}}`, true},
-		{"chart labels", `{"chart":{"metadata":{"labels":{"team":"changed"}}}}`, true},
-		{"chart annotations", `{"chart":{"metadata":{"annotations":{"note":"changed"}}}}`, true},
-		{"chart interval", `{"chart":{"spec":{"interval":"5m"}}}`, true},
-		{"chart reconcile strategy", `{"chart":{"spec":{"reconcileStrategy":"Revision"}}}`, true},
-		{"chart verification", `{"chart":{"spec":{"verify":{"provider":"cosign"}}}}`, true},
-		{"prepared chart name", `{"chart":{"spec":{"chart":"already-resolved"}}}`, true},
-		{"prepared chart version", `{"chart":{"spec":{"version":"2.0.0"}}}`, true},
-		{"prepared chart values files", `{"chart":{"spec":{"valuesFiles":["already-resolved.yaml"]}}}`, true},
-		{"prepared chart missing values", `{"chart":{"spec":{"ignoreMissingValuesFiles":true}}}`, true},
+		{"chart labels", `{"chart":{"metadata":{"labels":{"team":"changed"}}}}`, false},
+		{"chart annotations", `{"chart":{"metadata":{"annotations":{"note":"changed"}}}}`, false},
+		{"chart interval", `{"chart":{"spec":{"interval":"5m"}}}`, false},
+		{"chart reconcile strategy", `{"chart":{"spec":{"reconcileStrategy":"Revision"}}}`, false},
+		{"chart verification", `{"chart":{"spec":{"verify":{"provider":"cosign"}}}}`, false},
+		{"template chart name", `{"chart":{"spec":{"chart":"already-resolved"}}}`, false},
+		{"template chart version", `{"chart":{"spec":{"version":"2.0.0"}}}`, false},
+		{"template values files", `{"chart":{"spec":{"valuesFiles":["already-resolved.yaml"]}}}`, false},
+		{"template missing values", `{"chart":{"spec":{"ignoreMissingValuesFiles":true}}}`, false},
 		{"prepared inline values", `{"values":{"already":"resolved"}}`, true},
 		{"install wait", `{"install":{"disableWait":true}}`, true},
 		{"install wait jobs", `{"install":{"disableWaitForJobs":true}}`, true},
@@ -233,4 +238,78 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 		}
 	})
 
+}
+
+func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
+	t.Parallel()
+	if !renderPersistenceEligible(t) {
+		t.Skip("requires a clean VCS-stamped build for positive persistence")
+	}
+	st, hr, dir := ociRenderFixture(t)
+	hr.ChartRef = nil
+	hr.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Kind: manifest.KindOCIRepository,
+		ObjectMeta: &helmv2.HelmChartTemplateObjectMeta{Labels: map[string]string{"label": "one"}},
+		Spec: helmv2.HelmChartTemplateSpec{OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			URL: "oci://example.test/podinfo", Reference: &sourcev1.OCIRepositoryRef{Tag: "6.15.0"}, Interval: &metav1.Duration{Duration: time.Minute},
+		}},
+	}
+	assert.NoError(t, hr.ResolveChartSource(nil))
+	generated, err := manifest.GeneratedObjects(hr)
+	assert.NoError(t, err)
+	st.AddObject(generated[0])
+	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
+	st.SetArtifact(hr.ChartSource(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, FS: chartFixtureFS(hr, os.DirFS(dir)), LocalPath: dir, Digest: digest, Revision: "6.15.0@" + digest})
+	renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
+	input := RenderOptions{Sources: NewSources(st)}
+	_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
+	assert.NoError(t, err)
+	assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, emptyRenderInventory))
+	if _, complete := renderer.PreviousRender(t.Context(), hr.Clone(), nil, input); !complete {
+		t.Fatal("unchanged inline declaration lost accepted history")
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*manifest.HelmRelease)
+	}{
+		{"url", func(h *manifest.HelmRelease) { h.HelmReleaseSpec.Chart.Spec.URL += "/other" }},
+		{"ref", func(h *manifest.HelmRelease) { h.HelmReleaseSpec.Chart.Spec.Reference.Tag = "next" }},
+		{"selector", func(h *manifest.HelmRelease) {
+			h.HelmReleaseSpec.Chart.Spec.LayerSelector = &sourcev1.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Operation: sourcev1.OCILayerExtract}
+		}},
+		{"metadata", func(h *manifest.HelmRelease) { h.HelmReleaseSpec.Chart.ObjectMeta.Labels["label"] = "two" }},
+		{"interval", func(h *manifest.HelmRelease) { h.HelmReleaseSpec.Chart.Spec.Interval.Duration *= 2 }},
+		{"namespace", func(h *manifest.HelmRelease) { h.Namespace = "other" }},
+		{"kind", func(h *manifest.HelmRelease) {
+			h.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "podinfo", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: "repository"}}}
+		}},
+		{"chart_ref", func(h *manifest.HelmRelease) {
+			h.HelmReleaseSpec.Chart = nil
+			h.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: hr.ChartSource().Name}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			changed := hr.Clone()
+			tc.change(changed)
+			if _, complete := renderer.PreviousRender(t.Context(), changed, nil, input); complete {
+				t.Fatal("changed inline declaration borrowed accepted history")
+			}
+		})
+	}
+	for _, skipped := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unavailable_source_skipped=%t", skipped), func(t *testing.T) {
+			t.Parallel()
+			unavailable := store.New()
+			unavailable.AddObject(generated[0])
+			info := store.StatusInfo{Status: store.StatusFailed, Message: "acquisition failed"}
+			if skipped {
+				info = store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "source unavailable"}
+			}
+			unavailable.UpdateStatus(hr.ChartSource(), info)
+			unavailable.SetArtifact(hr.ChartSource(), &store.SourceArtifact{Kind: manifest.KindOCIRepository, Key: "unavailable"})
+			if _, complete := renderer.PreviousRender(t.Context(), hr, nil, RenderOptions{Sources: NewSources(unavailable)}); complete {
+				t.Fatal("unavailable acquisition supplied accepted history")
+			}
+		})
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func TestBootstrap_RemoteGeneratorSharedAcquisition(t *testing.T) {
@@ -45,13 +46,13 @@ generatorOptions:
 	for name, want := range map[string]map[string]any{
 		"env": {"VALUE": "stable"}, "file": {"payload": "VALUE=stable\n"},
 	} {
-		obj, ok := o.store.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name})
+		obj, ok := values.NewStoreProvider(o.store, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}).(*manifest.ConfigMap)
 		if !ok {
 			t.Fatalf("bootstrap ConfigMap %s missing", name)
 		}
 		assert.Diff(t, obj.Data, want)
 	}
-	secret, ok := o.store.Get[*manifest.Secret](manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"})
+	secret, ok := values.NewStoreProvider(o.store, true).Data(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "secret"}).(*manifest.Secret)
 	if !ok {
 		t.Fatal("bootstrap Secret missing")
 	}
@@ -69,4 +70,7 @@ generatorOptions:
 		t.Fatalf("rendered documents differ: first=%v second=%v", first, second)
 	}
 	assert.Equal(t, requests.Load(), int32(1))
+	if len(o.store.ListObjects("", manifest.KindConfigMap))+len(o.store.ListObjects("", manifest.KindSecret)) != 0 {
+		t.Fatal("bootstrap generator lookup entered canonical inventory")
+	}
 }

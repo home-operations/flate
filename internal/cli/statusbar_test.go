@@ -206,7 +206,7 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 	}
 }
 
-func TestModel_ExcludesSyntheticIDs(t *testing.T) {
+func TestModel_TracksAdmittedEvents(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
 	boot := manifest.BootstrapSourceID
@@ -223,23 +223,23 @@ func TestModel_ExcludesSyntheticIDs(t *testing.T) {
 		m.events.publish(id, store.StatusPending, time.Now())
 	}
 	m.drainEvents()
-	if got := m.inflightLabels(); len(got) != len(declared) {
-		t.Fatalf("in-flight labels = %v, want %d declared resources", got, len(declared))
+	if got := m.inflightLabels(); len(got) != len(ids) {
+		t.Fatalf("in-flight labels = %v, want %d admitted resources", got, len(ids))
 	}
 	for _, id := range ids {
 		m.events.publish(id, store.StatusReady, time.Now())
 	}
 	m.drainEvents()
-	if m.done != len(declared) || m.total != len(declared) {
-		t.Errorf("live counts: done=%d total=%d; want %d/%d", m.done, m.total, len(declared), len(declared))
+	if m.done != len(ids) || m.total != len(ids) {
+		t.Errorf("live counts: done=%d total=%d; want %d/%d", m.done, m.total, len(ids), len(ids))
 	}
 
 	m2 := newBarModel(false)
 	m2.events.publish(boot, store.StatusPending, time.Now())
 	m2.events.publish(chart, store.StatusPending, time.Now())
 	m2.drainEvents()
-	if got := m2.inflightLabels(); len(got) != 0 {
-		t.Errorf("synthetic ids listed in-flight: %v", got)
+	if got := m2.inflightLabels(); len(got) != 2 {
+		t.Errorf("admitted events missing in-flight: %v", got)
 	}
 }
 

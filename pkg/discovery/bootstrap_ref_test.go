@@ -32,6 +32,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
 )
 
@@ -133,11 +134,14 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 				t.Fatalf("pinned children: phantom=%v child=%v parent=%v", st.GetObject(phantom), st.GetObject(childID), parentsForTest(result.Index)[childID])
 			}
 			generated := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "generated"}
-			generatedCM, ok := st.GetObject(generated).(*manifest.ConfigMap)
-			if !ok || generatedCM.Data["value"] != "pinned" || st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) != nil {
+			generatedCM, ok := values.NewStoreProvider(st, true).Data(generated).(*manifest.ConfigMap)
+			if st.GetObject(generated) != nil {
+				t.Fatal("pinned generator lookup entered canonical inventory")
+			}
+			if !ok || generatedCM.Data["value"] != "pinned" || values.NewStoreProvider(st, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "phantom-generated"}) != nil {
 				t.Fatalf("pinned generators = %v", generatedCM)
 			}
-			fileGenerated, ok := st.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
+			fileGenerated, ok := values.NewStoreProvider(st, true).Data(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "file-generated"}).(*manifest.ConfigMap)
 			if !ok || fileGenerated.Data["value"] != "pinned" {
 				t.Fatalf("committed generator file = %v", fileGenerated)
 			}

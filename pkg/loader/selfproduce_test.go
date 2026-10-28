@@ -20,6 +20,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 func cmID(ns string) manifest.NamedResource {
@@ -780,7 +781,7 @@ func TestFinalizeIndex_DeclaredKeysStayUnpublished(t *testing.T) {
 	}
 }
 
-func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
+func TestFinalizeIndex_LookupReferenceData(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
@@ -806,7 +807,7 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 	for _, file := range []string{"generated/nested/secret.yaml", "generated/nested/producer.yaml", "inputs/payload.yaml"} {
 		assert.Diff(t, idx.Readers[file], []manifest.FileReader{{Reader: testutil.KustomizationID("flux-system", "generated"), Source: manifest.BootstrapSourceID}})
 	}
-	generated, _ := s.Get[*manifest.ConfigMap](manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "generated-data"})
+	generated, _ := lookupDataForTest[*manifest.ConfigMap](t, s, manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "generated-data"})
 	if generated == nil || generated.Data["payload"] != testutil.KustomizationYAML("terminal", "authored", "  path: ./hidden\n") || s.GetObject(testutil.KustomizationID("authored", "terminal")) != nil {
 		t.Fatalf("implicit generator data was lost or admitted as a resource: generated=%+v terminal=%+v", generated, s.GetObject(testutil.KustomizationID("authored", "terminal")))
 	}
@@ -821,9 +822,12 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 		}
 	}
 
-	got, _ := s.GetObject(secretID("flux-system", "cluster-secrets")).(*manifest.Secret)
+	got, _ := lookupDataForTest[*manifest.Secret](t, s, secretID("flux-system", "cluster-secrets"))
+	if s.GetObject(secretID("flux-system", "cluster-secrets")) != nil {
+		t.Fatal("SOPS lookup entered canonical inventory")
+	}
 	if got == nil {
-		t.Fatal("SOPS cluster-secrets was not materialized into the store")
+		t.Fatal("SOPS cluster-secrets was unavailable through lookup")
 	}
 	if want := manifest.ValuePlaceholder("SECRET_DOMAIN"); got.StringData["SECRET_DOMAIN"] != want {
 		t.Errorf("materialized SECRET_DOMAIN = %v, want %q", got.StringData["SECRET_DOMAIN"], want)
@@ -933,12 +937,20 @@ func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 func TestSelfProduceBuilder_AuthoredSecretReplacement(t *testing.T) {
 	t.Parallel()
 	id := secretID("apps", "input")
-	b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, secrets: map[manifest.NamedResource]*manifest.Secret{}}
+	firstProof := manifest.Production{Source: manifest.BootstrapSourceID, Authored: id, Path: "first.yaml", File: "first.yaml"}
+	secondProof := firstProof
+	secondProof.Path, secondProof.File = "second.yaml", "second.yaml"
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Productions: []manifest.Production{firstProof, secondProof}}}}
+	b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, idx: index}
 	first := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"first": "..PLACEHOLDER_first.."}}
 	second := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"second": "..PLACEHOLDER_second.."}}
-	b.materializeSecret(first, "apps", "apps")
-	b.materializeSecret(second, "apps", "apps")
-	assert.Diff(t, b.secrets[id], second)
+	b.recordSecret(first, id, firstProof)
+	b.recordSecret(second, id, secondProof)
+	b.store.SetDiscoveryIndex(index)
+	assert.Diff(t, values.NewStoreProvider(b.store, true).Data(id), second)
+	if b.store.GetObject(id) != nil {
+		t.Fatal("lookup-only SOPS data acquired object authority")
+	}
 }
 
 func TestFinalizeIndex_MixedKustomizationDataFile(t *testing.T) {

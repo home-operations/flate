@@ -1188,7 +1188,7 @@ func TestReferenceFacts_DataOnlyProviderPolicy(t *testing.T) {
 	defer current.Retire()
 	want := []manifest.Production{{Owner: owner, Source: manifest.BootstrapSourceID, Declaration: external.Named()}}
 	for _, reader := range []dataReader{st, &current} {
-		assert.Diff(t, reader.ReferenceFacts(id, nil), store.ReferenceFacts{Productions: want})
+		assert.Diff(t, reader.ReferenceFacts(id, nil), store.ReferenceFacts{Productions: want, ReferenceData: []manifest.ReferenceData{{Production: want[0], DeclaredKeys: []string{"VALUE"}}}})
 		assert.Diff(t, NewStoreProvider(reader, true).Data(id), &manifest.Secret{
 			Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"VALUE": manifest.ValuePlaceholder("VALUE")},
 		})

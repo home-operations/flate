@@ -17,14 +17,14 @@ require (
 	github.com/controlplaneio-fluxcd/flux-operator v0.61.0
 	github.com/cyphar/filepath-securejoin v0.7.0
 	github.com/distribution/reference v0.6.0
-	github.com/fluxcd/helm-controller/api v1.6.5
+	github.com/fluxcd/helm-controller/api v1.7.1
 	github.com/fluxcd/kustomize-controller/api v1.10.0
 	github.com/fluxcd/pkg/apis/kustomize v1.23.0
 	github.com/fluxcd/pkg/apis/meta v1.38.0
 	github.com/fluxcd/pkg/envsubst v1.9.0
 	github.com/fluxcd/pkg/kustomize v1.44.0
 	github.com/fluxcd/pkg/sourceignore v0.22.0
-	github.com/fluxcd/source-controller/api v1.9.6
+	github.com/fluxcd/source-controller/api v1.10.0
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/go-task/slim-sprig/v3 v3.0.0
@@ -90,7 +90,7 @@ require (
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fluxcd/cli-utils v1.2.2 // indirect
-	github.com/fluxcd/pkg/apis/acl v0.10.0 // indirect
+	github.com/fluxcd/pkg/apis/acl v0.12.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect

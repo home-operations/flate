@@ -5,12 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
-
-	"github.com/Masterminds/semver/v3"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/keylock"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -77,8 +72,7 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 		policy.MaxAge = cache.Forever
 	}
 	if r.IsOCI() {
-		syn := synthesizeOCIRepository(r, hc)
-		syn.Interval = r.Interval
+		syn := hc.OCIRepository(r)
 		art, err := f.oci.FetchChart(ctx, syn, f.reads, policy)
 		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryAmbient != nil {
 			retry := missing.RetryAmbient
@@ -105,107 +99,4 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 		return nil, err
 	}
 	return f.fetchHTTPChart(ctx, prepared, hc, policy)
-}
-
-// Synthesize builds an in-memory HelmChart for a single chart served by a
-// HelmRepository. The HelmRelease controller registers it so the source
-// controller fetches the chart here; the chart name+version live on the
-// consuming HelmRelease, not the HelmRepository, so there's no standalone CR.
-// The id is syntheticChartName(...): distinct charts/versions from the same
-// repo get distinct Store ids.
-func Synthesize(r *manifest.HelmRepository, chartName, version string) *manifest.HelmChartSource {
-	chartURL := normalizeChartURL(r.URL, chartName)
-	return &manifest.HelmChartSource{
-		Name:      syntheticChartName(r.Name, chartName, chartURL, version),
-		Namespace: r.Namespace,
-		Chart:     chartName,
-		Version:   version,
-		SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: r.Name},
-	}
-}
-
-// normalizeChartURL joins a HelmRepository base URL and a chart name into the
-// chart's URL, tolerating a trailing slash on the base.
-func normalizeChartURL(url, chartName string) string {
-	return strings.TrimSuffix(url, "/") + "/" + chartName
-}
-
-// synthesizeOCIRepository builds an in-memory OCIRepository for a single
-// chart served by a type=oci HelmRepository (precondition: r.IsOCI()).
-// A HelmRepository(oci) is only a registry base; the chart name and version
-// live on the consuming HelmRelease, so there is no standalone OCIRepository
-// CR. The OCI branch of Fetch builds one on the fly and hands it to the OCI
-// fetcher, which applies spec.verify / cert / insecure / layerSelector
-// exactly as for a real OCIRepository.
-//
-// The HelmRepository's auth / TLS / insecure / provider are lifted (it
-// carries no proxySecretRef). The version is classified by versionToOCIRef:
-// a ':' is a digest, an exact semver pin or a non-semver literal stays a
-// tag, and a semver constraint becomes a SemVer ref so the OCI fetcher
-// resolves it to the highest matching published tag — matching the
-// OCIRepository path.
-func synthesizeOCIRepository(r *manifest.HelmRepository, hc *manifest.HelmChartSource) *manifest.OCIRepository {
-	chartURL := normalizeChartURL(r.URL, hc.Chart)
-	syn := &manifest.OCIRepository{Namespace: r.Namespace}
-	syn.Name = syntheticChartName(r.Name, hc.Chart, chartURL, hc.Version)
-	syn.URL = chartURL
-	syn.Provider = r.Provider
-	if hc.Version != "" {
-		syn.Reference = versionToOCIRef(hc)
-	}
-	syn.SecretRef = r.SecretRef
-	syn.CertSecretRef = r.CertSecretRef
-	syn.Insecure = r.Insecure
-	syn.Timeout = &metav1.Duration{Duration: r.OperationTimeout()}
-	return syn
-}
-
-// versionToOCIRef classifies a HelmRelease chart version into an OCI
-// reference. A ':' means a digest. Otherwise a string that parses as a
-// concrete semver version is an exact pin kept as a literal tag; a string
-// that is not a concrete version but is a valid semver constraint (1.20.x,
-// *, ~, ^, ranges) is routed to SemVer so the OCI fetcher's semver resolver
-// selects the highest matching published tag; anything else is a non-semver
-// literal tag (e.g. "latest").
-//
-// The exact-version-before-constraint ordering is load-bearing:
-// semver.NewConstraint("1.20.0") succeeds as "=1.20.0", so testing the
-// constraint first would misroute exact pins and bare partials (1.20, 1) to
-// SemVer. Peeling concrete versions off first is what separates a pin from a
-// constraint.
-func versionToOCIRef(hc *manifest.HelmChartSource) *sourcev1.OCIRepositoryRef {
-	version := hc.Version
-	ref := &sourcev1.OCIRepositoryRef{}
-	switch {
-	case strings.Contains(version, ":"):
-		ref.Digest = version
-	case hc.ExactVersion():
-		ref.Tag = version
-	case isSemverConstraint(version):
-		ref.SemVer = version
-	default:
-		ref.Tag = version
-	}
-	return ref
-}
-
-// isSemverConstraint reports whether version parses as a semver constraint
-// (wildcards, tilde/caret, ranges).
-func isSemverConstraint(version string) bool {
-	_, err := semver.NewConstraint(version)
-	return err == nil
-}
-
-const syntheticChartHashHexLength = 7
-
-// syntheticChartName derives the stable <helmrepo>-<chart>-<short hash>
-// identity shared by the synthetic HelmChart (Synthesize) and the synthetic
-// OCIRepository (synthesizeOCIRepository) for one chart served by a
-// HelmRepository. Hashing the normalized chartURL@version keeps distinct
-// charts/versions from the same repo on distinct ids and stays name-legal
-// when the version is a digest (whose ':' isn't a valid name character). The
-// synthetic OCIRepository is never stored (the OCI fetcher caches by URL+ref,
-// not name), so for it the name is mainly log readability.
-func syntheticChartName(repoName, chartName, chartURL, version string) string {
-	return repoName + "-" + chartName + "-" + manifest.SHA256Hex([]byte(chartURL + "@" + version))[:syntheticChartHashHexLength]
 }

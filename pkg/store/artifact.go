@@ -93,78 +93,52 @@ func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 	return input
 }
 
-type artifactSnapshot struct {
-	value       Artifact
-	publication uint64
-}
-
 type artifactRecord struct {
-	artifactSnapshot
-	effective Artifact
+	value            *SourceArtifact
+	publication      uint64
+	effective        Artifact
+	inventoryVisible bool
 	authority
 	revisionHead, originHead authority
 }
 
-// SetArtifact stores the complete latest descriptor and notifies selected readers.
-func (s *Store) SetArtifact(id manifest.NamedResource, artifact Artifact) {
-	var input ArtifactInput
-	if a, ok := artifact.(*SourceArtifact); ok {
-		input = a.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
-	}
+// SetArtifact stores acquired content and notifies readers of selected source facts.
+func (s *Store) SetArtifact(id manifest.NamedResource, artifact *SourceArtifact) {
 	sh := s.shardFor(id)
-	for {
-		var snapshot artifactSnapshot
-		_, source := artifact.(*SourceArtifact)
-		if !source {
-			sh.mu.RLock()
-			snapshot = sh.artifacts[id].artifactSnapshot
-			sh.mu.RUnlock()
-			if artifactValueEqual(snapshot.value, artifact) {
-				return
-			}
-		}
-		sh.mu.Lock()
-		prev := sh.artifacts[id]
-		if !source && prev.publication != snapshot.publication {
-			sh.mu.Unlock()
-			continue
-		}
-		if prev.value == artifact {
-			sh.mu.Unlock()
-			return
-		}
-		var retired *ReadSet
-		if before, ok := prev.value.(*SourceArtifact); ok {
-			retired = before.Reads
-			if a, ok := artifact.(*SourceArtifact); ok && before.Reads == a.Reads {
-				retired = nil
-			}
-		}
-		prev.value = artifact
-		if sh.derived {
-			var view capture
-			sh.captureLocked(id, sh.cells[id], &view)
-			if sh.cells[id].hidden {
-				artifact, input = nil, ArtifactInput{}
-			} else if view.payload != nil {
-				artifact, input = view.payload, *view.payloadInput
-			}
-		}
-		changed := sh.publishArtifactLocked(id, &prev, artifact, input)
-		sh.artifacts[id] = prev
-		var dispatch eventDispatch
-		if changed && !sh.cells[id].hidden {
-			dispatch = fireUnderLock(s, EventArtifactUpdated, id)
-			dispatch.payload = artifact
-		}
+	sh.mu.Lock()
+	prev := sh.artifacts[id]
+	if prev.value == artifact {
 		sh.mu.Unlock()
-		retired.Retire()
-		dispatch.run()
 		return
 	}
+	var retired *ReadSet
+	if before := prev.value; before != nil {
+		retired = before.Reads
+		if artifact != nil && before.Reads == artifact.Reads {
+			retired = nil
+		}
+	}
+	prev.value = artifact
+	var view capture
+	sh.captureLocked(id, sh.cells[id], &view)
+	visible := sh.projectArtifactLocked(id, &view, prev)
+	changed := sh.publishArtifactLocked(id, &prev, visible)
+	sh.artifacts[id] = prev
+	var dispatch eventDispatch
+	if changed && !sh.cells[id].hidden {
+		dispatch = fireUnderLock(s, EventArtifactUpdated, id)
+		dispatch.payload = visible
+	}
+	sh.mu.Unlock()
+	s.Retire(retired)
+	dispatch.run()
 }
 
-func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifactRecord, value Artifact, input ArtifactInput) bool {
+func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifactRecord, value Artifact) bool {
+	var input ArtifactInput
+	if source, ok := value.(*SourceArtifact); ok {
+		input = source.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
+	}
 	var before ArtifactInput
 	if source, ok := record.effective.(*SourceArtifact); ok {
 		before = source.Input(ArtifactContent | ArtifactRevision | ArtifactOrigin)
@@ -223,16 +197,51 @@ func (s *Store) GetArtifact(id manifest.NamedResource, _ ArtifactRead) Artifact 
 	}
 	var view capture
 	sh.captureLocked(id, sh.cells[id], &view)
-	artifact := sh.artifacts[id].value
-	if view.payload != nil {
-		artifact = view.payload
-	}
+	artifact := sh.artifacts[id].effective
 	e, emitted := artifact.(*Emission)
 	sh.mu.RUnlock()
 	if emitted && !emissionCurrent(e, view) {
 		return nil
 	}
 	return artifact
+}
+
+func (sh *shard) projectArtifactLocked(id manifest.NamedResource, view *capture, record artifactRecord) Artifact {
+	if sh.cells[id].hidden {
+		return nil
+	}
+	if view.payload != nil {
+		return view.payload
+	}
+	if record.value != nil {
+		return record.value
+	}
+	if slot := sh.slots[id]; slot != nil && slot.visible.Load() && record.inventoryVisible {
+		if inventory := slot.current.Load(); inventory != nil {
+			return inventory
+		}
+	}
+	return nil
+}
+
+// Retire releases registrations only when neither retained output borrows them.
+func (s *Store) Retire(reads *ReadSet) {
+	if reads == nil {
+		return
+	}
+	sh := s.shardFor(reads.id)
+	sh.mu.RLock()
+	source := sh.artifacts[reads.id].value
+	retained := source != nil && source.Reads == reads
+	if slot := sh.slots[reads.id]; slot != nil {
+		if inventory := slot.current.Load(); inventory != nil {
+			retained = retained || inventory.Retains(reads)
+		}
+	}
+	sh.mu.RUnlock()
+	if !retained {
+		reads.Retire()
+	}
 }
 
 // Family and generation metadata pin payload identity; never walk a filesystem under the shard lock.
@@ -299,9 +308,10 @@ func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
 		record.conditions, record.failure = record.conditions[:0], nil
 		sh.conditions[id] = record
 	}
-	if record := sh.artifacts[id]; record.value != nil {
+	if record := sh.artifacts[id]; record.value != nil || record.inventoryVisible {
 		record.value = nil
-		sh.publishArtifactLocked(id, &record, nil, ArtifactInput{})
+		record.inventoryVisible = false
+		sh.publishArtifactLocked(id, &record, nil)
 		sh.artifacts[id] = record
 	}
 }

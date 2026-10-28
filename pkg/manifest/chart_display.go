@@ -1,12 +1,16 @@
 package manifest
 
-// ChartDisplaySource returns the resolved chart source when no explicit version is set.
+// ChartDisplaySource returns the effective chart input selected by the declaration.
 func (h *HelmRelease) ChartDisplaySource() (NamedResource, bool) {
-	if h.Chart.Version != "" {
+	if h.HelmReleaseSpec.Chart != nil && h.chartProjection().declared.Kind == KindHelmChart {
 		return NamedResource{}, false
 	}
-	return h.ChartSource(), true
+	source := h.ChartSource()
+	return source, source.Name != ""
 }
+
+// ChartVersion returns the chart template's declared version or OCI reference.
+func (h *HelmRelease) ChartVersion() string { return h.chartProjection().version }
 
 // ChartDisplaySource reports no chart display source for this manifest.
 func (*Kustomization) ChartDisplaySource() (NamedResource, bool) {

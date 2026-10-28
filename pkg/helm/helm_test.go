@@ -106,7 +106,8 @@ func TestTemplate_DoesNotMutateInputValues(t *testing.T) {
 	done.Wait()
 	assert.Diff(t, canonical.chart.Values, chartSnapshot)
 	assert.Diff(t, vals, snapshot)
-	assert.Diff(t, hr, hrBefore)
+	assert.Diff(t, hr.HelmReleaseSpec, hrBefore.HelmReleaseSpec)
+	assert.Equal(t, hr.Chart, hrBefore.Chart)
 	assert.Diff(t, outputs[1], outputs[0])
 	for _, want := range []string{"tag: v1", "repository: nginx", "pullPolicy: Always"} {
 		key, value, _ := strings.Cut(want, ": ")

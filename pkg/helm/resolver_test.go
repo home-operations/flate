@@ -57,17 +57,17 @@ data:
 	for _, tc := range []struct {
 		name string
 		id   manifest.NamedResource
-		want *manifest.HelmChartSource
+		want manifest.BaseManifest
 	}{
 		{"complete", chart.Named(), chart},
 		{"group", manifest.NamedResource{Group: "foreign.example", Kind: manifest.KindHelmChart, Namespace: chart.Namespace, Name: chart.Name}, nil},
-		{"kind", gr.Named(), nil},
+		{"kind", gr.Named(), gr},
 		{"namespace", manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "other", Name: chart.Name}, nil},
 		{"name", manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: chart.Namespace, Name: "other"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := resolver.HelmChart(tc.id); got != tc.want {
+			if got := resolver.Declaration(tc.id); got != tc.want {
 				t.Fatalf("HelmChart(%+v) = %p, want %p", tc.id, got, tc.want)
 			}
 		})

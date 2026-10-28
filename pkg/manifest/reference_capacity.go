@@ -17,8 +17,22 @@ func (k *Kustomization) ReferenceCapacity() (int, int) {
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
 func (h *HelmRelease) ReferenceCapacity() (int, int) {
 	n := len(h.DependsOn) + len(h.ValuesFrom)
-	if h.hasChartReferences() {
-		n += 2
+	if h.ChartRef != nil {
+		n++
+		if h.chartDeclaration != nil {
+			n++
+		}
+	} else if template := h.HelmReleaseSpec.Chart; template != nil {
+		if template.Kind == KindOCIRepository {
+			n++
+			for _, ref := range []*LocalObjectReference{template.Spec.SecretRef, template.Spec.CertSecretRef, template.Spec.ProxySecretRef} {
+				if ref != nil {
+					n++
+				}
+			}
+		} else {
+			n += 2
+		}
 	}
 	return n, len(h.ValuesFrom)
 }
@@ -67,8 +81,4 @@ func (r *RawObject) ReferenceCapacity() (int, int) {
 		return len(sources), 0
 	}
 	return 0, 0
-}
-
-func (h *HelmRelease) hasChartReferences() bool {
-	return h.ChartRef != nil || h.HelmReleaseSpec.Chart != nil || h.Chart.Source.Kind != ""
 }

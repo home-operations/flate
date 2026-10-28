@@ -858,7 +858,19 @@ func renderModelUniverse(w modelWorld) (modelSet, error) {
 				return nil, fmt.Errorf("model declaration %s: %w", file.path, err)
 			}
 			if doc["kind"] != nil {
-				ids[renderModelDocument(file.source, doc).id.modelID] = true
+				id := renderModelDocument(file.source, doc).id.modelID
+				ids[id] = true
+				if id.group == "helm.toolkit.fluxcd.io" && id.kind == "HelmRelease" {
+					spec, _ := doc["spec"].(map[string]any)
+					chart, _ := spec["chart"].(map[string]any)
+					template, _ := chart["spec"].(map[string]any)
+					ref, _ := template["sourceRef"].(map[string]any)
+					namespace, _ := ref["namespace"].(string)
+					if namespace == "" {
+						namespace = id.namespace
+					}
+					ids[modelID{source: id.source, group: "source.toolkit.fluxcd.io", kind: "HelmChart", namespace: namespace, name: id.namespace + "-" + id.name}] = true
+				}
 			}
 		}
 	}
@@ -901,7 +913,7 @@ func observeRenderModel(w modelWorld, side Rendered, selected bool) (modelObserv
 		if !known {
 			return out, admitted, fmt.Errorf("unexpected store identity: %s", key)
 		}
-		if !id.KindInfo().Runnable {
+		if side.store.ReportHidden(id) || !id.KindInfo().Runnable {
 			continue
 		}
 		if selected && !side.filter.ShouldReconcile(id) {
@@ -1393,17 +1405,17 @@ func TestIndependentModel_ObservationRejects(t *testing.T) {
 			side := Rendered{Orchestrator: &Orchestrator{store: store.New(), tasks: task.NewBounded(2)}, Result: &Result{}}
 			side.store.AddObject(obj)
 			side.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusReady})
-			side.store.SetArtifact(obj.Named(), &store.Emission{Complete: true})
+			if tc.name != "missing-artifact" && tc.name != "incomplete-emission" && tc.name != "unselected-output" {
+				side.store.RecordEmitted(obj.Named(), &store.Emission{Complete: true}, nil)
+			}
 			selected := false
 			switch tc.name {
 			case "missing-side":
 				side = Rendered{}
-			case "missing-artifact":
-				side.store.SetArtifact(obj.Named(), nil)
 			case "pending-producer":
 				side.store.UpdateStatus(obj.Named(), store.StatusInfo{Status: store.StatusPending})
 			case "incomplete-emission":
-				side.store.SetArtifact(obj.Named(), &store.Emission{})
+				side.store.RecordEmitted(obj.Named(), &store.Emission{}, nil)
 			case "extra-store-object":
 				side.store.AddObject(&manifest.ConfigMap{Name: "extra", Namespace: "flux-system"})
 			case "extra-store-producer":
@@ -1412,7 +1424,6 @@ func TestIndependentModel_ObservationRejects(t *testing.T) {
 				selected = true
 				side.filter = change.NewFilter(change.NewSet(nil), nil, nil, "")
 				if tc.name == "unselected-output" {
-					side.store.SetArtifact(obj.Named(), nil)
 					side.Result.Manifests = []manifest.DocumentBatch{{Parent: obj, Documents: []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "extra"}}}}}
 				}
 			case "ownerless-extra-document":

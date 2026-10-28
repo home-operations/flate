@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"errors"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"os"
 	"reflect"
 	"testing"
@@ -126,7 +127,7 @@ func TestTemplate_OCIConcurrentIdentities(t *testing.T) {
 				expected = output
 			}
 			for i, release := range []*manifest.HelmRelease{hr, hrB} {
-				if diff := cmp.Diff(originals[i], release); diff != "" {
+				if diff := cmp.Diff(originals[i], release, cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
 					t.Fatalf("release mutated (-want +got):\n%s", diff)
 				}
 			}

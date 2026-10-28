@@ -98,7 +98,7 @@ func TestFilter_ProducedTargetsWithoutObjects(t *testing.T) {
 			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: target.Name}}}}
 			if tc.kind == manifest.KindOCIRepository {
 				target.Group = manifest.SourceDomain
-				obj = &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: target}}
+				obj = &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: target}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: target.Kind, Name: target.Name, Namespace: target.Namespace}}
 			}
 			consumer := obj.Named()
 			proof := manifest.Production{Owner: producer, Source: manifest.BootstrapSourceID}

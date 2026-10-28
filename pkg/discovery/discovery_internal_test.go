@@ -158,7 +158,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		source := &manifest.GitRepository{Name: "source"}
 		st.AddObject(source)
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
-		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named(), store.ArtifactContent))
+		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
 		d := discoverer{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
 		if err := d.loadManifests(t.Context(), root, true); err != nil {
 			t.Fatal(err)

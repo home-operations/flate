@@ -91,7 +91,7 @@ func TestTemplate_SourceRootValuesFiles(t *testing.T) {
 							selected.ChartRef = &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindHelmChart, Name: "standalone"}
 							selected.Chart.Source.Kind, selected.Chart.Source.Name = manifest.KindHelmChart, "standalone"
 							var err error
-							selected, _, err = Prepare(selected, func(id manifest.NamedResource) *manifest.HelmChartSource {
+							selected, _, err = Prepare(selected, func(id manifest.NamedResource) manifest.BaseManifest {
 								return &manifest.HelmChartSource{Name: id.Name, Namespace: id.Namespace, Chart: "charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: kind, Name: "repo"}, ValuesFiles: tc.files, IgnoreMissingValuesFiles: ignore}
 							}, nil, nil)
 							assert.NoError(t, err)

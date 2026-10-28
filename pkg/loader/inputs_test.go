@@ -318,7 +318,7 @@ func TestAdmit_FluxComponentInputContexts(t *testing.T) {
 	if len(l.documents.cache[filepath.Join(root, "apps")].body.Components) != 0 {
 		t.Fatal("injected components mutated the cached document or retained ignored input")
 	}
-	if s.GetObject(secretID("effective", "component")) == nil {
+	if data, ok := lookupDataForTest[*manifest.Secret](t, s, secretID("effective", "component")); !ok || data == nil {
 		t.Fatal("injected component lost its inherited namespace")
 	}
 	warnings := s.Warnings()

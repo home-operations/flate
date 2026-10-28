@@ -264,26 +264,29 @@ func (s *selectionSide) prepareStatuses(name string) {
 		}
 	}
 	for _, obj := range s.result.Objects {
-		id := obj.Named()
-		if facts := manifest.KindOf(obj); facts.Tracked && (!id.ReportHidden() || !facts.SourceArtifact) {
-			info, ok := s.run.store.GetStatus(id)
-			if !ok {
-				info = store.StatusInfo{Status: store.StatusFailed, Message: "no status reported"}
-			}
-			add(id, info)
-		}
-	}
-	for id := range s.run.Result.Failed {
-		if seen[id] || id.ReportHidden() ||
-			(name != "" && id.Name != name) || !s.includes(id.Namespace) {
+		if !manifest.KindOf(obj).Tracked {
 			continue
 		}
-		if info, ok := s.run.store.GetStatus(id); ok {
+		id := obj.Named()
+		info, hidden := s.run.store.ReportStatus(id)
+		if hidden {
+			continue
+		}
+		if info.Status == "" {
+			info = store.StatusInfo{Status: store.StatusFailed, Message: "no status reported"}
+		}
+		add(id, info)
+	}
+	for id := range s.run.Result.Failed {
+		if seen[id] || (name != "" && id.Name != name) || !s.includes(id.Namespace) {
+			continue
+		}
+		if info, hidden := s.run.store.ReportStatus(id); info.Status != "" && !hidden {
 			add(id, info)
 		}
 	}
 	for victim, blockers := range blocked {
-		roots := rootsOf(victim, blocked)
+		roots := rootsOf(victim, s.run.Result.Blocked)
 		if len(roots) == 0 {
 			roots = slices.Clone(blockers)
 		}

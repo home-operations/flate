@@ -248,7 +248,7 @@ func TestResourceSetFingerprint_CapturedInputs(t *testing.T) {
 func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver, previous string) ([]map[string]any, string, error) {
 	s := store.New()
 	s.AddObject(rs)
-	s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: previous, Complete: true})
+	s.RecordEmitted(rs.Named(), &store.Emission{Fingerprint: previous, Complete: true}, nil)
 	c := base.New(s, nil)
 	run := controllertest.NewExecution(c, rs.Named())
 	defer run.Close()

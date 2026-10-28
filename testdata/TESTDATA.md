@@ -16,6 +16,11 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+- `hr-oci-template/` - inline OCI chart template and tiny chart for package-level
+  orchestration integration tests with an in-process registry. The test replaces
+  the registry URL, serves an unrelated first layer, and compares tag/digest,
+  copy/extract, credentials and explicit chartRef behavior.
+
 - `simple/` - a hand-crafted minimal cluster used across the scenario packages.
   Exercises the Kustomization + HelmRelease pipeline end-to-end without any network
   access.

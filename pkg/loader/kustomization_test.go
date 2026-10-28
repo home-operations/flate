@@ -363,13 +363,13 @@ metadata: {name: pending}
 		}
 		alias := &manifest.GitRepository{Name: "alias"}
 		st.AddObject(alias)
-		st.SetArtifact(alias.Named(), st.GetArtifact(git.Named(), store.ArtifactContent))
+		st.SetArtifact(alias.Named(), st.GetArtifact(git.Named(), store.ArtifactContent).(*store.SourceArtifact))
 		absentPath := &manifest.GitRepository{Name: "absent-path"}
 		st.AddObject(absentPath)
 		st.SetArtifact(absentPath.Named(), &store.SourceArtifact{FS: fstest.MapFS{}})
 		wrongArtifact := &manifest.Bucket{Name: "wrong-artifact"}
 		st.AddObject(wrongArtifact)
-		st.SetArtifact(wrongArtifact.Named(), &store.Emission{})
+		st.RecordEmitted(wrongArtifact.Named(), &store.Emission{}, nil)
 		bootstrapPath := filepath.Join(root, "bootstrap")
 		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: bootstrapPath, FS: fstest.MapFS{
 			"Kustomization": {Data: []byte("namespace: bootstrap\n")},

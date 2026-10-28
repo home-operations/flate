@@ -29,7 +29,7 @@ type gatePromotion struct {
 func TestFingerprintDedup_ChangedWorkBecomesPending(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	hr := &manifest.HelmRelease{Name: "release", Namespace: "apps"}
+	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "release", Namespace: "apps"}
 	s.AddObject(hr)
 	s.UpdateStatus(hr.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "completed"})
 	c := gateExecution(New(s, task.NewBounded(2)), hr.Named())
@@ -91,10 +91,10 @@ func TestRequireRefresh_PreparedSource(t *testing.T) {
 			repository := &manifest.HelmRepository{Name: "charts", Namespace: "apps", URL: "https://example.test/charts"}
 			s.AddObject(repository)
 			s.UpdateStatus(repository.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			canonical := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Version: "1.0.0", Source: repository.Named()}}
+			canonical := &manifest.HelmRelease{Name: "release", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "1.0.0", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: manifest.KindHelmRepository, Name: repository.Name}}}}, Chart: manifest.HelmChart{Name: "chart", Version: "1.0.0", Source: repository.Named()}}
 			s.AddObject(canonical)
 			prepared := canonical.Clone()
-			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "materialized"}
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "apps", Name: "apps-release"}
 			prepared.Chart.Source = source
 			want := canonical
 			if replaced {
@@ -255,7 +255,7 @@ func TestEmit_LatePreflight(t *testing.T) {
 
 func TestStamp_CommonMetadataIntroducesHook(t *testing.T) {
 	t.Parallel()
-	h := &manifest.HelmRelease{Name: "owner", Namespace: "apps", CommonMetadata: &helmv2.CommonMetadata{Labels: map[string]string{manifest.HelmReleaseDomain + "/name": "common"}, Annotations: map[string]string{"helm.sh/hook": ""}}}
+	h := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps", CommonMetadata: &helmv2.CommonMetadata{Labels: map[string]string{manifest.HelmReleaseDomain + "/name": "common"}, Annotations: map[string]string{"helm.sh/hook": ""}}}
 	doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "hook"}}
 	Stamp(h.EmissionPolicy(), testutil.DocumentOccurrences([]map[string]any{doc}))
 	metadata := doc["metadata"].(map[string]any)
@@ -268,7 +268,7 @@ func TestEmit_ProducerNamespacePolicy(t *testing.T) {
 	t.Parallel()
 	for _, producer := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps", TargetNamespace: "target"},
-		&manifest.HelmRelease{Name: "owner", Namespace: "apps", TargetNamespace: "target"},
+		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps", TargetNamespace: "target"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "target"},
 	} {
 		t.Run(producer.Named().Kind, func(t *testing.T) {
@@ -306,7 +306,7 @@ func TestEmit_KindExclusionPolicy(t *testing.T) {
 	t.Parallel()
 	for _, producer := range []manifest.BaseManifest{
 		&manifest.Kustomization{Name: "owner", Namespace: "apps"},
-		&manifest.HelmRelease{Name: "owner", Namespace: "apps"},
+		&manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "owner", Namespace: "apps"},
 		&manifest.ResourceSet{Name: "owner", Namespace: "apps"},
 	} {
 		t.Run(producer.Named().Kind, func(t *testing.T) {

@@ -3,9 +3,9 @@ package manifest
 import (
 	"cmp"
 	"encoding/json"
-	"fmt"
 	"maps"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -23,11 +23,6 @@ type HelmChart struct {
 	// Version is omitted from output for tidy diffs but kept in memory.
 	Version string        `json:"-" yaml:"-"`
 	Source  NamedResource `json:"source" yaml:"source"`
-}
-
-// Materializes reports whether the chart requires HelmRepository acquisition.
-func (h HelmChart) Materializes() bool {
-	return h.Source.Group == SourceDomain && (h.Source.Kind == "" || h.Source.Kind == KindHelmRepository)
 }
 
 // ChartLocation validates the source kind and selects a source path or automatic archive input.
@@ -91,43 +86,6 @@ func (h HelmChart) ChartName() string {
 	return h.RepoFullName() + "/" + h.Name
 }
 
-func chartFromHelmRelease(spec *helmv2.HelmReleaseSpec) (HelmChart, error) {
-	if ref := spec.ChartRef; ref != nil {
-		if ref.Kind == "" {
-			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.kind")
-		}
-		if ref.Name == "" {
-			return HelmChart{}, inputf("HelmRelease missing spec.chartRef.name")
-		}
-		// A chartRef name identifies the source, not the chart inside it.
-		// ResolveChartRef reads the chart name from a HelmChartSource;
-		// other source kinds determine it from their artifact's layout.
-		return HelmChart{Source: NamedResource{
-			Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind,
-			Namespace: ref.Namespace, Name: ref.Name,
-		}}, nil
-	}
-	tmpl := spec.Chart
-	if tmpl == nil {
-		return HelmChart{}, inputf("HelmRelease missing spec.chart or spec.chartRef")
-	}
-	chartName := tmpl.Spec.Chart
-	if chartName == "" {
-		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec.chart")
-	}
-	srcName := tmpl.Spec.SourceRef.Name
-	if srcName == "" {
-		return HelmChart{}, inputf("HelmRelease missing spec.chart.spec.sourceRef.name")
-	}
-	return HelmChart{
-		Name: chartName, Version: tmpl.Spec.Version,
-		Source: NamedResource{
-			Group: referenceGroup(cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository), tmpl.Spec.SourceRef.APIVersion),
-			Kind:  cmp.Or(tmpl.Spec.SourceRef.Kind, KindHelmRepository), Namespace: tmpl.Spec.SourceRef.Namespace, Name: srcName,
-		},
-	}, nil
-}
-
 func helmChartFromSource(src *HelmChartSource) HelmChart {
 	return HelmChart{
 		Name: src.Chart, Version: src.Version,
@@ -163,7 +121,9 @@ type HelmRelease struct {
 
 	// Chart is the resolved chart reference, unifying spec.chart and
 	// spec.chartRef into one shape. Shadows the embedded Spec.Chart.
-	Chart HelmChart `json:"chart" yaml:"chart"`
+	Chart            HelmChart `json:"chart" yaml:"chart"`
+	source           NamedResource
+	chartDeclaration *HelmChartSource
 
 	// Values is the decoded form of spec.values. Shadows the embedded
 	// Spec.Values (*apiextensionsv1.JSON).
@@ -180,6 +140,16 @@ type HelmRelease struct {
 	IgnoreMissingValuesFiles bool     `json:"-" yaml:"-"`
 }
 
+func (h *HelmRelease) equal(other *HelmRelease) bool {
+	if h == nil || other == nil {
+		return h == other
+	}
+	return h.Name == other.Name && h.Namespace == other.Namespace && h.Chart == other.Chart &&
+		h.DisableSchemaValidation == other.DisableSchemaValidation && h.IgnoreMissingValuesFiles == other.IgnoreMissingValuesFiles &&
+		maps.Equal(h.Labels, other.Labels) && maps.Equal(h.Annotations, other.Annotations) && slices.Equal(h.ChartValuesFiles, other.ChartValuesFiles) &&
+		reflect.DeepEqual(&h.HelmReleaseSpec, &other.HelmReleaseSpec) && reflect.DeepEqual(h.Values, other.Values)
+}
+
 // Suspended reports whether reconciliation is paused.
 func (h *HelmRelease) Suspended() bool { return h.Suspend }
 
@@ -192,21 +162,24 @@ func (h *HelmRelease) Named() NamedResource {
 func (h *HelmRelease) WithNamespace(namespace string) BaseManifest {
 	out := *h
 	out.Namespace = namespace
+	_ = out.normalizeChartSource()
 	return &out
 }
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (h *HelmRelease) ProjectionCompatible(BaseManifest) bool { return true }
 
-// TracksDigest reports whether chartRef directly selects an OCIRepository chart identity.
+// TracksDigest reports whether the declared chart source uses OCI revision identity.
 func (h *HelmRelease) TracksDigest() bool {
-	return h.ChartRef != nil && h.ChartRef.Kind == KindOCIRepository &&
-		referenceGroup(h.ChartRef.Kind, h.ChartRef.APIVersion) == kindTable[kindOCIRepository].Group
+	source := h.chartProjection().declared
+	return source.Group == SourceDomain && source.Kind == KindOCIRepository
 }
 
 // Clone deep-copies mutable fields; store-owned specs MUST remain immutable.
 func (h *HelmRelease) Clone() *HelmRelease {
 	out := *h
+	out.source = NamedResource{}
+	out.chartDeclaration = nil
 	h.DeepCopyInto(&out.HelmReleaseSpec)
 	out.Values = DeepCopyMap(h.Values)
 	out.ChartValuesFiles = slices.Clone(h.ChartValuesFiles)
@@ -261,18 +234,16 @@ func (h *HelmRelease) ReleaseNamespace() string {
 
 // ChartSource returns the effective source reference used by the chart.
 func (h *HelmRelease) ChartSource() NamedResource {
-	var source NamedResource
-	for ref := range References(h, ReferenceRelations) {
-		if ref.Use == "chart" || ref.Use == "source" {
-			source = ref.NamedResource
-		}
+	if h.Chart.Source.Name != "" {
+		return Resolve(h.Chart.Source, "", h.Namespace)
 	}
-	return source
+	return h.chartProjection().declared
 }
 
 // HelmReleaseHistoryPolicy binds declaration inputs outside the raw render key to accepted history.
 type HelmReleaseHistoryPolicy struct {
 	DeclaredChart      NamedResource
+	Template           *helmv2.HelmChartTemplate
 	Suspend            bool
 	PostRenderStrategy helmv2.PostRenderStrategy
 	DependsOn          []helmv2.DependencyReference
@@ -284,15 +255,10 @@ type HelmReleaseHistoryPolicy struct {
 // HistoryPolicy returns a frozen projection of emitted-child admission inputs.
 func (h *HelmRelease) HistoryPolicy() HelmReleaseHistoryPolicy {
 	policy := HelmReleaseHistoryPolicy{Suspend: h.Suspend, PostRenderStrategy: h.PostRenderStrategy}
-	declared := h.Chart.Source
-	if ref := h.ChartRef; ref != nil {
-		declared = NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}
-	} else if template := h.HelmReleaseSpec.Chart; template != nil {
-		ref := template.Spec.SourceRef
-		kind := cmp.Or(ref.Kind, KindHelmRepository)
-		declared = NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Namespace: ref.Namespace, Name: ref.Name}
+	policy.DeclaredChart = h.chartProjection().declared
+	if template := h.HelmReleaseSpec.Chart; template != nil {
+		policy.Template = template.DeepCopy()
 	}
-	policy.DeclaredChart = Resolve(declared, "", h.Namespace)
 	if len(h.DependsOn) > 0 {
 		policy.DependsOn = slices.Clone(h.DependsOn)
 	}
@@ -310,46 +276,16 @@ func (h *HelmRelease) HistoryPolicy() HelmReleaseHistoryPolicy {
 
 // Equal reports whether two frozen policies admit the same accepted history.
 func (p HelmReleaseHistoryPolicy) Equal(other HelmReleaseHistoryPolicy) bool {
-	return p.DeclaredChart == other.DeclaredChart && p.Suspend == other.Suspend && p.PostRenderStrategy == other.PostRenderStrategy && slices.Equal(p.DependsOn, other.DependsOn) && slices.Equal(p.ValuesFrom, other.ValuesFrom) && slices.Equal(p.HealthCheckExprs, other.HealthCheckExprs) && maps.Equal(p.Annotations, other.Annotations)
+	return p.DeclaredChart == other.DeclaredChart && equalChartTemplate(p.Template, other.Template) && p.Suspend == other.Suspend && p.PostRenderStrategy == other.PostRenderStrategy && slices.Equal(p.DependsOn, other.DependsOn) && slices.Equal(p.ValuesFrom, other.ValuesFrom) && slices.Equal(p.HealthCheckExprs, other.HealthCheckExprs) && maps.Equal(p.Annotations, other.Annotations)
 }
 
-// HelmChartLookup returns the HelmChartSource at the full identity, or nil when absent.
-type HelmChartLookup func(NamedResource) *HelmChartSource
-
-// ResolveChartRef replaces an unresolved HelmChart reference and propagates its values files.
-// Versionless HelmCharts MUST resolve to their underlying source for acquisition.
-func (h *HelmRelease) ResolveChartRef(lookup HelmChartLookup) error {
-	if h.Chart.Source.Kind != KindHelmChart || h.Chart.Source.Group != kindTable[kindHelmChartSource].Group || h.Chart.Version != "" {
-		return nil
-	}
-	id := h.ChartSource()
-	src := lookup(id)
-	if src == nil {
-		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s",
-			ErrObjectNotFound, id.NamespacedName(), h.Named().NamespacedName())
-	}
-	h.Chart = helmChartFromSource(src)
-	if len(src.ValuesFiles) > 0 {
-		h.ChartValuesFiles = src.ValuesFiles
-		h.IgnoreMissingValuesFiles = src.IgnoreMissingValuesFiles
-	}
-	return nil
-}
-
-// parseHelmRelease decodes a HelmRelease CR via the helm-controller
-// typed schema (helm-controller/api/v2). The chart vs chartRef
-// normalization is preserved by chartFromHelmRelease.
 func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 	var cr helmv2.HelmRelease
 	if err := decodeCR(doc, &cr, "HelmRelease", HelmReleaseDomain); err != nil {
 		return nil, err
 	}
-	// metadata.namespace is optional — Flux Kustomizations commonly
-	// inject it via spec.targetNamespace. Treat the empty string as
-	// "inherit later".
-	chart, err := chartFromHelmRelease(&cr.Spec)
-	if err != nil {
-		return nil, err
+	if err := validateChartTemplateDocument(doc, &cr.Spec); err != nil {
+		return nil, inputf("HelmRelease %s/%s: %w", cr.Namespace, cr.Name, err)
 	}
 	var values map[string]any
 	if cr.Spec.Values != nil && len(cr.Spec.Values.Raw) > 0 {
@@ -363,7 +299,7 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		}
 	}
 	// spec.chart.spec.valuesFiles (inline template). spec.chartRef
-	// case is handled later by ResolveChartRef once HelmChartSource is
+	// case is handled later by ResolveChartSource once HelmChartSource is
 	// available in the store.
 	var chartValuesFiles []string
 	var ignoreMissingValuesFiles bool
@@ -372,70 +308,58 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		ignoreMissingValuesFiles = cr.Spec.Chart.Spec.IgnoreMissingValuesFiles
 	}
 
-	return &HelmRelease{
+	out := &HelmRelease{
 		Name:                     cr.Name,
 		Namespace:                cr.Namespace,
 		HelmReleaseSpec:          cr.Spec,
-		Chart:                    chart,
 		Values:                   values,
 		Labels:                   cr.Labels,
 		Annotations:              cr.Annotations,
 		DisableSchemaValidation:  cr.GetInstall().DisableSchemaValidation,
 		ChartValuesFiles:         chartValuesFiles,
 		IgnoreMissingValuesFiles: ignoreMissingValuesFiles,
-	}, nil
+	}
+	if err := out.normalizeChartSource(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (h *HelmRelease) references(yield func(Reference) bool) {
-	if h.hasChartReferences() {
-		source := Resolve(h.Chart.Source, "", h.Namespace)
-		chartPath, files := h.Chart.sourceInputs(h.ChartValuesFiles)
-		var authored NamedResource
-		gate := func(id NamedResource) (GateStage, bool) {
-			if id != source || id.Name == "" {
-				return 0, false
+	if h.HelmReleaseSpec.Chart != nil || h.ChartRef != nil {
+		projection := h.chartProjection()
+		source := h.Chart.Source
+		if source.Name == "" {
+			source = projection.declared
+		} else {
+			source = Resolve(source, "", h.Namespace)
+		}
+		if declared := projection.declared; declared.Name != "" {
+			stage := GateStage(0)
+			artifact := source == declared
+			if artifact {
+				stage = GateArtifacts
 			}
-			stage := GateArtifacts
-			if id.Group == SourceDomain && id.Kind == KindHelmChart && h.Chart.Version == "" {
+			if h.ChartRef != nil && declared.Group == SourceDomain && declared.Kind == KindHelmChart {
 				stage |= GateInputs
 			}
-			return stage, true
-		}
-		if ref := h.ChartRef; ref != nil {
-			authored = Resolve(NamedResource{Group: referenceGroup(ref.Kind, ref.APIVersion), Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
-			if source.Kind == "" && source.Name == "" {
-				source = authored
-			}
-			stage, artifact := gate(authored)
-			if !yield(Reference{NamedResource: authored, Use: "chart", Content: true, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
-				return
-			}
-		} else if tmpl := h.HelmReleaseSpec.Chart; tmpl != nil {
-			ref := tmpl.Spec.SourceRef
-			authored = Resolve(NamedResource{Group: referenceGroup(cmp.Or(ref.Kind, KindHelmRepository), ref.APIVersion), Kind: cmp.Or(ref.Kind, KindHelmRepository), Namespace: ref.Namespace, Name: ref.Name}, "", h.Namespace)
-			refFiles := files
-			refChartPath := chartPath
-			if authored != source {
-				refFiles = nil
-				refChartPath = ""
-			}
-			if source.Kind == "" && source.Name == "" {
-				source = authored
-			}
-			stage, artifact := gate(authored)
-			if !yield(Reference{NamedResource: authored, Use: "source", Content: true, Files: refFiles, ChartPath: refChartPath, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
+			if !yield(Reference{NamedResource: declared, Use: "chart", Content: true, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
 				return
 			}
 		}
-		if source.Kind != "" && authored != source {
-			stage, artifact := gate(source)
-			if !yield(Reference{
-				NamedResource: source,
-				Use:           "source", Content: true, Files: files, ChartPath: chartPath, Gate: stage, Artifact: artifact, ChartSource: artifact,
-				ArtifactStages: GateArtifacts,
-			}) {
+		if backing := projection.backing; backing.Source.Name != "" {
+			path, files := backing.sourceInputs(h.ChartValuesFiles)
+			artifact := source == backing.Source
+			stage := GateStage(0)
+			if artifact {
+				stage = GateArtifacts
+			}
+			if !yield(Reference{NamedResource: backing.Source, Use: "source", Content: true, Files: files, ChartPath: path, Gate: stage, Artifact: artifact, ChartSource: artifact, ArtifactStages: GateArtifacts}) {
 				return
 			}
+		}
+		if !credentialReferences(yield, h.Namespace, projection.credentials[:]...) {
+			return
 		}
 	}
 

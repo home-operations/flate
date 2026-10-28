@@ -350,7 +350,7 @@ func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 	ks, _ := l.Store.Get[*manifest.Kustomization](root.owner)
 	if ks == nil {
 		record, _ := l.Index.Lookup(root.owner)
-		ks, _ = l.indexedObject(root.owner, record).Obj.(*manifest.Kustomization)
+		ks, _ = l.IndexedObject(root.owner, record).Obj.(*manifest.Kustomization)
 	}
 	unshared := !membershipOnly && ks != nil && len(ks.Components) != 0
 	if unshared {
@@ -708,7 +708,7 @@ func (l *Loader) resolveEligibility() {
 		}
 		owner, _ := l.Index.Lookup(c.owner)
 		source, _ := l.Index.Lookup(c.source)
-		declaredSource := c.membershipOnly && l.indexedObject(c.source, source).Obj != nil
+		declaredSource := c.membershipOnly && l.IndexedObject(c.source, source).Obj != nil
 		controlled := c.owner != (manifest.NamedResource{}) && !declaredSource
 		for _, v := range c.visits {
 			if v.role != kustomizeinput.Resource {

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"maps"
 	"slices"
 	"strings"
@@ -656,12 +659,12 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	run.Err = &FailuresError{Message: "raw failures"}
 	results, _, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{{Group: victim.Group, Kind: victim.Kind, Name: victim.Name}}, nil)
 	res := results[0]
-	assert.Diff(t, slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{victim, extra})
-	assert.Equal(t, res.Statuses[victim].String(), "blocked by "+chart.NamespacedName()+": chart failed")
+	assert.Diff(t, slices.SortedFunc(maps.Keys(res.Statuses), manifest.NamedResource.Compare), []manifest.NamedResource{chart, victim, extra})
+	assert.Equal(t, res.Statuses[victim].String(), "blocked by "+chart.NamespacedName())
 	assert.Equal(t, res.Statuses[victim].IsDependencyFailure(), true)
 	assert.Diff(t, res.Statuses[victim].BlockedBy(), []manifest.NamedResource{chart})
-	if _, exists := res.Statuses[chart]; exists || res.Counts[victim.Kind] != 1 {
-		t.Fatal("prerequisite entered diagnostic roster or roots count")
+	if _, exists := res.Statuses[chart]; !exists || res.Counts[victim.Kind] != 1 {
+		t.Fatal("authored chart missing from diagnostics or root count changed")
 	}
 
 	bootstrap := &manifest.GitRepository{Name: manifest.BootstrapSourceID.Name, Namespace: manifest.BootstrapSourceID.Namespace}
@@ -690,7 +693,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		{
 			name: "render roster with missing status", root: manifest.NamedResource{Group: victim.Group, Kind: victim.Kind},
 			objects:  []manifest.BaseManifest{statusless, run.store.GetObject(victim)},
-			statuses: []manifest.NamedResource{victim, statusless.Named(), extra, foreignChart.Named()},
+			statuses: []manifest.NamedResource{chart, victim, statusless.Named(), extra, foreignChart.Named()},
 		},
 		{
 			name: "explicit chart", root: manifest.NamedResource{Group: chart.Group, Kind: chart.Kind},
@@ -700,7 +703,7 @@ func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 		{
 			name: "explicit source", root: manifest.NamedResource{Group: bootstrap.Named().Group, Kind: bootstrap.Named().Kind},
 			objects:  []manifest.BaseManifest{bootstrap, ordinary, otherNamespace},
-			statuses: []manifest.NamedResource{ordinary.Named(), otherNamespace.Named(), victim, extra, foreignChart.Named()},
+			statuses: []manifest.NamedResource{chart, ordinary.Named(), otherNamespace.Named(), victim, extra, foreignChart.Named()},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -998,7 +1001,7 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 			var obj manifest.BaseManifest = &manifest.Kustomization{Name: "external", Namespace: namespace,
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Namespace: source.Namespace, Name: source.Name}}
 			if tc.nonParticipant {
-				obj = &manifest.HelmRelease{Name: "external", Namespace: namespace, Chart: manifest.HelmChart{Source: source}}
+				obj = &manifest.HelmRelease{Name: "external", Namespace: namespace, Chart: manifest.HelmChart{Source: source}, HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{Chart: "chart", Version: "", SourceRef: &helmv2.CrossNamespaceObjectReference{Kind: (source).Kind, Name: (source).Name, Namespace: (source).Namespace, APIVersion: ""}}}}}
 			}
 			run, other := selectedRun(&Result{}), selectedRun(&Result{})
 			run.repoRoot = t.TempDir()
@@ -1076,7 +1079,9 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 				t.Fatalf("selected rows: %+v, want %s", selected, id)
 			}
 			if i == 1 {
-				assert.Diff(t, selected[0].Objects, objects)
+				if diff := cmp.Diff(objects, selected[0].Objects, cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
+					t.Fatal(diff)
+				}
 				assert.Diff(t, selected[0].ChartVersions, versions)
 			}
 			objects = selected[0].Objects
@@ -1099,7 +1104,7 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 			{name: "helm chart", kind: manifest.KindHelmChart, want: "2.3.4"},
 			{name: "empty helm chart", kind: manifest.KindHelmChart},
 			{name: "missing helm chart", kind: manifest.KindHelmChart, absent: true},
-			{name: "nonapplicable source", kind: manifest.KindHelmRepository},
+			{name: "nonapplicable source", kind: manifest.KindExternalArtifact},
 		} {
 			t.Run(tc.name+"/source_"+ns.namespace, func(t *testing.T) {
 				t.Parallel()
@@ -1108,7 +1113,8 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 				if kind == "" {
 					kind = manifest.KindOCIRepository
 				}
-				hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", Chart: manifest.HelmChart{Version: "9.9.9", Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: ns.namespace, Name: "chart"}}}
+				hr := &manifest.HelmRelease{Name: "app", Namespace: "authored", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: kind, Namespace: ns.namespace, Name: "chart"}}
+
 				hr = hr.WithNamespace("apps").(*manifest.HelmRelease)
 				run.store.AddObject(hr)
 				if !tc.absent {
@@ -1117,8 +1123,8 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 						source := &manifest.HelmChartSource{Name: "chart", Namespace: ns.source}
 						source.Version = tc.want
 						run.store.AddObject(source)
-					case manifest.KindHelmRepository:
-						run.store.AddObject(&manifest.HelmRepository{Name: "chart", Namespace: ns.source})
+					case manifest.KindExternalArtifact:
+						run.store.AddObject(&manifest.ExternalArtifact{Name: "chart", Namespace: ns.source})
 					default:
 						source := &manifest.OCIRepository{Name: "chart", Namespace: ns.source}
 						source.Reference = (*sourcev1.OCIRepositoryRef)(tc.ref)
@@ -1126,13 +1132,9 @@ func TestSelect_ExplicitChartVersion(t *testing.T) {
 					}
 				}
 				versions := selectVersions(t, run, hr)
-				if versions != nil || hr.Chart.Version != "9.9.9" {
-					t.Fatalf("explicit version replaced: %+v, chart version %q", versions, hr.Chart.Version)
+				if hr.Chart.Version != "" {
+					t.Fatalf("selection mutated the declared chart projection: %q", hr.Chart.Version)
 				}
-				updated := hr.Clone()
-				updated.Chart.Version = ""
-				run.store.AddObject(updated)
-				versions = selectVersions(t, run, updated)
 				version, ok := versions[hr.Named()]
 				assert.Equal(t, version, tc.want)
 				assert.Equal(t, ok, tc.want != "")

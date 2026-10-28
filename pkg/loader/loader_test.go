@@ -44,14 +44,16 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	objects := s.ListAs[*manifest.ConfigMap]("", manifest.KindConfigMap)
-	if len(objects) != 1 || objects[0].Name != "pinned" || objects[0].Namespace != "apps" || objects[0].Data["value"] != "pinned" {
-		t.Fatalf("expected only the artifact generator: %+v", objects)
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "pinned"}
+	object, ok := lookupDataForTest[*manifest.ConfigMap](t, s, id)
+	if !ok || object.Data["value"] != "pinned" || len(s.ListObjects("", manifest.KindConfigMap)) != 0 {
+		t.Fatalf("artifact lookup data=%+v, canonical maps=%v", object, s.ListObjects("", manifest.KindConfigMap))
 	}
 	want, err := filepath.Rel(root, filepath.Join(artifactDir, "apps/kustomization.yaml"))
-	if got := filesForTest(l.Index)[objects[0].Named()]; err != nil || got != filepath.ToSlash(want) {
-		t.Fatalf("artifact generator source = %q, want %q: %v", got, want, err)
+	if got := filesForTest(l.Index)[id]; err != nil || got != filepath.ToSlash(want) {
+		t.Fatalf("artifact generator source=%q, want %q: %v", got, want, err)
 	}
+
 }
 
 func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {

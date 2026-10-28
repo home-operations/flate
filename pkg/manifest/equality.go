@@ -19,6 +19,10 @@ func Equal(a, b BaseManifest) bool {
 		other, ok := b.(*Kustomization)
 		return ok && k.equal(other)
 	}
+	if h, ok := a.(*HelmRelease); ok {
+		other, ok := b.(*HelmRelease)
+		return ok && h.equal(other)
+	}
 	return reflect.DeepEqual(a, b)
 }
 

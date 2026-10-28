@@ -369,7 +369,11 @@ metadata: {name: output}`}
 	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: rs.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady {
 		t.Fatalf("first status = %+v, want Ready", info)
 	}
-	artifact := s.GetArtifact(rs.Named(), store.ArtifactContent)
+	artifact := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+	var authority store.ReadSet
+	authority.Init(s, manifest.NamedResource{Name: "artifact-reader"}, nil)
+	defer authority.Retire()
+	authority.GetArtifact(rs.Named(), store.ArtifactContent)
 	unsub := s.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
 		if id == rs.Named() && payload.(store.StatusInfo).Status == store.StatusPending {
 			t.Error("already-Ready ResourceSet transiently became Pending")
@@ -380,7 +384,7 @@ metadata: {name: output}`}
 	if info, _ := s.GetStatus(rs.Named()); info.Status != store.StatusReady {
 		t.Errorf("final status = %+v, want Ready", info)
 	}
-	if s.GetArtifact(rs.Named(), store.ArtifactContent) != artifact {
+	if current := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission); current.Fingerprint != artifact.Fingerprint || !authority.Valid() {
 		t.Error("no-op reconcile replaced artifact")
 	}
 }
@@ -554,7 +558,7 @@ func TestReconcile_WarningsBeforeExit(t *testing.T) {
 			s.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			if hit {
 				_, _, err := resourceset.Render(rs, resourceset.StoreResolver(s), func(content any) (bool, error) {
-					s.SetArtifact(rs.Named(), &store.Emission{Fingerprint: manifest.Fingerprint(content), Complete: true})
+					s.RecordEmitted(rs.Named(), &store.Emission{Fingerprint: manifest.Fingerprint(content), Complete: true}, nil)
 					return true, nil
 				})
 				if err != nil {

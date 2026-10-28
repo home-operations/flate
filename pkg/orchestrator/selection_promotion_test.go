@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"path/filepath"
 	"slices"
 	"sync/atomic"
@@ -58,7 +59,7 @@ func TestDAGDispatch_SelectionPromotionWakesPublishedConsumer(t *testing.T) {
 							PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: target.Name, Optional: true}}},
 						}
 					} else {
-						consumer = &manifest.HelmRelease{
+						consumer = &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"},
 							Name: "consumer", Namespace: "apps",
 							ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: target.Name}},
 						}

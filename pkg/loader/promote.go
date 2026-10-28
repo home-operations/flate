@@ -130,7 +130,7 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 		obj := child.Obj
 		id := obj.Named()
 		record := manifest.DiscoveryRecord{File: builder, Builder: builder, Inputs: inputs}
-		if raw, ok := l.Index.Lookup(id); ok && manifest.KindOf(obj).DiscoverySeed() && manifest.Equal(obj, l.indexedObject(id, raw).Obj) {
+		if raw, ok := l.Index.Lookup(id); ok && manifest.KindOf(obj).DiscoverySeed() && manifest.Equal(obj, l.IndexedObject(id, raw).Obj) {
 			record.File, record.Inputs = raw.File, shared
 		}
 		record.Refs = discoveryReferences(nil, obj)
@@ -140,7 +140,7 @@ func (l *Loader) RegisterBuilt(root string, docs []store.Child) {
 		if record.Path == "" || !l.documents.cache[record.Path].selected {
 			continue
 		}
-		if existing := l.Store.GetObject(id); existing != nil && (existing == l.admitted[id] || existing == l.indexedObject(id, record).Obj) {
+		if existing := l.Store.GetObject(id); existing != nil && (existing == l.admitted[id] || existing == l.IndexedObject(id, record).Obj) {
 			l.Store.DeleteObject(id)
 		}
 		delete(l.Index.Records, id)

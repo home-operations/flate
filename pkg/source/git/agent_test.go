@@ -201,7 +201,7 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				}
 			} else {
 				assert.NoError(t, err)
-				if artifact == nil || artifact.FS == nil || !artifact.UsedLocalSSHAgent {
+				if artifact == nil || artifact.FS == nil {
 					t.Fatalf("accepted agent artifact = %+v", artifact)
 				}
 			}
@@ -224,7 +224,7 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				before := opened.Load()
 				warm, err := missing.RetryAmbient(t.Context())
 				assert.NoError(t, err)
-				if warm == nil || warm.UsedLocalSSHAgent || opened.Load() != before {
+				if warm == nil || opened.Load() != before {
 					t.Fatalf("disk reuse asserted fresh authentication: %+v", warm)
 				}
 				if shape == "accepted" {
@@ -407,7 +407,7 @@ func TestFetcher_StalledAgent(t *testing.T) {
 			if !errors.Is(err, want) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("ambient failure = %v; want %v and ErrFlux", err, want)
 			}
-			if artifact != nil && (artifact.FS != nil || artifact.Content != "" || artifact.UsedLocalSSHAgent) {
+			if artifact != nil && (artifact.FS != nil || artifact.Content != "") {
 				t.Fatalf("failed attempt published successful content or agent warning: %+v", artifact)
 			}
 			select {

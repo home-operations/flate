@@ -87,7 +87,6 @@ func TestSetArtifact_PayloadComparedByKey(t *testing.T) {
 			st.SetArtifact(id, first)
 			next := *first
 			next.Warnings = []manifest.Warning{{Category: manifest.WarnSkippedSubmodule, Detail: []string{"module"}}}
-			next.UsedLocalSSHAgent = true
 			assert.Equal(t, artifactValueEqual(first, &next), true)
 			if next.FS != nil {
 				next.FS = &hookFS{}

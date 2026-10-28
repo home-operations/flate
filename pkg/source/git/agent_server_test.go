@@ -164,7 +164,7 @@ func TestFetcher_LocalAgentSSH(t *testing.T) {
 			}
 			if shape == "accepted" {
 				assert.NoError(t, err)
-				if artifact == nil || authenticated.Load() == 0 || !artifact.UsedLocalSSHAgent {
+				if artifact == nil || authenticated.Load() == 0 {
 					t.Fatalf("native acquisition = %+v; authenticated=%d", artifact, authenticated.Load())
 				}
 			} else if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != (shape == "absent") || !errors.Is(err, manifest.ErrFlux) || authenticated.Load() != 0 {

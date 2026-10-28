@@ -96,6 +96,11 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 	}
 	prepared, err := f.prepareHTTP(r)
 	if err != nil {
+		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && prepared != nil {
+			missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+				return f.fetchHTTPChart(ctx, prepared, hc, policy)
+			}
+		}
 		return nil, err
 	}
 	return f.fetchHTTPChart(ctx, prepared, hc, policy)

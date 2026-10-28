@@ -72,9 +72,6 @@ const (
 	// WarnSourceCredentialsUnavailable reports a source skipped for unavailable credential material.
 	WarnSourceCredentialsUnavailable = "SourceCredentialsUnavailable" //nolint:gosec // G101: this is a warning category, not credential material.
 
-	// WarnLocalSSHAgent reports accepted acquisition using the local SSH agent.
-	WarnLocalSSHAgent = "LocalSSHAgent"
-
 	// WarnDuplicateDocument reports that a later document shadows the same identity.
 	WarnDuplicateDocument = "DuplicateDocument"
 

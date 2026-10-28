@@ -4,10 +4,9 @@ package bucket
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/url"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -16,7 +15,7 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Fetcher acquires S3-compatible content using captured static credentials.
+// Fetcher acquires S3-compatible content using captured credentials.
 type Fetcher struct {
 	Cache *cache.Cache
 
@@ -24,7 +23,6 @@ type Fetcher struct {
 	Network *source.Network
 }
 
-// Fetch implements source.TypedFetcher[*manifest.Bucket].
 type operation struct {
 	*Fetcher
 	reads   *store.ReadSet
@@ -41,82 +39,56 @@ func (f *operation) fetchSource(ctx context.Context, b *manifest.Bucket, policy 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	client, material, err := f.newMinioClient(b)
+	request, err := f.prepare(b)
 	if err != nil {
+		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.bucket != nil {
+			missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+				return f.fetch(ctx, request, policy)
+			}
+		}
 		return nil, err
 	}
+	return f.fetch(ctx, request, policy)
+}
 
-	endpoint, secure := client.EndpointURL().Host, client.EndpointURL().Scheme == "https"
+func (f *operation) fetch(ctx context.Context, request bucketAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+	b := request.bucket
 	ignore := ""
 	if b.Ignore != nil {
 		ignore = *b.Ignore
 	}
-	key := cache.ArchiveKey{Content: struct{ Source, Transport any }{b.Content(endpoint, secure), material}, Ignore: ignore, Policy: "", Required: []string{"revision", "object-count"}}
+	key := cache.ArchiveKey{Content: struct{ Source, Transport any }{b.Content(request.endpoint, request.options.Secure), request.material}, Ignore: ignore, Policy: "", Required: []string{"revision", "object-count"}}
 	timeout := b.OperationTimeout()
 	policy.Timeout = &timeout
-	input, desc, id, err := f.Cache.Acquire(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+	input, desc, id, err := f.Cache.Acquire(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (result cache.ProducerResult, err error) {
+		defer func() {
+			if request.providers != nil && err != nil {
+				err = source.MachineCredentialErr(err)
+			}
+		}()
+		opts := request.options
+		if request.providers != nil {
+			opts.Creds, err = request.machineCredentials(ctx)
+			if err != nil {
+				return cache.ProducerResult{}, err
+			}
+		}
+		client, err := minio.New(request.endpoint, &opts)
+		if err != nil {
+			return cache.ProducerResult{}, fmt.Errorf("minio client: %w", err)
+		}
 		desc, err := walkBucket(ctx, client, b, w)
 		return cache.ProducerResult{Descriptor: desc}, err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), err)
 	}
-
-	return &store.SourceArtifact{
+	artifact := &store.SourceArtifact{
 		Kind: manifest.KindBucket,
-		URL:  fmt.Sprintf("%s://%s/%s", schemeFor(secure), endpoint, b.BucketName),
-		FS:   input, Content: cache.AcquisitionIdentity(input),
-		Key:      id,
+		URL:  fmt.Sprintf("%s://%s/%s", schemeFor(request.options.Secure), request.endpoint, b.BucketName),
+		FS:   input, Content: cache.AcquisitionIdentity(input), Key: id,
 		Revision: desc.Annotations["flate.revision"],
-		Metadata: map[string]string{
-			"objectCount": desc.Annotations["flate.object-count"],
-		},
-	}, nil
-}
-
-func (f *operation) newMinioClient(b *manifest.Bucket) (*minio.Client, any, error) {
-	creds, authErr := f.resolveCredentials(b)
-	endpoint, secure, err := normalizeEndpoint(b.Endpoint, b.Insecure)
-	if err != nil {
-		return nil, nil, err
+		Metadata: map[string]string{"objectCount": desc.Annotations["flate.object-count"]},
 	}
-	owner := b.Named()
-	owner.Name = b.Namespace + "/" + b.Name
-	resolved, err := source.ResolveTransport(f.secrets, owner, []source.TransportInput{
-		{Reference: b.ProxySecretRef, Use: source.TransportProxy},
-		{Reference: b.CertSecretRef, Use: source.TransportCert},
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	if _, err := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); err != nil {
-		return nil, nil, fmt.Errorf("%w: resolve bucket proxy: invalid proxy configuration", manifest.ErrInput)
-	}
-	if authErr != nil {
-		return nil, nil, authErr
-	}
-	value, _ := creds.GetWithContext(nil)
-	if b.STS != nil || b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric && (b.Provider != sourcev1.BucketProviderAmazon || value.AccessKeyID == "") {
-		return nil, nil, source.MissingSecretErr(b.Named(), "", "provider authentication unavailable offline")
-	}
-	var credentials any
-	if value.AccessKeyID != "" || value.SecretAccessKey != "" {
-		credentials = value
-	}
-	material := resolved.Identity(credentials)
-	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: resolved, Credentials: credentials})
-	if err != nil {
-		return nil, nil, err
-	}
-	client, err := minio.New(endpoint, &minio.Options{
-		MaxRetries: 1,
-		Creds:      creds,
-		Secure:     secure,
-		Region:     b.Region,
-		Transport:  tr,
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("%s: minio client: %w", source.QualifiedName(manifest.KindBucket, b.Namespace, b.Name), err)
-	}
-	return client, material, nil
+	return artifact, nil
 }

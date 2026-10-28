@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/home-operations/flate/internal/filtertest"
 	"io/fs"
 	"maps"
 	"slices"
@@ -17,6 +16,8 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/fetcherr"
+	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -57,7 +58,7 @@ func (f *fakeFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, reads 
 
 func TestSource_CapturedMaterialRefresh(t *testing.T) {
 	t.Parallel()
-	f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "acquired", FS: fstest.MapFS{}, UsedLocalSSHAgent: true}}
+	f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "acquired", FS: fstest.MapFS{}}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 	repo := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "https://example.test/source"}
 	secret := &manifest.Secret{Name: f.secret, Namespace: repo.Namespace, StringData: map[string]any{"username": "first"}}
@@ -112,7 +113,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		if previous != nil {
 			previous.Retire()
 		}
-		assert.Diff(t, st.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}, AgentSources: []manifest.NamedResource{repo.Named()}})
+		assert.Diff(t, st.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}})
 		if pending != 1 {
 			t.Fatalf("pending transitions=%d, want only initial acquisition", pending)
 		}
@@ -130,7 +131,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 		for _, timing := range []string{"accepted", "in_flight", "changed_in_flight"} {
 			t.Run(fmt.Sprintf("complete=%t/filtered=%t/%s", complete, tc.filtered, timing), func(t *testing.T) {
 				t.Parallel()
-				f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}, UsedLocalSSHAgent: true}}
+				f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
 				chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
 				first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
 				second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
@@ -194,7 +195,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != wantCalls {
 					t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
 				}
-				wantEvidence := store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}, AgentSources: []manifest.NamedResource{chart.Named()}}
+				wantEvidence := store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}}
 				assert.Diff(t, st.AdvisoryEvidence(), wantEvidence)
 				c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
 				publish("changed again")
@@ -763,6 +764,8 @@ func TestController_AmbientPolicy(t *testing.T) {
 	for _, repo := range []manifest.BaseManifest{
 		&manifest.GitRepository{Name: "r", Namespace: "ns", URL: "ssh://git@fixture/repo"},
 		&manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://fixture/image"},
+		&manifest.Bucket{Name: "r", Namespace: "ns", Endpoint: "https://bucket.invalid", BucketName: "data"},
+		&manifest.HelmChartSource{Name: "chart", Namespace: "ns", Chart: "app", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: manifest.KindHelmRepository, Name: "r"}},
 	} {
 		for _, tt := range []struct {
 			name            string
@@ -773,11 +776,16 @@ func TestController_AmbientPolicy(t *testing.T) {
 			{name: "producer allowed", producer: true, allow: true},
 			{name: "success"},
 			{name: "success allowed", allow: true},
-			{name: "failure", failure: manifest.ErrInput},
-			{name: "failure allowed", allow: true, failure: manifest.ErrInput},
-			{name: "unavailable allowed", allow: true, failure: src.MissingSecretErr(repo.Named(), "", "no ambient credentials")},
-			{name: "timeout", allow: true, failure: context.DeadlineExceeded},
-			{name: "canceled", allow: true, failure: context.Canceled},
+			{name: "rejected", failure: &fetcherr.ResponseError{StatusCode: 401}},
+			{name: "rejected allowed", allow: true, failure: &fetcherr.ResponseError{StatusCode: 401}},
+			{name: "unavailable", failure: src.MissingSecretErr(repo.Named(), "", "no machine credentials")},
+			{name: "unavailable allowed", allow: true, failure: src.MissingSecretErr(repo.Named(), "", "no machine credentials")},
+			{name: "acquisition error", failure: &fs.PathError{Op: "open", Path: "repositories.yaml", Err: fs.ErrPermission}},
+			{name: "acquisition error allowed", allow: true, failure: &fs.PathError{Op: "open", Path: "repositories.yaml", Err: fs.ErrPermission}},
+			{name: "timeout", failure: context.DeadlineExceeded},
+			{name: "timeout allowed", allow: true, failure: context.DeadlineExceeded},
+			{name: "canceled", failure: context.Canceled},
+			{name: "canceled allowed", allow: true, failure: context.Canceled},
 		} {
 			t.Run(repo.Named().Kind+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
@@ -792,7 +800,7 @@ func TestController_AmbientPolicy(t *testing.T) {
 					if failure != nil {
 						return nil, failure
 					}
-					return &store.SourceArtifact{Kind: repo.Named().Kind}, nil
+					return &store.SourceArtifact{Kind: repo.Named().Kind, FS: fstest.MapFS{}}, nil
 				}
 				f := &fakeFetcher{err: missing, secret: "auth"}
 				c, st := newConfiguredController(t, map[string]src.Fetcher{repo.Named().Kind: f}, FetchOptions{AllowMissingSecrets: tt.allow})
@@ -801,6 +809,9 @@ func TestController_AmbientPolicy(t *testing.T) {
 					addDeclaration(index, missing.Secret, manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "producer"})
 				}
 				st.SetDiscoveryIndex(index)
+				repository := &manifest.HelmRepository{Name: "r", Namespace: "ns", URL: "https://charts.invalid"}
+				st.AddObject(repository)
+				st.UpdateStatus(repository.Named(), store.StatusInfo{Status: store.StatusReady})
 				st.AddObject(repo)
 				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
 				wantCalls := 1
@@ -823,6 +834,13 @@ func TestController_AmbientPolicy(t *testing.T) {
 				}
 				if (st.GetArtifact(repo.Named(), store.ArtifactContent) != nil) != (!wantSkip && failure == nil) {
 					t.Fatal("ambient settlement published the wrong content outcome")
+				}
+				if !wantSkip && failure == nil {
+					controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+					if calls != wantCalls {
+						t.Fatal("accepted source artifact was acquired again")
+					}
+					assert.Equal(t, len(st.Warnings()), 0)
 				}
 				if wantSkip && !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
 					return w.Resource == repo.Named() && w.Category == manifest.WarnSourceCredentialsUnavailable

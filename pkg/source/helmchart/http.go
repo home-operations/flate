@@ -32,8 +32,21 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 	key := cache.BlobKey{Content: struct{ Repository, Chart, Transport any }{r.Content(), hc.Content(), r.material}, Required: []string{"chart-version", "chart-url"}}
 	timeout := r.OperationTimeout()
 	policy.Timeout = &timeout
-	generation, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		idx, err := f.fetchIndex(ctx, r, policy.Retry)
+	generation, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (result cache.ProducerResult, err error) {
+		attempt := r
+		defer func() {
+			if attempt.ambient && err != nil {
+				err = source.MachineCredentialErr(err)
+			}
+		}()
+		if attempt.ambient {
+			local := *r
+			attempt = &local
+			if err := attempt.localCredentials(ctx); err != nil {
+				return cache.ProducerResult{}, err
+			}
+		}
+		idx, err := f.fetchIndex(ctx, attempt, policy.Retry)
 		if err != nil {
 			return cache.ProducerResult{}, err
 		}
@@ -48,7 +61,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		if err != nil {
 			return cache.ProducerResult{}, err
 		}
-		desc, err := r.get(ctx, chartURL, w)
+		desc, err := attempt.get(ctx, chartURL, w)
 		if err != nil {
 			return cache.ProducerResult{Descriptor: desc}, err
 		}
@@ -63,8 +76,9 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		return nil, fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindHelmRepository, r.Namespace, r.Name), err)
 	}
 	input := cache.NameBlob(source.HelmChartArchiveFilename, generation)
-	return &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Content: cache.AcquisitionIdentity(input), Key: id,
-		URL: desc.Annotations["flate.chart-url"], Revision: desc.Annotations["flate.chart-version"], Digest: desc.Digest.Encoded(), Size: desc.Size}, nil
+	artifact := &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Content: cache.AcquisitionIdentity(input), Key: id,
+		URL: desc.Annotations["flate.chart-url"], Revision: desc.Annotations["flate.chart-version"], Digest: desc.Digest.Encoded(), Size: desc.Size}
+	return artifact, nil
 }
 
 func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, retry cache.RetryConfig) (*repo.IndexFile, error) {
@@ -189,7 +203,7 @@ func (r *httpRepository) get(ctx context.Context, target string, w io.Writer) (o
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return ocispec.Descriptor{}, &fetcherr.ResponseError{StatusCode: response.StatusCode, Op: http.MethodGet, Message: fmt.Sprintf("failed to fetch %s : %s", target, response.Status)}
+		return ocispec.Descriptor{}, &fetcherr.ResponseError{StatusCode: response.StatusCode, Op: http.MethodGet, Message: fmt.Sprintf("failed to fetch %s : %d %s", target, response.StatusCode, http.StatusText(response.StatusCode))}
 	}
 	h := digest.SHA256.Digester()
 	size, err := io.Copy(io.MultiWriter(w, h.Hash()), response.Body)

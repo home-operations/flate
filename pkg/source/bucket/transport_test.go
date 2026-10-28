@@ -56,7 +56,9 @@ func TestFetcher_ResolveTransport(t *testing.T) {
 				ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}))
 				fInputs.secrets = func(_, _ string) *manifest.Secret { return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}} }
 			}
-			client, _, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).newMinioClient(b)
+			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
+			assert.NoError(t, err)
+			client, err := minio.New(request.endpoint, &request.options)
 			assert.NoError(t, err)
 			exists, err := client.BucketExists(t.Context(), "fixture")
 			assert.NoError(t, err)
@@ -135,10 +137,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				err = fetchErr
 			case "cert":
 				b.CertSecretRef = ref
-				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).newMinioClient(b)
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
 			case "proxy":
 				b.ProxySecretRef = ref
-				_, _, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).newMinioClient(b)
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(b)}).prepare(b)
 			}
 			if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("missing=%t, error=%v, want %q", tc.missing, err, tc.wantError)
@@ -381,7 +383,11 @@ func TestFetcher_ProviderCredentials(t *testing.T) {
 				return &manifest.Secret{StringData: map[string]any{"accesskey": "fixture", "secretkey": "fixture"}}
 			}}
 			fetcher := &Fetcher{Network: newTestNetwork(t)}
-			client, _, err := (&operation{Fetcher: fetcher, secrets: inputs.lookup(repo)}).newMinioClient(repo)
+			request, err := (&operation{Fetcher: fetcher, secrets: inputs.lookup(repo)}).prepare(repo)
+			var client *minio.Client
+			if err == nil {
+				client, err = minio.New(request.endpoint, &request.options)
+			}
 			if tc.missing {
 				if !errors.Is(err, manifest.ErrMissingSecret) || client != nil {
 					t.Fatalf("unavailable provider: %v", err)

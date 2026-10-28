@@ -73,7 +73,7 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 	fs.StringVarP(&f.namespace, "namespace", "n", "", "Select resources in this namespace")
 	fs.StringArrayVar(&f.supply, "supply", nil, "Read missing Secret and ConfigMap data from YAML (repeatable)")
 	fs.BoolVar(&f.strictSubstitutions, "strict-substitutions", false, "Match kustomize-controller StrictPostBuildSubstitutions")
-	fs.StringSliceVar(&f.allowMissingKinds, "allow-missing-kinds", nil, "Tolerate missing cluster inputs: Secret,ConfigMap,CustomResourceDefinition")
+	fs.StringSliceVar(&f.allowMissingKinds, "allow-missing-kinds", nil, "Tolerate missing cluster inputs: Secret,ConfigMap,CustomResourceDefinition. Missing source auth first tries eligible machine credentials: SSH agent, Helm login, AWS environment then EC2/ECS role or STS web identity. Shared AWS credentials/config profiles are not read; export variables or declare a Secret")
 	fs.BoolVar(&f.restrictEgress, "restrict-egress", false, "Block private-address fetches and local Git transports")
 	fs.StringSliceVar(&f.skipKinds, "skip-kinds",
 		[]string{manifest.KindSecret, manifest.KindCustomResourceDefinition}, "Exclude these output kinds (empty includes all)")

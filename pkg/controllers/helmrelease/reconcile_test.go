@@ -1003,3 +1003,58 @@ func TestReconcile_UnreadableParentDoesNotFillRequiredValues(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
+	t.Parallel()
+	c, st := newTestController(t, nil)
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
+	testutil.WriteFile(t, root, "chart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '{{ .Values.value }}'}\n")
+	source := &manifest.GitRepository{Name: "charts", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), &store.SourceArtifact{Kind: manifest.KindGitRepository, FS: os.DirFS(root), LocalPath: root})
+	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
+	input := &manifest.ConfigMap{Name: "values", Namespace: "apps", Data: map[string]any{"values.yaml": "value: equal\n"}}
+	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: input, Path: "supply.yaml"}})
+	assert.NoError(t, err)
+	st.SetSupplied(supply)
+	hr := &manifest.HelmRelease{Name: "app", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()},
+		ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: input.Name}}}
+	st.AddObject(hr)
+	var previous *base.Execution
+	var first *store.Emission
+	for i, value := range []string{"", "equal", "", "fresh"} {
+		repository := &manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{}}
+		if value != "" {
+			repository.Data["values.yaml"] = "value: " + value + "\n"
+		}
+		st.AddObject(repository)
+		var next *base.Execution
+		c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { next = c.ReconcileNode(ctx, hr.Named(), manifest.DrainNone) })
+		c.Tasks.BlockTillDone()
+		if previous != nil {
+			previous.Retire()
+		}
+		previous = next
+		t.Cleanup(next.Close)
+		if next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2) {
+			t.Fatalf("phase %d: execution=%+v", i, next)
+		}
+		current := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+		if i == 0 {
+			first = current
+		} else if i < 3 && (current.Fingerprint != first.Fingerprint || !cmp.Equal(current.Manifests, first.Manifests)) {
+			t.Fatal("equal-output collision transition changed render output")
+		}
+		var want []store.SuppliedOverride
+		if value != "" {
+			want = []store.SuppliedOverride{{Resource: input.Named(), SupplyPath: "supply.yaml", Keys: []string{"values.yaml"}}}
+		}
+		assert.Diff(t, st.AdvisoryEvidence().Overrides, want)
+		wantValue := "equal"
+		if i == 3 {
+			wantValue = "fresh"
+		}
+		assert.Equal(t, current.Manifests[0].Document["data"].(map[string]any)["value"], any(wantValue))
+	}
+}

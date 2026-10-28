@@ -139,8 +139,7 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 			input.Data, overridden = input.Data.WithSupplied(facts.Supplied)
 			if len(overridden) > 0 {
 				if reads, ok := p.s.(*store.ReadSet); ok {
-					reads.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnSuppliedPrecedence,
-						Message: "repository data takes precedence over " + facts.SupplyPath, Detail: overridden})
+					reads.RecordSuppliedOverride(store.SuppliedOverride{Resource: id, SupplyPath: facts.SupplyPath, Keys: overridden})
 				}
 			}
 		}

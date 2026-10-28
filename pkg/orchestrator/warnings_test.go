@@ -163,7 +163,7 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
       - kind: Secret
         name: cluster-secrets
 `))
-	testutil.WriteFile(t, dir, "kubernetes/flux/other-apps.yaml", testutil.KustomizationYAML("other-apps", "other", `  path: ./kubernetes/apps
+	testutil.WriteFile(t, dir, "kubernetes/flux/other-apps.yaml", testutil.KustomizationYAML("other-apps", "flux-system", `  path: ./kubernetes/apps
   sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
   postBuild:
     substituteFrom:
@@ -195,7 +195,7 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
 			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
 			"or resolve to defaults or empty values",
-		Count: 1,
+		Count: 2,
 	}
 	assert.Diff(t, warnings, []manifest.Warning{want})
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"net"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/server"
 	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -29,22 +32,52 @@ import (
 type suppliedSSHTransport struct {
 	transport.Transport
 	allowed       ssh.PublicKey
+	host          ssh.PublicKey
 	authenticated atomic.Int32
 	onAuth        func()
 }
 
 func (s *suppliedSSHTransport) NewUploadPackSession(endpoint *transport.Endpoint, auth transport.AuthMethod) (transport.UploadPackSession, error) {
-	keys, ok := auth.(*gitssh.PublicKeys)
-	if !ok || keys.User != "git" || keys.Signer == nil || !bytes.Equal(keys.Signer.PublicKey().Marshal(), s.allowed.Marshal()) {
+	var signers []ssh.Signer
+	switch keys := auth.(type) {
+	case *gitssh.PublicKeys:
+		if keys.User != "git" || keys.Signer == nil {
+			return nil, transport.ErrAuthenticationRequired
+		}
+		signers = []ssh.Signer{keys.Signer}
+	case *gitssh.PublicKeysCallback:
+		if keys.User != "git" || s.host == nil {
+			return nil, transport.ErrAuthenticationRequired
+		}
+		if err := keys.HostKeyCallback("fixture:22", &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 22}, s.host); err != nil {
+			return nil, err
+		}
+		var err error
+		signers, err = keys.Callback()
+		if err != nil {
+			return nil, err
+		}
+	default:
 		return nil, transport.ErrAuthenticationRequired
 	}
 	challenge := []byte("supplied source authentication fixture")
-	signature, err := keys.Signer.Sign(rand.Reader, challenge)
-	if err != nil {
-		return nil, err
+	accepted := false
+	for _, signer := range signers {
+		if !bytes.Equal(signer.PublicKey().Marshal(), s.allowed.Marshal()) {
+			continue
+		}
+		signature, err := signer.Sign(rand.Reader, challenge)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.allowed.Verify(challenge, signature); err != nil {
+			return nil, err
+		}
+		accepted = true
+		break
 	}
-	if err := s.allowed.Verify(challenge, signature); err != nil {
-		return nil, err
+	if !accepted {
+		return nil, transport.ErrAuthorizationFailed
 	}
 	s.authenticated.Add(1)
 	if s.onAuth != nil {
@@ -246,5 +279,97 @@ func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
 	}
 	if tr.authenticated.Load() < 2 {
 		t.Fatalf("authenticated acquisitions = %d", tr.authenticated.Load())
+	}
+}
+
+func TestE2E_DataReader_ClusterAdvisoriesOnBothBaseSides(t *testing.T) {
+	public, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hostKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := ssh.NewSignerFromKey(hostKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed, host: host.PublicKey()}
+	previous := client.Protocols["ssh"]
+	client.InstallProtocol("ssh", tr)
+	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
+	keyring := agent.NewKeyring()
+	if err := keyring.Add(agent.AddedKey{PrivateKey: key}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	listener, err := net.Listen("unix", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSH_AUTH_SOCK", "a")
+	var workers sync.WaitGroup
+	workers.Go(func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			workers.Go(func() {
+				_ = agent.ServeAgent(keyring, conn)
+				_ = conn.Close()
+			})
+		}
+	})
+	t.Cleanup(func() { _ = listener.Close(); workers.Wait() })
+	remote, root := t.TempDir(), t.TempDir()
+	repository, local := testutil.GitInit(t, remote), testutil.GitInit(t, root)
+	if _, err := local.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}}); err != nil {
+		t.Fatal(err)
+	}
+	author := &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}
+	var base string
+	for _, value := range []string{"before", "after"} {
+		testutil.WriteFile(t, remote, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, remote, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output, namespace: apps}\ndata: {value: "+value+", override: '${OVERRIDE}'}\n")
+		commit := testutil.GitCommitAll(t, repository, value, &gitlib.CommitOptions{Author: author})
+		declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://local.invalid/cluster}\n---\n" +
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n---\n" +
+			testutil.KustomizationYAML("consumer", "flux-system", "  path: ./app\n  sourceRef: {kind: GitRepository, name: private}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n")
+		testutil.WriteFile(t, root, "flux.yaml", declarations)
+		testutil.WriteFile(t, root, "settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {OVERRIDE: repository}\n")
+		commit = testutil.GitCommitAll(t, local, value, &gitlib.CommitOptions{Author: author})
+		if value == "before" {
+			base = commit.String()
+		}
+	}
+	input := filepath.Join(t.TempDir(), "supply.yaml")
+	testutil.WriteFileAt(t, input, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {OVERRIDE: supplied}\n")
+	var previousOut, previousErr string
+	for run := range 2 {
+		before := tr.authenticated.Load()
+		stdout, stderr, code := harness.RunCLIBuffers("diff", "all", "--path", root, "--base", base, "--supply", input,
+			"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "-o", "diff")
+		if code != 0 || tr.authenticated.Load()-before < 2 || strings.Count(stdout, "-  value: before") != 1 || strings.Count(stdout, "+  value: after") != 1 {
+			t.Fatalf("base diff: exit=%d authentications=%d stdout=%s stderr=%s", code, tr.authenticated.Load()-before, stdout, stderr)
+		}
+		if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || strings.Count(stderr, "[LocalSSHAgent]") != 1 || !strings.Contains(stderr, "ConfigMap/flux-system/settings: OVERRIDE") || !strings.Contains(stderr, "GitRepository.source.toolkit.fluxcd.io/flux-system/private") {
+			t.Fatalf("cluster advisories lost or duplicated: %s", stderr)
+		}
+		if strings.Contains(stdout+stderr, "PRIVATE KEY") || strings.Contains(stdout, "supplied") || !strings.Contains(stdout, "override: repository") {
+			t.Fatalf("private material or incorrect precedence: stdout=%s stderr=%s", stdout, stderr)
+		}
+		if run == 1 && (stdout != previousOut || stderr != previousErr) {
+			t.Fatalf("base diff changed across runs: stdout=%s stderr=%s", stdout, stderr)
+		}
+		previousOut, previousErr = stdout, stderr
 	}
 }

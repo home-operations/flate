@@ -16,6 +16,7 @@ import (
 	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
@@ -56,7 +57,7 @@ func (f *fakeFetcher) Fetch(_ context.Context, obj manifest.BaseManifest, reads 
 
 func TestSource_CapturedMaterialRefresh(t *testing.T) {
 	t.Parallel()
-	f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "acquired", FS: fstest.MapFS{}}}
+	f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "acquired", FS: fstest.MapFS{}, UsedLocalSSHAgent: true}}
 	c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
 	repo := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "https://example.test/source"}
 	secret := &manifest.Secret{Name: f.secret, Namespace: repo.Namespace, StringData: map[string]any{"username": "first"}}
@@ -65,6 +66,9 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		repo.Named(): {Productions: []manifest.Production{{Owner: parent.Named()}}},
 	}})
 	st.AddObjects([]manifest.BaseManifest{parent, repo, secret})
+	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: "credentials.yaml"}})
+	assert.NoError(t, err)
+	st.SetSupplied(supply)
 	c.Emit(parent.Named(), &store.Emission{Children: []store.Child{{Obj: repo}}, Complete: true}, nil)
 	var pending int
 	st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
@@ -108,6 +112,7 @@ func TestSource_CapturedMaterialRefresh(t *testing.T) {
 		if previous != nil {
 			previous.Retire()
 		}
+		assert.Diff(t, st.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}, AgentSources: []manifest.NamedResource{repo.Named()}})
 		if pending != 1 {
 			t.Fatalf("pending transitions=%d, want only initial acquisition", pending)
 		}
@@ -125,7 +130,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 		for _, timing := range []string{"accepted", "in_flight", "changed_in_flight"} {
 			t.Run(fmt.Sprintf("complete=%t/filtered=%t/%s", complete, tc.filtered, timing), func(t *testing.T) {
 				t.Parallel()
-				f := &fakeFetcher{artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}}}
+				f := &fakeFetcher{secret: "credentials", artifact: &store.SourceArtifact{Key: "shared", FS: fstest.MapFS{}, UsedLocalSSHAgent: true}}
 				chart := &manifest.HelmChartSource{Name: "shared", Namespace: "apps"}
 				first := &manifest.HelmRelease{Name: "first", Namespace: "apps"}
 				second := &manifest.HelmRelease{Name: "second", Namespace: "apps"}
@@ -136,6 +141,11 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				}
 				c, st := newConfiguredController(t, map[string]src.Fetcher{manifest.KindHelmChart: f}, FetchOptions{Filter: filter})
 				st.AddObjects([]manifest.BaseManifest{first, second})
+				secret := &manifest.Secret{Name: "credentials", Namespace: "apps", StringData: map[string]any{"username": "same"}}
+				st.AddObject(secret)
+				supply, err := store.NewSupplied([]store.SuppliedObject{{Object: secret, Path: "credentials.yaml"}})
+				assert.NoError(t, err)
+				st.SetSupplied(supply)
 				publish := func(value string) {
 					c.Emit(first.Named(), &store.Emission{Children: []store.Child{{Obj: chart}, {Obj: &manifest.ConfigMap{Name: "other", Namespace: "apps", Data: map[string]any{"VALUE": value}}}}, Complete: complete}, nil)
 				}
@@ -184,6 +194,8 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 				if accepted.Outcome() == schedule.Blocked || !accepted.Valid() || f.calls != wantCalls {
 					t.Fatalf("initial valid=%t unresolved=%t acquisitions=%d", accepted.Valid(), accepted.Outcome() == schedule.Blocked, f.calls)
 				}
+				wantEvidence := store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: secret.Named(), SupplyPath: "credentials.yaml", Keys: []string{"username"}}}, AgentSources: []manifest.NamedResource{chart.Named()}}
+				assert.Diff(t, st.AdvisoryEvidence(), wantEvidence)
 				c.Emit(second.Named(), &store.Emission{Children: []store.Child{{Obj: chart}}, Complete: complete}, nil)
 				publish("changed again")
 				if accepted.Valid() {
@@ -197,6 +209,7 @@ func TestSource_DeclarationContributorsReuse(t *testing.T) {
 					}
 				})
 				c.Tasks.BlockTillDone()
+				assert.Diff(t, st.AdvisoryEvidence(), wantEvidence)
 			})
 		}
 	}

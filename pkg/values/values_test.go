@@ -1121,11 +1121,8 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 		t.Fatal("accepted repository data did not supersede supply")
 	}
 	second.Accept()
-	warnings := s.Warnings()
-	if len(warnings) != 1 || warnings[0].Category != manifest.WarnSuppliedPrecedence || warnings[0].Count != 1 {
-		t.Fatalf("accepted precedence = %+v", warnings)
-	}
-	assert.Diff(t, warnings[0].Detail, []string{"VALUE"})
+	assert.Diff(t, s.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{{Resource: supplied.Named(), SupplyPath: "credentials.yaml", Keys: []string{"VALUE"}}}})
+	assert.Equal(t, len(s.Warnings()), 0)
 	s.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
 	if second.Valid() {
 		t.Fatal("withdrawal did not invalidate repository capture")
@@ -1137,7 +1134,7 @@ func TestStoreProvider_SuppliedProductionReplacementAndWithdrawal(t *testing.T) 
 	value, _, err = restored.Value("VALUE")
 	assert.NoError(t, err)
 	assert.Equal(t, value, "supplied")
-	if s.GetObject(supplied.Named()) != nil || len(s.Warnings()) != 0 {
+	if s.GetObject(supplied.Named()) != nil || len(s.Warnings()) != 0 || len(s.AdvisoryEvidence().Overrides) != 0 {
 		t.Fatal("withdrawal retained canonical data or stale precedence")
 	}
 }

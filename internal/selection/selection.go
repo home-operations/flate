@@ -9,10 +9,11 @@ import (
 // Selection contains the objects and diagnostics projected onto requested roots.
 // Borrowed manifests and document batches MUST remain immutable in use.
 type Selection struct {
-	Manifests []manifest.DocumentBatch
-	Failed    map[manifest.NamedResource]store.StatusInfo
-	Blocked   map[manifest.NamedResource][]manifest.NamedResource
-	Warnings  []manifest.Warning
+	Manifests       []manifest.DocumentBatch
+	Failed          map[manifest.NamedResource]store.StatusInfo
+	Blocked         map[manifest.NamedResource][]manifest.NamedResource
+	Warnings        []manifest.Warning
+	ClusterWarnings []manifest.Warning
 	// Objects contains selected roots after metadata filtering, grouped by requested kind.
 	Objects []manifest.BaseManifest
 	// Counts records matched roots per requested kind before label filtering.

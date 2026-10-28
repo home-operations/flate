@@ -95,6 +95,7 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		return results, err
 	}
 	results = make([]Rendered, len(trees))
+	stores := make([]*store.Store, len(trees))
 	byID := make(map[manifest.TreeID]int, len(trees))
 	var wg sync.WaitGroup
 	for i, tree := range trees {
@@ -107,6 +108,7 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		}
 		wg.Go(func() {
 			o := newOrchestrator(cfg, tree, budget.Fork())
+			stores[i] = o.store
 			if failure := o.discover(ctx); failure != nil {
 				results[i].Result = &Result{Warnings: o.store.Warnings()}
 				results[i].Err = &treeError{id: tree.ID, err: failure, attributed: len(results) > 1}
@@ -190,6 +192,7 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		})
 	}
 	wg.Wait()
+	clusterAdvisories(results, stores)
 	for _, result := range results {
 		err = errors.Join(err, result.Err)
 	}

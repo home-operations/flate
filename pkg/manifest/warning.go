@@ -20,8 +20,8 @@ type Warning struct {
 	// Detail is an optional structured payload, e.g. the dotted value key paths
 	// a WarnStaleValues advisory lists.
 	Detail []string
-	// Count is set to one by the collector, which combines messages and details
-	// for every category and resource.
+	// Count is the number of current origins contributing this complete payload.
+	// Identical direct publications count once; incoming Count is ignored.
 	Count int
 }
 
@@ -51,8 +51,8 @@ const (
 	// not be read offline (absent, or an ExternalSecret-synthesized empty
 	// target), so the ${VAR}s it would supply render as the empty string —
 	// dependent resources may then fail schema/template validation and drop
-	// out of the render. Render-global (Message names the Secret) so the many
-	// per-namespace KSes a cluster-config KS re-emits collapse to one line.
+	// out of the render. Render-global; Message names the Secret and Count
+	// records the independent consumers reporting the same payload.
 	WarnUnresolvedSubstitution = "UnresolvedSubstitution"
 	// WarnBootstrapAliases reports that multiple sources alias the working tree.
 	WarnBootstrapAliases = "BootstrapAliases"

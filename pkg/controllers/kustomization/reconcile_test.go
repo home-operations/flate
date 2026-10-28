@@ -634,7 +634,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 				t.Fatalf("warnings = %+v, want one unresolved Secret group", warnings)
 			}
 			assert.Equal(t, warnings[0].Resource, manifest.NamedResource{})
-			assert.Equal(t, warnings[0].Count, 1)
+			assert.Equal(t, warnings[0].Count, 2)
 			t.Logf("replay=%t; both consumers Ready; accepted output reused; warning=%+v", replay, warnings[0])
 		})
 	}
@@ -1429,5 +1429,56 @@ func TestReconcile_DeclarationChangeBeforeCapture(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
+	t.Parallel()
+	c, st, root := newControllerWithFixture(t)
+	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\ndata: {value: '${VALUE}'}\n")
+	freezeSourceForTest(t, st)
+	input := &manifest.ConfigMap{Name: "settings", Namespace: "flux-system", Data: map[string]any{"VALUE": "equal"}}
+	supply, err := store.NewSupplied([]store.SuppliedObject{{Object: input, Path: "supply.yaml"}})
+	assert.NoError(t, err)
+	st.SetSupplied(supply)
+	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps",
+		SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "flux-system"},
+		PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: input.Name}}}}
+	st.AddObject(ks)
+	var previous *base.Execution
+	var first *store.Emission
+	for i, value := range []string{"", "equal", "", "fresh"} {
+		repository := &manifest.ConfigMap{Name: input.Name, Namespace: input.Namespace, Data: map[string]any{}}
+		if value != "" {
+			repository.Data["VALUE"] = value
+		}
+		st.AddObject(repository)
+		var next *base.Execution
+		c.Tasks.Go(t.Context(), "reconcile", func(ctx context.Context) { next = c.ReconcileNode(ctx, ks.Named(), manifest.DrainNone) })
+		c.Tasks.BlockTillDone()
+		if previous != nil {
+			previous.Retire()
+		}
+		previous = next
+		t.Cleanup(next.Close)
+		if next.Outcome() == schedule.Blocked || !next.Valid() || next.Reused != (i == 1 || i == 2) {
+			t.Fatalf("phase %d: execution=%+v", i, next)
+		}
+		current := st.GetArtifact(ks.Named(), store.ArtifactContent).(*store.Emission)
+		if i == 0 {
+			first = current
+		} else if i < 3 && (current.Fingerprint != first.Fingerprint || !cmp.Equal(current.Manifests, first.Manifests)) {
+			t.Fatal("equal-output collision transition changed render output")
+		}
+		var want []store.SuppliedOverride
+		if value != "" {
+			want = []store.SuppliedOverride{{Resource: input.Named(), SupplyPath: "supply.yaml", Keys: []string{"VALUE"}}}
+		}
+		assert.Diff(t, st.AdvisoryEvidence().Overrides, want)
+		wantValue := "equal"
+		if i == 3 {
+			wantValue = "fresh"
+		}
+		assert.Equal(t, current.Manifests[0].Document["data"].(map[string]any)["value"], any(wantValue))
 	}
 }

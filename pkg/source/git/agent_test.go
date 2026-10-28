@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"net"
 	"path/filepath"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -184,9 +183,7 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				}
 			} else {
 				assert.NoError(t, err)
-				if artifact == nil || artifact.FS == nil || !slices.ContainsFunc(artifact.Warnings, func(w manifest.Warning) bool {
-					return w.Category == manifest.WarnLocalSSHAgent && w.Resource == repo.Named()
-				}) {
+				if artifact == nil || artifact.FS == nil || !artifact.UsedLocalSSHAgent {
 					t.Fatalf("accepted agent artifact = %+v", artifact)
 				}
 			}
@@ -209,7 +206,7 @@ func TestFetcher_AmbientAcquisition(t *testing.T) {
 				before := opened.Load()
 				warm, err := missing.RetryAmbient(t.Context())
 				assert.NoError(t, err)
-				if warm == nil || slices.ContainsFunc(warm.Warnings, func(w manifest.Warning) bool { return w.Category == manifest.WarnLocalSSHAgent }) || opened.Load() != before {
+				if warm == nil || warm.UsedLocalSSHAgent || opened.Load() != before {
 					t.Fatalf("disk reuse asserted fresh authentication: %+v", warm)
 				}
 				if shape == "accepted" {
@@ -392,7 +389,7 @@ func TestFetcher_StalledAgent(t *testing.T) {
 			if !errors.Is(err, want) || !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("ambient failure = %v; want %v and ErrFlux", err, want)
 			}
-			if artifact != nil && (artifact.FS != nil || artifact.Content != "" || slices.ContainsFunc(artifact.Warnings, func(w manifest.Warning) bool { return w.Category == manifest.WarnLocalSSHAgent })) {
+			if artifact != nil && (artifact.FS != nil || artifact.Content != "" || artifact.UsedLocalSSHAgent) {
 				t.Fatalf("failed attempt published successful content or agent warning: %+v", artifact)
 			}
 			select {

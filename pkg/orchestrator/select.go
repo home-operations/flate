@@ -220,6 +220,7 @@ func (s *selectionSide) collectWarnings(root manifest.NamedResource, kinds map[m
 	if s.run.Result == nil {
 		return
 	}
+	s.result.ClusterWarnings = s.run.Result.ClusterWarnings
 	for _, warning := range s.run.Result.Warnings {
 		if warning.Category == manifest.WarnIncompleteInputCoverage {
 			id := warning.Resource

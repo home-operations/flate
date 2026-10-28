@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -225,6 +227,11 @@ func TestEncoderReport_AdvisoryNames(t *testing.T) {
 	ordinary := manifest.Warning{Resource: source, Category: manifest.WarnPathConfig, Message: "ordinary", Count: 3}
 	collision := ordinary
 	collision.Resource = other
+	global := ordinary
+	global.Resource = manifest.NamedResource{}
+	global.Detail = []string{"kept"}
+	clusterAgent := agent
+	clusterAgent.Resource = manifest.NamedResource{}
 	for _, tc := range []struct {
 		name     string
 		groups   []ReportGroup
@@ -253,11 +260,33 @@ func TestEncoderReport_AdvisoryNames(t *testing.T) {
 			want:     []string{"warnings (1)", "information (1)", "GitRepository.source.toolkit.fluxcd.io alpha: apps/source: authenticated", "GitRepository.custom.example omega: apps/source: ordinary (×3)"},
 			absent:   []string{"Cluster:", GlyphFail},
 		},
+		{
+			name:     "cluster globals and invocation notice",
+			groups:   []ReportGroup{{Cluster: "alpha"}, {Cluster: "omega"}},
+			warnings: []Warning{{Warning: global}, {Warning: clusterAgent}, {Warning: global, Group: 1}, {Warning: clusterAgent, Group: 1}, {Warning: manifest.Warning{Category: "Notice", Message: "invocation"}, Group: -1}},
+			want:     []string{"alpha: ordinary (×3)", "omega: ordinary (×3)", "alpha: authenticated", "omega: authenticated", "[Notice] invocation"},
+			absent:   []string{"orig snapshot", "current snapshot", "alpha: invocation", "omega: invocation"},
+		},
+		{
+			name:     "one cluster global",
+			groups:   []ReportGroup{{Cluster: "omega"}},
+			warnings: []Warning{{Warning: global}, {Warning: clusterAgent}},
+			want:     []string{"[PathConfig] ordinary (×3)", "[LocalSSHAgent] authenticated"},
+			absent:   []string{"omega:", "snapshot"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			before := make([]manifest.Warning, len(tc.warnings))
+			for i, warning := range tc.warnings {
+				before[i] = warning.Warning
+				before[i].Detail = slices.Clone(warning.Warning.Detail)
+			}
 			report := Report{Groups: tc.groups, Warnings: tc.warnings}
 			report.Prepare(nil)
+			for i, warning := range report.Warnings {
+				assert.Diff(t, warning.Warning, before[i])
+			}
 			var b bytes.Buffer
 			encoder := Encoder{Writer: &b}
 			if err := encoder.Report(report, encoder); err != nil {

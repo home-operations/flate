@@ -914,14 +914,11 @@ func TestRun_ClusterGroups_SuppliedPrecedence(t *testing.T) {
 	}
 	input := substitutionInput(t, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: flux-system}\ndata: {CLUSTER: supplied}\n")
 	stdout, stderr, code := runCLI(t, "diff", "all", "--path", head, "--path-orig", base, "--supply", input, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
-	if code != 0 || strings.Count(stderr, "[SuppliedPrecedence]") != 4 || !strings.Contains(stderr, "ConfigMap alpha: flux-system/settings") || !strings.Contains(stderr, "ConfigMap omega: flux-system/settings") || strings.Contains(stderr, "Cluster:") || strings.Contains(stdout, "supplied") {
+	if code != 0 || strings.Count(stderr, "[SuppliedPrecedence]") != 2 || !strings.Contains(stderr, "[SuppliedPrecedence] alpha:") || !strings.Contains(stderr, "[SuppliedPrecedence] omega:") || strings.Contains(stderr, "Cluster:") || strings.Contains(stdout, "supplied") {
 		t.Fatalf("cluster supply reduction: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 	for _, cluster := range []string{"alpha", "omega"} {
-		for _, side := range []string{"orig", "current"} {
-			row := "[SuppliedPrecedence] " + side + " snapshot: ConfigMap " + cluster + ": flux-system/settings:"
-			assert.Equal(t, strings.Count(stderr, row), 1)
-		}
+		assert.Equal(t, strings.Count(stderr, "[SuppliedPrecedence] "+cluster+":"), 1)
 	}
 	for _, value := range []string{"old-alpha", "new-alpha", "old-omega", "new-omega"} {
 		if !strings.Contains(stdout, value) {

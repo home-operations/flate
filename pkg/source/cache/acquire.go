@@ -132,6 +132,14 @@ type acquireKey struct {
 
 type producerError struct{ error }
 
+type machineError struct{ cause error }
+
+func (e *machineError) Error() string { return "machine credential acquisition failed" }
+func (e *machineError) Unwrap() error { return e.cause }
+
+// MachineCredentialErr masks credential material while preserving the acquisition cause.
+func MachineCredentialErr(cause error) error { return &machineError{cause} }
+
 // readerError marks a failure of the archive consumer that the producer only observes as a failed write.
 type readerError struct{ error }
 

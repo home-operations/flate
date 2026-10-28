@@ -63,7 +63,7 @@ func (f *operation) fetch(ctx context.Context, request bucketAcquisition, policy
 	input, desc, id, err := f.Cache.Acquire(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (result cache.ProducerResult, err error) {
 		defer func() {
 			if request.providers != nil && err != nil {
-				err = source.MachineCredentialErr(err)
+				err = cache.MachineCredentialErr(err)
 			}
 		}()
 		opts := request.options

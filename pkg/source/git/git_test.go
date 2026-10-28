@@ -201,7 +201,7 @@ func TestFetcher_RestrictedEndpointSchemes(t *testing.T) {
 		t.Run(url, func(t *testing.T) {
 			t.Parallel()
 			f := &Fetcher{RestrictSchemes: true}
-			err := f.validateRepo(&manifest.GitRepository{URL: url})
+			_, err := f.validateRepo(&manifest.GitRepository{URL: url})
 			if want && err != nil || !want && !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("allowed = %t, validateRepo = %v", want, err)
 			}

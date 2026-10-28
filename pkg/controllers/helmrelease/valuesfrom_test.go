@@ -235,7 +235,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	st.UpdateStatus(source.Named(), store.StatusInfo{Status: store.StatusReady})
 	hr := &manifest.HelmRelease{Name: "emitter", Namespace: "apps", Chart: manifest.HelmChart{Name: "chart", Source: source.Named()}, ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindSecret, Name: "optional", Optional: true}}}
 	st.AddObject(hr)
-	seed, omitted, err := helm.Prepare(hr, helm.NewSources(st).HelmChart, values.NewStoreProvider(st, false, nil), c.Helm.ValuesCache())
+	seed, omitted, err := helm.Prepare(hr, helm.NewSources(st).HelmChart, values.NewStoreProvider(st, false), c.Helm.ValuesCache())
 	assert.NoError(t, err)
 	assert.Equal(t, len(omitted), 0)
 	_, receipt, err := c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)})

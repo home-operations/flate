@@ -176,3 +176,33 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 		})
 	}
 }
+
+func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
+	t.Parallel()
+	ca := testutil.SelfSignedCA(t)
+	supplied := &manifest.Secret{Name: "material", Namespace: "apps", StringData: map[string]any{"username": "supplied", "password": "filled", "ca.crt": ca, "address": "http://proxy.invalid"}}
+	snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: supplied}})
+	assert.NoError(t, err)
+	s := store.New()
+	s.SetSupplied(snapshot)
+	repository := &manifest.Secret{Name: supplied.Name, Namespace: supplied.Namespace, StringData: map[string]any{"username": "repository", "password": manifest.ValuePlaceholder("password")}}
+	s.AddObject(repository)
+	owner := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "source"}
+	var reads store.ReadSet
+	reads.Init(s, owner, nil)
+	defer reads.Close()
+	lookup := SecretLookup(&reads)
+	effective := lookup(owner.Namespace, supplied.Name)
+	username, password, err := BasicAuthFromSecret(effective, owner, supplied.Name)
+	assert.NoError(t, err)
+	assert.Equal(t, username, "repository")
+	assert.Equal(t, password, "filled")
+	ref := &manifest.LocalObjectReference{Name: supplied.Name}
+	material, err := ResolveTransport(lookup, owner, []TransportInput{{Reference: ref, Use: TransportSecret, OptionalTLS: true, CAFallback: true}, {Reference: ref, Use: TransportProxy}})
+	assert.NoError(t, err)
+	assert.Equal(t, material.Certificate()[2], ca)
+	assert.Diff(t, material.ProxyComponents(), [3]string{"http://proxy.invalid", "repository", "filled"})
+	if s.GetObject(supplied.Named()) != repository || repository.StringData["password"] != manifest.ValuePlaceholder("password") {
+		t.Fatal("effective credential material entered canonical state")
+	}
+}

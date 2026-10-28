@@ -52,6 +52,25 @@ func (c *ConfigMap) HasKeys() bool { return len(c.Data) != 0 }
 // Keys yields the data keys without imposing output order.
 func (c *ConfigMap) Keys() iter.Seq[string] { return maps.Keys(c.Data) }
 
+// WithSupplied fills absent or wiped logical keys without changing repository data.
+func (c *ConfigMap) WithSupplied(supplied Data) (Data, []string) {
+	out := *c
+	out.Data = nil
+	overridden := fillSupplied(c, supplied, func(key, value string) {
+		if out.Data == nil {
+			out.Data = maps.Clone(c.Data)
+			if out.Data == nil {
+				out.Data = make(map[string]any)
+			}
+		}
+		out.Data[key] = value
+	})
+	if out.Data == nil {
+		return c, overridden
+	}
+	return &out, overridden
+}
+
 // Snapshot returns an owned document for sanitation through ParseDoc.
 func (c *ConfigMap) Snapshot() map[string]any {
 	return map[string]any{"apiVersion": "v1", "kind": KindConfigMap,
@@ -136,6 +155,38 @@ func (s *Secret) Keys() iter.Seq[string] {
 			}
 		}
 	}
+}
+
+// WithSupplied fills absent or wiped logical keys while preserving lazy decoding.
+func (s *Secret) WithSupplied(supplied Data) (Data, []string) {
+	out := *s
+	out.Data = nil
+	out.StringData = nil
+	overridden := fillSupplied(s, supplied, func(key, value string) {
+		if out.StringData == nil {
+			out.StringData = maps.Clone(s.StringData)
+			if out.StringData == nil {
+				out.StringData = make(map[string]any)
+			}
+		}
+		if _, exists := s.Data[key]; exists {
+			if out.Data == nil {
+				out.Data = maps.Clone(s.Data)
+			}
+			delete(out.Data, key)
+		}
+		out.StringData[key] = value
+	})
+	if out.StringData == nil {
+		return s, overridden
+	}
+	if out.Data == nil {
+		out.Data = s.Data
+	}
+	if len(out.Data) == 0 {
+		out.Data = nil
+	}
+	return &out, overridden
 }
 
 // HasPlaceholder reports whether the payload contains a wiped value.

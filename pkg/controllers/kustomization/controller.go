@@ -61,7 +61,7 @@ type execution struct {
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 	execution := &execution{Controller: c}
 	execution.run.Init(c.Controller, id)
-	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, c.SubstituteFrom)
+	execution.data = values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
 	return execution
 }
 
@@ -225,7 +225,7 @@ func (c *Controller) PreviousRender(ctx context.Context, reads *store.ReadSet) (
 	if !ok || ctx.Err() != nil {
 		return nil, false
 	}
-	data := values.NewStoreProvider(reads, c.WipeSecrets, c.SubstituteFrom)
+	data := values.NewStoreProvider(reads, c.WipeSecrets)
 	waiter := depwait.Waiter{Store: reads, Parent: reads.ID(), AllowMissingCRDs: c.MissingCRDsAllowed()}
 	for ref := range manifest.References(ks, manifest.ReferenceRelations) {
 		if ref.Use != "substituteFrom" {

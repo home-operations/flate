@@ -49,8 +49,8 @@ type Input struct {
 }
 
 // NewStoreProvider returns one execution's captured values and availability evidence.
-func NewStoreProvider(s dataReader, wipeSecrets bool, supplied map[manifest.NamedResource]manifest.BaseManifest) *StoreProvider {
-	p := &StoreProvider{s: s, wipeSecrets: wipeSecrets, supplied: supplied}
+func NewStoreProvider(s dataReader, wipeSecrets bool) *StoreProvider {
+	p := &StoreProvider{s: s, wipeSecrets: wipeSecrets}
 	if owner, ok := s.(interface{ ID() manifest.NamedResource }); ok {
 		p.owner = owner.ID()
 	}
@@ -62,7 +62,6 @@ type StoreProvider struct {
 	s           dataReader
 	wipeSecrets bool
 	owner       manifest.NamedResource
-	supplied    map[manifest.NamedResource]manifest.BaseManifest
 	inputs      []capturedInput
 }
 
@@ -83,60 +82,71 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 		}
 		i++
 	}
-	data, supplied := p.supplied[id].(manifest.Data)
-	input := Input{Data: data, Private: supplied}
-	if !supplied {
-		facts := p.s.ReferenceFacts(id, nil)
-		self, independent := false, false
-		var declarations []manifest.NamedResource
-		for _, production := range facts.Productions {
-			self = self || production.Owner == p.owner && p.owner != (manifest.NamedResource{})
-			if production.Owner != (manifest.NamedResource{}) && production.Owner != p.owner && !slices.Contains(input.Materializers, production.Owner) {
-				input.Materializers = append(input.Materializers, production.Owner)
+	facts := p.s.ReferenceFacts(id, nil)
+	input := Input{}
+	self, independent := false, false
+	var declarations []manifest.NamedResource
+	for _, production := range facts.Productions {
+		self = self || production.Owner == p.owner && p.owner != (manifest.NamedResource{})
+		if production.Owner != (manifest.NamedResource{}) && production.Owner != p.owner && !slices.Contains(input.Materializers, production.Owner) {
+			input.Materializers = append(input.Materializers, production.Owner)
+		}
+		if production.Declaration == (manifest.NamedResource{}) {
+			input.Offline = input.Offline || production.Owner != (manifest.NamedResource{}) || production.Path != ""
+			independent = independent || production.Owner == (manifest.NamedResource{}) && production.Path != ""
+		} else {
+			input.Generated = true
+			declarations = append(declarations, production.Declaration)
+		}
+	}
+	input.Private = self
+	if p.owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0 {
+		input.Data = facts.Data
+	}
+	pending := false
+	if reads, ok := p.s.(interface {
+		UnsettledProducers(manifest.NamedResource) []manifest.NamedResource
+	}); ok && input.Data == nil && input.Generated {
+		pending = len(reads.UnsettledProducers(id)) != 0
+	}
+	if input.Data == nil && p.wipeSecrets && !input.Offline && !pending {
+		for _, declarationID := range declarations {
+			declaration := p.s.GetObject(declarationID)
+			if declaration == nil {
+				continue
 			}
-			if production.Declaration == (manifest.NamedResource{}) {
-				input.Offline = input.Offline || production.Owner != (manifest.NamedResource{}) || production.Path != ""
-				independent = independent || production.Owner == (manifest.NamedResource{}) && production.Path != ""
-			} else {
-				input.Generated = true
-				declarations = append(declarations, production.Declaration)
-			}
-		}
-		input.Private = self
-		if p.owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0 {
-			input.Data = facts.Data
-		}
-		pending := false
-		if reads, ok := p.s.(interface {
-			UnsettledProducers(manifest.NamedResource) []manifest.NamedResource
-		}); ok && input.Data == nil && input.Generated {
-			pending = len(reads.UnsettledProducers(id)) != 0
-		}
-		if input.Data == nil && p.wipeSecrets && !input.Offline && !pending {
-			for _, declarationID := range declarations {
-				declaration := p.s.GetObject(declarationID)
-				if declaration == nil {
+			for _, target := range manifest.ProducerTargets(declaration, id) {
+				if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
 					continue
 				}
-				for _, target := range manifest.ProducerTargets(declaration, id) {
-					if target.NamedResource != id || len(target.DeclaredKeys) == 0 {
-						continue
-					}
-					data := make(map[string]any, len(target.DeclaredKeys))
-					for _, key := range target.DeclaredKeys {
-						data[key] = manifest.ValuePlaceholder(key)
-					}
-					input.Data = &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: data}
-					break
+				data := make(map[string]any, len(target.DeclaredKeys))
+				for _, key := range target.DeclaredKeys {
+					data[key] = manifest.ValuePlaceholder(key)
 				}
-				if input.Data != nil {
-					break
+				input.Data = &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: data}
+				break
+			}
+			if input.Data != nil {
+				break
+			}
+		}
+	}
+	if facts.Supplied != nil {
+		if input.Data == nil {
+			input.Data = facts.Supplied
+		} else {
+			var overridden []string
+			input.Data, overridden = input.Data.WithSupplied(facts.Supplied)
+			if len(overridden) > 0 {
+				if reads, ok := p.s.(*store.ReadSet); ok {
+					reads.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnSuppliedPrecedence,
+						Message: "repository data takes precedence over " + facts.SupplyPath, Detail: overridden})
 				}
 			}
 		}
-		if input.Data != nil {
-			input.Materializers = nil
-		}
+	}
+	if input.Data != nil {
+		input.Materializers = nil
 	}
 	p.inputs = slices.Insert(p.inputs, i, capturedInput{id: id, input: input})
 	return input

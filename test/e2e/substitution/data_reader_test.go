@@ -1,13 +1,138 @@
 package substitution
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/pem"
+	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	gitlib "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	"github.com/go-git/go-git/v5/plumbing/transport/client"
+	"github.com/go-git/go-git/v5/plumbing/transport/server"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
+
+type suppliedSSHTransport struct {
+	transport.Transport
+	allowed       ssh.PublicKey
+	authenticated atomic.Int32
+	onAuth        func()
+}
+
+func (s *suppliedSSHTransport) NewUploadPackSession(endpoint *transport.Endpoint, auth transport.AuthMethod) (transport.UploadPackSession, error) {
+	keys, ok := auth.(*gitssh.PublicKeys)
+	if !ok || keys.User != "git" || keys.Signer == nil || !bytes.Equal(keys.Signer.PublicKey().Marshal(), s.allowed.Marshal()) {
+		return nil, transport.ErrAuthenticationRequired
+	}
+	challenge := []byte("supplied source authentication fixture")
+	signature, err := keys.Signer.Sign(rand.Reader, challenge)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.allowed.Verify(challenge, signature); err != nil {
+		return nil, err
+	}
+	s.authenticated.Add(1)
+	if s.onAuth != nil {
+		s.onAuth()
+	}
+	local := *endpoint
+	local.Protocol = "file"
+	local.Path = filepath.Join(local.Path, ".git")
+	return s.Transport.NewUploadPackSession(&local, nil)
+}
+
+func TestE2E_DataReader_SuppliedSSHOnBothDiffSides(t *testing.T) {
+	public, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(key, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := string(pem.EncodeToMemory(block))
+	allowed, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed}
+	previous := client.Protocols["ssh"]
+	client.InstallProtocol("ssh", tr)
+	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "absent"))
+	remote := t.TempDir()
+	repository := testutil.GitInit(t, remote)
+	author := &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}
+	var roots []string
+	for _, value := range []string{"before", "after"} {
+		for _, name := range []string{"one", "two"} {
+			testutil.WriteFile(t, remote, name+"/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, remote, name+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+name+", namespace: apps}\ndata: {value: "+value+"}\n")
+		}
+		commit := testutil.GitCommitAll(t, repository, value, &gitlib.CommitOptions{Author: author})
+		root := t.TempDir()
+		local := testutil.GitInit(t, root)
+		if _, err := local.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}}); err != nil {
+			t.Fatal(err)
+		}
+		roots = append(roots, root)
+		declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: 'https://local.invalid/cluster'}\n---\n" +
+			"apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: ursa-major-ssh}\n"
+		for _, name := range []string{"one", "two"} {
+			declarations += "---\n" + testutil.KustomizationYAML(name, "flux-system", "  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n")
+		}
+		declarations += "---\n" + testutil.KustomizationYAML("credentials", "flux-system", "  path: ./local\n  sourceRef: {kind: GitRepository, name: cluster}\n")
+		testutil.WriteFile(t, root, "local/kustomization.yaml", "resources: [auth.yaml]\n")
+		testutil.WriteFile(t, root, "local/auth.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData: {identity: 'ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]'}\nsops: {mac: encrypted}\n")
+		testutil.WriteFile(t, root, "flux.yaml", declarations)
+		testutil.GitCommitAll(t, local, "cluster "+value, &gitlib.CommitOptions{Author: author})
+	}
+	supplied := t.TempDir()
+	testutil.WriteFile(t, supplied, "credentials.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData:\n  identity: |\n    "+strings.ReplaceAll(strings.TrimSpace(identity), "\n", "\n    ")+"\n")
+	input := filepath.Join(supplied, "credentials.yaml")
+	for i, root := range roots {
+		stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--supply", input, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress", "--skip-kinds", "CustomResourceDefinition")
+		if code != 0 || !strings.Contains(stdout, "..PLACEHOLDER_identity..") || strings.Contains(stdout+stderr, "BEGIN OPENSSH PRIVATE KEY") {
+			t.Fatalf("supplied build: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		}
+		if strings.Count(stdout, "value: "+[]string{"before", "after"}[i]) != 2 {
+			t.Fatalf("private consumers missing: %s", stdout)
+		}
+	}
+	before := tr.authenticated.Load()
+	var changed sync.Once
+	tr.onAuth = func() {
+		changed.Do(func() {
+			testutil.WriteFileAt(t, input, "apiVersion: v1\nkind: Secret\nmetadata: {name: ursa-major-ssh, namespace: flux-system}\nstringData: {identity: changed-after-snapshot}\n")
+		})
+	}
+	args := []string{"diff", "all", "--path", roots[1], "--path-orig", roots[0], "--concurrency", "2", "--no-progress", "-o", "diff"}
+	stdout, stderr, code := harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--supply", input)...)
+	if code != 0 || strings.Count(stdout, "-  value: before") != 2 || strings.Count(stdout, "+  value: after") != 2 || tr.authenticated.Load()-before < 2 {
+		t.Fatalf("supplied diff: exit=%d authenticated=%d stdout=%s stderr=%s", code, tr.authenticated.Load()-before, stdout, stderr)
+	}
+	tr.onAuth = nil
+	before = tr.authenticated.Load()
+	stdout, stderr, code = harness.RunCLIBuffers(append(args, "--cache-dir", t.TempDir(), "--allow-missing-secrets")...)
+	if code != 0 || !strings.Contains(stderr, "SourceCredentialsUnavailable") || !strings.Contains(stderr, "ursa-major-ssh") || strings.Contains(stderr, "ExternalSource") || strings.Contains(stderr, "LocalSSHAgent") || tr.authenticated.Load() != before {
+		t.Fatalf("absent-agent cause: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+}
 
 func TestE2E_DataReader_GeneratorEmbeddedCiphertext(t *testing.T) {
 	const value = "enabled: ENC[AES256_GCM,data:YWJj,iv:ZGVm,tag:Z2hp,type:str]"
@@ -67,5 +192,59 @@ func TestE2E_DataReader_StringDataPrecedence(t *testing.T) {
 	stdout, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
 	if code != 0 || !strings.Contains(stdout, "value: B") || !strings.Contains(stdout, "empty: fallback") {
 		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+}
+
+func TestE2E_DataReader_SuppliedSourceProducesCredential(t *testing.T) {
+	public, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(key, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := string(pem.EncodeToMemory(block))
+	allowed, err := ssh.NewPublicKey(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := &suppliedSSHTransport{Transport: server.DefaultServer, allowed: allowed}
+	previous := client.Protocols["ssh"]
+	client.InstallProtocol("ssh", tr)
+	t.Cleanup(func() { client.InstallProtocol("ssh", previous) })
+	remote := t.TempDir()
+	repository := testutil.GitInit(t, remote)
+	secret := "apiVersion: v1\nkind: Secret\nmetadata: {name: credentials, namespace: flux-system}\nstringData:\n  identity: |\n    " + strings.ReplaceAll(strings.TrimSpace(identity), "\n", "\n    ") + "\n"
+	testutil.WriteFile(t, remote, "credentials/kustomization.yaml", "resources: [auth.yaml]\n")
+	testutil.WriteFile(t, remote, "credentials/auth.yaml", secret)
+	testutil.WriteFile(t, remote, "workload/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, remote, "workload/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: source-produced, namespace: apps}\ndata: {value: complete}\n")
+	commit := testutil.GitCommitAll(t, repository, "fixture", &gitlib.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(1, 0)}})
+	root := t.TempDir()
+	local := testutil.GitInit(t, root)
+	if _, err := local.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://local.invalid/cluster"}}); err != nil {
+		t.Fatal(err)
+	}
+	declarations := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: https://local.invalid/cluster}\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: private, namespace: flux-system}\nspec:\n  url: ssh://git@fixture" + remote + "\n  ref: {commit: " + commit.String() + "}\n  secretRef: {name: credentials}\n"
+	for _, name := range []string{"credentials", "workload"} {
+		declarations += "---\n" + testutil.KustomizationYAML(name, "flux-system", "  path: ./"+name+"\n  sourceRef: {kind: GitRepository, name: private}\n")
+	}
+	testutil.WriteFile(t, root, "flux.yaml", declarations)
+	input := filepath.Join(t.TempDir(), "credentials.yaml")
+	testutil.WriteFileAt(t, input, secret)
+	var first string
+	for i := range 2 {
+		stdout, stderr, code := harness.RunCLIBuffers("build", "all", "--path", root, "--supply", input, "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress")
+		if code != 0 || !strings.Contains(stdout, "name: source-produced") || strings.Contains(stdout, "BEGIN OPENSSH PRIVATE KEY") || strings.Contains(stderr, "dependency cycle") {
+			t.Fatalf("source-producing credential: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+		}
+		if i == 1 && stdout != first {
+			t.Fatal("source-producing output varies across runs")
+		}
+		first = stdout
+	}
+	if tr.authenticated.Load() < 2 {
+		t.Fatalf("authenticated acquisitions = %d", tr.authenticated.Load())
 	}
 }

@@ -20,8 +20,8 @@ type Warning struct {
 	// Detail is an optional structured payload, e.g. the dotted value key paths
 	// a WarnStaleValues advisory lists.
 	Detail []string
-	// Count is the number of distinct advisory origins sharing this payload,
-	// set by the collector. Repeated submissions by one origin count once.
+	// Count is set to one by the collector, which combines messages and details
+	// for every category and resource.
 	Count int
 }
 
@@ -66,8 +66,14 @@ const (
 	// WarnInputReadFailed reports that an advisory input read failed.
 	WarnInputReadFailed = "InputReadFailed"
 
-	// WarnSubstitutionPrecedence reports that repository substitution data overrides supplied data.
-	WarnSubstitutionPrecedence = "SubstitutionPrecedence"
+	// WarnSuppliedPrecedence reports that repository logical keys override supplied data.
+	WarnSuppliedPrecedence = "SuppliedPrecedence"
+
+	// WarnSourceCredentialsUnavailable reports a source skipped for unavailable credential material.
+	WarnSourceCredentialsUnavailable = "SourceCredentialsUnavailable" //nolint:gosec // G101: this is a warning category, not credential material.
+
+	// WarnLocalSSHAgent reports accepted acquisition using the local SSH agent.
+	WarnLocalSSHAgent = "LocalSSHAgent"
 
 	// WarnDuplicateDocument reports that a later document shadows the same identity.
 	WarnDuplicateDocument = "DuplicateDocument"

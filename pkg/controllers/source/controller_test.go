@@ -616,7 +616,15 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 				detail = "invalid credential encoding"
 				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrInput, secret.Name, detail)
 			}
-			f := &fakeFetcher{err: fetchErr}
+			ambientCalls := 0
+			if tt.producer && !tt.malformed {
+				missing, _ := errors.AsType[*src.MissingSecretError](fetchErr)
+				missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+					ambientCalls++
+					return &store.SourceArtifact{Kind: repo.Named().Kind}, nil
+				}
+			}
+			f := &fakeFetcher{err: fetchErr, secret: secret.Name}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 			if tt.producer {
 				addDeclaration(index, secret.Named(), manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
@@ -654,6 +662,9 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			if info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != tt.wantSkip || !strings.Contains(info.String(), detail) || !strings.Contains(info.String(), secret.Name) {
 				t.Fatalf("status = %+v, want %v (skip=%t) preserving %q and %q", info, wantStatus, tt.wantSkip, detail, secret.Name)
 			}
+			if ambientCalls != 0 {
+				t.Fatalf("index-only producer invoked ambient continuation %d times", ambientCalls)
+			}
 			if st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
 				t.Fatal("unavailable or malformed source must not produce an artifact")
 			}
@@ -677,13 +688,9 @@ func (f *fallbackFetcher) Fetch(_ context.Context, _ manifest.BaseManifest, _ *s
 		return &store.SourceArtifact{Kind: manifest.KindOCIRepository}, nil
 	}
 	missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "r"}, "ghcr-creds", "not found"))
-	missing.RegistryConfig = "/registry/config.json"
-	missing.RetryWithRegistryConfig = func(_ context.Context, configPath string) (*store.SourceArtifact, error) {
+	missing.RetryAmbient = func(_ context.Context) (*store.SourceArtifact, error) {
 		f.fallbackCalls++
 		f.fallbackRetry = policy
-		if configPath != missing.RegistryConfig {
-			return nil, fmt.Errorf("unexpected registry config %q", configPath)
-		}
 		if f.fallbackErr != nil {
 			return nil, f.fallbackErr
 		}
@@ -738,45 +745,103 @@ func TestController_MissingSecretRegistryFallback(t *testing.T) {
 	}
 }
 
-func TestController_ProducerBackedSecretSkipsRegistryFallback(t *testing.T) {
+func TestController_AmbientPolicy(t *testing.T) {
 	t.Parallel()
-	f := &fallbackFetcher{}
-	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	addDeclaration(index, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "ghcr-creds"},
-		manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "auth"})
-	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{})
-	st.SetDiscoveryIndex(index)
-	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
-	st.AddObject(repo)
-
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || info.Outcome() != store.OutcomeSkipped {
-		t.Fatalf("status = %+v, want Ready with a skip", info)
-	}
-	if f.fallbackCalls != 0 {
-		t.Errorf("fallback calls = %d, want 0 for a producer-backed Secret", f.fallbackCalls)
-	}
-	if st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
-		t.Error("skipped source must not store an artifact")
+	for _, repo := range []manifest.BaseManifest{
+		&manifest.GitRepository{Name: "r", Namespace: "ns", URL: "ssh://git@fixture/repo"},
+		&manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://fixture/image"},
+	} {
+		for _, tt := range []struct {
+			name            string
+			producer, allow bool
+			failure         error
+		}{
+			{name: "producer", producer: true},
+			{name: "producer allowed", producer: true, allow: true},
+			{name: "success"},
+			{name: "success allowed", allow: true},
+			{name: "failure", failure: manifest.ErrInput},
+			{name: "failure allowed", allow: true, failure: manifest.ErrInput},
+			{name: "timeout", failure: context.DeadlineExceeded},
+			{name: "canceled", failure: context.Canceled},
+		} {
+			t.Run(repo.Named().Kind+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(repo.Named(), "auth", "not found"))
+				calls := 0
+				failure := tt.failure
+				if failure != nil {
+					failure = fmt.Errorf("%w: ambient acquisition: %w", manifest.ErrFlux, failure)
+				}
+				missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+					calls++
+					if failure != nil {
+						return nil, failure
+					}
+					return &store.SourceArtifact{Kind: repo.Named().Kind}, nil
+				}
+				f := &fakeFetcher{err: missing, secret: "auth"}
+				c, st := newConfiguredController(t, map[string]src.Fetcher{repo.Named().Kind: f}, FetchOptions{AllowMissingSecrets: tt.allow})
+				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
+				if tt.producer {
+					addDeclaration(index, missing.Secret, manifest.NamedResource{Group: "external-secrets.io", Kind: "ExternalSecret", Namespace: "ns", Name: "producer"})
+				}
+				st.SetDiscoveryIndex(index)
+				st.AddObject(repo)
+				info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode})
+				wantCalls := 1
+				if tt.producer {
+					wantCalls = 0
+				}
+				wantSkip := tt.producer || tt.allow && failure != nil
+				wantStatus := store.StatusReady
+				if failure != nil && !wantSkip {
+					wantStatus = store.StatusFailed
+				}
+				if calls != wantCalls || info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != wantSkip {
+					t.Fatalf("status=%+v calls=%d; want status=%v skip=%t calls=%d", info, calls, wantStatus, wantSkip, wantCalls)
+				}
+				if failure != nil && !wantSkip && !strings.Contains(info.Message, failure.Error()) {
+					t.Fatalf("settlement lost acquisition error: %+v", info)
+				}
+				if failure != nil && !wantSkip && !strings.Contains(info.Message, "secret ns/auth not found") {
+					t.Fatalf("settlement lost unavailable-material context: %+v", info)
+				}
+				if (st.GetArtifact(repo.Named(), store.ArtifactContent) != nil) != (!wantSkip && failure == nil) {
+					t.Fatal("ambient settlement published the wrong content outcome")
+				}
+				if wantSkip && !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
+					return w.Resource == repo.Named() && w.Category == manifest.WarnSourceCredentialsUnavailable
+				}) {
+					t.Fatal("missing-material settlement lost its warning")
+				}
+			})
+		}
 	}
 }
 
-func TestController_AllowMissingSecretsSkipsFailedRegistryFallback(t *testing.T) {
+func TestPendingSource_AmbientContextError(t *testing.T) {
 	t.Parallel()
-	f := &fallbackFetcher{fallbackErr: fmt.Errorf("%w: registry authentication failed", manifest.ErrInput)}
-	c, st := newConfiguredController(t,
-		map[string]src.Fetcher{manifest.KindOCIRepository: f}, FetchOptions{AllowMissingSecrets: true})
-	repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: metav1.Duration{Duration: time.Hour}}
-	st.AddObject(repo)
-
-	if info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: repo.Named(), ReconcileNode: c.ReconcileNode}); info.Status != store.StatusReady || info.Outcome() != store.OutcomeSkipped {
-		t.Fatalf("status = %+v, want Ready with a skip", info)
-	}
-	if f.fallbackCalls != 1 {
-		t.Errorf("fallback calls = %d, want 1 before skipping", f.fallbackCalls)
-	}
-	if st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
-		t.Error("failed fallback must not store an artifact")
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			t.Parallel()
+			repo := &manifest.GitRepository{Name: "r", Namespace: "ns"}
+			failure := fmt.Errorf("%w: %w", manifest.ErrFlux, cause)
+			missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(repo.Named(), "auth", "not found"))
+			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) { return nil, failure }
+			controller, st := newController(t, nil)
+			st.AddObject(repo)
+			c := &execution{Controller: controller}
+			c.run.Init(controller.Controller, repo.Named())
+			defer c.run.Close()
+			pending := &pendingSource{execution: c, object: repo, missing: missing}
+			var err error
+			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { err = pending.Settle(ctx, manifest.DrainCascade) })
+			c.Tasks.BlockTillDone()
+			if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrMissingSecret) {
+				t.Fatalf("default settlement error = %v; want %v and ErrFlux", err, cause)
+			}
+		})
 	}
 }
 
@@ -1026,6 +1091,38 @@ func TestController_ArtifactMaterializersCycleDrains(t *testing.T) {
 		blocked := status.BlockedBy()
 		if status.Status != store.StatusFailed || !status.IsDependencyFailure() || len(blocked) != 1 || blocked[0] != ids[1-i] || st.GetArtifact(id, store.ArtifactContent) != nil {
 			t.Fatalf("contentless cycle %s = %+v, blocked=%v", id, status, blocked)
+		}
+	}
+}
+
+func TestController_AmbientSettlementExactlyOnce(t *testing.T) {
+	t.Parallel()
+	for _, secret := range []string{"auth", ""} {
+		for _, level := range []manifest.DrainLevel{manifest.DrainNone, manifest.DrainCascade} {
+			t.Run(fmt.Sprintf("secret=%q/level=%d", secret, level), func(t *testing.T) {
+				t.Parallel()
+				repo := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "ssh://git@fixture/repo"}
+				missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(repo.Named(), secret, "credentials unavailable"))
+				calls := 0
+				missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+					calls++
+					return &store.SourceArtifact{Kind: manifest.KindGitRepository}, nil
+				}
+				f := &fakeFetcher{err: missing}
+				c, st := newController(t, map[string]src.Fetcher{manifest.KindGitRepository: f})
+				st.AddObject(repo)
+				dispatch := controllertest.Dispatch{Tasks: c.Tasks, ID: repo.Named(), ReconcileNode: c.ReconcileNode}
+				done := controllertest.Reconcile(t.Context(), t, dispatch, level)
+				if secret != "" && level == manifest.DrainNone {
+					if done || calls != 0 {
+						t.Fatal("ambient tier ran before repository settlement")
+					}
+					done = controllertest.Reconcile(t.Context(), t, dispatch, manifest.DrainCascade)
+				}
+				if !done || calls != 1 || st.GetArtifact(repo.Named(), store.ArtifactContent) == nil {
+					t.Fatalf("settlement: done=%t calls=%d", done, calls)
+				}
+			})
 		}
 	}
 }

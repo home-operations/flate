@@ -60,7 +60,7 @@ func (d *discoverer) admitBootstrapInput(ctx context.Context) (*store.SourceArti
 	}
 	if admitted != nil {
 		for _, warning := range admitted.Warnings {
-			d.cfg.Store.AddWarning(manifest.BootstrapSourceID, warning)
+			d.cfg.Store.AddWarning(warning)
 		}
 	}
 	if admitted.FS == nil || admitted.LocalPath == "" {
@@ -245,9 +245,9 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		location = input.Location()
 	}
 	artifacts, err := git.ResolveLocal(ctx, location, pinned, bootstrap.Revision)
-	for id, artifact := range artifacts {
+	for _, artifact := range artifacts {
 		for _, warning := range artifact.Warnings {
-			d.cfg.Store.AddWarning(id, warning)
+			d.cfg.Store.AddWarning(warning)
 		}
 	}
 	if err != nil {
@@ -263,7 +263,7 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			artifact = artifacts[id]
 			if artifact == nil {
 				d.resolvedSources[id] = candidate
-				d.cfg.Store.AddWarning(id, manifest.Warning{Resource: id, Category: manifest.WarnSourceRefUnavailable,
+				d.cfg.Store.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnSourceRefUnavailable,
 					Message: "declared source ref cannot be satisfied locally; using normal source fetch",
 					Detail:  []string{(*manifest.GitRepositoryRef)(candidate.git.Reference).String(), "ref unavailable in this tree's repository or checkout options require fetching"}})
 				continue
@@ -407,7 +407,7 @@ func (d *discoverer) warnBootstrapAliases(repoRoot string) {
 		return
 	}
 	slices.Sort(names)
-	d.cfg.Store.AddWarning(manifest.NamedResource{}, manifest.Warning{Category: manifest.WarnBootstrapAliases,
+	d.cfg.Store.AddWarning(manifest.Warning{Category: manifest.WarnBootstrapAliases,
 		Message: "aliased multiple bootstrap sources to the working tree; cross-repo refs render against the wrong tree",
 		Detail:  append(names, repoRoot)})
 }

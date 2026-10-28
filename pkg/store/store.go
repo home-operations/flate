@@ -160,7 +160,8 @@ func newShard() *shard {
 // orchestrator (pkg/orchestrator/orchestrator.go) follow the
 // clone-then-AddObject pattern; any new mutation site should too.
 type Store struct {
-	shards [shardCount]*shard
+	shards   [shardCount]*shard
+	supplied *Supplied
 
 	index    atomic.Pointer[manifest.DiscoveryIndex]
 	coverage map[manifest.NamedResource]*contributor
@@ -183,8 +184,8 @@ type Store struct {
 	// reads them once at finalize. Its own mutex keeps advisory writes off the
 	// shard locks' hot path. See warning.go.
 	warnMu    sync.Mutex
-	warnOrder []warningRecord
-	warnIndex map[warningKey]int
+	warnOrder []manifest.Warning
+	warnIndex map[warningKey]struct{}
 }
 
 // New constructs an empty Store.

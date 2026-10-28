@@ -656,9 +656,10 @@ spec:
 			if artifact, ok := st.GetArtifact(pinned.Named(), store.ArtifactContent).(*store.SourceArtifact); !ok || artifact.InputAlias || artifact.Key == "" || st.GetObject(pinned.Named()) != pinned {
 				t.Fatalf("committed source artifact = %+v", artifact)
 			}
+			want = append(want, dir)
 			slices.Sort(want)
 			warnings := st.Warnings()
-			if len(warnings) != 1 || warnings[0].Category != manifest.WarnBootstrapAliases || warnings[0].Count != 1 || !slices.Equal(warnings[0].Detail, append(want, dir)) {
+			if len(warnings) != 1 || warnings[0].Category != manifest.WarnBootstrapAliases || warnings[0].Count != 1 || !slices.Equal(warnings[0].Detail, want) {
 				t.Fatalf("combined alias warning = %+v, want %v", warnings, want)
 			}
 		})
@@ -865,7 +866,7 @@ data: {value: fixture}
 	}
 }
 
-func TestRun_StandaloneSecretWinsProducerPlaceholder(t *testing.T) {
+func TestRun_StandaloneSecretPreservesProducerEvidence(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []string{"standalone", "preexisting", "graph-owned"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -904,11 +905,12 @@ stringData: {HOST: fixture-value}
 			if scenario == "preexisting" {
 				want = "preexisting-value"
 			}
-			if scenario == "graph-owned" {
-				want = "..PLACEHOLDER_HOST.."
-			}
 			secret, ok := st.GetObject(id).(*manifest.Secret)
-			if !ok || secret.StringData["HOST"] != want {
+			if scenario == "graph-owned" {
+				if st.GetObject(id) != nil {
+					t.Fatalf("graph-owned Secret published before rendering: %+v", secret)
+				}
+			} else if !ok || secret.StringData["HOST"] != want {
 				t.Fatalf("Secret = %+v, want HOST=%q", secret, want)
 			}
 			if scenario == "preexisting" && secret != preexisting {
@@ -916,6 +918,9 @@ stringData: {HOST: fixture-value}
 			}
 			for _, doc := range result.Documents {
 				if manifest.DocIdentity(doc) == id {
+					if scenario == "graph-owned" {
+						t.Fatal("graph-owned Secret entered discovery output")
+					}
 					assert.Diff(t, doc["stringData"], map[string]any{"HOST": want})
 				}
 			}

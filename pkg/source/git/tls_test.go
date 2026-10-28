@@ -602,7 +602,7 @@ func TestFetcher_ResolveTransport_EndpointValidation(t *testing.T) {
 		name, secret string
 		wantInput    bool
 	}{
-		{name: "without secretRef"},
+		{name: "without secretRef", wantInput: true},
 		{name: "with secretRef", secret: "creds", wantInput: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -630,14 +630,14 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 	t.Parallel()
 	ca := testutil.SelfSignedCA(t)
 	for _, tc := range []struct {
-		name, errorKey                     string
-		data, encodedData                  map[string]any
-		wantInput, wantMissing, wantBearer bool
+		name, errorKey                                string
+		data, encodedData                             map[string]any
+		wantInput, wantMissing, wantBearer, proxyRead bool
 	}{
 		{name: "hard auth before hard TLS", encodedData: map[string]any{"bearerToken": "%%%fixture", "caFile": "%%%fixture"}, wantInput: true, errorKey: "bearerToken"},
 		{name: "hard auth before missing TLS", data: map[string]any{"ca.crt": "..PLACEHOLDER_ca.."}, encodedData: map[string]any{"bearerToken": "%%%fixture"}, wantInput: true, errorKey: "bearerToken"},
-		{name: "missing auth before absent TLS", data: map[string]any{"username": "u"}, wantMissing: true, errorKey: "username/password"},
-		{name: "missing auth before missing TLS", data: map[string]any{"bearerToken": "..PLACEHOLDER_token..", "ca.crt": "..PLACEHOLDER_ca.."}, wantMissing: true, errorKey: "bearerToken"},
+		{name: "malformed proxy before unavailable auth", data: map[string]any{"username": "u"}, wantInput: true, proxyRead: true, errorKey: "proxy"},
+		{name: "missing TLS before unavailable auth", data: map[string]any{"bearerToken": "..PLACEHOLDER_token..", "ca.crt": "..PLACEHOLDER_ca.."}, wantMissing: true, errorKey: "TLS material"},
 		{name: "hard TLS before missing auth", data: map[string]any{"username": "u"}, encodedData: map[string]any{"ca.crt": "%%%fixture"}, wantInput: true, errorKey: "ca.crt"},
 		{name: "real TLS before wiped auth", data: map[string]any{"bearerToken": "..PLACEHOLDER_token..", "ca.crt": "invalid"}, wantInput: true, errorKey: "ca.crt"},
 		{name: "valid auth hard TLS", data: map[string]any{"username": "u", "password": "p"}, encodedData: map[string]any{"caFile": "%%%fixture"}, wantInput: true, errorKey: "caFile"},
@@ -664,7 +664,7 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 			reads.Init(s, repo.Named(), nil)
 			request, err := (&operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}).resolveTransport(repo)
 			s.AddObject(&manifest.Secret{Name: "proxy", Namespace: "ns", StringData: map[string]any{"address": "http://changed.invalid"}})
-			assert.Equal(t, reads.Valid(), true)
+			assert.Equal(t, reads.Valid(), !tc.proxyRead)
 			s.AddObject(&manifest.Secret{Name: "creds", Namespace: "ns"})
 			assert.Equal(t, reads.Valid(), false)
 			if tc.wantInput || tc.wantMissing {
@@ -674,7 +674,11 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.wantInput)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), tc.wantMissing)
-				if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), "ns/creds") || !strings.Contains(err.Error(), source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name)) {
+				secret, owner := "ns/creds", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name)
+				if tc.proxyRead {
+					secret, owner = "ns/proxy", "GitRepository g"
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.errorKey) || !strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), owner) {
 					t.Fatalf("wrong selected error context: %v", err)
 				}
 				if strings.Contains(err.Error(), "%%%fixture") || strings.Contains(err.Error(), "credential-fixture") {

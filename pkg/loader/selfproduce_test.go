@@ -726,14 +726,7 @@ func TestFinalizeIndex_ExplicitProducerTargetName(t *testing.T) {
 	}
 }
 
-// An ExternalSecret that statically declares its output keys (target.template.data
-// here) materializes a stand-in placeholder Secret in the store, so a downstream
-// substituteFrom / valuesFrom resolves those keys to ..PLACEHOLDER_<key>.. rather
-// than empty — flate's SOPS shape, applied to a secret whose keys are knowable
-// but whose values are not. The scan never clobbers a real Secret already
-// occupying the target id; a dataFrom-only producer declares nothing, so none is
-// synthesized and it stays genuinely unreadable.
-func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
+func TestFinalizeIndex_DeclaredKeysStayUnpublished(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "apps/kustomization.yaml",
@@ -762,14 +755,8 @@ func TestFinalizeIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 		t.Fatal("implicit producer was registered or synthesized before rendering")
 	}
 
-	got, _ := s.GetObject(secretID("secure", "app-secret")).(*manifest.Secret)
-	if got == nil {
-		t.Fatal("app-secret was not synthesized from its declared keys")
-	}
-	for _, k := range []string{"HOST", "TOKEN"} {
-		if want := manifest.ValuePlaceholder(k); got.StringData[k] != want {
-			t.Errorf("app-secret stringData[%s] = %v, want %q", k, got.StringData[k], want)
-		}
+	if s.GetObject(secretID("secure", "app-secret")) != nil || len(s.Productions(secretID("secure", "app-secret"), idx)) == 0 {
+		t.Fatal("declared keys must retain production evidence without canonical publication")
 	}
 	if obj := s.GetObject(secretID("secure", "dyn-secret")); obj != nil {
 		t.Errorf("dataFrom-only ExternalSecret must NOT be synthesized; got %#v", obj)
@@ -832,9 +819,6 @@ func TestFinalizeIndex_MaterializesSopsSecret(t *testing.T) {
 	}
 }
 
-// The placeholder Secret is a wipe-mode stand-in (a stand-in for a value flate
-// can't read), so --no-wipe-secrets suppresses synthesis entirely — the secret
-// is left genuinely absent, exactly as it was before this feature.
 func TestFinalizeIndex_NoSynthesisWithoutWipe(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -932,32 +916,15 @@ func TestFinalizeIndex_ProducerOwnersMultipleTargets(t *testing.T) {
 	}
 }
 
-func TestSelfProduceBuilder_SecretPrecedence(t *testing.T) {
+func TestSelfProduceBuilder_AuthoredSecretReplacement(t *testing.T) {
 	t.Parallel()
-	for _, order := range []string{"placeholder first", "SOPS first", "two SOPS"} {
-		t.Run(order, func(t *testing.T) {
-			t.Parallel()
-			id := secretID("apps", "input")
-			b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, secrets: map[manifest.NamedResource]*manifest.Secret{}}
-			first := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, Data: map[string]any{"first": "..PLACEHOLDER_first.."}}
-			second := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"second": "..PLACEHOLDER_second.."}}
-			want := first
-			switch order {
-			case "placeholder first":
-				b.synthesizePlaceholderSecret(id, []string{"first"})
-				want = second
-				b.materializeSecret(second, "apps", "apps")
-			case "SOPS first":
-				b.materializeSecret(first, "apps", "apps")
-				b.synthesizePlaceholderSecret(id, []string{"second"})
-			case "two SOPS":
-				want = second
-				b.materializeSecret(first, "apps", "apps")
-				b.materializeSecret(second, "apps", "apps")
-			}
-			assert.Diff(t, b.secrets[id], want)
-		})
-	}
+	id := secretID("apps", "input")
+	b := &selfProduceBuilder{store: store.New(), wipeSecrets: true, secrets: map[manifest.NamedResource]*manifest.Secret{}}
+	first := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"first": "..PLACEHOLDER_first.."}}
+	second := &manifest.Secret{Name: id.Name, Namespace: id.Namespace, StringData: map[string]any{"second": "..PLACEHOLDER_second.."}}
+	b.materializeSecret(first, "apps", "apps")
+	b.materializeSecret(second, "apps", "apps")
+	assert.Diff(t, b.secrets[id], second)
 }
 
 func TestFinalizeIndex_MixedKustomizationDataFile(t *testing.T) {

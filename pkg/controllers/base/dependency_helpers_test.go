@@ -32,7 +32,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 	c := gateExecution(e.Controller, obj.Named())
 	defer c.Reads.Retire()
 	deps := c.dependencies(obj, manifest.GateInputs)
-	provider := values.NewStoreProvider(&c.Reads, false, c.SubstituteFrom)
+	provider := values.NewStoreProvider(&c.Reads, false)
 	inputs := c.DataInputs(context.TODO(), obj, provider)
 	inputs = slices.DeleteFunc(inputs, func(input depwait.DataDependency) bool { return input.Optional })
 	for _, input := range inputs {

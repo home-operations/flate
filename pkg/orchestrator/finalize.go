@@ -127,7 +127,7 @@ func (o *Orchestrator) finalize() error {
 	ksCount := len(o.store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	hrCount := len(o.store.ListObjects(manifest.HelmReleaseDomain, manifest.KindHelmRelease))
 	for _, id := range slices.SortedFunc(maps.Keys(o.orphans), manifest.NamedResource.Compare) {
-		o.store.AddWarning(id, manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource, Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
+		o.store.AddWarning(manifest.Warning{Resource: id, Category: manifest.WarnOrphanedResource, Message: "resource orphaned", Detail: []string{o.fileOf(id), o.orphans[id]}})
 	}
 	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
@@ -196,7 +196,7 @@ func (o *Orchestrator) warnMissingCRDs() {
 		for i, id := range dependents {
 			names[i] = id.String()
 		}
-		o.store.AddWarning(crd, manifest.Warning{
+		o.store.AddWarning(manifest.Warning{
 			Resource: crd,
 			Category: manifest.WarnMissingCRD,
 			Message:  fmt.Sprintf("CRD %s absent from offline inputs; accepted for %s", crd.String(), strings.Join(names, ", ")),
@@ -214,7 +214,7 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 	// the "typo'd --path that happens to be an empty directory" case
 	// where flate would otherwise look like a silent success.
 	if ksCount == 0 && hrCount == 0 {
-		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{
+		o.store.AddWarning(manifest.Warning{
 			Category: manifest.WarnEmptyScan,
 			Message:  "no Flux Kustomization or HelmRelease objects found under --path; check the path is correct",
 		})

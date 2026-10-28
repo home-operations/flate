@@ -85,7 +85,7 @@ func TestRun_ExternalSubstitution(t *testing.T) {
 			root := substitutionFixture(t, tc.postBuild, "${VALUE}")
 			args := []string{"build", "all", "--path", root, "--concurrency", "2", "--cache-dir", t.TempDir(), "--skip-kinds", "CustomResourceDefinition"}
 			if tc.input != "" {
-				args = append(args, "--substitute-from", substitutionInput(t, tc.input))
+				args = append(args, "--supply", substitutionInput(t, tc.input))
 			}
 			for _, pair := range tc.pairs {
 				args = append(args, "--substitute", pair)
@@ -131,8 +131,8 @@ func TestLoadSubstitutions_InputValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			path := substitutionInput(t, tc.body)
-			c := commonFlags{substituteFrom: []string{path}}
-			err := c.loadSubstitutions(t.Context())
+			c := commonFlags{supply: []string{path}}
+			err := c.loadInputs(t.Context())
 			if !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("expected input error: %v", err)
 			}
@@ -148,8 +148,8 @@ func TestLoadSubstitutions_InputValidation(t *testing.T) {
 	}
 	t.Run("unreadable", func(t *testing.T) {
 		t.Parallel()
-		c := commonFlags{substituteFrom: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
-		if err := c.loadSubstitutions(t.Context()); !errors.Is(err, manifest.ErrInput) {
+		c := commonFlags{supply: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
+		if err := c.loadInputs(t.Context()); !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("expected input error: %v", err)
 		}
 	})
@@ -157,15 +157,15 @@ func TestLoadSubstitutions_InputValidation(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		c := commonFlags{substituteFrom: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
-		if err := c.loadSubstitutions(ctx); !errors.Is(err, context.Canceled) {
+		c := commonFlags{supply: []string{filepath.Join(t.TempDir(), "absent.yaml")}}
+		if err := c.loadInputs(ctx); !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected cancellation before file I/O: %v", err)
 		}
 	})
 	t.Run("empty and null", func(t *testing.T) {
 		t.Parallel()
-		c := commonFlags{substituteFrom: []string{substitutionInput(t, "---\nnull\n---\n\n")}}
-		if err := c.loadSubstitutions(t.Context()); err != nil || len(c.substitutionSources) != 0 {
+		c := commonFlags{supply: []string{substitutionInput(t, "---\nnull\n---\n\n")}}
+		if err := c.loadInputs(t.Context()); err != nil || len(c.suppliedObjects) != 0 {
 			t.Fatalf("empty documents: %v", err)
 		}
 	})
@@ -177,7 +177,7 @@ func TestRun_SubstitutionFilesAndDuplicates(t *testing.T) {
 	t.Chdir(cwd)
 	testutil.WriteFile(t, cwd, "first,values.yaml", strings.Replace(externalCM, "data: {VALUE: supplied}", "data: {VALUE: first, OLD: old}", 1))
 	testutil.WriteFile(t, cwd, "last.yaml", "---\nnull\n---\n"+strings.Replace(externalCM, "supplied", "second", 1)+"---\n"+strings.Replace(externalCM, "supplied", "last", 1))
-	out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--substitute-from", "first,values.yaml", "--substitute-from", "last.yaml")
+	out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--supply", "first,values.yaml", "--supply", "last.yaml")
 	if code != 0 {
 		t.Fatal(diagnostic)
 	}
@@ -197,14 +197,14 @@ func TestRun_SubstitutionEnvironment(t *testing.T) {
 		{name: "CSV pairs", files: input, pairs: `"VALUE=left,right=tail",VALUE=final`, strict: "1", want: "final"},
 		{name: "quoted CSV value", files: input, pairs: `"VALUE=left,right=tail"`, want: "left,right=tail"},
 		{name: "quoted CSV newline", files: input, pairs: "\"VALUE=left\nright\"", want: "leftright"},
-		{name: "empty env lists", want: "", flags: []string{"--substitute-from", input, "--substitute", "VALUE="}},
-		{name: "file flags override invalid env", files: ":", strict: "true", want: "supplied", flags: []string{"--substitute-from", input}},
+		{name: "empty env lists", want: "", flags: []string{"--supply", input, "--substitute", "VALUE="}},
+		{name: "file flags override invalid env", files: ":", strict: "true", want: "supplied", flags: []string{"--supply", input}},
 		{name: "pair flags override invalid env", files: input, pairs: `"private-fixture-value`, want: "flag", flags: []string{"--substitute", "VALUE=flag"}},
 		{name: "false flag overrides invalid bool env", files: input, strict: "invalid", want: "supplied", flags: []string{"--strict-substitutions=false"}},
 		{name: "false flag overrides true env", files: input, strict: "true", want: "supplied", flags: []string{"--strict-substitutions=false"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("FLATE_SUBSTITUTE_FROM", tc.files)
+			t.Setenv("FLATE_SUPPLY", tc.files)
 			t.Setenv("FLATE_SUBSTITUTE", tc.pairs)
 			t.Setenv("FLATE_STRICT_SUBSTITUTIONS", tc.strict)
 			if tc.strict == "" {
@@ -246,7 +246,7 @@ func TestRun_SubstitutionDiagnosticsRedacted(t *testing.T) {
 		})
 	}
 	for _, input := range []string{":", "file:", ":file"} {
-		if _, err := substitutionEnv("substitute-from", input); !errors.Is(err, manifest.ErrInput) {
+		if _, err := substitutionEnv("supply", input); !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("empty file component accepted: %v", err)
 		}
 	}
@@ -303,14 +303,14 @@ func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 			if code != 0 {
 				t.Fatal(diagnostic)
 			}
-			for _, flag := range []string{"substitute-from", "substitute", "strict-substitutions"} {
+			for _, flag := range []string{"supply", "substitute", "strict-substitutions"} {
 				for _, want := range []string{"--" + flag, envKey(flag)} {
 					if !strings.Contains(help, want) {
 						t.Fatalf("help missing %s", want)
 					}
 				}
 			}
-			args := []string{verb, "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--substitute-from", input, "--substitute", "VALUE=overlay", "--strict-substitutions"}
+			args := []string{verb, "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", input, "--substitute", "VALUE=overlay", "--strict-substitutions"}
 			if verb == "diff" {
 				base := substitutionFixture(t, substitutionReference("ConfigMap", false), "${VALUE}-base")
 				args = append(args, "--path-orig", base, "-o", "diff", "--skip-kinds", "CustomResourceDefinition")
@@ -326,16 +326,16 @@ func TestRun_SubstitutionHelpAndSharedCommands(t *testing.T) {
 	}
 }
 
-func TestRun_SubstitutionIsolation(t *testing.T) {
+func TestRun_SuppliedReaderValidation(t *testing.T) {
 	for _, ref := range []string{"secretRef", "certSecretRef", "proxySecretRef"} {
 		t.Run(ref, func(t *testing.T) {
 			root := substitutionFixture(t, "", "literal")
 			testutil.WriteFile(t, root, "flux.yaml", testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  sourceRef: {kind: OCIRepository, name: remote}\n"))
 			testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: remote, namespace: apps}\nspec:\n  url: oci://example.invalid/fixture\n  "+ref+": {name: external}\n")
 			input := substitutionInput(t, externalSecret)
-			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--substitute-from", input)
-			if code != 1 || !strings.Contains(diagnostic, "external") || !strings.Contains(diagnostic, "not found") {
-				t.Fatalf("source input leaked into %s: %s", ref, diagnostic)
+			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", input)
+			if code != 1 || !strings.Contains(diagnostic, "external") || strings.Contains(diagnostic, "not found") {
+				t.Fatalf("supplied %s was not read by its parser: %s", ref, diagnostic)
 			}
 		})
 	}
@@ -349,9 +349,9 @@ func TestRun_SubstitutionIsolation(t *testing.T) {
 			if kind == "Secret" {
 				input = externalSecret
 			}
-			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--substitute-from", substitutionInput(t, input))
-			if code != 1 || !strings.Contains(diagnostic, "external") {
-				t.Fatalf("external %s satisfied Helm values: %s", kind, diagnostic)
+			_, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--supply", substitutionInput(t, input))
+			if code != 1 || !strings.Contains(diagnostic, "values.yaml") || !strings.Contains(diagnostic, "external") {
+				t.Fatalf("supplied %s did not retain requested-key validation: %s", kind, diagnostic)
 			}
 		})
 	}
@@ -391,11 +391,11 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 	testutil.WriteFile(t, root, "producer/kustomization.yaml", "resources: [input.yaml]\n")
 	testutil.WriteFile(t, root, "producer/input.yaml", strings.Replace(externalCM, "supplied", "repository", 1))
 	input := substitutionInput(t, strings.Replace(externalCM, "supplied", "private-fixture-value", 1))
-	out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--substitute-from", input, "--strict-substitutions", "--log-level", "warn")
+	out, diagnostic, code := runCLI(t, "build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "4", "--supply", input, "--strict-substitutions", "--log-level", "warn")
 	if code != 0 {
 		t.Fatal(diagnostic)
 	}
-	if strings.Count(diagnostic, "repository substitution source takes precedence") != 1 || !strings.Contains(diagnostic, input) || !strings.Contains(diagnostic, "ConfigMap apps/external") || strings.Contains(diagnostic, "private-fixture-value") {
+	if strings.Count(diagnostic, "repository data takes precedence over") != 1 || !strings.Contains(diagnostic, input) || !strings.Contains(diagnostic, "ConfigMap apps/external") || strings.Contains(diagnostic, "private-fixture-value") {
 		t.Fatalf("collision diagnostic: %s", diagnostic)
 	}
 	if strings.Contains(out, "private-fixture-value") {
@@ -415,7 +415,7 @@ func TestRun_SubstitutionRepositoryCollision(t *testing.T) {
 
 func TestRun_SubstitutionSecretReadableAdvisory(t *testing.T) {
 	root := substitutionFixture(t, substitutionReference("Secret", false), "${VALUE}")
-	out, diagnostic, code := runCLI(t, "test", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--substitute-from", substitutionInput(t, externalSecret), "--strict-substitutions")
+	out, diagnostic, code := runCLI(t, "test", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "--supply", substitutionInput(t, externalSecret), "--strict-substitutions")
 	if code != 0 || strings.Contains(out+diagnostic, "could not be read offline") {
 		t.Fatalf("supplied Secret reported unreadable: %s %s", out, diagnostic)
 	}
@@ -434,7 +434,7 @@ func TestRun_SubstitutionSecretMissingChartValue(t *testing.T) {
 		t.Run(fmt.Sprintf("supplied=%t", supplied), func(t *testing.T) {
 			args := []string{"test", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2"}
 			if supplied {
-				args = append(args, "--substitute-from", input)
+				args = append(args, "--supply", input)
 			}
 			out, diagnostic, code := runCLI(t, args...)
 			if (code == 1) != supplied || supplied && !strings.Contains(out+diagnostic, "greeting needed") {
@@ -482,7 +482,7 @@ func TestRun_SubstitutionCachedInputChanges(t *testing.T) {
 					args = append(args, "--substitute", "VALUE="+value)
 				} else {
 					testutil.WriteFile(t, inputs, "values.yaml", strings.Replace(tc.input, "supplied", value, 1))
-					args = append(args, "--substitute-from", filepath.Join(inputs, "values.yaml"))
+					args = append(args, "--supply", filepath.Join(inputs, "values.yaml"))
 				}
 				out, diagnostic, code := runCLI(t, args...)
 				if code != 0 {

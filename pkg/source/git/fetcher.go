@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -19,11 +22,13 @@ import (
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/filesystem"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"golang.org/x/crypto/ssh/agent"
 
 	// HTTPS operations must retain flate's egress guard.
 	_ "github.com/home-operations/flate/pkg/source/git/internal/gittransport"
@@ -64,41 +69,38 @@ func (f *operation) fetchSource(ctx context.Context, repo *manifest.GitRepositor
 	}
 	request, err := f.resolveTransport(repo)
 	if err != nil {
+		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.ambientUser != "" {
+			missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+				return f.fetch(ctx, request, policy)
+			}
+		}
 		return nil, err
 	}
 	return f.fetch(ctx, request, policy)
 }
 
 func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisition, error) {
+	endpoint, err := f.validateRepo(repo)
+	if err != nil {
+		return gitAcquisition{}, err
+	}
 	secrets := f.secrets
 	var sec *manifest.Secret
 	if repo.SecretRef != nil && secrets != nil {
 		sec = secrets(repo.Namespace, repo.SecretRef.Name)
 	}
-	auth, authErr := f.resolveAuth(repo, sec)
+	auth, authErr := f.resolveAuth(repo, sec, endpoint)
 	if authErr != nil && !errors.Is(authErr, manifest.ErrMissingSecret) {
 		return gitAcquisition{}, authErr
 	}
-	var skipTLS bool
-	if repo.SecretRef != nil {
-		endpoint, err := transport.NewEndpoint(repo.URL)
-		if err != nil {
-			return gitAcquisition{}, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
-		}
-		skipTLS = endpoint.Protocol == "ssh"
-	}
+	skipTLS := endpoint.Protocol == "ssh"
 	var inputs []source.TransportInput
 	if repo.SecretRef != nil && !skipTLS && secrets != nil {
 		inputs = append(inputs, source.TransportInput{Reference: repo.SecretRef, Use: source.TransportSecret, OptionalTLS: true, CAFallback: true})
 	}
-	if authErr == nil {
-		inputs = append(inputs, source.TransportInput{Reference: repo.ProxySecretRef, Use: source.TransportProxy})
-	}
+	inputs = append(inputs, source.TransportInput{Reference: repo.ProxySecretRef, Use: source.TransportProxy})
 	owner := repo.Named()
 	resolved, err := source.ResolveTransport(secrets, owner, inputs)
-	if authErr != nil && (err == nil || errors.Is(err, manifest.ErrMissingSecret)) {
-		return gitAcquisition{}, authErr
-	}
 	if err != nil {
 		return gitAcquisition{}, err
 	}
@@ -131,14 +133,15 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisiti
 		}
 		material = [2]any{secretMaterial, opts.ProxyOptions}
 	}
-	return gitAcquisition{spec: repo, options: opts, material: material}, nil
+	request := gitAcquisition{spec: repo, options: opts, material: material}
+	if authErr != nil && skipTLS {
+		request.ambientUser = cmp.Or(endpoint.User, "git")
+	}
+	return request, authErr
 }
 
 func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sourcecache.Policy) (*store.SourceArtifact, error) {
-	repo, opts := request.spec, request.options
-	if err := f.validateRepo(repo); err != nil {
-		return nil, err
-	}
+	repo := request.spec
 	ref := (*manifest.GitRepositoryRef)(repo.Reference)
 	refLabel := cmp.Or(ref.Label(), "HEAD")
 	content := struct {
@@ -158,11 +161,36 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 	policy.Timeout = &timeout
 	var input *gittree.FS
 	var identity string
+	usedAgent := false
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
-		input = nil
-		cloned, err := f.acquire(ctx, storer, worktree, request)
+		input, usedAgent = nil, false
+		attempt := request
+		if request.ambientUser != "" {
+			var dialer net.Dialer
+			conn, err := dialer.DialContext(ctx, "unix", os.Getenv("SSH_AUTH_SOCK"))
+			if err != nil {
+				return plumbing.ZeroHash, err
+			}
+			stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+			defer func() {
+				stop()
+				_ = conn.Close()
+			}()
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return plumbing.ZeroHash, err
+			}
+			callback, err := gitssh.NewKnownHostsCallback(filepath.Join(homeDir, ".ssh", "known_hosts"))
+			if err != nil {
+				return plumbing.ZeroHash, err
+			}
+			auth := &gitssh.PublicKeysCallback{User: request.ambientUser, Callback: agent.NewClient(conn).Signers}
+			auth.HostKeyCallback = callback
+			attempt.options.Auth = auth
+		}
+		cloned, err := f.acquire(ctx, storer, worktree, attempt)
 		if err != nil {
-			return plumbing.ZeroHash, err
+			return plumbing.ZeroHash, errors.Join(ctx.Err(), err)
 		}
 		hash, err := resolveRefHash(cloned, repo.Reference, true)
 		if err != nil {
@@ -172,8 +200,8 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 			if err := checkoutRef(cloned, hash, repo.SparseCheckout); err != nil {
 				return plumbing.ZeroHash, err
 			}
-			if err := f.updateSubmodules(ctx, cloned, opts.Auth, git.DefaultSubmoduleRecursionDepth); err != nil {
-				return plumbing.ZeroHash, err
+			if err := f.updateSubmodules(ctx, cloned, attempt.options.Auth, git.DefaultSubmoduleRecursionDepth); err != nil {
+				return plumbing.ZeroHash, errors.Join(ctx.Err(), err)
 			}
 		}
 
@@ -182,6 +210,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		if err != nil {
 			return plumbing.ZeroHash, fmt.Errorf("%w: validate git view: %w", manifest.ErrInput, err)
 		}
+		usedAgent = request.ambientUser != ""
 		return hash, nil
 	})
 	if err != nil {
@@ -196,7 +225,11 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%w: %s: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
 	}
 
-	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Content: identity, Warnings: gitWarnings(input, repo.Named(), repo.URL, refLabel)}, nil
+	warnings := gitWarnings(input, repo.Named(), repo.URL, refLabel)
+	if usedAgent {
+		warnings = append(warnings, manifest.Warning{Resource: repo.Named(), Category: manifest.WarnLocalSSHAgent, Message: "authenticated with the local SSH agent", Count: 1})
+	}
+	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repo.URL, Revision: generation.Commit.String(), FS: input, Key: id, Content: identity, Warnings: warnings}, nil
 }
 
 func gitWarningArtifact(input *gittree.FS, id manifest.NamedResource, repository, ref string) *store.SourceArtifact {
@@ -231,10 +264,11 @@ func gitWarnings(input *gittree.FS, id manifest.NamedResource, repository, ref s
 }
 
 type gitAcquisition struct {
-	timeout  time.Duration
-	spec     *manifest.GitRepository
-	options  git.CloneOptions
-	material any
+	ambientUser string
+	timeout     time.Duration
+	spec        *manifest.GitRepository
+	options     git.CloneOptions
+	material    any
 }
 
 func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree billy.Filesystem, request gitAcquisition) (*git.Repository, error) {
@@ -334,24 +368,24 @@ func initRemote(storer storage.Storer, worktree billy.Filesystem, url string) (*
 	return repo, err
 }
 
-func (f *Fetcher) validateRepo(repo *manifest.GitRepository) error {
+func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoint, error) {
 	if repo == nil {
-		return errors.New("git repository is nil")
+		return nil, errors.New("git repository is nil")
 	}
 	if repo.URL == "" {
-		return fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name))
+		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name))
+	}
+	endpoint, err := transport.NewEndpoint(repo.URL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
 	}
 	if f.RestrictSchemes {
-		endpoint, err := transport.NewEndpoint(repo.URL)
-		if err != nil {
-			return fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
-		}
 		// Restricted scp-style remotes require an explicit user.
 		ssh := endpoint.Protocol == "ssh" && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
 		if endpoint.Protocol != "https" && !ssh {
-			return fmt.Errorf("%w: %s url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
+			return nil, fmt.Errorf("%w: %s url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
 				manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.URL)
 		}
 	}
-	return nil
+	return endpoint, nil
 }

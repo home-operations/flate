@@ -121,7 +121,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			} else if tc.field == "tls.crt" {
 				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo)
 			} else {
-				auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, sec)
+				auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, sec, testEndpoint(t, repo.URL))
 			}
 			if err != nil {
 				assert.Equal(t, auth == nil, true)
@@ -195,7 +195,7 @@ func TestFetcher_HTTPSBasicAuth(t *testing.T) {
 	} {
 		t.Run(url, func(t *testing.T) {
 			t.Parallel()
-			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", url, "creds"))}).resolveAuth(gitRepoWithSecret("g", url, "creds"), fInputs.secrets("ns", "creds"))
+			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", url, "creds"))}).resolveAuth(gitRepoWithSecret("g", url, "creds"), fInputs.secrets("ns", "creds"), testEndpoint(t, url))
 			if err != nil {
 				t.Fatalf("resolveAuth: %v", err)
 			}
@@ -227,7 +227,7 @@ func TestFetcher_HTTPSBearerWinsOverBasic(t *testing.T) {
 		URL:       "https://github.com/x/y.git",
 		SecretRef: &manifest.LocalObjectReference{Name: "creds"},
 	}
-	auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, fInputs.secrets(repo.Namespace, repo.SecretRef.Name))
+	auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, fInputs.secrets(repo.Namespace, repo.SecretRef.Name), testEndpoint(t, repo.URL))
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestFetcher_NoSecretIsAnonymous(t *testing.T) {
 		Name: "g", Namespace: "ns",
 		URL: "https://github.com/x/y.git",
 	}
-	auth, err := (&operation{Fetcher: f}).resolveAuth(repo, nil)
+	auth, err := (&operation{Fetcher: f}).resolveAuth(repo, nil, testEndpoint(t, repo.URL))
 	if err != nil {
 		t.Fatalf("resolveAuth: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestFetcher_SSHAuthEndpointUser(t *testing.T) {
 	} {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", tc.url, "creds"))}).resolveAuth(gitRepoWithSecret("g", tc.url, "creds"), fInputs.secrets("ns", "creds"))
+			auth, err := (&operation{Fetcher: f, secrets: fInputs.lookup(gitRepoWithSecret("g", tc.url, "creds"))}).resolveAuth(gitRepoWithSecret("g", tc.url, "creds"), fInputs.secrets("ns", "creds"), testEndpoint(t, tc.url))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -315,4 +315,22 @@ func TestFetcher_ForceGenericProvider(t *testing.T) {
 	if !errors.Is(err, manifest.ErrMissingSecret) {
 		t.Errorf("want ErrMissingSecret from the generic path; got %v", err)
 	}
+}
+
+func testEndpoint(t *testing.T, url string) *transport.Endpoint {
+	t.Helper()
+	endpoint, err := transport.NewEndpoint(url)
+	assert.NoError(t, err)
+	return endpoint
+}
+
+func testSSHIdentity(t *testing.T) (string, ssh.Signer) {
+	t.Helper()
+	_, key, err := ed25519.GenerateKey(nil)
+	assert.NoError(t, err)
+	block, err := ssh.MarshalPrivateKey(key, "fixture")
+	assert.NoError(t, err)
+	signer, err := ssh.NewSignerFromKey(key)
+	assert.NoError(t, err)
+	return string(pem.EncodeToMemory(block)), signer
 }

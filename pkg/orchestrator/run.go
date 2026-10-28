@@ -76,7 +76,6 @@ func (o *Orchestrator) configureControllers() {
 	}, o.cfg.SourceRetry)
 	existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
 	common := base.Options{
-		SubstituteFrom:          o.substitutionSources,
 		SkipKinds:               o.cfg.HelmOptions.SkipResourceKinds(),
 		DependencySubstitutions: o.dependencySubstitutions,
 		Filter:                  o.filter,

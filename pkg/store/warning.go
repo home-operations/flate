@@ -3,57 +3,41 @@ package store
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-// AddWarning records one advisory per origin and complete warning payload.
-// Count reports distinct origins sharing a resource, category, message and
-// ordered detail; incoming Count is ignored. A zero origin identifies a
-// render-global advisory independently of the displayed Resource.
-func (s *Store) AddWarning(origin manifest.NamedResource, w manifest.Warning) {
+// AddWarning retains each complete advisory payload once.
+func (s *Store) AddWarning(w manifest.Warning) {
 	detail := ""
 	if len(w.Detail) > 0 {
 		detail = fmt.Sprintf("%q", w.Detail)
-		w.Detail = slices.Clone(w.Detail)
 	} else {
 		w.Detail = nil
 	}
 	key := warningKey{w.Resource, w.Category, w.Message, detail}
+	w.Detail = slices.Clone(w.Detail)
 
 	s.warnMu.Lock()
 	defer s.warnMu.Unlock()
-	if i, ok := s.warnIndex[key]; ok {
-		record := &s.warnOrder[i]
-		if _, seen := record.origins[origin]; !seen {
-			record.origins[origin] = struct{}{}
-			record.warning.Count = len(record.origins)
-		}
+	if _, ok := s.warnIndex[key]; ok {
 		return
 	}
 	if s.warnIndex == nil {
-		s.warnIndex = make(map[warningKey]int)
+		s.warnIndex = make(map[warningKey]struct{})
 	}
 	w.Count = 1
-	s.warnIndex[key] = len(s.warnOrder)
-	s.warnOrder = append(s.warnOrder, warningRecord{
-		warning: w,
-		origins: map[manifest.NamedResource]struct{}{origin: {}},
-	})
+	s.warnIndex[key] = struct{}{}
+	s.warnOrder = append(s.warnOrder, w)
 }
 
 // Warnings returns a copy of the collected advisories ordered by
 // manifest.CompareWarning, or nil when none were recorded.
 func (s *Store) Warnings() []manifest.Warning {
-	reduction := &Store{}
 	s.warnMu.Lock()
-	for _, record := range s.warnOrder {
-		for origin := range record.origins {
-			reduction.AddWarning(origin, record.warning)
-		}
-	}
+	out := slices.Clone(s.warnOrder)
 	s.warnMu.Unlock()
-	var out []manifest.Warning
 	var bundles []*ReadSet
 	for _, sh := range s.shards {
 		sh.mu.RLock()
@@ -68,13 +52,8 @@ func (s *Store) Warnings() []manifest.Warning {
 	}
 	for _, reads := range bundles {
 		if reads.Valid() {
-			for _, warning := range reads.warnings {
-				reduction.AddWarning(reads.id, warning)
-			}
+			out = append(out, reads.warnings...)
 		}
-	}
-	for _, record := range reduction.warnOrder {
-		out = append(out, record.warning)
 	}
 	type contribution struct {
 		owner manifest.NamedResource
@@ -122,12 +101,28 @@ func (s *Store) Warnings() []manifest.Warning {
 		}
 	}
 	slices.SortFunc(out, manifest.CompareWarning)
-	return out
-}
-
-type warningRecord struct {
-	warning manifest.Warning
-	origins map[manifest.NamedResource]struct{}
+	n := 0
+	for i := 0; i < len(out); {
+		warning := out[i]
+		warning.Count = 1
+		warning.Detail = slices.Clone(warning.Detail)
+		messages := []string{warning.Message}
+		j := i + 1
+		for j < len(out) && out[j].Category == warning.Category && out[j].Resource == warning.Resource {
+			warning.Detail = append(warning.Detail, out[j].Detail...)
+			if message := out[j].Message; message != messages[len(messages)-1] {
+				messages = append(messages, message)
+			}
+			j++
+		}
+		warning.Message = strings.Join(messages, "; ")
+		slices.Sort(warning.Detail)
+		warning.Detail = slices.Compact(warning.Detail)
+		out[n] = warning
+		n++
+		i = j
+	}
+	return out[:n]
 }
 
 type warningKey struct {

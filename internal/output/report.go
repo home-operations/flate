@@ -207,6 +207,7 @@ func withContext(context, text string) string {
 
 func warningsBlock(warnings []Warning, color bool) string {
 	items := make([]string, 0, len(warnings))
+	var information []string
 	for _, w := range warnings {
 		wn := w.Warning
 		head := wn.Message
@@ -221,12 +222,26 @@ func warningsBlock(warnings []Warning, color bool) string {
 			head = fmt.Sprintf("%s (×%d)", head, wn.Count)
 		}
 		item := Warn(head, color)
+		if wn.Category == manifest.WarnLocalSSHAgent {
+			item = Dim(head, color)
+		}
 		if len(wn.Detail) > 0 {
 			item += "\n      " + Dim(strings.Join(wn.Detail, ", "), color)
 		}
-		items = append(items, item)
+		if wn.Category == manifest.WarnLocalSSHAgent {
+			information = append(information, item)
+		} else {
+			items = append(items, item)
+		}
 	}
-	return section(Warn(fmt.Sprintf("%s warnings (%d)", GlyphWarn, len(warnings)), color), items)
+	block := section(Warn(fmt.Sprintf("%s warnings (%d)", GlyphWarn, len(items)), color), items)
+	if len(information) > 0 {
+		if block != "" {
+			block += "\n\n"
+		}
+		block += section(Dim(fmt.Sprintf("information (%d)", len(information)), color), information)
+	}
+	return block
 }
 
 // section composes a titled footer block: the header line, then each item

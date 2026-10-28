@@ -525,8 +525,7 @@ data:
 		t.Fatalf("rendered fallback = %q, want fallback", got)
 	}
 	assert.Diff(t, st.Warnings(), []manifest.Warning{
-		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom ConfigMap/default/runtime-values omitted from offline render", Count: 1},
-		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom Secret/default/app-values omitted from offline render", Count: 1},
+		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom ConfigMap/default/runtime-values omitted from offline render; required valuesFrom Secret/default/app-values omitted from offline render", Count: 1},
 	})
 	warnings := st.Warnings()
 	hr = hr.Clone()
@@ -542,11 +541,9 @@ data:
 	hr.ValuesFrom = append(hr.ValuesFrom, manifest.ValuesReference{Kind: manifest.KindSecret, Name: "another-values"})
 	st.AddObject(hr)
 	assert.Equal(t, controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: hr.Named(), ReconcileNode: c.ReconcileNode}).Status, store.StatusReady)
-	if !slices.ContainsFunc(st.Warnings(), func(w manifest.Warning) bool {
-		return w.Message == "required valuesFrom Secret/default/another-values omitted from offline render" && w.Count == 1
-	}) {
-		t.Fatalf("new omitted reference did not produce a Count 1 warning: %+v", st.Warnings())
-	}
+	assert.Diff(t, st.Warnings(), []manifest.Warning{
+		{Resource: hr.Named(), Category: manifest.WarnOmittedValues, Message: "required valuesFrom ConfigMap/default/runtime-values omitted from offline render; required valuesFrom Secret/default/another-values omitted from offline render; required valuesFrom Secret/default/app-values omitted from offline render", Count: 1},
+	})
 	invalid := hr.Clone()
 	invalid.Name = "invalid"
 	invalid.Values = map[string]any{"required": ""}

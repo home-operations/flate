@@ -136,7 +136,13 @@ func TestKustomizationFingerprint_PreparedSources(t *testing.T) {
 				} else {
 					source = &manifest.Secret{Name: "external", Namespace: "apps", StringData: map[string]any{"VALUE": value}}
 				}
-				provider := values.NewStoreProvider(store.New(), true, map[manifest.NamedResource]manifest.BaseManifest{source.Named(): source})
+				st := store.New()
+				snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				st.SetSupplied(snapshot)
+				provider := values.NewStoreProvider(st, true)
 				prepared, err := kustomize.Prepare(ks, provider, nil)
 				if err != nil {
 					t.Fatal(err)
@@ -163,7 +169,7 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 	ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	ks.PostBuild = &kustomizev1.PostBuild{}
 	ks.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "external"}}}
-	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st, true, nil), nil)
+	ordinary, err := kustomize.Prepare(ks, values.NewStoreProvider(st, true), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,13 +179,13 @@ func TestKustomizationFingerprint_NoSubstitutionOptions(t *testing.T) {
 		opts Options
 	}{
 		{name: "nil"},
-		{name: "empty", opts: Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{}, Substitute: map[string]string{}}},
+		{name: "empty", opts: Options{Substitute: map[string]string{}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := New(st, task.NewBounded(2), nil, false)
 			c.Configure(tc.opts, sourcecache.RetryConfig{})
-			prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, c.WipeSecrets, nil), c.substitute)
+			prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(&c.newExecution(ks.Named()).run.Reads, c.WipeSecrets), c.substitute)
 			if err != nil {
 				t.Fatal(err)
 			}

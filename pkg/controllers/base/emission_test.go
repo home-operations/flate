@@ -227,7 +227,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 				if s.GetObject(target) != nil {
 					t.Fatal("runtime placeholder has a store writer")
 				}
-				data := values.NewStoreProvider(s, wipe, nil).Data(target)
+				data := values.NewStoreProvider(s, wipe).Data(target)
 				if !wipe {
 					if data != nil {
 						t.Fatal("wiping disabled synthesized placeholder")
@@ -245,7 +245,7 @@ func TestEmit_RuntimeProducerReplacement(t *testing.T) {
 				}
 			}
 			c.Emit(parent.Named(), &store.Emission{Complete: true}, nil)
-			if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe, nil).Data(target) != nil {
+			if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
 				t.Fatal("omitted declaration retained")
 			}
 			if invalidations != 3 {
@@ -293,7 +293,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 					if got := s.Productions(target, nil); len(got) != 1 || got[0].Declaration.Kind != tc.kind {
 						t.Fatalf("runtime declaration evidence: %v", got)
 					}
-					data := values.NewStoreProvider(s, wipe, nil).Data(target)
+					data := values.NewStoreProvider(s, wipe).Data(target)
 					known := wipe && tc.name != "bucket" && target.Kind == manifest.KindSecret
 					if (data != nil) != known {
 						t.Fatalf("known-key availability=%t want %t", data != nil, known)
@@ -331,7 +331,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 					if len(s.Productions(target, nil)) != 1 {
 						t.Fatal("target rename lost new contribution")
 					}
-					data := values.NewStoreProvider(s, wipe, nil).Data(target)
+					data := values.NewStoreProvider(s, wipe).Data(target)
 					if !wipe || tc.name == "bucket" {
 						if data != nil {
 							t.Fatal("unknown or wipe-disabled keys synthesized data")
@@ -360,7 +360,7 @@ func TestEmit_RuntimeProducerTargets(t *testing.T) {
 				}
 				c.Emit(supporter.Named(), &store.Emission{Complete: true}, nil)
 				for _, target := range tc.targets {
-					if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe, nil).Data(target) != nil {
+					if len(s.Productions(target, nil)) != 0 || values.NewStoreProvider(s, wipe).Data(target) != nil {
 						t.Fatal("last supporter withdrawal retained target data")
 					}
 				}
@@ -399,7 +399,7 @@ func TestEmit_RuntimeProducerDataPrecedence(t *testing.T) {
 				if actual {
 					s.AddObject(&manifest.Secret{Name: target.Name, Namespace: target.Namespace, StringData: map[string]any{"X": "actual"}})
 				}
-				data := values.NewStoreProvider(s, true, nil).Data(target)
+				data := values.NewStoreProvider(s, true).Data(target)
 				if pending != "none" && !actual {
 					if data != nil {
 						t.Fatal("declaration placeholder outranked pending materializer")
@@ -483,7 +483,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			first := newExecution(c, obj.Named())
 			first.Reads.GetObject(obj.Named())
 			warning := manifest.Warning{Resource: obj.Named(), Category: manifest.WarnStaleValues, Message: "unused value"}
-			first.Reads.AddWarning(obj.Named(), warning)
+			first.Reads.AddWarning(warning)
 			_, _, next := first.Reads.GetEmission(obj.Named())
 			next.Children = []store.Child{{Obj: child}}
 			next.Fingerprint, next.Complete = manifest.Fingerprint("equal projection"), true

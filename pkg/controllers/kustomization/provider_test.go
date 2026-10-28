@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -19,29 +18,33 @@ import (
 	"github.com/home-operations/flate/pkg/values"
 )
 
-func TestSubstitutionProvider_AcceptedIdentity(t *testing.T) {
+func TestSubstitutionProvider_ExactIdentity(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name, group, kind, namespace, ref string
-		accepted                          bool
+		name, kind, namespace, ref string
+		accepted                   bool
 	}{
-		{"exact", "", "ConfigMap", "apps", "external", true},
-		{"wrong group", "example.test", "ConfigMap", "apps", "external", false},
-		{"wrong kind", "", "Secret", "apps", "external", false},
-		{"wrong namespace", "", "ConfigMap", "other", "external", false},
-		{"wrong name", "", "ConfigMap", "apps", "other", false},
+		{"exact", manifest.KindConfigMap, "apps", "external", true},
+		{"wrong kind", manifest.KindSecret, "apps", "external", false},
+		{"wrong namespace", manifest.KindConfigMap, "other", "external", false},
+		{"wrong name", manifest.KindConfigMap, "apps", "other", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
+			var source manifest.BaseManifest = &manifest.ConfigMap{Name: tc.ref, Namespace: tc.namespace, Data: map[string]any{"VALUE": "supplied"}}
+			if tc.kind == manifest.KindSecret {
+				source = &manifest.Secret{Name: tc.ref, Namespace: tc.namespace, StringData: map[string]any{"VALUE": "supplied"}}
+			}
+			snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
+			assert.NoError(t, err)
+			st.SetSupplied(snapshot)
 			c := New(st, task.NewBounded(2), nil, true)
-			source := &manifest.ConfigMap{Name: "external", Namespace: "apps", Data: map[string]any{"VALUE": "supplied"}}
-			supplied := map[manifest.NamedResource]manifest.BaseManifest{{Group: tc.group, Kind: tc.kind, Namespace: tc.namespace, Name: tc.ref}: source}
-			c.Configure(Options{SubstituteFrom: supplied, Substitute: map[string]string{"VALUE": "overlay"}}, sourcecache.RetryConfig{})
-			ks := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "ConfigMap", Name: "external"}}}}
-			execution := c.newExecution(ks.Named())
-			input := execution.data.Lookup(source.Named())
-			if (input.Data == source) != tc.accepted {
+			c.Configure(Options{Substitute: map[string]string{"VALUE": "overlay"}}, sourcecache.RetryConfig{})
+			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
+			defer execution.run.Close()
+			input := execution.data.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "external"})
+			if (input.Data != nil) != tc.accepted {
 				t.Fatalf("input=%+v accepted=%t", input, tc.accepted)
 			}
 		})
@@ -63,20 +66,23 @@ func TestSubstitutionProvider_AcceptedSourceAndFallback(t *testing.T) {
 			other := external.WithNamespace("other")
 			st.AddObject(other)
 			c := New(st, task.NewBounded(2), nil, true)
-			c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{external.Named(): external}}, sourcecache.RetryConfig{})
+			snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: external}})
+			assert.NoError(t, err)
+			st.SetSupplied(snapshot)
+			c.Configure(Options{}, sourcecache.RetryConfig{})
 			st.AddObject(tc.late)
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
-			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets, c.SubstituteFrom)
+			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
 			missing := manifest.NamedResource{Kind: external.Named().Kind, Namespace: "apps", Name: "absent"}
-			if provider.Data(external.Named()) != external.(manifest.Data) || provider.Data(other.Named()) != other.(manifest.Data) || provider.Data(missing) != nil {
-				t.Fatal("provider lost exact frozen precedence or fallback")
+			if provider.Data(external.Named()) != tc.late.(manifest.Data) || provider.Data(other.Named()) != other.(manifest.Data) || provider.Data(missing) != nil {
+				t.Fatal("provider lost repository precedence or exact identity")
 			}
 			if !provider.Lookup(external.Named()).Data.HasKeys() {
 				t.Fatal("readable supplied source reported unreadable")
 			}
 
-			if got, _, err := values.NewStoreProvider(st, true, nil).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
+			if got, _, err := values.NewStoreProvider(st, true).Data(external.Named()).Value("VALUE"); err != nil || got != "late" {
 				t.Fatal("ordinary provider used supplied values")
 			}
 		})
@@ -91,12 +97,15 @@ func TestSubstitutionProvider_SuppliedLookupAllocations(t *testing.T) {
 		t.Run(source.Named().Kind, func(t *testing.T) {
 			st := store.New()
 			c := New(st, task.NewBounded(2), nil, true)
-			c.Configure(Options{SubstituteFrom: map[manifest.NamedResource]manifest.BaseManifest{source.Named(): source}}, sourcecache.RetryConfig{})
+			snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: source}})
+			assert.NoError(t, err)
+			st.SetSupplied(snapshot)
+			c.Configure(Options{}, sourcecache.RetryConfig{})
 			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
 			defer execution.run.Close()
 			provider := execution.data
 			id := source.Named()
-			if provider.Data(id) != source.(manifest.Data) {
+			if provider.Data(id) == nil {
 				t.Fatal("provider lost supplied identity")
 			}
 			if allocs := testing.AllocsPerRun(100, func() { provider.Data(id) }); allocs != 0 {

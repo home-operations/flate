@@ -39,13 +39,6 @@ var reconcilableKinds = func() []manifest.KindInfo {
 	return kinds
 }()
 
-// SubstitutionSource supplies a ConfigMap or Secret only for postBuild references.
-// Path identifies its input file in collision diagnostics; empty denotes SDK input.
-type SubstitutionSource struct {
-	Object manifest.BaseManifest
-	Path   string
-}
-
 // Config contains invocation policy and shared rendering resources.
 type Config struct {
 	// HelmOptions tunes templating and kind filtering through SkipKinds.
@@ -58,8 +51,9 @@ type Config struct {
 	// resources mark Ready with ReasonSkipped; omitted valuesFrom
 	// refs let HelmReleases render with the remaining values.
 	AllowMissingSecrets bool
-	// SubstituteFrom contains CI-side postBuild sources, never stored or emitted.
-	SubstituteFrom []SubstitutionSource
+	// Supply contains invocation data, never stored as canonical objects or emitted.
+	Supply   []store.SuppliedObject
+	supplied *store.Supplied
 	// Substitute overrides referenced and inline values when postBuild is present.
 	Substitute map[string]string
 	// StrictSubstitutions fails undefined postBuild variables without defaults.
@@ -131,20 +125,18 @@ type Config struct {
 
 // Orchestrator exposes a completed execution tree's store.
 type Orchestrator struct {
-	cfg         treeConfig
-	store       *store.Store
-	tasks       *task.Service
-	src         *sourcectrl.Controller
-	ksc         *kustomization.Controller
-	hrc         *helmrelease.Controller
-	rsc         *resourcesetctrl.Controller
-	agc         *artifactgenerator.Controller
-	filter      *change.Filter
-	cache       *sourcecache.Cache
-	inputs      source.HTTPInputs
-	unsubStatus store.Unsubscribe
-	// Accepted identities are immutable after bootstrap, including for late consumers.
-	substitutionSources     map[manifest.NamedResource]manifest.BaseManifest
+	cfg                     treeConfig
+	store                   *store.Store
+	tasks                   *task.Service
+	src                     *sourcectrl.Controller
+	ksc                     *kustomization.Controller
+	hrc                     *helmrelease.Controller
+	rsc                     *resourcesetctrl.Controller
+	agc                     *artifactgenerator.Controller
+	filter                  *change.Filter
+	cache                   *sourcecache.Cache
+	inputs                  source.HTTPInputs
+	unsubStatus             store.Unsubscribe
 	dependencySubstitutions values.DependencySubstitutions
 
 	// repoRoot anchors fresh claims for post-render orphan reporting, including
@@ -212,6 +204,7 @@ type treeConfig struct {
 
 func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	st := store.New()
+	st.SetSupplied(cfg.supplied)
 	o := &Orchestrator{cfg: treeConfig{Config: cfg, Tree: tree}, inputs: source.NewHTTPInputs(cfg.Cache, cfg.Network, ts), store: st, cache: cfg.Cache, tasks: ts}
 	if cfg.StatusListener != nil {
 		o.unsubStatus = st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, value any) {
@@ -278,7 +271,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		artifact, err := gitFetcher.FetchRemoteBase(ctx, git.RemoteBaseRequest{URL: request.URL, Ref: request.Ref, Timeout: request.Timeout, Submodules: request.Submodules}, sourcecache.Policy{MaxAge: request.MaxAge, Retry: retry})
 		if artifact != nil {
 			for _, warning := range artifact.Warnings {
-				o.store.AddWarning(manifest.NamedResource{}, warning)
+				o.store.AddWarning(warning)
 			}
 		}
 		return artifact, err
@@ -312,7 +305,6 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 }
 
 func (o *Orchestrator) completeBootstrap() {
-	o.freezeSubstitutions()
 	o.failDependsOnCycles()
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig, ForceGeneric: o.cfg.ForceGenericProvider}
 	chartFetcher := helmchart.New(ociFetcher, helmchart.Config{

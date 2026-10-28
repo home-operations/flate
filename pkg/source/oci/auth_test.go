@@ -399,7 +399,7 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 			switch {
 			case tt.wantRetry:
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
-				if !ok || !errors.Is(err, manifest.ErrMissingSecret) || credStore != nil || missing.RegistryConfig != f.RegistryConfig || missing.RetryWithRegistryConfig == nil {
+				if !ok || !errors.Is(err, manifest.ErrMissingSecret) || credStore != nil || missing.RetryAmbient == nil {
 					t.Fatalf("got (%v, %v), want missing Secret with retry using %q", credStore, err, f.RegistryConfig)
 				}
 			case tt.wantErr != nil:
@@ -407,16 +407,16 @@ func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 					t.Fatalf("err = %v, want %v", err, tt.wantErr)
 				}
 				if errors.Is(tt.wantErr, manifest.ErrMissingSecret) && tt.config != covering {
-					if missing, ok := errors.AsType[*source.MissingSecretError](err); !ok || missing.RetryWithRegistryConfig != nil {
+					if missing, ok := errors.AsType[*source.MissingSecretError](err); !ok || missing.RetryAmbient != nil {
 						t.Fatalf("err = %v, want missing Secret without registry retry", err)
 					}
 				}
 			default:
 				missing, ok := errors.AsType[*source.MissingSecretError](err)
-				if !ok || missing.RetryWithRegistryConfig == nil {
+				if !ok || missing.RetryAmbient == nil {
 					t.Fatalf("err = %v, want missing Secret with deferred config error", err)
 				}
-				if _, err := missing.RetryWithRegistryConfig(t.Context(), missing.RegistryConfig); !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret) {
+				if _, err := missing.RetryAmbient(t.Context()); !errors.Is(err, manifest.ErrInput) || errors.Is(err, manifest.ErrMissingSecret) {
 					t.Fatalf("retry err = %v, want a loud input error", err)
 				}
 			}
@@ -502,16 +502,16 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	_, err = fallbackCharts.Fetch(t.Context(), helmchart.Synthesize(repo, "app", "1.0.0"), fallbackChartsInputs.readSet(helmchart.Synthesize(repo, "app", "1.0.0")), sourcecache.Policy{Retry: retry})
 	missing, ok := errors.AsType[*source.MissingSecretError](err)
-	if !ok || missing.RetryWithRegistryConfig == nil {
+	if !ok || missing.RetryAmbient == nil {
 		t.Fatalf("missing fallback: %v", err)
 	}
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := missing.RetryWithRegistryConfig(cancelled, configPath); !errors.Is(err, context.Canceled) {
+	if _, err := missing.RetryAmbient(cancelled); !errors.Is(err, context.Canceled) {
 		t.Fatalf("fallback context: %v", err)
 	}
 	failNext.Store(true)
-	got, err = missing.RetryWithRegistryConfig(t.Context(), configPath)
+	got, err = missing.RetryAmbient(t.Context())
 	if err != nil || failures.Load() != 1 {
 		t.Fatalf("fallback recovery: %v, failures=%d", err, failures.Load())
 	}
@@ -519,7 +519,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		t.Fatalf("fallback artifact=%+v", got)
 	}
 	beforeWarm := requests.Load()
-	warm, err := missing.RetryWithRegistryConfig(t.Context(), configPath)
+	warm, err := missing.RetryAmbient(t.Context())
 	if err != nil || warm == nil || warm.Key != got.Key || warm.Kind != manifest.KindHelmChart || requests.Load() != beforeWarm {
 		t.Fatalf("fallback lost freshness or chart identity: artifact=%+v, err=%v, new requests=%d", warm, err, requests.Load()-beforeWarm)
 	}
@@ -529,7 +529,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	refreshCharts := helmchart.New(fallbackFetcher, helmchart.Config{Cache: cache, Network: &network})
 	_, err = refreshCharts.Fetch(t.Context(), helmchart.Synthesize(&refreshRepo, "app", "1.0.0"), refreshChartsInputs.readSet(helmchart.Synthesize(&refreshRepo, "app", "1.0.0")), sourcecache.Policy{Retry: retry})
 	missing, ok = errors.AsType[*source.MissingSecretError](err)
-	if !ok || missing.RetryWithRegistryConfig == nil {
+	if !ok || missing.RetryAmbient == nil {
 		t.Fatalf("refresh fallback: %v", err)
 	}
 	failing.Store(true)
@@ -545,7 +545,7 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	}
 	cause := terminal.Err
 	before := requests.Load()
-	_, err = missing.RetryWithRegistryConfig(t.Context(), configPath)
+	_, err = missing.RetryAmbient(t.Context())
 	if terminal, ok := errors.AsType[*sourcecache.TerminalError](err); !ok || terminal.Attempted || !errors.Is(err, cause) || requests.Load() != before {
 		t.Fatalf("suppressed fallback: %v, additional requests=%d", err, requests.Load()-before)
 	}
@@ -737,7 +737,7 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 			})
 			_, err := f.Fetch(t.Context(), repo, fInputs.readSet(repo), sourcecache.Policy{MaxAge: repo.SourceInterval()})
 			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			if !ok || missing.RetryWithRegistryConfig == nil || lookups.Load() != 2 {
+			if !ok || missing.RetryAmbient == nil || lookups.Load() != 2 {
 				t.Fatalf("snapshot before handoff: reads=%d error=%v", lookups.Load(), err)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
@@ -745,7 +745,7 @@ func TestFetcher_ResolveConfig_RegistryFallbackSnapshot(t *testing.T) {
 			var wg sync.WaitGroup
 			for range callers {
 				wg.Go(func() {
-					_, err := missing.RetryWithRegistryConfig(ctx, config)
+					_, err := missing.RetryAmbient(ctx)
 					if !errors.Is(err, context.Canceled) {
 						t.Errorf("canceled fallback: %v", err)
 					}

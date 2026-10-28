@@ -113,8 +113,8 @@ func TestE2E_SubstitutionPrecedence(t *testing.T) {
 	for _, verb := range []string{"build", "test"} {
 		t.Run(verb, func(t *testing.T) {
 			for range 2 {
-				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", filepath.Join(root, "flux"), "--substitute-from", filepath.Join(external, "settings.yaml"), "--concurrency=2", "--log-level=info")
-				if strings.Count(stderr, "[SubstitutionPrecedence]") != 1 || !strings.Contains(stderr, "ConfigMap apps/settings") || strings.Contains(stdout, "repository substitution source takes precedence") || strings.Contains(stdout+stderr, "private-value") || strings.Contains(stderr, "level=WARN") {
+				stdout, stderr := harness.RequireCLIOK(t, verb, "all", "--path", filepath.Join(root, "flux"), "--supply", filepath.Join(external, "settings.yaml"), "--concurrency=2", "--log-level=info")
+				if strings.Count(stderr, "[SuppliedPrecedence]") != 1 || !strings.Contains(stderr, "ConfigMap apps/settings") || strings.Contains(stdout, "repository data takes precedence") || strings.Contains(stdout+stderr, "private-value") || strings.Contains(stderr, "level=WARN") {
 					t.Fatalf("precedence destination: stdout=%s stderr=%s", stdout, stderr)
 				}
 				if verb == "build" && !strings.Contains(stdout, "value: repository") || verb == "test" && !strings.Contains(stdout, "passed") {

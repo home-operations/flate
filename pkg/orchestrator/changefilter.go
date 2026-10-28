@@ -18,7 +18,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 		return err
 	}
 	if o.cfg.BaseInput == o.cfg.Input && o.cfg.ExternalChanges == nil {
-		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{Category: manifest.WarnPathConfig, Message: "--path and --path-orig resolve to the same root; ignoring --path-orig", Detail: []string{o.repoRoot}})
+		o.store.AddWarning(manifest.Warning{Category: manifest.WarnPathConfig, Message: "--path and --path-orig resolve to the same root; ignoring --path-orig", Detail: []string{o.repoRoot}})
 		return nil
 	}
 	changes := o.cfg.ExternalChanges
@@ -71,7 +71,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 		return err
 	}
 	if changes.Len() == 0 && len(f.KeepNames()) == 0 && o.cfg.BaseInput != nil {
-		o.store.AddWarning(manifest.NamedResource{}, manifest.Warning{
+		o.store.AddWarning(manifest.Warning{
 			Category: manifest.WarnPathConfig,
 			Message:  "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots",
 		})

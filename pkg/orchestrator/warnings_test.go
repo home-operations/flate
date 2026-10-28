@@ -195,7 +195,7 @@ func TestRender_UnresolvedSubstitutionWarning(t *testing.T) {
 		Message: `substituteFrom Secret "cluster-secrets" could not be read offline; ` +
 			"its variables are unavailable, so their ${VAR} references may remain unsubstituted " +
 			"or resolve to defaults or empty values",
-		Count: 2,
+		Count: 1,
 	}
 	assert.Diff(t, warnings, []manifest.Warning{want})
 }

@@ -79,7 +79,7 @@ func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, lev
 		return false, nil
 	})
 	for _, warning := range warnings {
-		c.run.Reads.AddWarning(c.run.Reads.ID(), warning)
+		c.run.Reads.AddWarning(warning)
 	}
 	if err != nil {
 		return err

@@ -117,7 +117,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					return
 				}
 				for _, warning := range warnings {
-					runState.run.Reads.AddWarning(id, warning)
+					runState.run.Reads.AddWarning(warning)
 				}
 				attempt.Children, attempt.Manifests = c.ParseChildren(c.Store.GetObject(id), docs, manifest.ParseDocOptions{})
 				attempt.Complete = true

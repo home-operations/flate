@@ -187,18 +187,28 @@ func TestE2E_DisabledAppDiffSides(t *testing.T) {
 		}
 		checkDiagnostic := func(t *testing.T, stderr string, skipped bool) {
 			t.Helper()
+			credentials := 0
 			if strings.Contains(stderr, "source: skipped (missing secret)") != skipped || skipped && !strings.Contains(stderr, "unavailable-auth") || strings.Contains(stderr, "dial tcp") || strings.Contains(stderr, "[OrphanedResource]") || strings.Contains(stderr, "[IncompleteInputCoverage]") {
 				t.Fatalf("unexpected mixed-namespace diagnostics: %s", stderr)
 			}
 			for line := range strings.SplitSeq(stderr, "\n") {
 				if warning := strings.TrimSpace(line); strings.HasPrefix(warning, "[") {
 					category, _, _ := strings.Cut(warning[1:], "]")
+					if category == manifest.WarnSourceCredentialsUnavailable && skipped && strings.Contains(warning, "flux-system/external") && strings.Contains(warning, "unavailable-auth") {
+						credentials++
+						continue
+					}
 					if category == manifest.WarnExternalSource && !skipped && strings.Contains(warning, "flux-system/external") {
 						continue
 					}
 					assert.Equal(t, category, manifest.WarnRenderPersistenceDisabled)
 				}
 			}
+			wantCredentials := 0
+			if skipped {
+				wantCredentials = 1
+			}
+			assert.Equal(t, credentials, wantCredentials)
 		}
 		checkBuild := func(t *testing.T, out, namespace, value string) {
 			t.Helper()

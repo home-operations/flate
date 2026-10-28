@@ -14,12 +14,11 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
-// resolveAuth returns anonymous auth when no secret is configured.
-// For HTTPS URLs the secret may carry either
-// (username, password) or (bearerToken); for SSH URLs the secret
-// carries `identity` (PEM private key) and an optional `password`.
-func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret) (transport.AuthMethod, error) {
+func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret, endpoint *transport.Endpoint) (transport.AuthMethod, error) {
 	if repo.SecretRef == nil {
+		if endpoint.Protocol == "ssh" {
+			return nil, source.MissingSecretErr(repo.Named(), "", "SSH credentials unavailable")
+		}
 		return nil, nil
 	}
 	if f.secrets == nil {
@@ -28,10 +27,7 @@ func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secr
 	if sec == nil {
 		return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found")
 	}
-	endpoint, err := transport.NewEndpoint(repo.URL)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
-	}
+	var err error
 	if endpoint.Protocol == "ssh" {
 		identity, _, err := sec.Value("identity")
 		if err != nil {

@@ -10,12 +10,13 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"net/http"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
-	"oras.land/oras-go/v2/registry/remote/credentials"
+	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -25,20 +26,28 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, credStore credentials.Store, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, selected *resolvedCredential, policy cache.Policy) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
 	}
-	client, material, err := f.newRepoClient(ctx, repo, credStore, policy)
+	request, err := f.newRepoClient(ctx, repo, selected, policy)
 	if err != nil {
 		return nil, err
 	}
-	return f.fetch(ctx, repo, registryAcquisition{client, material}, policy)
+	artifact, err := f.fetch(ctx, repo, request, policy)
+	if err != nil && request.helper != "" {
+		response, _ := errors.AsType[*errcode.ErrorResponse](err)
+		if errors.Is(err, auth.ErrBasicCredentialNotFound) || response != nil && response.StatusCode == http.StatusUnauthorized {
+			err = fmt.Errorf("%w; credential helper %q cannot run offline: use --registry-config with a plain auths entry or a supplied Secret", err, request.helper)
+		}
+	}
+	return artifact, err
 }
 
 type registryAcquisition struct {
 	client   *remote.Repository
 	material any
+	helper   string
 }
 
 func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {

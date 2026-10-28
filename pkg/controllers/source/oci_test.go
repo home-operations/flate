@@ -25,7 +25,7 @@ import (
 )
 
 func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
-	for _, name := range []string{"stale global credentials", "unrelated global credentials", "corrupt global config"} {
+	for _, name := range []string{"stale global credentials", "unrelated global credentials", "corrupt global config", "stale Helm credentials", "corrupt Helm config"} {
 		t.Run(name, func(t *testing.T) {
 			const user, pass = "alice", "hunter2"
 			configBytes := []byte(`{}`)
@@ -62,13 +62,14 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			t.Cleanup(srv.Close)
 			host := strings.TrimPrefix(srv.URL, "https://")
 			t.Setenv("DOCKER_CONFIG", t.TempDir())
+			t.Setenv("HELM_REGISTRY_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
 			config := filepath.Join(t.TempDir(), "config.json")
 			staleAuth := base64.StdEncoding.EncodeToString([]byte(user + ":stale"))
 			configJSON := fmt.Sprintf(`{"auths":{%q:{"auth":%q}}}`, host, staleAuth)
 			if name == "unrelated global credentials" {
 				configJSON = fmt.Sprintf(`{"auths":{"quay.io":{"auth":%q}}}`, staleAuth)
 			}
-			if name == "corrupt global config" {
+			if name == "corrupt global config" || name == "corrupt Helm config" {
 				configJSON = `{"auths":`
 			}
 			testutil.WriteFileAt(t, config, configJSON)
@@ -79,6 +80,10 @@ func TestController_RenderedSecretWinsOverRegistryConfig(t *testing.T) {
 			t.Cleanup(network.Close)
 			f := &oci.Fetcher{
 				Cache: cache, Network: network, RegistryConfig: config,
+			}
+			if strings.Contains(name, "Helm") {
+				f.RegistryConfig = ""
+				t.Setenv("HELM_REGISTRY_CONFIG", config)
 			}
 			ts := task.NewBounded(2)
 			c := New(st, ts)

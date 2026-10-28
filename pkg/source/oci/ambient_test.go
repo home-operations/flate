@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -50,10 +51,8 @@ func (f *ambientObserver) Fetch(ctx context.Context, repo *manifest.OCIRepositor
 }
 
 func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
-	t.Parallel()
 	for _, timing := range []string{"before_settlement", "during_acquisition"} {
 		t.Run(timing, func(t *testing.T) {
-			t.Parallel()
 			artifact := newFakeOCIArtifact(t, map[string]string{"data.yaml": "ambient"})
 			upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
 			entered, release := make(chan struct{}), make(chan struct{})
@@ -78,7 +77,9 @@ func TestFetcher_LateProducerInvalidatesAmbient(t *testing.T) {
 			host := mustURL(t, srv.URL).Host
 			config := filepath.Join(t.TempDir(), "config.json")
 			testutil.WriteFileAt(t, config, fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":"fixture"}}}`, host))
-			f := &ambientObserver{Fetcher: &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t), RegistryConfig: config}}
+			t.Setenv("DOCKER_CONFIG", t.TempDir())
+			t.Setenv("HELM_REGISTRY_CONFIG", config)
+			f := &ambientObserver{Fetcher: &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}}
 			s := store.New()
 			s.SetDiscoveryIndex(&manifest.DiscoveryIndex{})
 			tasks := task.NewBounded(2)
@@ -183,8 +184,74 @@ func TestFetcher_AmbientFailedAcquisition(t *testing.T) {
 	}
 }
 
+func TestFetcher_HelmAmbientReload(t *testing.T) {
+	for _, mode := range []string{"rotated", "removed"} {
+		t.Run(mode, func(t *testing.T) {
+			artifact := newFakeOCIArtifact(t, map[string]string{"data.yaml": "current"})
+			upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
+			var expected atomic.Value
+			expected.Store("first")
+			var accepted atomic.Int32
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				want := expected.Load().(string)
+				user, password, present := r.BasicAuth()
+				if want == "" && present || want != "" && (!present || user != "fixture" || password != want) {
+					w.Header().Set("WWW-Authenticate", `Basic realm="fixture"`)
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				accepted.Add(1)
+				upstream.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			host := mustURL(t, srv.URL).Host
+			path := filepath.Join(t.TempDir(), "config.json")
+			t.Setenv("DOCKER_CONFIG", t.TempDir())
+			t.Setenv("HELM_REGISTRY_CONFIG", path)
+			write := func(password string) {
+				t.Helper()
+				testutil.WriteFileAt(t, path, fmt.Sprintf(`{"auths":{%q:{"username":"fixture","password":%q}}}`, host, password))
+			}
+			write("first")
+			repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://" + host + "/fixture", Insecure: true, SecretRef: &manifest.LocalObjectReference{Name: "missing"}}
+			var lookups atomic.Int32
+			inputs := testInputs{secrets: func(_, _ string) *manifest.Secret { lookups.Add(1); return nil }}
+			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t)}
+			op := &operation{Fetcher: f, secrets: inputs.lookup(repo)}
+			_, err := op.fetchSource(t.Context(), repo, sourcecache.Policy{})
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			if !ok || missing.RetryAmbient == nil || lookups.Load() != 1 {
+				t.Fatalf("Helm eligibility: lookups=%d error=%v", lookups.Load(), err)
+			}
+			selected, err := loadCredentials(t.Context(), "", host)
+			assert.NoError(t, err)
+			first, err := op.fetchWithCredentials(t.Context(), repo, selected, sourcecache.Policy{})
+			assert.NoError(t, err)
+			if mode == "removed" {
+				expected.Store("")
+				assert.NoError(t, os.Remove(path))
+			} else {
+				expected.Store("second")
+				write("second")
+			}
+			before := accepted.Load()
+			got, err := missing.RetryAmbient(t.Context())
+			assert.NoError(t, err)
+			if got.Key == first.Key || accepted.Load() == before || lookups.Load() != 1 {
+				t.Fatalf("retry reused stale credentials/identity or reread missing Secret: requests=%d->%d lookups=%d", before, accepted.Load(), lookups.Load())
+			}
+			assert.Equal(t, mustReadFile(t, got.FS, "data.yaml"), "current")
+		})
+	}
+}
+
 func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
-	t.Parallel()
+	dockerDir := t.TempDir()
+	t.Setenv("DOCKER_CONFIG", dockerDir)
+	testutil.WriteFile(t, dockerDir, "config.json", `{`)
+	helmPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("HELM_REGISTRY_CONFIG", helmPath)
+	testutil.WriteFileAt(t, helmPath, `{`)
 	repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://ghcr.io/fixture/image", SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
 	f := &Fetcher{Network: newTestNetwork(t)}
 	var identities []any
@@ -208,11 +275,11 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 		var reads store.ReadSet
 		reads.Init(s, repo.Named(), nil)
 		op := &operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}
-		credentials, err := op.resolveRegistryConfig(t.Context(), repo, sourcecache.Policy{})
+		credentials, err := op.resolveRegistryConfig(t.Context(), repo, "ghcr.io", sourcecache.Policy{})
 		assert.NoError(t, err)
-		_, identity, err := op.newRepoClient(t.Context(), repo, credentials, sourcecache.Policy{})
+		request, err := op.newRepoClient(t.Context(), repo, credentials, sourcecache.Policy{})
 		assert.NoError(t, err)
-		identities = append(identities, identity)
+		identities = append(identities, request.material)
 		reads.Close()
 	}
 	if identities[0] == nil || !cmp.Equal(identities[0], identities[1]) || cmp.Equal(identities[0], identities[2]) || !cmp.Equal(identities[0], identities[3]) {

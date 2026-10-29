@@ -258,3 +258,42 @@ func TestClassify_OrdinaryPromotion(t *testing.T) {
 		})
 	}
 }
+
+func TestClassify_AdmittedDependencyRejectsExcludedReadiness(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		expr *string
+	}{
+		{name: "builtin"},
+		{name: "cel", expr: new(`dep.status.conditions.exists(c, c.type == "Ready" && c.status == "True")`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			upstream := &manifest.Kustomization{Name: "upstream", Namespace: "apps"}
+			s.AddObject(upstream)
+			s.SetIncluded(upstream.Named(), false)
+			s.UpdateStatus(upstream.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged})
+			classify := func() schedule.Kind {
+				t.Helper()
+				var reads store.ReadSet
+				reads.Init(s, testutil.KustomizationID("apps", "consumer"), nil)
+				defer reads.Retire()
+				w := Waiter{Store: &reads}
+				return w.Classify(t.Context(), manifest.DependencyRef{NamedResource: upstream.Named(), ReadyExpr: tc.expr}, manifest.DrainNone).Kind
+			}
+			if got := classify(); got != schedule.Terminal {
+				t.Fatalf("excluded dependency: got %v", got)
+			}
+			s.SetIncluded(upstream.Named(), true)
+			if got := classify(); got != schedule.Blocked {
+				t.Fatalf("readmitted dependency reused excluded readiness: got %v, want blocked", got)
+			}
+			s.UpdateStatus(upstream.Named(), store.StatusInfo{Status: store.StatusReady})
+			if got := classify(); got != schedule.Terminal {
+				t.Fatalf("completed dependency: got %v", got)
+			}
+		})
+	}
+}

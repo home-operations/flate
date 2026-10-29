@@ -703,8 +703,12 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 		if next.Reads.Admitted() != tc.included {
 			t.Errorf("%s successor admission does not match inclusion=%t", tc.obj.Named(), tc.included)
 		}
-		if info, _ := s.GetStatus(tc.obj.Named()); info.Status != store.StatusReady {
-			t.Errorf("%s terminal status changed: %+v", tc.obj.Named(), info)
+		want := store.StatusReady
+		if tc.included {
+			want = store.StatusPending
+		}
+		if info, _ := s.GetStatus(tc.obj.Named()); info.Status != want {
+			t.Errorf("%s status = %+v, want %s", tc.obj.Named(), info, want)
 		}
 	}
 
@@ -745,9 +749,9 @@ func TestKeepEmitted_InvalidatesCapturedExclusion(t *testing.T) {
 			t.Cleanup(next.Close)
 			assert.Equal(t, next.Reads.Admitted(), true)
 			info, _ := s.GetStatus(obj.Named())
-			assert.Equal(t, info.Status, store.StatusReady)
-			assert.Equal(t, info.Outcome(), store.OutcomeUnchanged)
-			assert.Equal(t, info.Message, "unchanged")
+			assert.Equal(t, info.Status, store.StatusPending)
+			assert.Equal(t, info.Outcome(), store.OutcomePending)
+			assert.Equal(t, info.Message, "")
 		})
 	}
 }

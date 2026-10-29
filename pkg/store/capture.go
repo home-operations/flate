@@ -654,7 +654,7 @@ func (s *Store) RequiredInputs(id manifest.NamedResource) iter.Seq[manifest.Name
 	return reads.Required()
 }
 
-// SetIncluded publishes a changed-only admission transition through the object head.
+// SetIncluded publishes admission and resets stale unchanged readiness when excluded work is included.
 func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 	sh := s.shardFor(id)
 	sh.mu.Lock()
@@ -663,11 +663,32 @@ func (s *Store) SetIncluded(id manifest.NamedResource, included bool) {
 		sh.mu.Unlock()
 		return
 	}
-	sh.requireCapacityLocked(cell.authority)
+	var condition authority
+	var reset bool
+	if included {
+		record := sh.conditions[id]
+		info, _ := record.statusInfo()
+		reset = info.Outcome() == OutcomeUnchanged
+		if reset {
+			condition = record.stamp()
+		}
+	}
+	sh.requireCapacityLocked(cell.authority, condition)
 	cell.excluded = !included
 	cell.authority = sh.advanceLocked(cell.current())
 	sh.cells[id] = cell
+	var dispatch eventDispatch
+	if reset {
+		updated, _ := sh.setConditionLocked(id, readyCondition(StatusPending, "", ""), 0, nil)
+		if !sh.derived || !cell.hidden {
+			dispatch = fireUnderLock(s, EventStatusUpdated, id)
+			if dispatch.listeners != nil {
+				dispatch.payload, _ = updated.statusInfo()
+			}
+		}
+	}
 	sh.mu.Unlock()
+	dispatch.run()
 }
 
 // SetPreflight publishes a changed structural admission decision.

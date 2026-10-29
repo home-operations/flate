@@ -681,3 +681,39 @@ func TestReadRegistration_SeedReplacement(t *testing.T) {
 		t.Fatal("seed admission masked its producer's replacement")
 	}
 }
+
+func TestStore_ReadmissionExhaustionIsAtomic(t *testing.T) {
+	t.Parallel()
+	s := New()
+	obj := &manifest.Kustomization{Name: "readmitted", Namespace: "apps"}
+	id := obj.Named()
+	s.AddObject(obj)
+	s.SetIncluded(id, false)
+	s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: ReasonUnchanged})
+	sh := s.shardFor(id)
+	sh.mu.Lock()
+	sh.conditions[id].state.generation = math.MaxUint64
+	sh.mu.Unlock()
+	var reads ReadSet
+	reads.Init(s, id, nil)
+	defer reads.Retire()
+	reads.GetObject(id)
+	reads.GetStatus(id)
+	before := headsForTest(s, id)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("readmission did not reject exhausted condition authority")
+			}
+		}()
+		s.SetIncluded(id, true)
+	}()
+	assert.Equal(t, headsForTest(s, id), before)
+	assert.Equal(t, reads.Valid(), true)
+	var current ReadSet
+	current.Init(s, id, nil)
+	defer current.Retire()
+	assert.Equal(t, current.Admitted(), false)
+	info, _ := current.GetStatus(id)
+	assert.Equal(t, info.Outcome(), OutcomeUnchanged)
+}

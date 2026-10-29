@@ -332,22 +332,6 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 			}
 			l.Admit(repoRoot)
 			if ks == nil {
-				seeded := false
-				for _, root := range l.StandalonePackages(repoRoot) {
-					producer := manifest.NewPackageKustomization(manifest.BootstrapSourceID, root)
-					if d.cfg.Store.GetObject(producer.Named()) == nil {
-						d.cfg.Store.AddObject(producer)
-						prepared, err := d.prepareDocuments(ctx, manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}), input)
-						if err != nil {
-							return err
-						}
-						l.RegisterBuilt(loader.BuiltInput{Root: filepath.Join(input.LocalPath, root), Owner: producer.Named(), Source: manifest.BootstrapSourceID, Reads: kustomize.RenderInputs(prepared.receipt)}, prepared.children)
-						seeded = true
-					}
-				}
-				if seeded {
-					continue
-				}
 				break
 			}
 			source, _, _ := kustomize.SourceInput(d.cfg.Store, ks)

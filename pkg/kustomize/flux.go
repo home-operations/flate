@@ -142,6 +142,9 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 			if err := ctx.Err(); err != nil {
 				return sourcecache.ProducerResult{}, err
 			}
+			if slog.Default().Enabled(ctx, slog.LevelDebug) {
+				slog.Debug("kustomize: build", "path", req.SubPath)
+			}
 			rm, err := func() (resmap.ResMap, error) {
 				kustomizestate.BuildMutex.Lock()
 				defer kustomizestate.BuildMutex.Unlock()

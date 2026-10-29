@@ -45,9 +45,10 @@ import (
 func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 	t.Parallel()
 	authored := testutil.KustomizationID("apps", "owner")
-	internal := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
+	internal := manifest.EntryKustomizationID(".")
 	other := testutil.KustomizationID("apps", "other")
-	for _, pair := range [][2]manifest.NamedResource{{authored, internal}, {internal, authored}} {
+	renamed := testutil.KustomizationID("control", "renamed")
+	for _, pair := range [][2]manifest.NamedResource{{authored, internal}, {internal, authored}, {authored, renamed}, {renamed, authored}} {
 		t.Run(pair[0].NamespacedName(), func(t *testing.T) {
 			t.Parallel()
 			from, to := pair[0], pair[1]
@@ -55,8 +56,10 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 				{Reader: from, Source: manifest.BootstrapSourceID, Exact: true},
 				{Reader: other, Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "other"}},
 			}
-			index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"removed.yaml": readers}}
-			projected := projectEntryReaders(index, discovery.Binding{Producer: from}, discovery.Binding{Producer: to})
+			record := manifest.DiscoveryRecord{Application: "side-local-evidence", ApplicationOwner: other, Authored: from, Path: "/side/origin/removed.yaml", File: "removed.yaml", Productions: []manifest.Production{{Owner: from, Source: readers[0].Source, Path: "side/path", File: "removed.yaml"}}}
+			index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"removed.yaml": readers}, Records: map[manifest.NamedResource]manifest.DiscoveryRecord{from: record}}
+			projected := projectEntryReaders(index, discovery.Binding{Producer: from, Source: readers[0].Source, Path: "side/path"}, discovery.Binding{Producer: to, Source: readers[1].Source, Path: "other/path"})
+			assert.Diff(t, projected.Records, map[manifest.NamedResource]manifest.DiscoveryRecord{from: record})
 			assert.Diff(t, index.Readers["removed.yaml"], readers)
 			want := append([]manifest.FileReader{}, readers...)
 			want[0].Reader = to
@@ -1183,6 +1186,26 @@ func (c countedNodeController) ReconcileNode(ctx context.Context, id manifest.Na
 	return execution
 }
 
+type entryWorkController struct {
+	reconcileController
+	target                   manifest.NamedResource
+	calls, admitted, replays atomic.Int64
+}
+
+func (c *entryWorkController) ReconcileNode(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+	execution := c.reconcileController.ReconcileNode(ctx, id, level)
+	if id == c.target && execution != nil {
+		c.calls.Add(1)
+		if execution.Reused {
+			c.replays.Add(1)
+		}
+		if output, ok := execution.Store.GetArtifact(id, store.ArtifactContent).(*store.Emission); !execution.Reused && ok && output.Reads == &execution.Reads && output.Reads.Valid() {
+			c.admitted.Add(1)
+		}
+	}
+	return execution
+}
+
 type countedChartFetcher struct {
 	chart string
 	calls atomic.Int64
@@ -1270,7 +1293,7 @@ func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {
 
 func TestProjectEntryReaders_ZeroBinding(t *testing.T) {
 	t.Parallel()
-	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{}).Named()
+	entry := manifest.EntryKustomizationID(".")
 	index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"root.yaml": {{Reader: entry, Source: manifest.BootstrapSourceID}}}}
 	for _, pair := range [][2]discovery.Binding{{{}, {Producer: entry}}, {{Producer: entry}, {}}, {{}, {}}} {
 		assert.Equal(t, projectEntryReaders(index, pair[0], pair[1]), index)
@@ -1278,7 +1301,7 @@ func TestProjectEntryReaders_ZeroBinding(t *testing.T) {
 }
 
 func TestRenderTrees_EntryQualificationTransitions(t *testing.T) {
-	for _, pair := range [][2]string{{"discovery", "discovery"}, {"discovery", "package"}, {"package", "discovery"}, {"authored", "discovery"}, {"discovery", "authored"}} {
+	for _, pair := range [][2]string{{"discovery", "discovery"}, {"discovery", "package"}, {"package", "discovery"}, {"authored", "discovery"}, {"discovery", "authored"}, {"generated", "renamed"}, {"renamed", "generated"}, {"generated", "package"}, {"package", "generated"}, {"generated", "renamed with authored"}, {"renamed with authored", "generated"}} {
 		t.Run(pair[0]+" to "+pair[1], func(t *testing.T) {
 			var trees []Tree
 			for side, qualification := range pair {
@@ -1292,11 +1315,27 @@ func TestRenderTrees_EntryQualificationTransitions(t *testing.T) {
 				if qualification == "package" {
 					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [clusters/a/ks.yaml, clusters/b/ks.yaml]\n")
 				}
+				if qualification == "generated" || strings.HasPrefix(qualification, "renamed") {
+					repo := testutil.GitInit(t, root)
+					assert.NoError(t, repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))))
+					name := "original"
+					if strings.HasPrefix(qualification, "renamed") {
+						name = "renamed"
+					}
+					testutil.WriteFile(t, root, "kustomization.yaml", "resources: [instance.yaml, clusters/a/ks.yaml, clusters/b/ks.yaml]\n")
+					testutil.WriteFile(t, root, "instance.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: control}\nspec:\n  sync: {name: self, kind: GitRepository, url: https://example.test/transitions, ref: refs/heads/main, path: ./}\n  kustomize:\n    patches:\n    - target: {kind: Kustomization}\n      patch: '[{\"op\":\"replace\",\"path\":\"/metadata/name\",\"value\":\""+name+"\"}]'\n")
+					if qualification == "renamed with authored" {
+						testutil.WriteFile(t, root, "kustomization.yaml", "resources: [instance.yaml, original.yaml, clusters/a/ks.yaml, clusters/b/ks.yaml]\n")
+						testutil.WriteFile(t, root, "original.yaml", testutil.KustomizationYAML("original", "control", "  path: ./independent\n"))
+						testutil.WriteFile(t, root, "independent/kustomization.yaml", "resources: []\n")
+					}
+					testutil.GitCommitAll(t, repo, "fixture", &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}})
+				}
 				if qualification == "authored" {
 					assert.NoError(t, os.Remove(filepath.Join(root, "Taskfile.yaml")))
 					testutil.WriteFile(t, root, "owner.yaml", testutil.KustomizationYAML("root-owner", "apps", "  path: ./\n"))
 				}
-				trees = append(trees, Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, Path: root, RepoRoot: root})
+				trees = append(trees, Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, Path: root, RepoRoot: root, SelfURLs: []string{"https://example.test/transitions"}})
 			}
 			var previous []byte
 			for range 2 {
@@ -1307,6 +1346,32 @@ func TestRenderTrees_EntryQualificationTransitions(t *testing.T) {
 					qualified := pair[side] != "discovery"
 					assert.Equal(t, run.entryBinding != (discovery.Binding{}), qualified)
 					assert.Diff(t, configMapNames(run.Result), map[string]bool{"a": true, "b": true})
+					if pair[side] == "generated" || strings.HasPrefix(pair[side], "renamed") {
+						name, retired := "original", "renamed"
+						if strings.HasPrefix(pair[side], "renamed") {
+							name, retired = retired, name
+						}
+						assert.Equal(t, run.entryBinding.Producer, testutil.KustomizationID("control", name))
+						if pair[side] == "renamed with authored" {
+							independent := run.store.GetObject(testutil.KustomizationID("control", retired)).(*manifest.Kustomization)
+							assert.Equal(t, independent.Path, "./independent")
+						} else {
+							assert.Equal(t, run.store.GetObject(testutil.KustomizationID("control", retired)), manifest.BaseManifest(nil))
+						}
+						assert.Equal(t, run.store.EmissionOwner(run.entryBinding.Producer), manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "control", Name: "flux"})
+					} else if pair[side] == "package" {
+						for _, name := range []string{"original", "renamed"} {
+							assert.Equal(t, run.store.GetObject(testutil.KustomizationID("control", name)), manifest.BaseManifest(nil))
+						}
+					}
+					full, err := newTestOrchestrator(t, trees[side], Config{Concurrency: 2})
+					assert.NoError(t, err)
+					result, err := full.render(t.Context())
+					assert.NoError(t, err)
+					for _, name := range []string{"a", "b"} {
+						id := testutil.KustomizationID("apps", name)
+						assert.Diff(t, outputByParent(run.Result.Manifests)[id], outputByParent(result.Manifests)[id])
+					}
 				}
 				selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 				assert.NoError(t, err)

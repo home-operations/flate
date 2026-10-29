@@ -2,32 +2,140 @@
 package substitution
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
 func TestE2E_ParentPatchesPropagateToChildren(t *testing.T) {
-	src := harness.TestdataPath(t, "parent-patches")
 	root := t.TempDir()
-	testutil.CopyTree(t, src, root)
-
-	out := harness.RunCLI(t, "test", "ks", "--path", root)
-
-	leafLine := harness.MustExtractLine(t, out, "flux-system/leaf")
-	if !strings.Contains(leafLine, "✓") {
-		t.Errorf("leaf should pass once parent patches inject substituteFrom; got: %s", leafLine)
+	repo := testutil.GitInit(t, root)
+	assert.NoError(t, repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))))
+	_, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/policy"}})
+	assert.NoError(t, err)
+	encode := func(value any) string {
+		t.Helper()
+		body, err := json.Marshal(value)
+		assert.NoError(t, err)
+		return string(body)
 	}
-	clusterLine := harness.MustExtractLine(t, out, "flux-system/cluster-apps")
-	if !strings.Contains(clusterLine, "✓") {
-		t.Errorf("cluster-apps should pass; SOPS values are wiped to placeholder, not fail-loud; got: %s", clusterLine)
+	patch := func(kind, path string, value any) map[string]any {
+		return map[string]any{"target": map[string]any{"kind": kind}, "patch": encode([]any{map[string]any{"op": "add", "path": path, "value": value}})}
 	}
-	if strings.Contains(out, `is undefined and has no default`) {
-		t.Errorf("no postBuild variable should be reported undefined:\n%s", out)
+	policy := func(retries int) map[string]any {
+		return map[string]any{
+			"install":  map[string]any{"crds": "CreateReplace", "strategy": map[string]any{"name": "RemediateOnFailure"}, "remediation": map[string]any{"retries": retries}},
+			"upgrade":  map[string]any{"crds": "CreateReplace", "remediation": map[string]any{"retries": retries, "strategy": "rollback", "remediateLastFailure": true}},
+			"rollback": map[string]any{"cleanupOnFail": true, "timeout": "7m"},
+		}
 	}
+	writeInstance := func(retries int) {
+		t.Helper()
+		hrPatch := map[string]any{"target": map[string]any{"kind": "HelmRelease"}, "patch": encode(map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": map[string]any{"name": "unused"}, "spec": policy(retries)})}
+		childPatches := []any{hrPatch, patch("Kustomization", "/spec/patches/-", hrPatch)}
+		rootPatches := []any{patch("ConfigMap", "/data/root", "root-policy")}
+		for _, childPatch := range childPatches {
+			rootPatches = append(rootPatches, patch("Kustomization", "/spec/patches/-", childPatch))
+		}
+		instance := map[string]any{"apiVersion": "fluxcd.controlplane.io/v1", "kind": "FluxInstance", "metadata": map[string]any{"name": "flux", "namespace": "apps"}, "spec": map[string]any{
+			"distribution": map[string]any{"version": "2.x"},
+			"sync":         map[string]any{"name": "self", "kind": "GitRepository", "url": "https://example.test/policy", "ref": "refs/heads/main", "path": "./entry"},
+			"kustomize":    map[string]any{"patches": []any{patch("Kustomization", "/spec/patches", rootPatches)}},
+		}}
+		testutil.WriteFile(t, root, "entry/instance.yaml", encode(instance))
+	}
+	writeInstance(2)
+	for _, file := range []struct{ path, body string }{
+		{"entry/kustomization.yaml", "resources: [instance.yaml, child.yaml, cm.yaml]\n"},
+		{"entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: root-output, namespace: apps}\ndata: {}\n"},
+		{"entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./child\n  sourceRef: {kind: GitRepository, name: self}\n  patches: "+encode([]any{patch("ConfigMap", "/data/child", "authored"), patch("Kustomization", "/spec/patches/-", patch("Deployment", "/spec/replicas", 3))})+"\n")},
+		{"child/kustomization.yaml", "resources: [grandchild.yaml, release.yaml, cm.yaml]\n"},
+		{"child/grandchild.yaml", testutil.KustomizationYAML("grandchild", "apps", "  path: ./grandchild\n  sourceRef: {kind: GitRepository, name: self}\n  patches: "+encode([]any{patch("ConfigMap", "/data/grandchild", "authored")})+"\n")},
+		{"child/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output, namespace: apps}\ndata: {}\n"},
+		{"grandchild/kustomization.yaml", "resources: [release.yaml, cm.yaml, deploy.yaml]\n"},
+		{"grandchild/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: grandchild-output, namespace: apps}\ndata: {}\n"},
+		{"grandchild/deploy.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: workload, namespace: apps}\nspec:\n  replicas: 1\n  selector: {matchLabels: {app: workload}}\n  template:\n    metadata: {labels: {app: workload}}\n    spec: {containers: [{name: app, image: example.test/app:1}]}\n"},
+		{"charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 1.0.0\n"},
+		{"charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}-chart', namespace: apps}\n"},
+	} {
+		testutil.WriteFile(t, root, file.path, file.body)
+	}
+	for _, name := range []string{"child", "grandchild"} {
+		testutil.WriteFile(t, root, name+"/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: "+name+", namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/app\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n")
+	}
+	testutil.GitCommitAll(t, repo, "initial policy", &git.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}})
+	args := []string{"all", "--path", filepath.Join(root, "entry"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress"}
+	before, _ := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+	writeInstance(5)
+	after, _ := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+	again, _ := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+	assert.Equal(t, again, after)
+	for side, output := range []string{before, after} {
+		docs, err := testutil.DecodeDocs(strings.NewReader(output))
+		assert.NoError(t, err)
+		retries := 2
+		if side == 1 {
+			retries = 5
+		}
+		seen := map[string]bool{}
+		for _, doc := range docs {
+			name := doc["metadata"].(map[string]any)["name"].(string)
+			if doc["kind"] == "HelmRelease" {
+				spec := doc["spec"].(map[string]any)
+				for key, want := range policy(retries) {
+					assert.Equal(t, encode(spec[key]), encode(want))
+				}
+				seen[name] = true
+			}
+			if want, ok := map[string]map[string]any{"root-output": {"root": "root-policy"}, "child-output": {"child": "authored"}, "grandchild-output": {"grandchild": "authored"}}[name]; ok {
+				assert.Diff(t, doc["data"], any(want))
+				seen[name] = true
+			}
+			if doc["kind"] == "Deployment" {
+				assert.Equal(t, encode(doc["spec"].(map[string]any)["replicas"]), "3")
+				seen[name] = true
+			}
+		}
+		assert.Diff(t, seen, map[string]bool{"child": true, "grandchild": true, "root-output": true, "child-output": true, "grandchild-output": true, "workload": true})
+	}
+	changed, _ := harness.RequireCLIOK(t, append(append([]string{"build"}, args...), "--base", "HEAD")...)
+	assert.Equal(t, changed, after)
+	var result struct {
+		Changes []struct {
+			Kind, Name string
+			Old, New   map[string]any
+		}
+		Suppressed []any
+	}
+	output, _ := harness.RequireCLIOK(t, append(append([]string{"diff"}, args...), "--base", "HEAD", "-o", "json")...)
+	assert.NoError(t, json.Unmarshal([]byte(output), &result))
+	assert.Equal(t, len(result.Suppressed), 0)
+	full, err := testutil.DecodeDocs(strings.NewReader(after))
+	assert.NoError(t, err)
+	releases := map[string]bool{}
+	for _, change := range result.Changes {
+		if change.Kind != "HelmRelease" {
+			continue
+		}
+		releases[change.Name] = true
+		for _, doc := range full {
+			if doc["kind"] == change.Kind && doc["metadata"].(map[string]any)["name"] == change.Name {
+				assert.Equal(t, encode(change.New), encode(doc))
+			}
+		}
+	}
+	assert.Diff(t, releases, map[string]bool{"child": true, "grandchild": true})
 }
 
 func TestE2E_SOPSValueWipedToPlaceholder(t *testing.T) {

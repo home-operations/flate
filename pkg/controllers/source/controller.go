@@ -131,7 +131,8 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	// Available content survives idempotent re-emission. Released pins must
 	// reacquire normally and publish a Ready transition to wake content consumers.
 	if art, ok := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok {
-		if art.FS != nil && art.Reads.Valid() {
+		reusable := art.Reads.Valid() && (!art.InputAlias || art.Reads != nil)
+		if art.FS != nil && reusable {
 			c.run.Reads.CarryAdvisories(art.Reads)
 			for _, warning := range art.Warnings {
 				c.run.Reads.AddWarning(warning)
@@ -139,7 +140,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 			c.run.Reused = true
 			return nil
 		}
-		if art.FS != nil && c.run.Reads.Matches(art.Reads) {
+		if art.FS != nil && !art.InputAlias && art.Reads != nil && c.run.Reads.Matches(art.Reads) {
 			c.run.Reads.CarryAdvisories(art.Reads)
 			c.Store.SetArtifact(id, art.WithReads(&c.run.Reads))
 			for _, warning := range art.Warnings {
@@ -156,12 +157,15 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	}
 
 	if c.admission != nil {
-		_, artifact, err := c.admission.Resolve(ctx, obj.Named(), obj, nil)
+		_, artifact, err := c.admission.Resolve(ctx, &c.run.Reads, discovery.ResolveRequest{ID: obj.Named(), Object: obj})
 		if err != nil {
 			return err
 		}
 		if artifact != nil {
 			return c.completeFetch(obj, artifact, nil)
+		}
+		if artifact, ok := c.Store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok && artifact.InputAlias {
+			c.Store.SetArtifact(id, nil)
 		}
 	}
 
@@ -179,6 +183,9 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	}
 
 	c.SetPendingUnlessReady(id, "fetching")
+	if err := c.run.Checkpoint(); err != nil {
+		return err
+	}
 
 	// Release the worker slot during network I/O so other nodes can progress.
 	var artifact *store.SourceArtifact
@@ -243,7 +250,9 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	}
 	if artifact != nil {
 		if !c.run.Reads.Valid() {
-			c.acquired = artifact
+			if !artifact.InputAlias {
+				c.acquired = artifact
+			}
 			return nil
 		}
 		c.Store.SetArtifact(obj.Named(), artifact.WithReads(&c.run.Reads))

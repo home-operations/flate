@@ -33,10 +33,16 @@ type Kustomization struct {
 	Annotations map[string]string `json:"-" yaml:"-"`
 }
 
+// EntryKustomizationID identifies the internal producer for an admitted literal entry.
+func EntryKustomizationID(path string) NamedResource {
+	return NamedResource{Group: kindTable[kindKustomization].Group, Kind: KindKustomization, Namespace: internalKustomizationNamespace, Name: cmp.Or(NormalizeClaimBase(path), ".")}
+}
+
 // NewEntryKustomization constructs an internal producer for an admitted literal entry.
 func NewEntryKustomization(source NamedResource, path string, applier NamedResource) *Kustomization {
+	id := EntryKustomizationID(path)
 	return &Kustomization{
-		Name: cmp.Or(NormalizeClaimBase(path), "."), Namespace: internalKustomizationNamespace,
+		Name: id.Name, Namespace: id.Namespace,
 		Path:            path,
 		diagnosticOwner: applier, diagnosticPath: path, hasDiagnostic: true,
 		SourceRef:  kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name, Namespace: source.Namespace},

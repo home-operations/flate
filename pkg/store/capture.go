@@ -15,6 +15,7 @@ type ReadSet struct {
 	advisories   AdvisoryEvidence
 	produced     []admission
 	invalid      atomic.Bool
+	delivered    atomic.Bool
 	retired      atomic.Bool
 	store        *Store
 	id           manifest.NamedResource
@@ -79,6 +80,7 @@ type Gate struct {
 // Reused storage MUST have no live or detached registration or output borrower.
 func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.invalid.Store(false)
+	r.delivered.Store(false)
 	r.retired.Store(false)
 	r.local = Input{}
 	r.localDetails = inputDetails{}
@@ -288,14 +290,14 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 		r.activate(input, objectFacet, view.generation)
 	}
 	input.view, input.derived = view, input.derived|1
-	if view.binding != nil {
+	if view.binding != nil && view.binding.Ref.NamedResource != r.id {
 		r.GetObject(view.binding.Ref.NamedResource)
 		r.GetArtifact(view.binding.Ref.NamedResource, ArtifactContent)
 		if view.bound && !view.binding.current() {
 			r.invalid.Store(true)
 		}
 	}
-	if view.support != nil {
+	if view.support != nil && view.support.Ref.NamedResource != r.id {
 		r.GetObject(view.support.Ref.NamedResource)
 		r.GetArtifact(view.support.Ref.NamedResource, ArtifactContent)
 		if view.bound && !view.support.productionCurrent() {
@@ -398,6 +400,10 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 			kind := contentFacet + facet(i)
 			r.observe(input, kind, input.cell(kind).generation.Load())
 		}
+	}
+	if source, ok := details.artifact.(*SourceArtifact); ok && id != r.id && !source.Reads.Valid() {
+		r.invalid.Store(true)
+		return nil
 	}
 	return details.artifact
 }
@@ -518,9 +524,26 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 	return out
 }
 
-// GetEmission binds candidate output to this execution's captured declaration and source.
+// GetEmission captures accepted output, or binds this producer's own attempt.
 func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, map[string]any, Emission) {
-	return r.store.getEmission(r, id)
+	if id == r.id {
+		return r.store.getEmission(r, id)
+	}
+	obj := r.GetDeclaration(id)
+	doc := r.input(id).view.child.Doc
+	output, _ := r.GetArtifact(id, ArtifactContent).(*Emission)
+	captured := Emission{Reads: r, input: obj, inputDoc: doc}
+	if output != nil {
+		captured.OutputReads = output.OutputReads
+		if output.OutputReads.Valid() {
+			captured = *output
+			captured.Reads, captured.input, captured.inputDoc = r, obj, doc
+			captured.previous = nil
+		}
+	}
+	view := r.input(id).view
+	captured.inputHead = inputStamp{owner: view.owner, generation: view.generation, revision: view.revision, binding: view.sourceBinding()}
+	return obj, doc, captured
 }
 
 // ID identifies the execution that owns these inputs.

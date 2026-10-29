@@ -62,7 +62,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 			materialized := maps.Collect(records)
 			if reads.Valid() {
 				for child, record := range materialized {
-					o.admission.AddHistory(o.store, child, record)
+					o.admission.AddHistory(child, record)
 				}
 				history[id] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 					for child, record := range materialized {

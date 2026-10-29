@@ -585,3 +585,58 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, info.ModTime().Equal(stamp), true)
 }
+
+func TestRender_DocumentsAcceptedCache(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	req := RenderRequest{Documents: &DocumentsInput{Documents: []byte(cmYAML("original"))}}
+	owner := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "flux"}
+	var records map[manifest.NamedResource]manifest.DiscoveryRecord
+	var eligible bool
+	func() {
+		ownerCache, err := sourcecache.New(t.Context(), root)
+		assert.NoError(t, err)
+		defer func() { assert.NoError(t, ownerCache.Close()) }()
+		cache := NewTreeCache(ownerCache, nil, nil)
+		defer cache.Close()
+		docs, receipt, err := Render(t.Context(), cache, req, sourcecache.RetryConfig{})
+		assert.NoError(t, err)
+		if receipt == nil || len(docs) != 1 {
+			t.Fatal("document render supplied no receipt or output")
+		}
+		if previous, complete := cache.PreviousRender(t.Context(), req, owner); previous != nil || complete {
+			t.Fatal("unaccepted document render supplied history")
+		}
+		eligible = cache.owner.CanPersistRenders()
+		if !eligible {
+			return
+		}
+		frame := receipt.Value().(renderFrame)
+		docs[0].Document["metadata"].(map[string]any)["name"] = "accepted-cache-witness"
+		frame.output, err = manifest.EncodeRender(docs)
+		assert.NoError(t, err)
+		frame.encoded, frame.raw = nil, ""
+		receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
+		records = map[manifest.NamedResource]manifest.DiscoveryRecord{manifest.DocIdentity(docs[0].Document): {Refs: []manifest.NamedResource{}}}
+		assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: maps.All(records)}))
+	}()
+	if !eligible {
+		t.Skip("requires a clean VCS-stamped build for accepted document reuse")
+	}
+	fresh := newTestTreeCache(t, root)
+	previous, complete := fresh.PreviousRender(t.Context(), req, owner)
+	if !complete {
+		t.Fatal("accepted document history was unavailable after reopening")
+	}
+	assert.Diff(t, maps.Collect(previous), records)
+	warm, _, err := Render(t.Context(), fresh, req, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	assert.Equal(t, manifest.DocIdentity(warm[0].Document).Name, "accepted-cache-witness")
+	changed := RenderRequest{Documents: &DocumentsInput{Documents: []byte(cmYAML("changed"))}}
+	if previous, complete := fresh.PreviousRender(t.Context(), changed, owner); previous != nil || complete {
+		t.Fatal("changed document input reused accepted history")
+	}
+	rendered, _, err := Render(t.Context(), fresh, changed, sourcecache.RetryConfig{})
+	assert.NoError(t, err)
+	assert.Equal(t, manifest.DocIdentity(rendered[0].Document).Name, "changed")
+}

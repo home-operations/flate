@@ -557,7 +557,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	}
 	for _, field := range []string{
 		"Name", "Namespace", "HelmReleaseSpec.ReleaseName", "TargetNamespace",
-		"Install.CRDs", "DisableSchemaValidation", "Install.DisableOpenAPIValidation",
+		"DisableSchemaValidation", "Install.DisableOpenAPIValidation",
 		"Install.DisableHooks", "Install.Replace", "Test.Enable",
 		"Chart.Version", "ChartValuesFiles", "IgnoreMissingValuesFiles", "PostRenderers",
 	} {
@@ -620,7 +620,7 @@ func TestComputeTemplateKey_SelectedActionPolicy(t *testing.T) {
 		}{
 			{"empty", "", false, true, true},
 			{"default", helmv2.Create, false, true, true},
-			{"replace", helmv2.CreateReplace, false, true, false},
+			{"replace", helmv2.CreateReplace, false, true, true},
 			{"skip", helmv2.Skip, false, true, false},
 			{"openapi", "", true, true, false},
 			{"inactive", helmv2.Skip, true, false, true},

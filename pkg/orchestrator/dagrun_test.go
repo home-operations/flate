@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -749,4 +751,73 @@ func TestDAG_SeedAdmissionPreservesSourceReaders(t *testing.T) {
 	if !reads.Valid() {
 		t.Fatal("initial source admission invalidated a consumer that already captured its metadata")
 	}
+}
+
+func TestDAG_SourceFirstAcceptedContext(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload, namespace: apps}\n")
+	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(dir, "entry"), RepoRoot: dir}, Config{Concurrency: 2})
+	assert.NoError(t, err)
+	defer o.stop()
+	fetcher := &advisorySourceFetcher{root: dir}
+	o.src.Fetchers[manifest.KindGitRepository] = fetcher
+	assert.NoError(t, o.bootstrap(t.Context()))
+	o.configureControllers()
+	o.src.StartLifecycle()
+	o.ksc.StartLifecycle()
+	parent := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./producer"}
+	source := &manifest.GitRepository{Name: "self", Namespace: "apps", URL: "https://unreachable.invalid/self"}
+	root := &manifest.Kustomization{Name: "root", Namespace: "apps", Path: "./entry", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name}}
+	o.store.AddObject(parent)
+	published := make(chan struct{})
+	var once sync.Once
+	var sourceFirst, rootRan atomic.Bool
+	dispatcher := fixtureDispatcher{store: o.store, dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+		if id == source.Named() {
+			return schedule.Result{Assessment: o.src.ReconcileNode(ctx, id, level)}
+		}
+		if id == root.Named() {
+			select {
+			case <-published:
+				rootRan.Store(true)
+			default:
+				t.Error("root rendered before source publication")
+			}
+			return schedule.Result{Assessment: o.ksc.ReconcileNode(ctx, id, level)}
+		}
+		execution := controllertest.NewExecution(o.ksc.Controller, id)
+		execution.Dispatch(ctx, level, execution, func(e *base.Execution, _ context.Context, _ *manifest.Kustomization, _ manifest.DrainLevel) error {
+			return e.Emit(id, &store.Emission{Children: []store.Child{{Obj: source}, {Obj: root}}, Complete: true}, nil)
+		})
+		return schedule.Result{Assessment: execution}
+	}}
+	scheduler := schedule.New(o.tasks, dispatcher)
+	defer o.watchDAG(scheduler)()
+	defer o.store.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
+		if id == source.Named() {
+			if artifact, ok := o.store.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); ok && artifact.InputAlias && artifact.Reads.Valid() {
+				once.Do(func() { close(published) })
+			}
+		}
+	}, false)()
+	defer o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == source.Named() {
+			sourceFirst.Store(true)
+			select {
+			case <-published:
+			case <-t.Context().Done():
+				t.Error(t.Context().Err())
+			}
+		} else if id == root.Named() && !sourceFirst.Load() {
+			t.Error("fixture did not publish the source notification first")
+		}
+	}, false)()
+	scheduler.Seed([]schedule.NodeID{parent.Named()})
+	assert.NoError(t, scheduler.Run(t.Context()))
+	assert.Equal(t, fetcher.calls.Load(), int64(0))
+	assert.Equal(t, rootRan.Load(), true)
+	assert.Equal(t, o.store.EmissionOwner(root.Named()), parent.Named())
+	status, _ := o.store.GetStatus(root.Named())
+	assert.Equal(t, status.Status, store.StatusReady)
 }

@@ -22,7 +22,7 @@ func TestHelmChartSource_OCIRepository(t *testing.T) {
 	assert.Equal(t, got.Named(), NamedResource{Group: SourceDomain, Kind: KindOCIRepository, Name: chart.Name, Namespace: chart.Namespace})
 	assert.Equal(t, DiagnosticFor(got.Named(), got), DiagnosticIdentity{ID: got.Named(), Resource: chart.Named()})
 	assert.Equal(t, DiagnosticFor(got.WithNamespace("other").Named(), got.WithNamespace("other")).Resource, chart.Named())
-	alias, _ := got.BootstrapAlias(t.TempDir())
+	alias := got.BootstrapAlias(t.TempDir())
 	assert.Equal(t, DiagnosticFor(alias.Named(), alias).Resource, chart.Named())
 	assert.Equal(t, got.URL, "oci://registry.example/charts/app")
 	assert.Equal(t, got.Provider, repository.Provider)

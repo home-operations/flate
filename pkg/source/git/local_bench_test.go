@@ -17,7 +17,7 @@ func BenchmarkResolveLocal(b *testing.B) {
 			if name == "HEAD" {
 				tag = "v2.0.0"
 			}
-			repositories := []*manifest.GitRepository{localSource(sourcev1.GitRepositoryRef{Tag: tag})}
+			repositories := []manifest.BaseManifest{localSource(sourcev1.GitRepositoryRef{Tag: tag})}
 			if _, err := ResolveLocal(b.Context(), location, repositories, ""); err != nil {
 				b.Fatal(err)
 			}

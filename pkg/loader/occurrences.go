@@ -89,8 +89,11 @@ func (l *Loader) PathObjects() []store.Child {
 					continue
 				}
 				if slices.ContainsFunc(objects, func(other store.Child) bool {
+					if other.Obj.Named() != child.Obj.Named() {
+						return false
+					}
 					otherSource, otherPath, _ := other.Obj.SourcePath()
-					return other.Obj.Named() == child.Obj.Named() && otherSource == source && otherPath == path
+					return otherSource == source && otherPath == path
 				}) {
 					continue
 				}

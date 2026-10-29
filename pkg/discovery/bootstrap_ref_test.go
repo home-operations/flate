@@ -659,7 +659,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 			t.Fatal(err)
 		}
-		if len(d.aliasViews) != 1 || st.GetObject(alias.Named()) != alias {
+		if len(*d.aliasViews) != 1 || st.GetObject(alias.Named()) != alias {
 			t.Fatal("alias refresh changed registry or authored object")
 		}
 	})
@@ -745,9 +745,18 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			if i == 2 {
 				wantViews = 2
 			}
-			if len(d.aliasViews) != wantViews {
-				t.Fatalf("views = %d", len(d.aliasViews))
+			if len(*d.aliasViews) != wantViews {
+				t.Fatalf("views = %d", len(*d.aliasViews))
 			}
+		}
+		admission := d.admission()
+		for id, resolved := range d.resolvedSources {
+			if id == manifest.BootstrapSourceID {
+				continue
+			}
+			artifact, err := admission.entrySourceView(t.Context(), resolved)
+			assert.NoError(t, err)
+			assert.Equal(t, artifact, resolved.artifact)
 		}
 		if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
 			t.Fatal("bootstrap changed")
@@ -839,9 +848,9 @@ func TestEntrySourceView_WarningEvidence(t *testing.T) {
 					invocation := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "current only"}
 					bootstrap := &store.SourceArtifact{LocalPath: root, FS: input, Warnings: []manifest.Warning{invocation}}
 					obj := &manifest.OCIRepository{Name: "alias", Namespace: "apps"}
-					d := &Admission{aliasViews: map[string]*store.SourceArtifact{}}
+					d := &Admission{}
 					for range 2 {
-						artifact, _, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, subtree: subtree})
+						artifact, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, subtree: subtree})
 						if failed && !errors.Is(err, fs.ErrPermission) || !failed && err != nil {
 							t.Fatalf("source view error=%v, failed=%t", err, failed)
 						}

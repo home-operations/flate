@@ -126,10 +126,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err := d.acceptEntry(ctx); err != nil {
 		return nil, err
 	}
+	admission := d.admission()
+	if d.binding == (Binding{}) && d.selection == nil {
+		admission.declarations = d.applications()
+	}
 	return &Result{
 		pending:                 d,
 		Binding:                 d.binding,
-		Admission:               d.admission(),
+		Admission:               admission,
 		DependencySubstitutions: d.substitutions,
 		RepoRoot:                repoRoot,
 		Index:                   l.Index,
@@ -168,12 +172,16 @@ func (r *Result) PrepareEntry(ctx context.Context) error {
 		index.Readers[path] = slices.Clone(readers)
 	}
 	d.loader.Index, d.binding = &index, binding
-	d.cfg.Store.AddObject(root)
-	source, _, _ := kustomize.SourceInput(d.cfg.Store, root)
-	if source != nil && d.cfg.Trees != nil {
-		if err := d.prepareEntry(ctx, root, source); err != nil {
-			d.binding.Failure = err
+	if d.cfg.Store.GetObject(root.Named()) == nil {
+		var doc map[string]any
+		if r.Admission.selected != nil {
+			doc = r.Admission.selected.document
 		}
+		d.cfg.Store.AddObject(root, doc)
+	}
+	source, _, _ := kustomize.SourceInput(d.cfg.Store, root)
+	if _, err := d.prepareEntry(ctx, root, source); err != nil {
+		d.binding.Failure = err
 	}
 	if err := d.loader.FinalizeIndex(ctx, r.RepoRoot); err != nil {
 		return err
@@ -187,14 +195,14 @@ func (r *Result) PrepareEntry(ctx context.Context) error {
 
 type discoverer struct {
 	binding         Binding
-	entryApplier    manifest.NamedResource
+	selection       *applicationEvidence
 	prepared        map[*manifest.Kustomization]entryPreparation
 	substitutions   values.DependencySubstitutions
 	cfg             Config
 	loader          *loader.Loader
 	resolvedSources map[manifest.NamedResource]entryResolution
 	remotes         map[string]struct{}
-	aliasViews      map[string]*store.SourceArtifact
+	aliasViews      *map[string]aliasView
 	hasPins         bool
 }
 
@@ -208,7 +216,7 @@ type entryPreparation struct {
 func newDiscoverer(cfg Config) *discoverer {
 	l := loader.New(cfg.Store)
 	l.Options = loader.Options{WipeSecrets: cfg.WipeSecrets, RemoteInputs: cfg.RemoteInputs, RemoteRetry: cfg.RemoteRetry}
-	d := &discoverer{cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{}}
+	d := &discoverer{cfg: cfg, loader: l}
 	if cfg.Entry == nil || cfg.Entry.prepared == nil {
 		return d
 	}
@@ -225,7 +233,7 @@ func newDiscoverer(cfg Config) *discoverer {
 		return d
 	}
 	l.Options.ParsedInputs = prepared.parsed
-	d.aliasViews = maps.Clone(prepared.aliasViews)
+	d.aliasViews = prepared.aliasViews
 	return d
 }
 
@@ -323,7 +331,7 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 				discovered = append(discovered, child.Obj.(*manifest.Kustomization))
 			}
 			d.substitutions = values.NewDependencySubstitutions(discovered)
-			ks, err := d.bindEntry(ctx, repoRoot)
+			ks, err := d.bindEntry(ctx)
 			if err != nil {
 				return err
 			}
@@ -335,18 +343,16 @@ func (d *discoverer) loadManifests(ctx context.Context, repoRoot string, build b
 				break
 			}
 			source, _, _ := kustomize.SourceInput(d.cfg.Store, ks)
-			if d.cfg.Trees == nil || source == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
-				break
-			}
-			if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == source {
-				break
-			}
-			if err := d.prepareEntry(ctx, ks, source); err != nil {
+			prepared, err := d.prepareEntry(ctx, ks, source)
+			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				d.binding.Failure = err
 				slog.Debug("discovery: entry preparation deferred", "err", err)
+				break
+			}
+			if !prepared {
 				break
 			}
 		}
@@ -364,148 +370,30 @@ type Binding struct {
 	Failure               error
 }
 
-func (d *discoverer) bindEntry(ctx context.Context, repoRoot string) (*manifest.Kustomization, error) {
-	input := d.cfg.Store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	var internal *manifest.Kustomization
-	if d.binding == (Binding{}) {
-		var err error
-		internal, _, err = d.admission().entry(ctx, d.cfg.Store, d.applications())
-		if err != nil || internal == nil {
-			return nil, err
-		}
-		d.entryApplier = manifest.DiagnosticFor(internal.Named(), internal).Resource
-	} else {
-		subpath, _ := filepath.Rel(input.LocalPath, d.cfg.Path)
-		internal = manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(subpath), d.entryApplier)
+func (d *discoverer) bindEntry(ctx context.Context) (*manifest.Kustomization, error) {
+	admission := d.admission()
+	if d.selection == nil {
+		admission.declarations = d.applications()
 	}
-	var matches []store.Child
-	for _, child := range d.loader.Kustomizations() {
-		ks := child.Obj.(*manifest.Kustomization)
-		if ks.IsFragment() || ks.Named().ReportHidden() {
-			continue
-		}
-		if record, indexed := d.loader.Index.Lookup(ks.Named()); indexed &&
-			(record.Builder == "" && record.Authored != ks.Named() || record.Builder != "" && record.File == record.Builder) {
-			continue
-		}
-		if source, ok := d.cfg.Store.GetObject(ks.SourceID()).(entrySource); ok {
-			_, descriptor := source.BootstrapAlias(input.LocalPath)
-			if descriptor != nil && (descriptor.Ignore != nil && *descriptor.Ignore != "" || len(descriptor.SparseCheckout) != 0) {
-				continue
-			}
-		}
-		art, _, err := kustomize.SourceInput(d.cfg.Store, ks)
-		if err != nil {
-			continue
-		}
-		root, pinned, external := loader.SourceView(d.cfg.Store, ks.SourceID(), repoRoot)
-		if pinned || external {
-			continue
-		}
-		target := loader.OriginPath(art, filepath.Join(root, manifest.NormalizeClaimBase(ks.Path)))
-		if target == d.cfg.Path {
-			matches = append(matches, child)
-		}
+	root, binding, err := admission.BindEntry(ctx, d.cfg.Store)
+	d.selection = admission.selected
+	if err != nil || root == nil {
+		return nil, err
 	}
-	slices.SortFunc(matches, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
-	ks := internal
-	for _, child := range matches {
-		candidate := child.Obj.(*manifest.Kustomization)
-		if len(candidate.DependsOn) != 0 {
-			if d.cfg.Trees == nil || candidate.PostBuild != nil && len(candidate.PostBuild.SubstituteFrom) != 0 {
-				continue
-			}
-			source, _, _ := kustomize.SourceInput(d.cfg.Store, candidate)
-			prepared, err := d.prepareDocuments(ctx, candidate, source)
-			if err != nil {
-				slog.Debug("discovery: entry candidate preparation deferred", "err", err)
-				continue
-			}
-			if !d.entryEligible(candidate, prepared.children) {
-				continue
-			}
+	if d.cfg.Store.GetObject(root.Named()) == nil {
+		var doc map[string]any
+		if d.selection != nil {
+			doc = d.selection.document
 		}
-		ks = candidate
-		d.entryApplier = candidate.Named()
-		d.cfg.Store.AddObject(ks, child.Doc)
-		if previous := d.binding.Producer; previous.ReportHidden() && previous != ks.Named() {
-			d.cfg.Store.DeleteObject(previous)
-		}
-		break
-	}
-	if ks == internal {
-		if previous, ok := d.cfg.Store.GetObject(internal.Named()).(*manifest.Kustomization); ok {
-			ks = previous
-		} else {
-			d.cfg.Store.AddObject(ks)
-		}
+		d.cfg.Store.AddObject(root, doc)
 	}
 	for owner, prepared := range d.prepared {
-		if prepared.registered && owner != ks {
+		if prepared.registered && owner != root {
 			delete(d.prepared, owner)
 		}
 	}
-	source := ks.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
-	}
-	d.binding = Binding{Producer: ks.Named(), Source: source, Path: manifest.NormalizeClaimBase(ks.Path), Key: internal.Named()}
-	return ks, nil
-}
-
-func (d *discoverer) entryEligible(owner *manifest.Kustomization, children []store.Child) bool {
-	batch := make(map[manifest.NamedResource]manifest.BaseManifest, len(children))
-	for _, child := range children {
-		batch[child.Obj.Named()] = child.Obj
-	}
-	seen := map[manifest.NamedResource]bool{}
-	source := owner.SourceID()
-	if source.Name == "" || source.Kind == "" {
-		source = manifest.BootstrapSourceID
-	}
-	var captured func(manifest.NamedResource) bool
-	prerequisites := func(obj manifest.BaseManifest) bool {
-		obj = manifest.MapDependsOn(obj, d.substitutions.Resolve, d.substitutions.Resolve)
-		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-			if (ref.Ordering || ref.ArtifactStages != 0 && d.cfg.Store.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil) && captured(ref.NamedResource) {
-				return true
-			}
-		}
-		return false
-	}
-	captured = func(id manifest.NamedResource) bool {
-		if id.Name == "" || id.Kind == "" || id == owner.Named() || seen[id] {
-			return false
-		}
-		seen[id] = true
-		if batch[id] != nil {
-			return true
-		}
-		for _, child := range children {
-			for _, target := range manifest.ProducerTargets(child.Obj, id) {
-				if target.NamedResource == id {
-					return true
-				}
-			}
-		}
-		obj := d.cfg.Store.GetObject(id)
-		if obj == nil {
-			obj = d.loader.Index.Records[id].Declaration
-		}
-		if obj != nil && prerequisites(obj) {
-			return true
-		}
-		for _, production := range d.cfg.Store.Productions(id, d.loader.Index) {
-			if production.Source != (manifest.NamedResource{}) && production.Source != source {
-				continue
-			}
-			if production.Owner == owner.Named() || captured(production.Materializer(id)) || captured(production.Declaration) {
-				return true
-			}
-		}
-		return false
-	}
-	return !prerequisites(owner)
+	d.binding = binding
+	return root, nil
 }
 
 func (d *discoverer) prepareDocuments(ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact) (entryPreparation, error) {
@@ -538,15 +426,21 @@ func (d *discoverer) prepareDocuments(ctx context.Context, ks *manifest.Kustomiz
 	return result, nil
 }
 
-func (d *discoverer) prepareEntry(ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact) error {
+func (d *discoverer) prepareEntry(ctx context.Context, ks *manifest.Kustomization, input *store.SourceArtifact) (bool, error) {
+	if d.cfg.Trees == nil || input == nil || ks.PostBuild != nil && len(ks.PostBuild.SubstituteFrom) != 0 {
+		return false, nil
+	}
+	if previous, ok := d.prepared[ks]; ok && previous.registered && previous.source == input {
+		return false, nil
+	}
 	prepared, err := d.prepareDocuments(ctx, ks, input)
 	if err != nil {
-		return err
+		return false, err
 	}
 	d.loader.RegisterBuilt(loader.BuiltInput{Root: filepath.Join(input.LocalPath, manifest.NormalizeClaimBase(ks.Path)), Owner: ks.Named(), Source: d.binding.Source, Reads: kustomize.RenderInputs(prepared.receipt)}, prepared.children)
 	prepared.registered = true
 	d.prepared[ks] = prepared
-	return nil
+	return true, nil
 }
 
 func (d *discoverer) acceptEntry(ctx context.Context) error {

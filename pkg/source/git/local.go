@@ -21,7 +21,7 @@ import (
 // Only matching mutable HEAD inputs may expose working-tree edits; committed
 // artifacts retain their own object storage and use LocalPath solely for ownership.
 // On error, returned artifacts contain only warnings and no usable content.
-func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories []*manifest.GitRepository, sideRevision string) (map[manifest.NamedResource]*store.SourceArtifact, error) {
+func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories []manifest.BaseManifest, sideRevision string) (map[manifest.NamedResource]*store.SourceArtifact, error) {
 	if len(repositories) == 0 {
 		return nil, nil
 	}
@@ -39,9 +39,13 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 	}
 	resolved := make(map[sourcev1.GitRepositoryRef]resolution)
 	artifacts := make(map[manifest.NamedResource]*store.SourceArtifact, len(repositories))
-	for _, repository := range repositories {
-		if repository == nil {
+	for _, obj := range repositories {
+		repository, isGit := obj.(*manifest.GitRepository)
+		if obj == nil || isGit && repository == nil {
 			return failedLocal(artifacts), fmt.Errorf("%w: local GitRepository is nil", manifest.ErrInput)
+		}
+		if !isGit {
+			continue
 		}
 		selected := (*manifest.GitRepositoryRef)(repository.Reference)
 		ref := selected.Normalized()

@@ -8,6 +8,7 @@ import (
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	sourcectrl "github.com/home-operations/flate/pkg/controllers/source"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
@@ -45,12 +46,10 @@ func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSe
 	}
 	if e.o.admission != nil && reads != nil && reads.GetDeclaration(reads.ID()) != nil {
 		witness := reads.GetDeclaration(reads.ID())
-		object, artifact, err := e.o.admission.Resolve(ctx, id, nil, []manifest.BaseManifest{witness})
+		object, artifact, err := e.o.admission.Resolve(ctx, reads, discovery.ResolveRequest{ID: id, Witnesses: []manifest.BaseManifest{witness}})
 		if err == nil && object != nil && artifact != nil && reads.Valid() {
 			if e.admit(store.Child{Obj: object}, reads) {
 				e.o.store.AddObject(object)
-				e.o.store.SetArtifact(id, artifact)
-				e.o.store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Message: "local entry source"})
 				return true
 			}
 		}
@@ -103,6 +102,7 @@ func (o *Orchestrator) configureControllers() {
 	}, o.cfg.SourceRetry)
 	o.hrc.Configure(common)
 	o.rsc.Configure(common)
+	o.fic.Configure(common)
 	o.agc.Configure(common)
 }
 

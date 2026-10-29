@@ -835,7 +835,7 @@ spec:
 	}
 
 	ksID := testutil.KustomizationID("flux-system", "flux-entry-repos")
-	if s.GetObject(ksID) != nil || l.AdmitsRoot(ksID, filepath.Join(dir, "repositories/# flux-entry.yaml")) {
+	if s.GetObject(ksID) != nil || l.AdmitsRoot(l.IndexedObject(ksID, l.Index.Records[ksID]).Obj, filepath.Join(dir, "repositories/# flux-entry.yaml")) {
 		t.Error("unlisted declaration became runnable")
 	}
 	if got, want := filesForTest(l.Index)[ksID], "repositories/# flux-entry.yaml"; got != want {
@@ -1111,7 +1111,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
 		for _, name := range []string{"first", "second"} {
-			testutil.WriteFile(t, root, name+"/ks.yaml", testutil.KustomizationYAML(name, "", "  {path: ./apps}\n"))
+			testutil.WriteFile(t, root, name+"/ks.yaml", testutil.KustomizationYAML(name, "apps", "  {path: ./apps}\n"))
 		}
 		location, err := gitrepo.Locate(t.Context(), root, root)
 		assert.NoError(t, err)
@@ -1135,7 +1135,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 		if !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("uncreated file error = %v, want not exist", err)
 		}
-		testutil.WriteFile(t, root, "second/late.yaml", testutil.KustomizationYAML("late", "", "  {path: ./apps}\n"))
+		testutil.WriteFile(t, root, "second/late.yaml", testutil.KustomizationYAML("late", "apps", "  {path: ./apps}\n"))
 		n, err = loadForTest(t.Context(), t, l, filepath.Join(root, "second"))
 		assert.NoError(t, err)
 		if n != 1 {
@@ -1150,7 +1150,7 @@ func TestLoader_IndependentRoots(t *testing.T) {
 			t.Fatal("load discarded retained directory observations")
 		}
 		for _, name := range []string{"first", "second"} {
-			id := testutil.KustomizationID("", name)
+			id := testutil.KustomizationID("apps", name)
 			record, indexed := l.Index.Lookup(id)
 			if !indexed || record.Path != filepath.Join(root, name, "ks.yaml") || s.GetObject(id) == nil {
 				t.Fatalf("%s graph was not loaded and indexed: %+v", name, record)
@@ -1178,14 +1178,14 @@ func TestLoader_IndependentRoots(t *testing.T) {
 	t.Run("admitted membership", func(t *testing.T) {
 		t.Parallel()
 		root := t.TempDir()
-		testutil.WriteFile(t, root, "first.yaml", testutil.KustomizationYAML("first", "", "  {path: ./apps}\n"))
+		testutil.WriteFile(t, root, "first.yaml", testutil.KustomizationYAML("first", "apps", "  {path: ./apps}\n"))
 		location, err := gitrepo.Locate(t.Context(), root, root)
 		assert.NoError(t, err)
 		admitted, err := gittree.AdmitDirectory(t.Context(), location)
 		assert.NoError(t, err)
 		input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: admitted.FS})
 		assert.NoError(t, err)
-		testutil.WriteFile(t, root, "second.yaml", testutil.KustomizationYAML("second", "", "  {path: ./apps}\n"))
+		testutil.WriteFile(t, root, "second.yaml", testutil.KustomizationYAML("second", "apps", "  {path: ./apps}\n"))
 		s := store.New()
 		s.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
 		l := New(s)
@@ -1213,11 +1213,11 @@ func TestLoader_IndependentRoots(t *testing.T) {
 				roots[0] = filepath.Join(roots[1], "child")
 			}
 			ids := []manifest.NamedResource{
-				testutil.KustomizationID("", "first"),
-				testutil.KustomizationID("", "second"),
+				testutil.KustomizationID("apps", "first"),
+				testutil.KustomizationID("apps", "second"),
 			}
 			for i, root := range roots {
-				testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML(ids[i].Name, "", "  {path: ./apps}\n"))
+				testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML(ids[i].Name, ids[i].Namespace, "  {path: ./apps}\n"))
 			}
 			l := New(store.New())
 			if tc.bounded {

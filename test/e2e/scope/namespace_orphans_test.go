@@ -14,6 +14,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -178,6 +179,87 @@ func TestE2E_ChildKustomizationIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestE2E_RuntimeOwnerNamespace(t *testing.T) {
+	for _, namespace := range []string{"", "apps"} {
+		name := "omitted"
+		if namespace != "" {
+			name = "explicit"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := runtimeOwnerNamespaceFixture(t, namespace)
+			var rootReleases string
+			for _, entry := range []string{root, filepath.Join(root, "flux")} {
+				flags := []string{"--path", entry, "--cache-dir", "", "--concurrency", "2", "--no-progress"}
+				out := runtimeOwnerNamespaceOutput(t, append([]string{"get", "hr", "-o", "json"}, flags...)...)
+				var releases []struct {
+					Name, Namespace string
+					SourceRef       struct{ Kind, Name, Namespace string }
+				}
+				assert.NoError(t, json.Unmarshal([]byte(out), &releases))
+				if len(releases) != 1 {
+					t.Fatalf("want exactly one release: %s", out)
+				}
+				assert.Equal(t, releases[0].Name, "demo")
+				assert.Equal(t, releases[0].Namespace, "apps")
+				assert.Equal(t, releases[0].SourceRef.Kind, manifest.KindGitRepository)
+				assert.Equal(t, releases[0].SourceRef.Name, "flux-system")
+				assert.Equal(t, releases[0].SourceRef.Namespace, "flux-system")
+				if rootReleases == "" {
+					rootReleases = out
+				} else {
+					assert.Equal(t, out, rootReleases)
+				}
+				out = runtimeOwnerNamespaceOutput(t, append([]string{"build", "all"}, flags...)...)
+				docs, err := testutil.SplitDocs([]byte(out))
+				assert.NoError(t, err)
+				counts := map[string]int{}
+				for _, doc := range docs {
+					kind := manifest.DocKind(doc)
+					counts[kind]++
+					name, ns := manifest.DocMetadata(doc)
+					if kind == manifest.KindKustomization && name == "demo" {
+						assert.Equal(t, ns, "apps")
+					}
+					if kind == manifest.KindHelmRelease || kind == manifest.KindConfigMap {
+						assert.Equal(t, ns, "apps")
+						if kind == manifest.KindConfigMap {
+							assert.Equal(t, name, "demo-chart")
+							assert.Equal(t, doc["data"].(map[string]any)["value"], any("fixture"))
+						}
+					}
+				}
+				assert.Equal(t, counts[manifest.KindHelmRelease], 1)
+				assert.Equal(t, counts[manifest.KindConfigMap], 1)
+			}
+		})
+	}
+}
+
+func runtimeOwnerNamespaceOutput(t *testing.T, args ...string) string {
+	t.Helper()
+	out, stderr := harness.RequireCLIOK(t, args...)
+	again, diagnostics := harness.RequireCLIOK(t, args...)
+	assert.Equal(t, again, out)
+	assert.Equal(t, stderr, "")
+	assert.Equal(t, diagnostics, "")
+	return out
+}
+
+func runtimeOwnerNamespaceFixture(t *testing.T, namespace string) string {
+	t.Helper()
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "flux/repo.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: flux-system, namespace: flux-system}\nspec: {url: 'https://example.invalid/cluster.git'}\n")
+	owner := testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  targetNamespace: apps\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n")
+	testutil.WriteFile(t, root, "flux/owners.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owners, namespace: flux-system}\nspec:\n  resourcesTemplate: |\n    "+strings.ReplaceAll(strings.TrimSpace(owner), "\n", "\n    ")+"\n")
+	testutil.WriteFile(t, root, "apps/ks.yaml", testutil.KustomizationYAML("demo", namespace, "  path: ./workload\n  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"))
+	testutil.WriteFile(t, root, "workload/kustomization.yaml", "namespace: apps\nresources: [hr.yaml]\n")
+	testutil.WriteFile(t, root, "workload/hr.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: demo}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/demo\n      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n  values: {value: fixture}\n")
+	testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
+	testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo-chart\n  namespace: {{ .Release.Namespace }}\ndata: {value: {{ .Values.value }}}\n")
+	return root
 }
 
 func TestE2E_NamespaceOrphans(t *testing.T) {

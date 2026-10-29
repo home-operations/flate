@@ -287,7 +287,7 @@ func (l *Loader) AdmitsOccurrence(occurrence Occurrence) bool {
 				continue
 			}
 			if child.Obj.Named() == record.Authored && child.outcome.Ordinal == occurrence.Declaration.Document {
-				return l.AdmitsRoot(id, record.Path)
+				return l.AdmitsRoot(l.IndexedObject(id, record).Obj, record.Path)
 			}
 		}
 	}

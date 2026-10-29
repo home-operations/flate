@@ -207,7 +207,7 @@ spec:
 		if !exists || record.Path != "" || record.Authored != (manifest.NamedResource{}) || record.File != "entry/kustomization.yaml" {
 			t.Fatalf("built record %s lost authoritative evidence: %+v", id, record)
 		}
-		if st.GetObject(id) != obj || candidateForTest(t, l, id) != obj || l.AdmitsRoot(id, "") {
+		if st.GetObject(id) != obj || candidateForTest(t, l, id) != obj || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, "") {
 			t.Errorf("built identity %s did not survive admission and source mounts", id)
 		}
 		for _, file := range []string{"entry/kustomization.yaml", "entry/bundle.yaml", "entry/version.yaml", "entry/value.txt", selectedFile} {

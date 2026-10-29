@@ -260,7 +260,7 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 			}
 			admitted := map[manifest.NamedResource]bool{}
 			for id, record := range l.Index.Files() {
-				admitted[id] = l.AdmitsRoot(id, record.Path)
+				admitted[id] = l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)
 			}
 			assert.Equal(t, l.terminalInput(filepath.Join(root, tc.terminal)), true)
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
@@ -268,7 +268,7 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 			}
 			for id, before := range admitted {
 				record, _ := l.Index.Lookup(id)
-				assert.Equal(t, l.AdmitsRoot(id, record.Path), before)
+				assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path), before)
 			}
 			assert.Equal(t, l.terminalInput(filepath.Join(root, tc.terminal)), true)
 			if candidateForTest(t, l, testutil.KustomizationID("projected", "dual")) == nil {
@@ -507,12 +507,12 @@ func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 			l.SourceRoot = root
 			admitForTest(s, root)
 			l.Admit(root)
-			admitted := l.AdmitsRoot(sibling.Named(), filepath.Join(root, "apps/patch.yaml"))
+			admitted := l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml"))
 			assert.Equal(t, admitted, false)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 			idx := l.Index
-			assert.Equal(t, l.AdmitsRoot(sibling.Named(), filepath.Join(root, "apps/patch.yaml")), admitted)
-			if l.AdmitsRoot(sibling.Named(), filepath.Join(root, "apps/patch.yaml")) {
+			assert.Equal(t, l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml")), admitted)
+			if l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml")) {
 				t.Fatal("file-role input counted as a listed structural resource")
 			}
 			for _, file := range []string{"apps/" + filename, "inputs/absolute.yaml", "inputs/escaped.yaml", "inputs/missing", "apps/patch.yaml"} {
@@ -549,11 +549,11 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 		t.Fatal("terminal role suppressed a separately declared resource")
 	}
 	file := filepath.Join(root, "inputs/dual.yaml")
-	admitted := l.AdmitsRoot(id, file)
+	admitted := l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file)
 	assert.Equal(t, admitted, true)
 	assert.Equal(t, l.terminalInput(file), false)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
-	assert.Equal(t, l.AdmitsRoot(id, file), admitted)
+	assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file), admitted)
 	assert.Equal(t, l.terminalInput(file), false)
 }
 
@@ -577,7 +577,7 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 	peerFile, missingFile := filepath.Join(root, "declarations/peer.yaml"), filepath.Join(root, "missing/release.yaml")
 	l.Index.Records[missing] = manifest.DiscoveryRecord{Authored: missing, File: "missing/release.yaml", Path: missingFile}
 	l.Index.Readers = map[string][]manifest.FileReader{"missing": {{Reader: parent.Named(), Source: manifest.BootstrapSourceID}}}
-	before := map[manifest.NamedResource]bool{peer: l.AdmitsRoot(peer, peerFile), missing: l.AdmitsRoot(missing, missingFile)}
+	before := map[manifest.NamedResource]bool{peer: l.AdmitsRoot(l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile), missing: l.AdmitsRoot(l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile)}
 	assert.Equal(t, before[peer], true)
 	assert.Equal(t, before[missing], false)
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
@@ -612,7 +612,7 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 			for reader := range l.Index.ReadersOfFile("missing/release.yaml") {
 				readers = append(readers, reader)
 			}
-			results <- queryResult{admitted: map[manifest.NamedResource]bool{peer: l.AdmitsRoot(peer, peerFile), missing: l.AdmitsRoot(missing, missingFile)}, owners: owners, ancestors: ancestors, readers: readers}
+			results <- queryResult{admitted: map[manifest.NamedResource]bool{peer: l.AdmitsRoot(l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile), missing: l.AdmitsRoot(l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile)}, owners: owners, ancestors: ancestors, readers: readers}
 		})
 	}
 	for range 2 {

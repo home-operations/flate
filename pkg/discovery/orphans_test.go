@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/json"
 	"os"
 	"path"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing/fstest"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -107,7 +109,7 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			} else {
 				for _, id := range tc.order {
 					record, _ := l.Index.Lookup(id)
-					admit := func(obj manifest.BaseManifest) bool { return d.loader.AdmitsRoot(obj.Named(), record.Path) }
+					admit := func(obj manifest.BaseManifest) bool { return d.loader.AdmitsRoot(obj, record.Path) }
 					if !loader.Promote(t.Context(), st, id, loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, Admit: admit}) {
 						t.Fatalf("promotion failed for %s", id)
 					}
@@ -132,6 +134,105 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 				}
 				if got := obj.Data["VALUE"]; got != want.value {
 					t.Errorf("%s VALUE=%v, want indexed %s", want.id, got, want.value)
+				}
+			}
+		})
+	}
+}
+
+func TestPromoteOrphans_NamespaceAdmission(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name              string
+		indexed, siblings bool
+	}{
+		{name: "raw requested"},
+		{name: "raw siblings", siblings: true},
+		{name: "indexed requested", indexed: true},
+		{name: "indexed siblings and cluster scope", indexed: true, siblings: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			body := testutil.KustomizationYAML("bare", "", "  path: ./workload\n")
+			if tc.siblings {
+				body += "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: eligible, namespace: apps}\ndata: {value: retained}\n"
+				if tc.indexed {
+					body += "---\napiVersion: v1\nkind: Namespace\nmetadata: {name: apps}\n"
+				}
+			}
+			testutil.WriteFile(t, root, "bundle.yaml", body)
+			st := store.New()
+			admitDiscoveryForTest(st, root)
+			l := loader.New(st)
+			l.SourceRoot = root
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			if tc.indexed {
+				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [bundle.yaml]\n")
+				docs, err := testutil.SplitDocs([]byte(body))
+				assert.NoError(t, err)
+				var batch []store.Child
+				for _, doc := range docs {
+					obj, document, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+					assert.NoError(t, err)
+					batch = append(batch, store.Child{Obj: obj, Doc: document})
+				}
+				l.RegisterBuilt(loader.BuiltInput{Root: root, Source: manifest.BootstrapSourceID}, batch)
+			}
+			l.Admit(root)
+			bare := testutil.KustomizationID("", "bare")
+			if st.GetObject(bare) != nil {
+				t.Error("early admission published the namespace-less seed")
+			}
+			record, ok := l.Index.Lookup(bare)
+			assert.Equal(t, ok, true)
+			child := l.IndexedObject(bare, record)
+			if child.Obj == nil || child.Doc == nil {
+				t.Fatal("missing indexed declaration before promotion")
+			}
+			target := bare
+			if tc.siblings {
+				target = manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "eligible"}
+				st.DeleteObject(target)
+				record.Declaration = child.Obj
+				l.Index.Records[bare] = record
+			}
+			targetRecord, ok := l.Index.Lookup(target)
+			assert.Equal(t, ok, true)
+			if !tc.indexed {
+				targetRecord.Declaration = nil
+				l.Index.Records[target] = targetRecord
+				record, _ = l.Index.Lookup(bare)
+			}
+			if st.GetObject(target) != nil {
+				t.Fatal("promotion target already published")
+			}
+			assert.Equal(t, l.PromotionDocuments(target) != nil, tc.indexed)
+			before, err := json.Marshal(record)
+			assert.NoError(t, err)
+			document := manifest.DeepCopyMap(child.Doc)
+			object := child.Obj.(*manifest.Kustomization).Clone()
+			d := discoverer{cfg: Config{Store: st}, loader: l}
+			d.promoteOrphans(t.Context(), nil)
+			if st.GetObject(bare) != nil {
+				t.Error("namespace-less namespaced seed became an orphan root")
+			}
+			after, ok := l.Index.Lookup(bare)
+			assert.Equal(t, ok, true)
+			encoded, err := json.Marshal(after)
+			assert.NoError(t, err)
+			assert.Equal(t, string(encoded), string(before))
+			assert.Equal(t, after.Declaration, record.Declaration)
+			assert.Diff(t, l.IndexedObject(bare, after).Doc, document)
+			assert.Equal(t, manifest.Equal(child.Obj, object), true)
+			if tc.siblings {
+				eligible := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "eligible"}
+				if st.GetObject(eligible) == nil {
+					t.Error("explicitly namespaced sibling was not published")
+				}
+				if tc.indexed && st.GetObject(manifest.NamedResource{Kind: "Namespace", Name: "apps"}) == nil {
+					t.Error("cluster-scoped sibling was not published")
 				}
 			}
 		})

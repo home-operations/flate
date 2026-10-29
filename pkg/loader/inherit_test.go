@@ -69,7 +69,7 @@ func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
 	id := testutil.KustomizationID("apps", "one")
 	file := filepath.Join(root, "peers.yaml")
 	allocs := testing.AllocsPerRun(10, func() {
-		if !l.AdmitsRoot(id, file) {
+		if !l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file) {
 			t.Fatal("plain discovery candidate was rejected")
 		}
 	})
@@ -209,7 +209,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 					file = "disabled.yaml"
 				}
 				assert.Equal(t, record.File, "kube/deploy/app/"+file)
-				assert.Equal(t, l.AdmitsRoot(id, record.Path), name == "app" && tc.listed)
+				assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path), name == "app" && tc.listed)
 				assert.Equal(t, l.Store.GetObject(id) != nil, name == "app" && tc.listed)
 			}
 		})
@@ -391,7 +391,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		l.Admit(root)
 		for _, name := range []string{"self", "excluded"} {
 			id := testutil.KustomizationID("apps", name)
-			if l.Store.GetObject(id) != nil || l.AdmitsRoot(id, filepath.Join(root, "app/siblings.yaml")) {
+			if l.Store.GetObject(id) != nil || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "app/siblings.yaml")) {
 				t.Fatalf("omitted declaration became runnable: %s", id)
 			}
 			if _, ok := l.Index.Lookup(id); !ok {
@@ -400,7 +400,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		}
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
-		if l.AdmitsRoot(testutil.KustomizationID("apps", "self"), filepath.Join(root, "app/siblings.yaml")) {
+		if l.AdmitsRoot(l.IndexedObject(testutil.KustomizationID("apps", "self"), l.Index.Records[testutil.KustomizationID("apps", "self")]).Obj, filepath.Join(root, "app/siblings.yaml")) {
 			t.Fatal("finalization lost denial")
 		}
 	})
@@ -417,7 +417,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 		child := testutil.KustomizationID("apps", "child")
-		if l.Store.GetObject(child) != nil || l.AdmitsRoot(child, filepath.Join(root, "target/child.yaml")) {
+		if l.Store.GetObject(child) != nil || l.AdmitsRoot(l.IndexedObject(child, l.Index.Records[child]).Obj, filepath.Join(root, "target/child.yaml")) {
 			t.Fatal("inactive unresolved owner enabled builder-free descendant")
 		}
 	})
@@ -434,7 +434,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 		id := testutil.KustomizationID("apps", "direct")
-		if l.Store.GetObject(id) == nil || !l.AdmitsRoot(id, filepath.Join(root, "direct.yaml")) {
+		if l.Store.GetObject(id) == nil || !l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "direct.yaml")) {
 			t.Fatal("inactive broad claim disabled the plain entry's direct manifest")
 		}
 	})
@@ -460,7 +460,7 @@ func TestAdmit_GraphProjection(t *testing.T) {
 		l.Admit(root)
 		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 		id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "inactive-source"}
-		if st.GetObject(id) != nil || l.AdmitsRoot(id, filepath.Join(root, "outside/source.yaml")) {
+		if st.GetObject(id) != nil || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "outside/source.yaml")) {
 			t.Fatal("inactive alias enabled its physical resource outside the path claim")
 		}
 		for child := range l.Sources() {
@@ -509,8 +509,8 @@ func TestAdmit_GraphProjection(t *testing.T) {
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 			id := testutil.KustomizationID("apps", "disabled")
 			file := filepath.Join(root, "apps/disabled.yaml")
-			if l.AdmitsRoot(id, file) != included {
-				t.Fatalf("finalized admission=%t want %t", l.AdmitsRoot(id, file), included)
+			if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file) != included {
+				t.Fatalf("finalized admission=%t want %t", l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file), included)
 			}
 			if _, indexed := l.Index.Lookup(id); !indexed {
 				t.Fatal("inactive owner evidence was discarded")
@@ -757,8 +757,8 @@ spec:
 			}
 			if tc.name == "self_claim" {
 				id := testutil.KustomizationID("", "owner")
-				if _, ok := l.Index.Lookup(id); !ok || l.Store.GetObject(id) == nil {
-					t.Fatal("Kustomization inherited its own targetNamespace as its identity")
+				if _, ok := l.Index.Lookup(id); !ok || l.Store.GetObject(id) != nil {
+					t.Fatal("namespace-less owner must remain indexed without independent publication")
 				}
 				if err := l.FinalizeIndex(t.Context(), root); err != nil {
 					t.Fatal(err)
@@ -1189,7 +1189,7 @@ func TestAdmit_BootstrapSiblingNamespaceProjection(t *testing.T) {
 		if !ok || record.Authored != authored || record.Path != file {
 			t.Fatalf("projected sibling provenance = %+v, indexed=%t", record, ok)
 		}
-		if !l.AdmitsRoot(projected, file) {
+		if !l.AdmitsRoot(l.IndexedObject(projected, l.Index.Records[projected]).Obj, file) {
 			t.Fatal("projected bootstrap sibling is not admitted")
 		}
 		if _, ok := l.Index.Lookup(authored); ok || l.Store.GetObject(authored) != nil {
@@ -1248,7 +1248,7 @@ func TestAdmit_ExcludedBootstrapSibling(t *testing.T) {
 	if err := l.FinalizeIndex(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := l.Index.Lookup(sibling); !ok || l.Store.GetObject(sibling) != nil || l.AdmitsRoot(sibling, filepath.Join(root, "app/sibling.yaml")) {
+	if _, ok := l.Index.Lookup(sibling); !ok || l.Store.GetObject(sibling) != nil || l.AdmitsRoot(l.IndexedObject(sibling, l.Index.Records[sibling]).Obj, filepath.Join(root, "app/sibling.yaml")) {
 		t.Fatal("inactive declaration lost evidence or became runnable")
 	}
 }

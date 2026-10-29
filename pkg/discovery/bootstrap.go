@@ -160,10 +160,13 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 		}
 		if d.loader != nil {
 			for id, record := range d.loader.Index.Files() {
-				if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil || !d.loader.AdmitsRoot(id, record.Path) {
+				if !id.KindInfo().Runnable || d.cfg.Store.GetObject(id) != nil {
 					continue
 				}
-				addReferences(d.loader.IndexedObject(id, record).Obj, nil)
+				obj := d.loader.IndexedObject(id, record).Obj
+				if d.loader.AdmitsRoot(obj, record.Path) {
+					addReferences(obj, nil)
+				}
 			}
 		}
 	}

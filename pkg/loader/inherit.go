@@ -455,7 +455,11 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 	if allowed == nil && len(objects) != 0 {
 		allowed = make(map[manifest.NamedResource]bool, len(objects))
 	}
-	for id := range objects {
+	for id, child := range objects {
+		if !manifest.AdmitsRoot(child.Obj) {
+			allowed[id] = false
+			continue
+		}
 		r := next[id]
 		if r.Path == "" && r.Authored == (manifest.NamedResource{}) {
 			allowed[id] = r.Parent == (manifest.NamedResource{})

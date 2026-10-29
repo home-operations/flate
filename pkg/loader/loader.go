@@ -105,7 +105,11 @@ func (l *Loader) Sources() iter.Seq[store.Child] {
 }
 
 // AdmitsRoot applies the source-qualified scope boundary to every indexed document.
-func (l *Loader) AdmitsRoot(id manifest.NamedResource, file string) bool {
+func (l *Loader) AdmitsRoot(obj manifest.BaseManifest, file string) bool {
+	if obj == nil || !manifest.AdmitsRoot(obj) {
+		return false
+	}
+	id := obj.Named()
 	r, ok := l.Index.Lookup(id)
 	if !ok || r.Path != file || file != "" && l.terminalInput(file) {
 		return false

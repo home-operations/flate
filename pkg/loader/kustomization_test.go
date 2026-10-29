@@ -123,7 +123,7 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			assert.NoError(t, err)
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
-			if got := l.AdmitsRoot(testutil.KustomizationID("apps", "stray"), filepath.Join(root, "app/ks.yaml")); got != tc.want {
+			if got := l.AdmitsRoot(l.IndexedObject(testutil.KustomizationID("apps", "stray"), l.Index.Records[testutil.KustomizationID("apps", "stray")]).Obj, filepath.Join(root, "app/ks.yaml")); got != tc.want {
 				t.Fatalf("admission=%t want %t", got, tc.want)
 			}
 			var owners []manifest.NamedResource
@@ -138,7 +138,7 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [selected.yaml]\n")
-			testutil.WriteFile(t, root, "selected.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: selected}\nspec: {url: https://example.test/repo.git}\n")
+			testutil.WriteFile(t, root, "selected.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: selected, namespace: apps}\nspec: {url: https://example.test/repo.git}\n")
 			testutil.WriteFile(t, root, "excluded.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: excluded}\nspec:\n  dependsOn: [{apiVersion: '"+version+"', kind: Kustomization, name: missing}]\n")
 			l := New(store.New())
 			_, err := loadForTest(t.Context(), t, l, root)
@@ -148,7 +148,7 @@ func TestFinalizeIndex_ResourceMembership(t *testing.T) {
 			if err := l.FinalizeIndex(t.Context(), root); err != nil {
 				t.Fatal(err)
 			}
-			if len(retainedErrorsForTest(l)) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "selected"}) == nil {
+			if len(retainedErrorsForTest(l)) != 0 || l.Store.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "selected"}) == nil {
 				t.Fatalf("unlisted input affected selected source: errors=%v", retainedErrorsForTest(l))
 			}
 		})
@@ -562,7 +562,7 @@ metadata: {name: pending}
 		}
 		backing := t.TempDir()
 		testutil.WriteFile(t, backing, "kustomization.yaml", "resources: [ks.yaml]\n")
-		testutil.WriteFile(t, backing, "ks.yaml", testutil.KustomizationYAML("nested", "", "  {path: ./apps}\n"))
+		testutil.WriteFile(t, backing, "ks.yaml", testutil.KustomizationYAML("nested", "apps", "  {path: ./apps}\n"))
 		location, err = gitrepo.Locate(t.Context(), backing, backing)
 		if err != nil {
 			t.Fatal(err)
@@ -581,7 +581,7 @@ metadata: {name: pending}
 		if l.documents.views[artifact.LocalPath] == artifact.FS || l.documents.mountedRoot(filepath.Join(root, "child/ks.yaml")) != artifact.LocalPath {
 			t.Fatal("late native mount did not bind its own private operation view")
 		}
-		id := testutil.KustomizationID("", "nested")
+		id := testutil.KustomizationID("apps", "nested")
 		record, indexed := l.Index.Lookup(id)
 		if !indexed || record.Path != filepath.Join(root, "child/ks.yaml") || st.GetObject(id) == nil {
 			t.Fatalf("nested mount did not supply its object and index: %+v", record)
@@ -746,7 +746,7 @@ func TestLoader_ReplacedProjectedEvidence(t *testing.T) {
 			l.Admit(root)
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
 			id := testutil.KustomizationID("apps", "owner")
-			if l.AdmitsRoot(id, filepath.Join(root, "app/owner.yaml")) != included || (l.Store.GetObject(id) != nil) != included {
+			if l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, filepath.Join(root, "app/owner.yaml")) != included || (l.Store.GetObject(id) != nil) != included {
 				t.Fatalf("replacement membership retained another view: included=%t", included)
 			}
 		}

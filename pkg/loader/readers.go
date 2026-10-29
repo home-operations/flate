@@ -181,7 +181,7 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			}
 			return slices.ContainsFunc(r.Productions, func(owner manifest.Production) bool {
 				return owner.Owner != (manifest.NamedResource{}) && (owner.Source == p.Source && owner.Authored == p.Authored && owner.Path == p.Path && owner.File == p.File ||
-					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(id, p.Path))
+					p.Source == manifest.BootstrapSourceID && p.Path == r.Path && !l.AdmitsRoot(l.IndexedObject(id, r).Obj, p.Path))
 			})
 		})
 		slices.SortFunc(r.Productions, func(a, b manifest.Production) int { return a.Owner.Compare(b.Owner) })

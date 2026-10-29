@@ -59,7 +59,7 @@ metadata: {name: cluster, namespace: flux-system}
 spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 `+"---\n"+
 				testutil.KustomizationYAML("parent", "flux-system", "  {path: ./apps, sourceRef: {kind: GitRepository, name: cluster}}\n"))
-			child := testutil.KustomizationYAML("child", "", "  {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}\n")
+			child := testutil.KustomizationYAML("child", "flux-system", "  {path: ./leaf, sourceRef: {kind: GitRepository, name: cluster, namespace: flux-system}}\n")
 			testutil.WriteFile(t, root, "apps/child.yaml", child)
 			testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [child.yaml, cm.yaml, generator.yaml]\nconfigMapGenerator:\n- name: generated\n  literals: [value=pinned]\n- name: file-generated\n  files: [value=input.txt]\n")
 			testutil.WriteFile(t, root, "apps/generator.yaml", "apiVersion: source.extensions.fluxcd.io/v1beta1\nkind: ArtifactGenerator\nmetadata: {name: generator, namespace: apps, uid: pinned}\nspec:\n  sources: [{alias: repo, kind: GitRepository, name: cluster, namespace: flux-system}]\n  artifacts: [{name: pinned-output}]\n")
@@ -106,8 +106,8 @@ spec: {url: 'git://fixture.invalid/cluster', ref: {tag: pinned}}
 				t.Fatal("pinned source replaced a foreign artifact")
 			}
 			parent := testutil.KustomizationID("flux-system", "parent")
-			childID := testutil.KustomizationID("", "child")
-			phantom := testutil.KustomizationID("", "phantom")
+			childID := testutil.KustomizationID("flux-system", "child")
+			phantom := testutil.KustomizationID("flux-system", "phantom")
 			cm := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "settings"}
 			artifact, available := st.GetArtifact(manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}, store.ArtifactContent).(*store.SourceArtifact)
 			if !available {

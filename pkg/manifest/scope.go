@@ -24,3 +24,8 @@ func RegisterScopeResolver(resolver scopeResolver) {
 func (k KindInfo) Namespaced() bool {
 	return k.Kind != "" && scopes.ResolveScope(yaml.TypeMeta{APIVersion: k.apiVersion, Kind: k.Kind})
 }
+
+// AdmitsRoot reports whether an object's scope and identity permit independent admission.
+func AdmitsRoot(obj BaseManifest) bool {
+	return obj.Named().Namespace != "" || !KindOf(obj).Namespaced()
+}

@@ -18,7 +18,7 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 	var saved []store.Child
 	for _, id := range standaloneSecrets {
 		record, _ := index.Lookup(id)
-		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && d.loader.AdmitsRoot(id, record.Path) {
+		if obj, ok := d.cfg.Store.GetObject(id).(*manifest.Secret); ok && d.loader.AdmitsRoot(obj, record.Path) {
 			_, doc, emission := d.cfg.Store.GetEmission(id)
 			emission.Finish()
 			saved = append(saved, store.Child{Obj: obj, Doc: doc})
@@ -26,12 +26,13 @@ func (d *discoverer) promoteOrphans(ctx context.Context, standaloneSecrets []man
 		}
 	}
 	for id, record := range index.Files() {
-		if d.cfg.Store.GetObject(id) != nil || !d.loader.AdmitsRoot(id, record.Path) {
+		if d.cfg.Store.GetObject(id) != nil || record.Declaration != nil && !d.loader.AdmitsRoot(record.Declaration, record.Path) {
 			continue
 		}
 		admit := func(obj manifest.BaseManifest) bool {
-			sibling, ok := index.Lookup(obj.Named())
-			return ok && cmp.Or(sibling.Builder, sibling.File) == cmp.Or(record.Builder, record.File) && d.loader.AdmitsRoot(obj.Named(), record.Path)
+			id := obj.Named()
+			sibling, ok := index.Lookup(id)
+			return ok && cmp.Or(sibling.Builder, sibling.File) == cmp.Or(record.Builder, record.File) && d.loader.AdmitsRoot(obj, record.Path)
 		}
 		opts := loader.PromoteOptions{Record: manifest.Production{Authored: record.Authored, Path: record.Path, File: record.File}, WipeSecrets: d.cfg.WipeSecrets, Admit: admit}
 		opts.Documents = d.loader.PromotionDocuments(id)

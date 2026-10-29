@@ -131,8 +131,8 @@ spec:
 				t.Fatal("indexed release was published before orphan promotion")
 			}
 			record, ok := l.Index.Lookup(id)
-			if !ok || l.AdmitsRoot(id, record.Path) != (tc.role == "") {
-				t.Fatalf("indexed root admission = %t, record = %+v", l.AdmitsRoot(id, record.Path), record)
+			if !ok || l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path) != (tc.role == "") {
+				t.Fatalf("indexed root admission = %t, record = %+v", l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path), record)
 			}
 			count, err := d.resolveEntrySources(t.Context(), true)
 			if err != nil || (count == 1) != tc.want {

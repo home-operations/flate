@@ -156,8 +156,9 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 					if name == "explicit" {
 						want = "authored"
 					}
-					ks, ok := st.Get[*manifest.Kustomization](id)
-					if !ok || ks.TargetNamespace != want {
+					record, indexed := l.Index.Lookup(id)
+					ks, ok := l.IndexedObject(id, record).Obj.(*manifest.Kustomization)
+					if !indexed || !ok || ks.TargetNamespace != want {
 						t.Fatalf("%s declaration = %+v, want targetNamespace %q", id, ks, want)
 					}
 					projected, err := ks.RenderDocument()
@@ -167,9 +168,6 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 					target, _ := projected["spec"].(map[string]any)["targetNamespace"].(string)
 					if target != want {
 						t.Fatalf("%s projected namespace = %v, %v", id, projected, err)
-					}
-					if _, ok := l.Index.Lookup(id); !ok {
-						t.Fatalf("%s missing from index", id)
 					}
 					for _, staleNS := range []string{tc.authored, "red", "blue"} {
 						if staleNS == ns {

@@ -73,27 +73,50 @@ func helmLogin(t *testing.T, entries ...*repo.Entry) string {
 	return path
 }
 
-func helmPipe(t *testing.T, handle func(*http.Request) *http.Response) {
+type helmPipeConn struct {
+	net.Conn
+	cancel context.CancelFunc
+}
+
+func (c *helmPipeConn) Close() error {
+	err := c.Conn.Close()
+	c.cancel()
+	return err
+}
+
+func helmPipe(t *testing.T, handle func(*http.Request) (*http.Response, error)) {
 	t.Helper()
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"} {
 		t.Setenv(key, "")
 	}
 	old := http.DefaultTransport
 	transport := old.(*http.Transport).Clone()
-	transport.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+	transport.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		client, server := net.Pipe()
+		// Only client teardown may cancel the server request, after transport cancellation is recorded.
+		ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		conn := &helmPipeConn{Conn: client, cancel: cancel}
+		done := make(chan struct{})
 		go func() {
+			defer close(done)
 			defer server.Close()
 			request, err := http.ReadRequest(bufio.NewReader(server))
 			if err != nil {
 				return
 			}
 			defer request.Body.Close()
-			response := handle(request)
+			response, err := handle(request.WithContext(ctx))
+			if err != nil {
+				return
+			}
 			response.Close = true
 			_ = response.Write(server)
 		}()
-		return client, nil
+		t.Cleanup(func() {
+			_ = conn.Close()
+			<-done
+		})
+		return conn, nil
 	}
 	http.DefaultTransport = transport
 	t.Cleanup(func() { transport.CloseIdleConnections(); http.DefaultTransport = old })
@@ -177,19 +200,19 @@ func TestFetcher_LocalHelmContinuation(t *testing.T) {
 	var requests atomic.Int32
 	var username string
 	var rejected bool
-	helmPipe(t, func(r *http.Request) *http.Response {
+	helmPipe(t, func(r *http.Request) (*http.Response, error) {
 		requests.Add(1)
 		user, password, auth := r.BasicAuth()
 		if username == "" && auth || username != "" && (!auth || user != username || password != "password-canary") {
 			t.Error("request used the wrong credential tier")
 		}
 		if rejected {
-			return helmReply(r, http.StatusUnauthorized, []byte("credential-canary"))
+			return helmReply(r, http.StatusUnauthorized, []byte("credential-canary")), nil
 		}
 		if r.URL.Path == "/index.yaml" {
-			return helmReply(r, http.StatusOK, []byte(helmRepoIndex(chartDigest(chart))))
+			return helmReply(r, http.StatusOK, []byte(helmRepoIndex(chartDigest(chart)))), nil
 		}
-		return helmReply(r, http.StatusOK, chart)
+		return helmReply(r, http.StatusOK, chart), nil
 	})
 	for _, tier := range []string{"repository", "supply", "partial supply", "machine", "public", "rejected"} {
 		t.Run(tier, func(t *testing.T) {
@@ -313,17 +336,17 @@ func TestFetcher_LocalHelmAuthenticatedRequests(t *testing.T) {
 				r.PassCredentials = pass
 				helmLogin(t, &repo.Entry{URL: r.URL, Username: "machine-canary", Password: "password-canary", PassCredentialsAll: true})
 				var indexRequests, signedCharts atomic.Int32
-				helmPipe(t, func(req *http.Request) *http.Response {
+				helmPipe(t, func(req *http.Request) (*http.Response, error) {
 					_, _, signed := req.BasicAuth()
 					if req.Host == "charts.invalid" {
 						indexRequests.Add(1)
 						index := strings.ReplaceAll(helmRepoIndex(chartDigest(chart)), "app-template-1.0.0.tgz", "https://other.invalid/app-template-1.0.0.tgz")
-						return helmReply(req, http.StatusOK, []byte(index))
+						return helmReply(req, http.StatusOK, []byte(index)), nil
 					}
 					if signed {
 						signedCharts.Add(1)
 					}
-					return helmReply(req, http.StatusOK, chart)
+					return helmReply(req, http.StatusOK, chart), nil
 				})
 				f, inputs := newHTTPFetcher(t, r)
 				hc := helmChart(r.Name, "app-template", "1.0.0")
@@ -365,29 +388,30 @@ func TestFetcher_LocalHelmAcquisitionFailures(t *testing.T) {
 			defer cancel()
 			entered := make(chan struct{})
 			var requests atomic.Int32
-			helmPipe(t, func(req *http.Request) *http.Response {
+			helmPipe(t, func(req *http.Request) (*http.Response, error) {
 				requests.Add(1)
 				if stage == "index" || stage == "chart" && req.URL.Path != "/index.yaml" {
-					return helmReply(req, http.StatusForbidden, []byte("machine-canary password-canary"))
+					return helmReply(req, http.StatusForbidden, []byte("machine-canary password-canary")), nil
 				}
 				if req.URL.Path == "/index.yaml" {
 					if stage == "malformed index" {
-						return helmReply(req, http.StatusOK, []byte("apiVersion: v1\nentries: machine-canary\n"))
+						return helmReply(req, http.StatusOK, []byte("apiVersion: v1\nentries: machine-canary\n")), nil
 					}
 					digest := chartDigest(chart)
 					if stage == "digest" {
 						digest = "invalid-digest"
 					}
-					return helmReply(req, http.StatusOK, []byte(helmRepoIndex(digest)))
+					return helmReply(req, http.StatusOK, []byte(helmRepoIndex(digest))), nil
 				}
 				if stage == "publication" {
 					assert.NoError(t, c.Close())
 				}
 				if stage == "cancellation" {
 					close(entered)
-					<-ctx.Done()
+					<-req.Context().Done()
+					return nil, req.Context().Err()
 				}
-				return helmReply(req, http.StatusOK, chart)
+				return helmReply(req, http.StatusOK, chart), nil
 			})
 			f := New(nil, Config{Cache: c, Network: newTestNetwork(t)})
 			inputs := testInputs{repos: func(string, string) *manifest.HelmRepository { return r }}

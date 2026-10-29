@@ -12,7 +12,7 @@ import (
 func TestStatusListener_RepresentativeProvenance(t *testing.T) {
 	seen := map[manifest.NamedResource]int{}
 	o, err := newTestOrchestrator(t, Tree{Path: t.TempDir()}, Config{Concurrency: 2,
-		StatusListener: func(_ manifest.TreeID, id manifest.NamedResource, _ store.StatusInfo) { seen[id]++ }})
+		StatusListener: func(_ manifest.TreeID, subject manifest.DiagnosticIdentity, _ store.StatusInfo) { seen[subject.ID]++ }})
 	if err != nil {
 		t.Fatal(err)
 	}

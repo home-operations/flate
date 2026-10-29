@@ -52,7 +52,7 @@ func TestAddWarning_DedupAndCount(t *testing.T) {
 	w.Count, detail.Count, message.Count, foreign.Count, core.Count = 1, 1, 1, 1, 1
 	want := []manifest.Warning{w, detail, message, foreign, core}
 	slices.SortFunc(want, manifest.CompareWarning)
-	assert.Diff(t, got, want)
+	assert.Diff(t, got, warningSubjects(want))
 }
 
 func TestAddWarning_ResourceIdentity(t *testing.T) {
@@ -73,7 +73,7 @@ func TestAddWarning_ResourceIdentity(t *testing.T) {
 		s.AddWarning(w)
 	}
 	slices.SortFunc(want, manifest.CompareWarning)
-	assert.Diff(t, s.Warnings(), want)
+	assert.Diff(t, s.Warnings(), warningSubjects(want))
 }
 
 func TestAddWarning_DetailCollision(t *testing.T) {
@@ -106,7 +106,7 @@ func TestAddWarning_DetailCollision(t *testing.T) {
 				want = []manifest.Warning{w}
 			}
 			slices.SortFunc(want, manifest.CompareWarning)
-			assert.Diff(t, got, want)
+			assert.Diff(t, got, warningSubjects(want))
 		})
 	}
 }
@@ -138,7 +138,7 @@ func TestWarnings_Sorted(t *testing.T) {
 			for _, w := range input {
 				s.AddWarning(w)
 			}
-			assert.Diff(t, s.Warnings(), want)
+			assert.Diff(t, s.Warnings(), warningSubjects(want))
 		})
 	}
 }
@@ -230,8 +230,8 @@ func TestWarnings_AcceptedOrigins(t *testing.T) {
 		}
 		reads.Accept()
 	}
-	assert.Diff(t, s.Warnings(), want)
-	assert.Diff(t, s.Warnings(), want)
+	assert.Diff(t, s.Warnings(), warningSubjects(want))
+	assert.Diff(t, s.Warnings(), warningSubjects(want))
 	var replacement ReadSet
 	replacement.Init(s, first.Named(), nil)
 	defer replacement.Close()
@@ -240,7 +240,7 @@ func TestWarnings_AcceptedOrigins(t *testing.T) {
 	for i := range want {
 		want[i].Count = 1
 	}
-	assert.Diff(t, s.Warnings(), want)
+	assert.Diff(t, s.Warnings(), warningSubjects(want))
 	s.AddObject(&manifest.Secret{Name: resource.Name, Namespace: resource.Namespace, StringData: map[string]any{"VALUE": "after"}})
 	assert.Equal(t, b.Valid(), false)
 	assert.Diff(t, s.Warnings(), []manifest.Warning(nil))
@@ -308,4 +308,51 @@ func TestAdvisoryEvidence_AcceptedLifetime(t *testing.T) {
 	carried.Init(s, first.Named(), nil)
 	defer carried.Close()
 	assert.Diff(t, carried.advisories, AdvisoryEvidence{})
+}
+
+func warningSubjects(warnings []manifest.Warning) []manifest.Warning {
+	out := slices.Clone(warnings)
+	for i := range out {
+		if out[i].Resource != (manifest.NamedResource{}) {
+			out[i].Subject = manifest.DiagnosticFor(out[i].Resource, nil)
+		}
+	}
+	return out
+}
+func TestWarnings_RelatedIdentity(t *testing.T) {
+	t.Parallel()
+	s := New()
+	first, second := &manifest.Kustomization{Name: "first", Namespace: "apps"}, &manifest.Kustomization{Name: "second", Namespace: "apps"}
+	s.AddObject(first)
+	s.AddObject(second)
+	var a, b ReadSet
+	a.Init(s, first.Named(), nil)
+	b.Init(s, second.Named(), nil)
+	defer a.Close()
+	defer b.Close()
+	raw := []manifest.NamedResource{first.Named(), second.Named()}
+	for i, id := range raw {
+		warning := manifest.Warning{Resource: first.Named(), Subject: manifest.DiagnosticFor(first.Named(), first), Related: []manifest.NamedResource{id}, Category: manifest.WarnUnrelatedFailure, Message: "same displayed owner"}
+		s.AddWarning(warning)
+		warning.Subject.Resource = second.Named()
+		s.AddWarning(warning)
+		warning.Subject = manifest.DiagnosticFor(first.Named(), first)
+		for _, reads := range []*ReadSet{&a, &b} {
+			reads.GetObject(reads.ID())
+			reads.AddWarning(warning)
+			reads.AddWarning(warning)
+		}
+		warning.Related[0] = manifest.NamedResource{}
+		raw[i] = id
+	}
+	a.Accept()
+	b.Accept()
+	warnings := s.Warnings()
+	if len(warnings) != 2 || warnings[0].Count != 3 || warnings[1].Count != 3 || warnings[0].Related[0] != first.Named() || warnings[1].Related[0] != second.Named() {
+		t.Fatalf("origins collapsed: %+v", warnings)
+	}
+	warnings[0].Related[0] = manifest.NamedResource{}
+	if again := s.Warnings(); again[0].Related[0] != first.Named() {
+		t.Fatal("Related aliases retained warning")
+	}
 }

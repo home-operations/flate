@@ -61,6 +61,9 @@ func (k *Kustomization) renderRoots(components []string, yield func(string) bool
 func BuildKSClaims(kss []*Kustomization, components map[NamedResource][]string) []KSClaim {
 	claims := make([]KSClaim, 0, len(kss))
 	for _, ks := range kss {
+		if _, _, applies := ks.SourcePath(); !applies {
+			continue
+		}
 		id := ks.Named()
 		base := true
 		ks.renderRoots(components[id], func(root string) bool {

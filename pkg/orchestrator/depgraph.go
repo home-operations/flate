@@ -4,6 +4,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
@@ -27,17 +28,14 @@ type dependencyGraph struct {
 	mu sync.Mutex
 	// outEdges[src] contains only nodes with outgoing dependencies.
 	outEdges map[manifest.NamedResource]map[manifest.NamedResource]struct{}
-	// failed maps each cycle member to the human-readable message
-	// recorded in the orchestrator's preflightFailures map. Acts as
-	// the source-of-truth snapshot the orchestrator reads after each
-	// ReplaceEdges call.
-	failed map[manifest.NamedResource]string
+	// Cycle paths MUST remain immutable after publication.
+	failed map[manifest.NamedResource]*dependencyCycle
 }
 
 func newDependencyGraph() *dependencyGraph {
 	return &dependencyGraph{
 		outEdges: map[manifest.NamedResource]map[manifest.NamedResource]struct{}{},
-		failed:   map[manifest.NamedResource]string{},
+		failed:   map[manifest.NamedResource]*dependencyCycle{},
 	}
 }
 
@@ -128,7 +126,7 @@ func (g *dependencyGraph) markCycleMembersLocked(id manifest.NamedResource) {
 	queue = []manifest.NamedResource{id}
 	for i := 0; i < len(queue); i++ {
 		member := queue[i]
-		g.failed[member] = ""
+		g.failed[member] = nil
 		queue = append(queue, incoming[member]...)
 		delete(incoming, member)
 	}
@@ -221,12 +219,12 @@ func (g *dependencyGraph) revalidateFailedLocked() {
 		}
 		first := slices.Index(path, slices.MinFunc(path, manifest.NamedResource.Compare))
 		cycle := slices.Concat(path[first:len(path)-1], path[:first+1])
-		msg := "dependency cycle detected: " + formatCyclePath(cycle)
+		captured := &dependencyCycle{path: cycle}
 		for _, member := range path {
 			if _, seen := checked[member]; seen {
 				continue
 			}
-			g.failed[member] = msg
+			g.failed[member] = captured
 			checked[member] = struct{}{}
 		}
 	}
@@ -235,7 +233,7 @@ func (g *dependencyGraph) revalidateFailedLocked() {
 // snapshotFailedLocked returns a defensive copy of the failure map so
 // the orchestrator can install it under preflightMu without aliasing
 // the graph's internal state.
-func (g *dependencyGraph) snapshotFailedLocked() map[manifest.NamedResource]string {
+func (g *dependencyGraph) snapshotFailedLocked() map[manifest.NamedResource]*dependencyCycle {
 	if len(g.failed) == 0 {
 		return nil
 	}
@@ -246,7 +244,7 @@ func (g *dependencyGraph) snapshotFailedLocked() map[manifest.NamedResource]stri
 // the orchestrator's bootstrap-time sweep to read the post-rebuild
 // failure map without going through ReplaceEdges (the graph has
 // already been populated by per-id ReplaceEdges calls).
-func (g *dependencyGraph) Failures() map[manifest.NamedResource]string {
+func (g *dependencyGraph) Failures() map[manifest.NamedResource]*dependencyCycle {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.snapshotFailedLocked()
@@ -284,4 +282,18 @@ func (g *dependencyGraph) Edges() map[manifest.NamedResource][]manifest.NamedRes
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.snapshotEdgesLocked()
+}
+
+type dependencyCycle struct {
+	path    []manifest.NamedResource
+	message atomic.Pointer[string]
+}
+
+func (c *dependencyCycle) diagnostic(o *Orchestrator) string {
+	if cached := c.message.Load(); cached != nil {
+		return *cached
+	}
+	message := "dependency cycle detected: " + o.formatCyclePath(c.path)
+	c.message.CompareAndSwap(nil, &message)
+	return *c.message.Load()
 }

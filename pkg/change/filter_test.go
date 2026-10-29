@@ -1726,7 +1726,7 @@ func TestFilter_SourceFileReaderKeepsEmitter(t *testing.T) {
 
 func TestFilter_AcceptedChildren(t *testing.T) {
 	t.Parallel()
-	for _, phase := range []string{"initial", "runtime", "unselected", "declaration"} {
+	for _, phase := range []string{"initial", "runtime", "unselected", "declaration", "file_indexed"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			st := store.New()
@@ -1746,6 +1746,13 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 				sibling.Named():     {File: "sibling.yaml", Builder: "parent.yaml", BuilderOwner: parent.Named(), Declaration: sibling, Productions: []manifest.Production{{Owner: parent.Named(), Authored: sibling.Named(), File: "sibling.yaml"}}},
 				transformed.Named(): {File: "transformed.yaml", Builder: "parent.yaml", BuilderOwner: parent.Named(), Declaration: declaration, Productions: []manifest.Production{{Owner: parent.Named(), Authored: transformed.Named(), File: "transformed.yaml"}}},
 			}}
+			if phase == "file_indexed" {
+				for _, obj := range []manifest.BaseManifest{sibling, transformed} {
+					record := index.Records[obj.Named()]
+					record.Builder, record.BuilderOwner = "", manifest.NamedResource{}
+					index.Records[obj.Named()] = record
+				}
+			}
 			file := "emitter.yaml"
 			switch phase {
 			case "initial":
@@ -1755,16 +1762,68 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 			}
 			f := NewFilter(NewSet([]string{file}), index, st, "")
 			switch phase {
-			case "runtime":
+			case "runtime", "file_indexed":
 				f.AddEmitted(emitter.Named(), store.Child{Obj: parent}, f.objs)
 			case "unselected":
 				f.AddEmitted(parent.Named(), store.Child{Obj: child}, f.objs)
 			}
 			for _, obj := range []manifest.BaseManifest{child, leaf} {
-				assert.Equal(t, f.ShouldReconcile(obj.Named()), phase == "initial" || phase == "runtime")
+				assert.Equal(t, f.ShouldReconcile(obj.Named()), phase == "initial" || phase == "runtime" || phase == "file_indexed")
 			}
 			assert.Equal(t, f.ShouldReconcile(sibling.Named()), phase == "declaration")
-			assert.Equal(t, f.ShouldReconcile(transformed.Named()), phase == "initial" || phase == "runtime")
+			assert.Equal(t, f.ShouldReconcile(transformed.Named()), phase == "initial" || phase == "runtime" || phase == "file_indexed")
+		})
+	}
+}
+
+func TestFilter_LateProducerIndexedDeclarations(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		prepared    bool
+		otherOwner  bool
+		changed     bool
+		transformed bool
+		new         bool
+		want        bool
+	}{
+		{name: "file_indexed"},
+		{name: "prepared", prepared: true},
+		{name: "different_prepared_owner", prepared: true, otherOwner: true, want: true},
+		{name: "changed_input", changed: true, want: true},
+		{name: "transformed", transformed: true, want: true},
+		{name: "new", new: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			emitter := &manifest.Kustomization{Name: "emitter", Namespace: "apps"}
+			parent := &manifest.Kustomization{Name: "late", Namespace: "apps"}
+			declaration := &manifest.HelmRelease{Name: "sibling", Namespace: "apps"}
+			child := declaration.Clone()
+			child.Suspend = tc.transformed
+			st.AddObjects([]manifest.BaseManifest{emitter, parent, declaration})
+			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				emitter.Named(): {File: "emitter.yaml"},
+			}}
+			if !tc.new {
+				record := manifest.DiscoveryRecord{File: "sibling.yaml", Declaration: declaration}
+				if tc.prepared {
+					record.Builder, record.BuilderOwner = "kustomization.yaml", parent.Named()
+					if tc.otherOwner {
+						record.BuilderOwner.Name = "other"
+					}
+				}
+				if tc.changed {
+					record.Inputs = []string{"config.yaml"}
+				}
+				index.Records[declaration.Named()] = record
+			}
+			f := NewFilter(NewSet([]string{"emitter.yaml", "config.yaml"}), index, st, "")
+			f.AddEmitted(emitter.Named(), store.Child{Obj: parent}, st)
+			assert.Equal(t, f.ShouldReconcile(parent.Named()), true)
+			f.AddEmitted(parent.Named(), store.Child{Obj: child, Productions: []manifest.Production{{Owner: parent.Named(), File: "sibling.yaml"}}}, st)
+			assert.Equal(t, f.ShouldReconcile(child.Named()), tc.want)
 		})
 	}
 }

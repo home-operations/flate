@@ -14,6 +14,7 @@ import (
 )
 
 func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
+	defer func() { o.entryDiscovery = nil }()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -25,7 +26,6 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	if changes == nil {
 		return nil
 	}
-	f := change.NewFilter(changes, o.index, o.store, o.repoRoot)
 	history := map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{}
 	narrow := map[manifest.NamedResource]bool{}
 	defer func() {
@@ -61,6 +61,9 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 			}
 			materialized := maps.Collect(records)
 			if reads.Valid() {
+				for child, record := range materialized {
+					o.admission.AddHistory(o.store, child, record)
+				}
 				history[id] = func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 					for child, record := range materialized {
 						if !yield(child, record) {
@@ -71,6 +74,13 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 			}
 		}()
 	}
+	if o.entryDiscovery != nil {
+		if err := o.entryDiscovery.PrepareEntry(ctx); err != nil {
+			return err
+		}
+		o.index, o.entryBinding = o.entryDiscovery.Index, o.entryDiscovery.Binding
+	}
+	f := change.NewFilter(changes, o.index, o.store, o.repoRoot)
 	f.RefineHistory(history, narrow)
 	if err := ctx.Err(); err != nil {
 		return err

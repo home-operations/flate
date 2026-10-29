@@ -192,10 +192,10 @@ func (o *Orchestrator) warnMissingCRDs() {
 		dependents := slices.SortedFunc(maps.Keys(missing[crd]), manifest.NamedResource.Compare)
 		names := make([]string, len(dependents))
 		for i, id := range dependents {
-			names[i] = id.String()
+			names[i] = o.diagnostic(id).String()
 		}
 		o.store.AddWarning(manifest.Warning{
-			Resource: crd,
+			Resource: crd, Related: dependents,
 			Category: manifest.WarnMissingCRD,
 			Message:  fmt.Sprintf("CRD %s absent from offline inputs; accepted for %s", crd.String(), strings.Join(names, ", ")),
 		})
@@ -220,9 +220,9 @@ func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]sto
 	for _, id := range slices.SortedFunc(maps.Keys(failed), manifest.NamedResource.Compare) {
 		info := failed[id]
 		if f := o.fileOf(id); f != "" {
-			slog.Debug("orchestrator: resource failed", "id", id.String(), "reason", info.String(), "file", f)
+			slog.Debug("orchestrator: resource failed", "id", o.diagnostic(id).String(), "reason", info.String(), "file", f)
 		} else {
-			slog.Debug("orchestrator: resource failed", "id", id.String(), "reason", info.String())
+			slog.Debug("orchestrator: resource failed", "id", o.diagnostic(id).String(), "reason", info.String())
 		}
 	}
 }
@@ -239,9 +239,9 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 	msgs := make([]string, 0, len(failed))
 	for id, info := range sanitizeFailed(failed) {
 		if f := o.fileOf(id); f != "" {
-			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", id.String(), f, info.String()))
+			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", o.diagnostic(id), f, info.String()))
 		} else {
-			msgs = append(msgs, fmt.Sprintf("%s: %s", id.String(), info.String()))
+			msgs = append(msgs, fmt.Sprintf("%s: %s", o.diagnostic(id), info.String()))
 		}
 	}
 	slices.Sort(msgs) // deterministic ordering across runs
@@ -271,4 +271,13 @@ func sanitizeFailed(failed map[manifest.NamedResource]store.StatusInfo) map[mani
 		out[id] = info
 	}
 	return out
+}
+
+func (o *Orchestrator) diagnostic(id manifest.NamedResource) manifest.DiagnosticIdentity {
+	obj := o.store.GetObject(id)
+	if obj == nil {
+		record, _ := o.index.Lookup(id)
+		obj = o.unchangedDeclaration(id, record)
+	}
+	return manifest.DiagnosticFor(id, obj)
 }

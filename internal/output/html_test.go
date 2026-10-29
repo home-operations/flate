@@ -15,7 +15,7 @@ func TestEncoderLines_PreservesStatus(t *testing.T) {
 		Parent:   Subject{ID: manifest.NamedResource{Group: "parents.test", Kind: "Producer", Namespace: "ns", Name: "same"}},
 		From:     "key: old\n", To: "key: new\n",
 	}}
-	names := PrepareNames([]string{""}, [][]manifest.NamedResource{LineSubjects(lines, FormatHTML)})
+	names := PrepareNames([]string{""}, [][]manifest.NamedResource{LineSubjects(lines, FormatHTML)}, nil)
 	NameLines(lines, names[0])
 	var buf bytes.Buffer
 	if err := (Encoder{Writer: &buf, Format: FormatHTML}).Lines(lines); err != nil {

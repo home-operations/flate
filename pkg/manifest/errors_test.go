@@ -63,9 +63,9 @@ func TestDependencyFailedError_Format(t *testing.T) {
 	err := &DependencyFailedError{
 		Parent: parent,
 		Failed: []NamedResource{depA, depB},
-		Reasons: map[NamedResource]string{
-			depA: `variable "SECRET_DOMAIN" is undefined and has no default`,
-			depB: "rendering timed out",
+		Reasons: map[NamedResource]DiagnosticReason{
+			depA: {Subject: DiagnosticFor(depA, nil), Message: `variable "SECRET_DOMAIN" is undefined and has no default`},
+			depB: {Subject: DiagnosticFor(depB, nil), Message: "rendering timed out"},
 		},
 	}
 	msg := err.Error()

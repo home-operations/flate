@@ -83,9 +83,10 @@ spec:
 				if !ok || !slices.Contains(record.Refs, input) || st.GetObject(generator) == nil || st.GetObject(consumer) == nil {
 					t.Fatalf("side %d: missing real generator/input/consumer evidence: %+v", side, record)
 				}
-				assert.Diff(t, st.Productions(output, result.Index), []manifest.Production{{Owner: result.Binding.Producer, Declaration: generator, Authored: generator, Source: manifest.BootstrapSourceID, File: "entry/generator.yaml"}})
+				assert.Diff(t, st.Productions(output, result.Index), []manifest.Production{{Owner: generator, Declaration: generator, Authored: generator, Source: manifest.BootstrapSourceID, File: "entry/generator.yaml"}})
 				owners, ancestors := result.Index.OwnersOfFile("entry/source.yaml")
-				assert.Diff(t, owners, []manifest.NamedResource{result.Binding.Producer})
+				assert.Diff(t, result.Binding, discovery.Binding{})
+				assert.Diff(t, owners, []manifest.NamedResource(nil))
 				assert.Diff(t, ancestors, []manifest.NamedResource(nil))
 				filter := change.NewFilter(changes, result.Index, st, "")
 				for _, id := range []manifest.NamedResource{input, generator, consumer} {

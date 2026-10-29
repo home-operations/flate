@@ -51,7 +51,7 @@ type TransportMaterial struct {
 }
 
 // ResolveTransport resolves ordered inputs using one operation's Secret snapshot.
-func ResolveTransport(secrets SecretGetter, owner manifest.NamedResource, inputs []TransportInput) (TransportMaterial, error) {
+func ResolveTransport(secrets SecretGetter, owner manifest.DiagnosticIdentity, inputs []TransportInput) (TransportMaterial, error) {
 	var material TransportMaterial
 	for _, input := range inputs {
 		switch input.Use {

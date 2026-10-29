@@ -65,6 +65,10 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 			sides[i].result = &selection.Selection{}
 		}
 		sides[i].collectWarnings(roots[0], kinds, len(runs) == 2)
+		if run.Orchestrator != nil {
+			sides[i].prepareSubjects()
+		}
+
 		selected[i] = sides[i].result
 	}
 	if !complete {
@@ -324,7 +328,7 @@ func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifes
 	}) {
 		return
 	}
-	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Category: manifest.WarnExternalSource, Message: "external source " + src.String() + " is outside the local tree; not rendered"})
+	s.result.External = append(s.result.External, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: []manifest.NamedResource{src}, Category: manifest.WarnExternalSource, Message: "external source " + s.run.diagnostic(src).String() + " is outside the local tree; not rendered"})
 }
 
 func (s *selectionSide) prepareUnavailable(other *selectionSide, candidates []manifest.NamedResource) {
@@ -415,4 +419,46 @@ func (s *selectionSide) actualProducer(key manifest.NamedResource) manifest.Name
 		}
 	}
 	return key
+}
+
+func (s *selectionSide) prepareSubjects() {
+	add := func(subject manifest.DiagnosticIdentity) {
+		if subject.Resource == subject.ID && subject.Path == "" {
+			return
+		}
+		if s.result.Subjects == nil {
+			s.result.Subjects = make(map[manifest.NamedResource]manifest.DiagnosticIdentity)
+		}
+		s.result.Subjects[subject.ID] = subject
+	}
+	for _, obj := range s.result.Objects {
+		add(manifest.DiagnosticFor(obj.Named(), obj))
+	}
+	for _, batch := range s.result.Manifests {
+		if batch.Parent != nil {
+			add(manifest.DiagnosticFor(batch.Parent.Named(), batch.Parent))
+		}
+	}
+	if s.run.Result == nil {
+		return
+	}
+	for id := range s.run.Result.Failed {
+		add(s.run.diagnostic(id))
+	}
+	for id, deps := range s.run.Result.Blocked {
+		add(s.run.diagnostic(id))
+		for _, dep := range deps {
+			add(s.run.diagnostic(dep))
+		}
+	}
+	for _, warning := range s.run.Result.Warnings {
+		if warning.Subject.ID != (manifest.NamedResource{}) {
+			add(warning.Subject)
+		} else if warning.Resource != (manifest.NamedResource{}) {
+			add(s.run.diagnostic(warning.Resource))
+		}
+		for _, id := range warning.Related {
+			add(s.run.diagnostic(id))
+		}
+	}
 }

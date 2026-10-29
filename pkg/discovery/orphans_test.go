@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -45,7 +46,9 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			for name, file := range input {
 				view[path.Join(tc.chartPath, name)] = file
 			}
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: view})
+			var documentReads atomic.Int64
+			inputFS := entryReadFS{FS: view, reads: map[string]*atomic.Int64{path.Join(tc.chartPath, "a.yaml"): &documentReads}}
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: inputFS})
 			l := loader.New(st)
 			l.SourceRoot = root
 			if tc.chartPath != "" {
@@ -92,7 +95,13 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 			}
 			file := path.Join(tc.chartPath, "generator.yaml")
 			l.Index.Records[generator] = manifest.DiscoveryRecord{Authored: generator, Path: root + "/" + file, File: file}
+			if tc.name == "discovery" {
+				if err := l.FinalizeIndex(t.Context(), root); err != nil {
+					t.Fatal(err)
+				}
+			}
 			d := &discoverer{cfg: Config{Store: st}, loader: l}
+			readsBefore := documentReads.Load()
 			if tc.order == nil {
 				d.promoteOrphans(t.Context(), nil)
 			} else {
@@ -104,6 +113,9 @@ func TestPromoteOrphans_IndexedEvidence(t *testing.T) {
 					}
 				}
 				d.promoteOrphans(t.Context(), nil)
+			}
+			if tc.name == "discovery" && documentReads.Load() != readsBefore {
+				t.Fatal("orphan promotion reread indexed documents")
 			}
 			obj, doc, attempt := st.GetEmission(generator)
 			attempt.Finish()

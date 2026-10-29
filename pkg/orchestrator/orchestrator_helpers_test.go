@@ -107,6 +107,9 @@ func (o *Orchestrator) render(ctx context.Context) (*Result, error) {
 
 func reconcileEntryForTest(t *testing.T, o *Orchestrator) {
 	t.Helper()
+	if o.entryBinding.Producer == (manifest.NamedResource{}) {
+		return
+	}
 	o.configureControllers()
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
 		Tasks: o.tasks, Store: o.store, ID: o.entryBinding.Producer, ReconcileNode: o.ksc.ReconcileNode,

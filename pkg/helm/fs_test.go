@@ -821,8 +821,9 @@ func TestLoadChart_AliasArchiveLayout(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	files := map[string]string{
-		"cluster/ks.yaml":         testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: OCIRepository, name: automatic}\n"),
-		"apps/kustomization.yaml": "resources: []\n",
+		"cluster/kustomization.yaml": "resources: [ks.yaml, hr.yaml]\n",
+		"cluster/ks.yaml":            testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: OCIRepository, name: automatic}\n"),
+		"apps/kustomization.yaml":    "resources: []\n",
 		"cluster/hr.yaml": `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: demo, namespace: apps}

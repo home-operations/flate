@@ -2,12 +2,15 @@ package discovery
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -474,7 +477,8 @@ func TestRun_EntryOwnerEligibility(t *testing.T) {
 			if scenario != "transitive_admitted" && st.GetObject(ready.Named()) != nil || len(d.loader.Index.Records[ready.Named()].Refs) != 0 {
 				t.Fatal("index-only prerequisite gained store or ordering-ref authority")
 			}
-			selected := d.bindEntry(t.Context(), root)
+			selected, err := d.bindEntry(t.Context(), root)
+			assert.NoError(t, err)
 			wantOwner := scenario == "cycle" || scenario == "self_cycle" || scenario == "foreign_production"
 			assert.Equal(t, selected == owner, wantOwner)
 			if !wantOwner && !selected.Named().ReportHidden() {
@@ -499,12 +503,12 @@ func TestRun_EntryOwnerEligibility(t *testing.T) {
 				if declaration == nil || !manifest.Equal(declaration, owner) {
 					t.Fatal("literal registration erased the original authored declaration")
 				}
-				assert.Equal(t, d.bindEntry(t.Context(), root), selected)
+				assert.Equal(t, bindEntryForTest(t, d, root), selected)
 				assert.Equal(t, d.prepared[owner].receipt, previous)
 				independent := *ready
 				independent.DependsOn = nil
 				d.loader.Index.Records[ready.Named()] = manifest.DiscoveryRecord{Declaration: &independent}
-				assert.Equal(t, d.bindEntry(t.Context(), root), owner)
+				assert.Equal(t, bindEntryForTest(t, d, root), owner)
 				assert.Equal(t, d.prepared[owner].receipt, previous)
 				if len(ready.DependsOn) != 1 {
 					t.Fatal("eligibility mutated the borrowed prerequisite")
@@ -516,17 +520,17 @@ func TestRun_EntryOwnerEligibility(t *testing.T) {
 					return values.NewDependencySubstitutions([]*manifest.Kustomization{{PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"NEXT": value, "NS": "apps"}}}})
 				}
 				d.substitutions = vars("sibling")
-				if !d.bindEntry(t.Context(), root).Named().ReportHidden() {
+				if !bindEntryForTest(t, d, root).Named().ReportHidden() {
 					t.Fatal("new owner/snapshot retained the independent decision")
 				}
 				d.substitutions = vars("ready")
-				assert.Equal(t, d.bindEntry(t.Context(), root), &projected)
+				assert.Equal(t, bindEntryForTest(t, d, root), &projected)
 				before := d.prepared[&projected]
 				replacement := *before.source
 				replacement.Key = "new-source"
 				replacement.Content = "new-content"
 				st.SetArtifact(manifest.BootstrapSourceID, &replacement)
-				assert.Equal(t, d.bindEntry(t.Context(), root), &projected)
+				assert.Equal(t, bindEntryForTest(t, d, root), &projected)
 				assert.Equal(t, d.prepared[&projected].source, &replacement)
 			}
 		})
@@ -562,6 +566,7 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	producer := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
 	req := preparedRequest(t, cfg, producer, source)
 	want := map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {
+		Application:  `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"owner","namespace":"apps"},"spec":{"path":"./app"}}`,
 		Productions:  []manifest.Production{{Owner: producer.Named(), Source: result.Binding.Source}},
 		ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"app"}},
 	}}
@@ -628,7 +633,7 @@ spec:
 				t.Fatalf("failed package build published documents: %v", emission.Manifests)
 			}
 			first := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "first"}
-			if d.loader.BuiltDocuments(first) != nil || st.GetObject(first) != nil {
+			if d.loader.PromotionDocuments(first) != nil || st.GetObject(first) != nil {
 				t.Fatal("failed package published a partial batch")
 			}
 			closeCache()
@@ -674,7 +679,8 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	d.loader.SourceRoot = root
 	_, err := d.loader.Load(t.Context(), d.cfg.Path)
 	assert.NoError(t, err)
-	owner := d.bindEntry(t.Context(), root)
+	owner, err := d.bindEntry(t.Context(), root)
+	assert.NoError(t, err)
 	req := preparedRequest(t, d.cfg, owner, source)
 	assert.NoError(t, os.RemoveAll(cacheDir))
 	assert.NoError(t, d.prepareEntry(t.Context(), owner, source))
@@ -682,7 +688,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	if !errors.Is(err, manifest.ErrFlux) || !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), `discovery entry "app" publish`) {
 		t.Fatalf("publication failure lost classification, cause or entry context: %v", err)
 	}
-	if len(d.loader.BuiltDocuments(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "accepted"})) != 1 {
+	if len(d.loader.PromotionDocuments(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "accepted"})) != 1 {
 		t.Fatal("publication fault preceded successful rendering and registration")
 	}
 	closeCache()
@@ -731,6 +737,9 @@ func TestRun_BuiltPackages(t *testing.T) {
 				"a/source.yaml":        {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps}\nspec: {url: https://fixture.invalid/self}\n")},
 				"b/kustomization.yaml": {Data: []byte("configMapGenerator: [{name: generated, literals: [C=second]}]\n")},
 			}
+			if selected == "." {
+				input["kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: [a, b]\n")}
+			}
 			cacheDir := t.TempDir()
 			var previousDocs []map[string]any
 			var previousIndex *manifest.DiscoveryIndex
@@ -754,7 +763,7 @@ func TestRun_BuiltPackages(t *testing.T) {
 				d := newDiscoverer(Config{Input: source, Path: filepath.Join(root, selected), Store: st, Trees: trees, SelfURLs: []string{"https://fixture.invalid/self"}})
 				_, err := d.resolveEntrySources(t.Context(), false)
 				assert.NoError(t, err)
-				owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, selected)
+				owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, selected, manifest.NamedResource{})
 				req := preparedRequest(t, d.cfg, owner, source)
 				if lifetime == "changed" {
 					if _, ok := trees.PreviousRender(t.Context(), req, owner.Named()); ok {
@@ -767,7 +776,7 @@ func TestRun_BuiltPackages(t *testing.T) {
 				assert.NoError(t, d.loadManifests(t.Context(), root, true))
 				assert.Equal(t, d.binding.Producer, owner.Named())
 				id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings-dev"}
-				batch := d.loader.BuiltDocuments(id)
+				batch := d.loader.PromotionDocuments(id)
 				wantCount := 4
 				if selected == "a" {
 					wantCount = 3
@@ -783,6 +792,7 @@ func TestRun_BuiltPackages(t *testing.T) {
 					}
 					accepted := manifest.DiscoveryRecord{Productions: []manifest.Production{{Owner: owner.Named(), Source: d.binding.Source}}}
 					if child.Obj.Named() == testutil.KustomizationID("apps", "driver-dev") {
+						accepted.Application = `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"driver-dev","namespace":"apps"},"spec":{"path":"./output","sourceRef":{"kind":"GitRepository","name":"cluster-dev"}}}`
 						source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster-dev"}
 						accepted.Refs = []manifest.NamedResource{source}
 						accepted.ContentRoots = map[manifest.NamedResource][]string{source: {"output"}}
@@ -840,4 +850,208 @@ func TestRun_EmptyEntryHistory(t *testing.T) {
 	trees, closeCache = testReceiptTrees(t, cacheDir)
 	assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 0)
 	closeCache()
+}
+
+func TestRun_DiscoveryOnlyEntry(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual/discovery-only"
+	input := fstest.MapFS{
+		"Taskfile.yaml":        {Data: []byte("version: '3'\ntasks: {build: {cmds: [true]}}\n")},
+		"clusters/a/sync.yaml": {Data: []byte(testutil.KustomizationYAML("a", "apps", "  path: ./clusters/a\n"))},
+		"clusters/b/sync.yaml": {Data: []byte(testutil.KustomizationYAML("b", "apps", "  path: ./clusters/b\n"))},
+	}
+	st := store.New()
+	observed := &entryGeneratorFS{FS: input}
+	result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: observed}, Path: root, Store: st, Trees: testTrees(t)})
+	assert.NoError(t, err)
+	assert.Equal(t, result.Binding, Binding{})
+	assert.Equal(t, observed.calls.Load(), int64(0))
+	for _, name := range []string{"a", "b"} {
+		if st.GetObject(testutil.KustomizationID("apps", name)) == nil {
+			t.Fatalf("cluster %s was not discovered", name)
+		}
+	}
+	for _, obj := range st.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization) {
+		if obj.Named().ReportHidden() {
+			t.Fatalf("discovery-only entry published %s", obj.Named())
+		}
+	}
+}
+
+func bindEntryForTest(t *testing.T, d *discoverer, root string) *manifest.Kustomization {
+	t.Helper()
+	owner, err := d.bindEntry(t.Context(), root)
+	assert.NoError(t, err)
+	return owner
+}
+
+func TestRun_EntryApplication(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, owner, kind, url, path                     string
+		instance, admitted, pinned, qualified, dependent bool
+	}{
+		{name: "gotk-sync", owner: "gotk-sync", qualified: true},
+		{name: "arbitrary applier", owner: "applies-here", qualified: true},
+		{name: "different path", owner: "elsewhere", path: "./elsewhere"},
+		{name: "escaping path", owner: "escape", path: "../elsewhere"},
+		{name: "dependent applier", owner: "applies-here", dependent: true, qualified: true},
+		{name: "wrong source", owner: "foreign", kind: manifest.KindGitRepository, url: "https://fixture.invalid/foreign"},
+		{name: "pinned source", owner: "pinned", kind: manifest.KindGitRepository, url: "https://fixture.invalid/self", admitted: true, pinned: true},
+		{name: "admitted oci", owner: "oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/self", admitted: true, qualified: true},
+		{name: "unadmitted oci", owner: "oci", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/self"},
+		{name: "admitted bucket", owner: "bucket", kind: manifest.KindBucket, url: "s3.fixture.invalid", admitted: true, qualified: true},
+		{name: "unadmitted bucket", owner: "bucket", kind: manifest.KindBucket, url: "s3.fixture.invalid"},
+		{name: "instance git", owner: "flux", kind: manifest.KindGitRepository, url: "https://fixture.invalid/self", instance: true, admitted: true, qualified: true},
+		{name: "instance foreign git", owner: "flux", kind: manifest.KindGitRepository, url: "https://fixture.invalid/foreign", instance: true},
+		{name: "instance oci", owner: "flux", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/self", instance: true, admitted: true, qualified: true},
+		{name: "instance unadmitted oci", owner: "flux", kind: manifest.KindOCIRepository, url: "oci://fixture.invalid/self", instance: true},
+		{name: "instance bucket", owner: "flux", kind: manifest.KindBucket, url: "s3.fixture.invalid", instance: true, admitted: true, qualified: true},
+		{name: "instance unadmitted bucket", owner: "flux", kind: manifest.KindBucket, url: "s3.fixture.invalid", instance: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const root = "/virtual/entry-application"
+			input := fstest.MapFS{"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")}}
+			st := store.New()
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Name: "self", Namespace: "apps"}
+			declaration := ""
+			if tc.instance {
+				input["owner.yaml"] = &fstest.MapFile{Data: []byte(fmt.Sprintf("apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: %s, url: '%s', ref: main, path: ./}\n", tc.kind, tc.url))}
+			} else {
+				extra := ""
+				if tc.dependent {
+					extra = "  dependsOn: [{name: sibling}]\n"
+					input["sibling.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML("sibling", "apps", "  path: ./leaf\n"))}
+					input["leaf/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: []\n")}
+				}
+				if tc.kind != "" {
+					extra = "  sourceRef: {kind: " + tc.kind + ", name: self}\n"
+					spec := "url: '" + tc.url + "'"
+					if tc.kind == manifest.KindBucket {
+						spec = "endpoint: '" + tc.url + "', bucketName: cluster"
+					}
+					if tc.pinned {
+						spec += ", ref: {tag: pinned}"
+					}
+					declaration = fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: self, namespace: apps}\nspec: {%s}\n", tc.kind, spec)
+					input["source.yaml"] = &fstest.MapFile{Data: []byte(declaration)}
+				}
+				path := tc.path
+				if path == "" {
+					path = "./"
+				}
+				input["owner.yaml"] = &fstest.MapFile{Data: []byte(testutil.KustomizationYAML(tc.owner, "apps", "  path: "+path+"\n"+extra))}
+			}
+			if tc.admitted {
+				artifact := &store.SourceArtifact{LocalPath: "/virtual/application-alias", LocalRoot: root, InputAlias: true, FS: input}
+				if tc.pinned {
+					artifact.InputAlias, artifact.Content, artifact.Key = false, "committed", "committed"
+				}
+				st.SetArtifact(source, artifact)
+			}
+			d := newDiscoverer(Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: root, Store: st, Trees: testTrees(t), SelfURLs: []string{"https://fixture.invalid/self"}})
+			_, err := d.resolveEntrySources(t.Context(), false)
+			assert.NoError(t, err)
+			assert.NoError(t, d.loadManifests(t.Context(), root, true))
+			assert.Equal(t, d.binding != (Binding{}), tc.qualified)
+			if tc.qualified {
+				assert.Equal(t, d.entryApplier.Name, tc.owner)
+				if tc.dependent {
+					assert.Equal(t, d.binding.Producer.ReportHidden(), true)
+				}
+				if tc.instance {
+					assert.Equal(t, d.entryApplier.Kind, "FluxInstance")
+				}
+			} else {
+				assert.Equal(t, len(d.prepared), 0)
+			}
+			if tc.instance {
+				assert.Equal(t, st.GetObject(source), manifest.BaseManifest(nil))
+				instance := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "flux"}
+				assert.Equal(t, st.GetObject(instance), manifest.BaseManifest(nil))
+				_, indexed := d.loader.Index.Lookup(instance)
+				assert.Equal(t, indexed, true)
+			}
+		})
+	}
+}
+
+func TestRun_EntryPackage(t *testing.T) {
+	t.Parallel()
+	for _, filename := range manifest.KustomizeBuilderFilenames {
+		t.Run(filename, func(t *testing.T) {
+			t.Parallel()
+			const root = "/virtual/entry-package"
+			input := fstest.MapFS{filename: {Data: []byte("resources: [cm.yaml]\n")}, "cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")}}
+			st := store.New()
+			observed := &entryGeneratorFS{FS: input}
+			result, err := Run(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: observed}, Path: root, Store: st, Trees: testTrees(t)})
+			assert.NoError(t, err)
+			assert.Equal(t, result.Binding.Producer.ReportHidden(), true)
+			if observed.calls.Load() == 0 {
+				t.Fatal("positive control did not observe the root generator")
+			}
+			record, ok := result.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "literal"})
+			assert.Equal(t, ok, true)
+			assert.Equal(t, record.Parent, result.Binding.Producer)
+		})
+	}
+}
+
+func TestBindEntry_PackageReadFailure(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual/unreadable-entry"
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: unreadableEntryFS{fstest.MapFS{}}})
+	d := newDiscoverer(Config{Path: root, Store: st})
+	_, err := d.bindEntry(t.Context(), root)
+	if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("entry package failure lost its classification or cause: %v", err)
+	}
+	assert.Equal(t, d.binding, Binding{})
+}
+
+type unreadableEntryFS struct{ fs.FS }
+
+func (f unreadableEntryFS) Open(name string) (fs.File, error) {
+	if name == "kustomization.yaml" {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
+	}
+	return f.FS.Open(name)
+}
+
+type entryGeneratorFS struct {
+	fs.FS
+	calls atomic.Int64
+}
+
+func (f *entryGeneratorFS) Open(name string) (fs.File, error) {
+	f.observe()
+	return f.FS.Open(name)
+}
+
+func (f *entryGeneratorFS) Stat(name string) (fs.FileInfo, error) {
+	f.observe()
+	return fs.Stat(f.FS, name)
+}
+
+func (f *entryGeneratorFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	f.observe()
+	return fs.ReadDir(f.FS, name)
+}
+
+func (f *entryGeneratorFS) observe() {
+	var stack [64]uintptr
+	frames := runtime.CallersFrames(stack[:runtime.Callers(2, stack[:])])
+	for {
+		frame, more := frames.Next()
+		if frame.Function == "github.com/home-operations/flate/pkg/kustomize.generateManifest" {
+			f.calls.Add(1)
+			return
+		}
+		if !more {
+			return
+		}
+	}
 }

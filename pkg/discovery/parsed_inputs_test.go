@@ -88,8 +88,9 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	files := fstest.MapFS{
-		"owner.yaml":  {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: planned, namespace: apps}\nspec: {path: ./leaf}\n")},
-		"secret.yaml": {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: secret, namespace: apps}\nstringData: {KEY: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n")},
+		"kustomization.yaml": {Data: []byte("resources: [owner.yaml, secret.yaml]\n")},
+		"owner.yaml":         {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: planned, namespace: apps}\nspec: {path: ./leaf}\n")},
+		"secret.yaml":        {Data: []byte("apiVersion: v1\nkind: Secret\nmetadata: {name: secret, namespace: apps}\nstringData: {KEY: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n")},
 	}
 	view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: files})
 	assert.NoError(t, err)
@@ -110,7 +111,8 @@ func TestRun_PreparedInputAdmission(t *testing.T) {
 			t.Parallel()
 			if tc.input == nil {
 				other, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: fstest.MapFS{
-					"owner.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: authoritative, namespace: apps}\nspec: {path: ./other}\n")},
+					"kustomization.yaml": {Data: []byte("resources: [owner.yaml]\n")},
+					"owner.yaml":         {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: authoritative, namespace: apps}\nspec: {path: ./other}\n")},
 				}})
 				assert.NoError(t, err)
 				tc.input = &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: other}

@@ -56,7 +56,7 @@ func writeMemoryCluster(t *testing.T, producers int) (string, []manifest.NamedRe
 	return root, declarations
 }
 
-func memoryWorkloadBatches(t *testing.T, result *Result, entry manifest.NamedResource, want []manifest.NamedResource) []manifest.DocumentBatch {
+func memoryWorkloadBatches(t *testing.T, result *Result, o *Orchestrator, want []manifest.NamedResource) []manifest.DocumentBatch {
 	t.Helper()
 	var workloads []manifest.DocumentBatch
 	var declarations []manifest.NamedResource
@@ -65,7 +65,7 @@ func memoryWorkloadBatches(t *testing.T, result *Result, entry manifest.NamedRes
 			workloads = append(workloads, batch)
 			continue
 		}
-		assert.Equal(t, batch.Parent.Named(), entry)
+		assert.Equal(t, batch.Parent.Named(), o.entryBinding.Producer)
 		for _, doc := range batch.Documents {
 			declarations = append(declarations, manifest.DocIdentity(doc))
 		}
@@ -73,7 +73,14 @@ func memoryWorkloadBatches(t *testing.T, result *Result, entry manifest.NamedRes
 	slices.SortFunc(declarations, manifest.NamedResource.Compare)
 	want = slices.Clone(want)
 	slices.SortFunc(want, manifest.NamedResource.Compare)
-	assert.Diff(t, declarations, want)
+	if o.entryBinding.Producer == (manifest.NamedResource{}) {
+		assert.Equal(t, len(declarations), 0)
+		for _, id := range want {
+			assert.Equal(t, o.store.GetObject(id) != nil, true)
+		}
+	} else {
+		assert.Diff(t, declarations, want)
+	}
 	return workloads
 }
 
@@ -94,7 +101,7 @@ func TestRender_MemorySharedOwner(t *testing.T) {
 				result, renderErr := render.render(t.Context())
 				assert.NoError(t, renderErr)
 				count := 0
-				for _, batch := range memoryWorkloadBatches(t, result, render.entryBinding.Producer, declarations) {
+				for _, batch := range memoryWorkloadBatches(t, result, render, declarations) {
 					count += len(batch.Documents)
 				}
 				assert.Equal(t, count, 20)
@@ -203,7 +210,7 @@ func TestRender_MemorySparseGit(t *testing.T) {
 						t.Fatal("unrelated sibling reconciled")
 					}
 					count := 0
-					for _, batch := range memoryWorkloadBatches(t, side.Result, side.entryBinding.Producer, []manifest.NamedResource{app, sibling}) {
+					for _, batch := range memoryWorkloadBatches(t, side.Result, side.Orchestrator, []manifest.NamedResource{app, sibling}) {
 						if batch.Parent == nil || batch.Parent.Named().Name != "app" {
 							t.Fatalf("unrelated output parent=%v", batch.Parent)
 						}
@@ -240,7 +247,7 @@ func TestRender_MemoryContained(t *testing.T) {
 	assert.NoError(t, renderErr)
 	parents := make(map[manifest.NamedResource]int)
 	objects := make(map[string]bool)
-	for _, batch := range memoryWorkloadBatches(t, result, o.entryBinding.Producer, declarations) {
+	for _, batch := range memoryWorkloadBatches(t, result, o, declarations) {
 		if batch.Parent == nil {
 			t.Fatal("ownerless workload output")
 		}

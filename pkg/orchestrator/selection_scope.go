@@ -45,9 +45,9 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 		}
 	}
 	if len(unrelated) > 0 {
-		s.result.Unrelated = unrelatedFailures(s.run.Result, unrelated, required)
+		s.result.Unrelated = s.unrelatedFailures(s.run.Result, unrelated, required)
 	}
-	s.result.Causes = failureCauses(s.result.Failed, s.result.Blocked)
+	s.result.Causes = s.failureCauses(s.result.Failed, s.result.Blocked)
 }
 
 func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *selectionSide) map[manifest.NamedResource]struct{} {
@@ -152,7 +152,7 @@ func rootVictims(blocked map[manifest.NamedResource][]manifest.NamedResource) ma
 	return byRoot
 }
 
-func failureCauses(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
+func (s *selectionSide) failureCauses(failed map[manifest.NamedResource]store.StatusInfo, blocked map[manifest.NamedResource][]manifest.NamedResource) map[manifest.NamedResource][]manifest.NamedResource {
 	byRoot := rootVictims(blocked)
 	covered := make(map[manifest.NamedResource]bool)
 	for root, ids := range byRoot {
@@ -196,7 +196,7 @@ func failureCauses(failed map[manifest.NamedResource]store.StatusInfo, blocked m
 			slices.SortFunc(peers, manifest.NamedResource.Compare)
 			names := make([]string, len(peers))
 			for i, peer := range peers {
-				names[i] = peer.String()
+				names[i] = s.result.Diagnostic(peer).String()
 			}
 			info := failed[id]
 			info.Message = "dependency cycle: blocked by " + strings.Join(names, ", ")
@@ -214,19 +214,21 @@ func failureCauses(failed map[manifest.NamedResource]store.StatusInfo, blocked m
 	return byRoot
 }
 
-func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.StatusInfo, required map[manifest.NamedResource]struct{}) []manifest.Warning {
+func (s *selectionSide) unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.StatusInfo, required map[manifest.NamedResource]struct{}) []manifest.Warning {
 	byRoot := rootVictims(raw.Blocked)
 	covered := make(map[manifest.NamedResource]bool)
 	var warnings []manifest.Warning
-	children := func(ids []manifest.NamedResource) []string {
+	children := func(ids []manifest.NamedResource) ([]string, []manifest.NamedResource) {
 		var out []string
+		var related []manifest.NamedResource
 		for _, id := range ids {
 			if _, ok := unrelated[id]; ok {
-				out = append(out, id.String())
+				out = append(out, s.result.Diagnostic(id).String())
+				related = append(related, id)
 				covered[id] = true
 			}
 		}
-		return out
+		return out, related
 	}
 	for id, info := range raw.Failed {
 		if _, derived := raw.Blocked[id]; derived {
@@ -234,7 +236,8 @@ func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.S
 		}
 		if _, ok := unrelated[id]; ok {
 			covered[id] = true
-			warnings = append(warnings, manifest.Warning{Resource: id, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: children(byRoot[id])})
+			detail, related := children(byRoot[id])
+			warnings = append(warnings, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: related, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
 		}
 	}
 	for root, victims := range byRoot {
@@ -244,8 +247,8 @@ func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.S
 		if _, needed := required[root]; needed {
 			continue
 		}
-		if detail := children(victims); len(detail) > 0 {
-			warnings = append(warnings, manifest.Warning{Resource: root, Category: manifest.WarnUnrelatedFailure, Message: "not found; required by", Detail: detail})
+		if detail, related := children(victims); len(detail) > 0 {
+			warnings = append(warnings, manifest.Warning{Resource: root, Subject: s.result.Diagnostic(root), Related: related, Category: manifest.WarnUnrelatedFailure, Message: "not found; required by", Detail: detail})
 		}
 	}
 	for id, info := range unrelated {
@@ -255,10 +258,11 @@ func unrelatedFailures(raw *Result, unrelated map[manifest.NamedResource]store.S
 		deps := slices.Clone(raw.Blocked[id])
 		slices.SortFunc(deps, manifest.NamedResource.Compare)
 		var detail []string
-		for _, dep := range slices.Compact(deps) {
-			detail = append(detail, "blocked by "+dep.String())
+		deps = slices.Compact(deps)
+		for _, dep := range deps {
+			detail = append(detail, "blocked by "+s.result.Diagnostic(dep).String())
 		}
-		warnings = append(warnings, manifest.Warning{Resource: id, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
+		warnings = append(warnings, manifest.Warning{Resource: id, Subject: s.result.Diagnostic(id), Related: deps, Category: manifest.WarnUnrelatedFailure, Message: info.Message, Detail: detail})
 	}
 	slices.SortFunc(warnings, func(a, b manifest.Warning) int { return a.Resource.Compare(b.Resource) })
 	return warnings
@@ -319,7 +323,11 @@ func (s *selectionSide) prepareStatuses(name string) {
 		slices.SortFunc(roots, manifest.NamedResource.Compare)
 		names := make([]string, len(roots))
 		for i, root := range roots {
-			names[i] = root.NamespacedName()
+			subject := s.result.Diagnostic(root)
+			names[i] = subject.Resource.NamespacedName()
+			if subject.Path != "" || subject.Resource == (manifest.NamedResource{}) {
+				names[i] = subject.String()
+			}
 			if info, known := s.run.store.GetStatus(root); !known {
 				names[i] += " (not found)"
 			} else if !seen[root] && info.Status == store.StatusFailed {
@@ -340,9 +348,9 @@ func selectedFailures(res *selection.Selection) error {
 	blocked := res.BlockedCount()
 	for root := range res.Causes {
 		if info, failed := res.Failed[root]; failed {
-			msgs = append(msgs, fmt.Sprintf("%s: %s", root, info.String()))
+			msgs = append(msgs, fmt.Sprintf("%s: %s", res.Diagnostic(root), info.String()))
 		} else {
-			msgs = append(msgs, fmt.Sprintf("%s: not found", root))
+			msgs = append(msgs, fmt.Sprintf("%s: not found", res.Diagnostic(root)))
 		}
 	}
 	slices.Sort(msgs)

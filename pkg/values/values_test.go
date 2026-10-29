@@ -1,9 +1,11 @@
 package values
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strconv"
 	"strings"
@@ -1217,4 +1219,33 @@ func TestStoreProvider_SharedSuppliedValues(t *testing.T) {
 		t.Fatalf("usable supply omitted: %v", omitted)
 	}
 	assert.Diff(t, hr.Values, map[string]any{"greeting": "inline", "image": map[string]any{"tag": ""}})
+}
+
+func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	owner := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: "FluxInstance", Namespace: "flux-system", Name: "sync"}
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", owner).WithNamespace("sources").(*manifest.Kustomization)
+	entry.PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: "Unsupported", Name: "ignored"}, {Kind: manifest.KindConfigMap, Name: "missing"}}}
+	if err := ExpandPostBuildSubstituteReference(entry, NewStoreProvider(store.New(), true)); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for line := range bytes.SplitSeq(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
+		var record struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.ID != manifest.DiagnosticFor(entry.Named(), entry).String() {
+			t.Fatalf("substitution debug identity=%q", record.ID)
+		}
+		count++
+	}
+	if count != 2 {
+		t.Fatalf("debug records=%d", count)
+	}
 }

@@ -852,7 +852,7 @@ func TestDAGDispatch_SharedHelmRepositoryAcquisition(t *testing.T) {
 							}
 							if event.Message == "source: fetch complete" {
 								for id := range f.calls {
-									if id.String() == event.ID {
+									if manifest.DiagnosticFor(id, s.GetObject(id)).String() == event.ID {
 										completions[id]++
 									}
 								}

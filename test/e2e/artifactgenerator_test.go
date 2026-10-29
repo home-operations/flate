@@ -120,6 +120,7 @@ spec:
 func TestE2E_ArtifactGenerator_PartialFailure(t *testing.T) {
 	root := t.TempDir()
 	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [generator.yaml, a.yaml, b.yaml, c.yaml]\n")
 	testutil.WriteFile(t, root, "entry/generator.yaml", `apiVersion: source.extensions.fluxcd.io/v1beta1
 kind: ArtifactGenerator
 metadata: {name: generator, namespace: apps}

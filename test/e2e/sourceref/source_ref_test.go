@@ -1064,6 +1064,9 @@ func TestE2E_SourceRef_PinnedRootPreservesSource(t *testing.T) {
 func TestE2E_SourceRef_PinnedPathIgnoresAddedDiscoveryObjects(t *testing.T) {
 	original, _, _, _ := sourceRefFixture(t)
 	current, _, _, _ := sourceRefFixture(t)
+	for _, root := range []string{original, current} {
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux/entry.yaml, apps]\n")
+	}
 	testutil.WriteFile(t, current, "apps/added-ks.yaml", testutil.KustomizationYAML("added-ks", "flux-system", `  path: ./apps/phantom
   sourceRef: {kind: GitRepository, name: working, namespace: flux-system}
 `)+"---\n"+
@@ -1148,9 +1151,9 @@ spec:
 					id := change.Kind + "/" + change.Namespace + "/" + change.Name
 					changed[id]++
 					assert.Equal(t, change.Status, []string{"added", "removed"}[direction])
-					wantKind, wantNamespace, wantName, wantPath := "Kustomization", "\x00", "entry", "."
+					wantKind, wantNamespace, wantName, wantPath := "", "", "", "."
 					if change.Kind == "ConfigMap" && change.Name == "added-ks-output" {
-						wantNamespace, wantName, wantPath = "flux-system", "added-ks", ""
+						wantKind, wantNamespace, wantName, wantPath = "Kustomization", "flux-system", "added-ks", ""
 					}
 					assert.Equal(t, change.Parent.Kind, wantKind)
 					assert.Equal(t, change.Parent.Namespace, wantNamespace)
@@ -1206,6 +1209,7 @@ func TestE2E_SourceRef_PinnedPathOwnsWorkingTreeReleases(t *testing.T) {
 		if err := wt.Checkout(&gogit.CheckoutOptions{Hash: hash}); err != nil {
 			t.Fatal(err)
 		}
+		testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [entry.yaml]\n")
 		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources:\n- cm.yaml\n- release.yaml\n")
 		testutil.WriteFile(t, root, "apps/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease

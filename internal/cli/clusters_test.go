@@ -181,7 +181,7 @@ func runClusterInputs(t *testing.T, argv ...string) (string, string, int) {
 }
 
 func clusterSnapshot(side *selection.Selection) diff.Snapshot {
-	return diff.Snapshot{Manifests: side.Manifests, Unavailable: side.Unavailable, ProducerKeys: side.ProducerKeys}
+	return diff.Snapshot{Subjects: side.Subjects, Manifests: side.Manifests, Unavailable: side.Unavailable, ProducerKeys: side.ProducerKeys}
 }
 
 func clusterDiffPayload(t *testing.T, inv *selectedInvocation, encoder output.Encoder) selectedPayload {
@@ -199,11 +199,11 @@ func clusterDiffPayload(t *testing.T, inv *selectedInvocation, encoder output.En
 			payload.warnings[i] = appendSuppressionWarnings(warnings, notes)
 			continue
 		}
-		left, right, notes := diffprep.Suppress(diffprep.Snapshot{Manifests: before.Manifests, Unavailable: before.Unavailable, ProducerKeys: before.ProducerKeys}, diffprep.Snapshot{Manifests: after.Manifests, Unavailable: after.Unavailable, ProducerKeys: after.ProducerKeys})
-		prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), diffprep.Options{StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields})
+		left, right, notes := diffprep.Suppress(diffprep.Snapshot{Subjects: before.Subjects, Manifests: before.Manifests, Unavailable: before.Unavailable, ProducerKeys: before.ProducerKeys}, diffprep.Snapshot{Subjects: after.Subjects, Manifests: after.Manifests, Unavailable: after.Unavailable, ProducerKeys: after.ProducerKeys})
+		prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), diffprep.Options{Subjects: [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{before.Subjects, after.Subjects}, StripAttrs: diff.DefaultStripAttrs, StripFields: diff.DefaultStripFields})
 		payload.warnings[i] = prepared.Warnings
 		for _, note := range notes {
-			payload.warnings[i] = append(payload.warnings[i], manifest.Warning{Resource: note.Parent.NamedResource, Category: manifest.WarnDiffSuppressed, Message: note.String()})
+			payload.warnings[i] = append(payload.warnings[i], manifest.Warning{Resource: note.Parent.NamedResource, Subject: note.Subject, Category: manifest.WarnDiffSuppressed, Message: note.String()})
 		}
 		var err error
 		if encoder.Format == output.FormatDiff || encoder.Format == output.FormatHTML {
@@ -266,8 +266,8 @@ func TestRun_ClusterGroups_PayloadAndSelection(t *testing.T) {
 	root := writeClusterGroupsFixture(t, map[string]string{"omega": "second", "alpha": "first"})
 	args := []string{"build", "all", "--path", root, "-o", "json", "--concurrency", "2"}
 	collision, diagnostic, status := runCLI(t, args...)
-	if status != 1 || collision != "[]\n" || !strings.Contains(diagnostic, "duplicate resource(s)") || !strings.Contains(diagnostic, "select an individual overlay with -p") {
-		t.Fatalf("literal duplicate root was not rejected: code=%d stdout=%s stderr=%s", status, collision, diagnostic)
+	if status != 0 || !strings.Contains(collision, "example.test/app:") || strings.Contains(diagnostic, "duplicate resource(s)") {
+		t.Fatalf("discovery root did not render clusters: code=%d stdout=%s stderr=%s", status, collision, diagnostic)
 	}
 	stdout, stderr, code := runClusterInputs(t, args...)
 	if code != 0 {
@@ -1149,5 +1149,58 @@ func TestRun_ClusterGroups_SuppliedPrecedence(t *testing.T) {
 		if !strings.Contains(stdout, value) {
 			t.Fatalf("cluster precedence lost %q: %s", value, stdout)
 		}
+	}
+}
+
+func TestRun_SyntheticDiagnosticsAcrossCommands(t *testing.T) {
+	fixture := func() string {
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [release.yaml]\n")
+		testutil.WriteFile(t, root, "release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: release, namespace: apps}
+spec:
+  interval: 5m
+  chart:
+    kind: OCIRepository
+    spec:
+      url: oci://registry.example/charts/app
+      ref: {tag: 1.0.0}
+      secretRef: {name: auth}
+`)
+		return root
+	}
+	current, original := fixture(), fixture()
+	testutil.WriteFile(t, original, "kustomization.yaml", "resources: []\n")
+	if err := os.Remove(filepath.Join(original, "release.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "config.json")
+	testutil.WriteFileAt(t, config, "{}")
+	for _, verb := range []string{"build", "diff", "get", "test"} {
+		t.Run(verb, func(t *testing.T) {
+			args := []string{verb, "all", "--path", current, "--allow-missing-kinds", "Secret", "--registry-config", config, "--cache-dir", t.TempDir(), "--concurrency", "2"}
+			if verb == "diff" {
+				args = append(args, "--path-orig", original, "-o", "diff")
+			}
+			if verb == "build" || verb == "get" {
+				args = append(args, "-o", "json")
+			}
+			out, diagnostic, code := runCLI(t, args...)
+			if code != 0 || strings.Contains(diagnostic, "OCIRepository") || !strings.Contains(diagnostic, "HelmRelease") {
+				t.Fatalf("%s diagnostic: code=%d stdout=%s stderr=%s", verb, code, out, diagnostic)
+			}
+			if verb == "build" || verb == "get" {
+				var documents []map[string]any
+				if err := json.Unmarshal([]byte(out), &documents); err != nil {
+					t.Fatal(err)
+				}
+				for _, document := range documents {
+					if document["kind"] == manifest.KindOCIRepository {
+						t.Fatalf("%s exposed generated source: %s", verb, out)
+					}
+				}
+			}
+		})
 	}
 }

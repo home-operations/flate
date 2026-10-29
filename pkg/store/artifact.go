@@ -17,6 +17,8 @@ type Artifact interface {
 
 // SourceArtifact retains content and metadata acquired by a source owner.
 type SourceArtifact struct {
+	material *SourceArtifact
+
 	// Reads retains the declaration and material that produced this acquisition.
 	Reads     *ReadSet
 	Kind      string
@@ -51,6 +53,24 @@ type SourceArtifact struct {
 }
 
 func (*SourceArtifact) artifact() {}
+
+// WithReads retains the acquired material while replacing its execution registrations.
+func (a *SourceArtifact) WithReads(reads *ReadSet) *SourceArtifact {
+	captured := *a
+	captured.Reads = reads
+	captured.material = a.mutableMaterial()
+	return &captured
+}
+
+func (a *SourceArtifact) mutableMaterial() *SourceArtifact {
+	if a == nil || a.Content != "" || a.FS == nil {
+		return nil
+	}
+	if a.material != nil {
+		return a.material
+	}
+	return a
+}
 
 // ArtifactRead selects the source facts consumed by an execution.
 type ArtifactRead uint8
@@ -132,6 +152,13 @@ func (s *Store) SetArtifact(id manifest.NamedResource, artifact *SourceArtifact)
 	dispatch.run()
 }
 
+func mutableMaterial(artifact Artifact) *SourceArtifact {
+	if source, ok := artifact.(*SourceArtifact); ok {
+		return source.mutableMaterial()
+	}
+	return nil
+}
+
 func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifactRecord, value Artifact) bool {
 	var input ArtifactInput
 	if source, ok := value.(*SourceArtifact); ok {
@@ -146,7 +173,7 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	before.Revision, before.Origin, before.OriginPresent = "", "", false
 	after.Revision, after.Origin, after.OriginPresent = "", "", false
 	changed := ArtifactRead(0)
-	if before != after || input.Readable && input.Content == "" && record.effective != value {
+	if before != after || input.Readable && input.Content == "" && mutableMaterial(record.effective) != mutableMaterial(value) {
 		changed |= ArtifactContent
 	}
 	if _, source := value.(*SourceArtifact); !source && record.effective != value {
@@ -267,6 +294,7 @@ func artifactValueEqual(prev, next Artifact) bool {
 	ac, bc := *a, *b
 	ac.FS, bc.FS = nil, nil
 	ac.Reads, bc.Reads = nil, nil
+	ac.material, bc.material = nil, nil
 	ac.Warnings, bc.Warnings = nil, nil
 	ac.ContentFingerprint, bc.ContentFingerprint = nil, nil
 	return reflect.DeepEqual(ac, bc)

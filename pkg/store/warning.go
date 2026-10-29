@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -15,8 +16,14 @@ func (s *Store) AddWarning(w manifest.Warning) {
 	} else {
 		w.Detail = nil
 	}
-	key := warningKey{w.Resource, w.Category, w.Message, detail}
-	w.Detail = slices.Clone(w.Detail)
+	related := ""
+	if len(w.Related) > 0 {
+		encoded, _ := json.Marshal(w.Related)
+		related = string(encoded)
+	} else {
+		w.Related = nil
+	}
+	key := warningKey{w.Resource, w.Category, w.Message, detail, related}
 
 	s.warnMu.Lock()
 	defer s.warnMu.Unlock()
@@ -26,6 +33,8 @@ func (s *Store) AddWarning(w manifest.Warning) {
 	if s.warnIndex == nil {
 		s.warnIndex = make(map[warningKey]struct{})
 	}
+	w.Detail = slices.Clone(w.Detail)
+	w.Related = slices.Clone(w.Related)
 	w.Count = 1
 	s.warnIndex[key] = struct{}{}
 	s.warnOrder = append(s.warnOrder, w)
@@ -76,17 +85,20 @@ func (s *Store) Warnings() []manifest.Warning {
 			}
 			slices.SortFunc(contributions, func(a, b contribution) int { return a.owner.Compare(b.owner) })
 			owners := make([]string, len(contributions))
+			related := make([]manifest.NamedResource, 0, len(contributions)+1)
 			for i, c := range contributions {
-				owners[i] = c.owner.String()
+				owners[i] = manifest.DiagnosticFor(c.owner, s.GetObject(c.owner)).String()
+				related = append(related, c.owner)
 			}
 			winner := "static object"
 			if owner := s.EmissionOwner(id); owner != (manifest.NamedResource{}) {
-				winner = owner.String()
+				winner = manifest.DiagnosticFor(owner, s.GetObject(owner)).String()
+				related = append(related, owner)
 			}
 			out = append(out, manifest.Warning{
 				Resource: id, Category: manifest.WarnConflictingProducers, Count: 1,
 				Message: "conflicting producers; using " + winner,
-				Detail:  owners,
+				Detail:  owners, Related: related,
 			})
 		}
 	}
@@ -96,6 +108,13 @@ func (s *Store) Warnings() []manifest.Warning {
 		warning := out[i]
 		warning.Count = 1
 		warning.Detail = slices.Clone(warning.Detail)
+		warning.Related = slices.Clone(warning.Related)
+		if len(warning.Related) == 0 {
+			warning.Related = nil
+		}
+		if warning.Subject.ID == (manifest.NamedResource{}) && warning.Resource != (manifest.NamedResource{}) {
+			warning.Subject = manifest.DiagnosticFor(warning.Resource, s.GetObject(warning.Resource))
+		}
 		if len(warning.Detail) == 0 {
 			warning.Detail = nil
 		}
@@ -128,6 +147,6 @@ func (s *Store) assessments() []*ReadSet {
 }
 
 type warningKey struct {
-	resource                  manifest.NamedResource
-	category, message, detail string
+	resource                           manifest.NamedResource
+	category, message, detail, related string
 }

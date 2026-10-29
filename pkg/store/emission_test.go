@@ -3489,7 +3489,7 @@ func TestRecordEmitted_PayloadPrecedence(t *testing.T) {
 				t.Fatal("publication panicked")
 			}
 			s.RecordEmitted(zz, &Emission{Children: []Child{declaration}, Manifests: testutil.DocumentOccurrences([]map[string]any{declaration.Doc}), Complete: true}, nil)
-			assert.Diff(t, s.Warnings(), []manifest.Warning{{Resource: target, Category: manifest.WarnConflictingProducers, Count: 1, Message: "conflicting producers; using " + zz.String(), Detail: []string{a.String(), z.String(), zz.String()}}})
+			assert.Diff(t, s.Warnings(), []manifest.Warning{{Resource: target, Subject: manifest.DiagnosticFor(target, nil), Related: []manifest.NamedResource{a, z, zz, zz}, Category: manifest.WarnConflictingProducers, Count: 1, Message: "conflicting producers; using " + zz.String(), Detail: []string{a.String(), z.String(), zz.String()}}})
 			seen := 0
 			unsubscribe := s.AddListener(EventArtifactUpdated, func(id manifest.NamedResource, value any) {
 				if id == target {
@@ -3667,7 +3667,7 @@ func TestRecordEmitted_PayloadWarnings(t *testing.T) {
 			s.RecordEmitted(z, &Emission{Children: []Child{child}, Complete: true}, map[manifest.NamedResource]*SourceArtifact{target: last})
 			var want []manifest.Warning
 			if !equal {
-				want = []manifest.Warning{{Resource: target, Category: manifest.WarnConflictingProducers, Count: 1, Message: "conflicting producers; using " + zz.String(), Detail: []string{a.String(), z.String(), zz.String()}}}
+				want = []manifest.Warning{{Resource: target, Subject: manifest.DiagnosticFor(target, nil), Related: []manifest.NamedResource{a, z, zz, zz}, Category: manifest.WarnConflictingProducers, Count: 1, Message: "conflicting producers; using " + zz.String(), Detail: []string{a.String(), z.String(), zz.String()}}}
 			}
 			assert.Diff(t, s.Warnings(), want)
 			assert.Equal(t, s.EmissionOwner(target), zz)
@@ -4384,5 +4384,50 @@ func TestRecordEmitted_ReceiptOnly(t *testing.T) {
 	assert.Equal(t, next.Render.Value().(string), "second")
 	if next.Footprint() == nil {
 		t.Fatal("receipt-only replacement lost the accepted caller handoff")
+	}
+}
+
+func TestRecordEmitted_ConflictingProducers_SyntheticOwners(t *testing.T) {
+	t.Parallel()
+	for _, static := range []bool{false, true} {
+		t.Run(fmt.Sprintf("static=%t", static), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
+			first := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
+			second := first.WithNamespace("other")
+			s.AddObject(first)
+			s.AddObject(second)
+			target := &manifest.ConfigMap{Name: "target", Namespace: "apps"}
+			if static {
+				s.AddObject(target)
+			}
+			owners := []manifest.NamedResource{first.Named(), second.Named()}
+			for i, owner := range owners {
+				child := &manifest.ConfigMap{Name: target.Name, Namespace: target.Namespace, Data: map[string]any{"value": fmt.Sprint(i)}}
+				s.RecordEmitted(owner, &Emission{Children: []Child{{Obj: child}}, Complete: true}, nil)
+			}
+			if static {
+				s.AddObject(s.GetObject(target.Named()))
+			}
+			warnings := s.Warnings()
+			if len(warnings) != 1 {
+				t.Fatalf("warnings=%+v", warnings)
+			}
+			warning := warnings[0]
+			if warning.Count != 1 || warning.Resource != target.Named() || warning.Subject.Resource != target.Named() || len(warning.Detail) != 2 || warning.Detail[0] != chart.Named().String() || warning.Detail[1] != chart.Named().String() {
+				t.Fatalf("conflict display=%+v", warning)
+			}
+			if len(warning.Related) < 2 || warning.Related[0] != owners[0] || warning.Related[1] != owners[1] {
+				t.Fatalf("raw contributors=%v", warning.Related)
+			}
+			winner := chart.Named().String()
+			if static {
+				winner = "static object"
+			}
+			if warning.Message != "conflicting producers; using "+winner {
+				t.Fatalf("winner=%+v", warning)
+			}
+		})
 	}
 }

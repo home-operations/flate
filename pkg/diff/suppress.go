@@ -1,6 +1,9 @@
 package diff
 
-import "github.com/home-operations/flate/internal/diffprep"
+import (
+	"github.com/home-operations/flate/internal/diffprep"
+	"github.com/home-operations/flate/pkg/manifest"
+)
 
 // Side names the side of a comparison. Left is the orig (base, --path-orig)
 // tree and right the current (head, --path) tree. Suppression also uses "both"
@@ -17,13 +20,14 @@ const (
 // Suppression records a producer whose rendered objects were withheld because
 // rendering failed, was soft-skipped, or was suspended.
 type Suppression struct {
-	Parent Parent `json:"parent"`
-	Side   Side   `json:"side"`   // orig, current, or both unavailable sides
-	Count  int    `json:"count"`  // withheld healthy-side entries, or all entries for both
-	Reason string `json:"reason"` // the render failure, skip, or suspension reason
+	Subject manifest.DiagnosticIdentity `json:"-"`
+	Parent  Parent                      `json:"parent"`
+	Side    Side                        `json:"side"`   // orig, current, or both unavailable sides
+	Count   int                         `json:"count"`  // withheld healthy-side entries, or all entries for both
+	Reason  string                      `json:"reason"` // the render failure, skip, or suspension reason
 }
 
 // String renders the suppression as a human-readable sentence.
 func (s Suppression) String() string {
-	return (diffprep.Suppression{Parent: diffprep.Parent(s.Parent), Side: diffprep.Side(s.Side), Count: s.Count, Reason: s.Reason}).String()
+	return (diffprep.Suppression{Parent: diffprep.Parent(s.Parent), Subject: s.Subject, Side: diffprep.Side(s.Side), Count: s.Count, Reason: s.Reason}).String()
 }

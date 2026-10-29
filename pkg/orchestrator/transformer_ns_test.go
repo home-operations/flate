@@ -160,7 +160,7 @@ spec:
 			}
 			owners, ancestors := o.index.OwnersOfFile(record.File)
 			t.Logf("source %s: File=%s owners=%v ancestors=%v", source, record.File, owners, ancestors)
-			if !slices.Equal(owners, []manifest.NamedResource{o.entryBinding.Producer}) || len(ancestors) != 0 {
+			if len(owners) != 0 || len(ancestors) != 0 {
 				t.Fatalf("source fixture %s has unrelated ownership selection", source)
 			}
 			id := testutil.KustomizationID(ns, "myapp")

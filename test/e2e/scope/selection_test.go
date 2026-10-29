@@ -849,11 +849,11 @@ spec: {url: 'https://fixture.invalid/other'}
 					t.Fatalf("healthy named sibling failed: exit=%d\n%s\n%s", code, stdout, stderr)
 				}
 			} else {
-				want := "flux kustomize generator"
+				want := "entry monitoring/blackbox-exporter.yaml: document 1"
 				if tc.graph {
 					want = "kustomize build monitoring"
 				}
-				if !strings.Contains(stderr, want) || !strings.Contains(stderr, "Kustomization") || !strings.Contains(stderr, "entry") {
+				if !strings.Contains(stderr, want) || strings.Contains(stderr, "Kustomization entry") {
 					t.Fatalf("unowned malformed file lost its owning error:\n%s", stderr)
 				}
 			}
@@ -947,6 +947,7 @@ kind: HelmRepository
 metadata: {name: excluded-source, namespace: apps}
 spec: {url: https://must-not-run.invalid/charts}
 `)
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [owner.yaml]\n")
 	testutil.WriteFile(t, root, "flux/owner.yaml", testutil.KustomizationYAML("owner", "flux-system", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
 
 	out, stderr := harness.RequireCLIOK(t, "get", "hr", "-o", "json", "--path", filepath.Join(root, "app"),
@@ -1206,6 +1207,8 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 				testutil.GitInit(t, root)
 				if !tc.plain {
 					testutil.WriteFile(t, root, "app/kustomization.yaml", tc.before)
+				} else {
+					testutil.WriteFile(t, root, "app/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./app\n"))
 				}
 				testutil.WriteFile(t, root, "app/deployment.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web}\nspec: {template: {spec: {containers: [{name: web, image: 'example.test/web:1'}]}}}\n")
 				testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: config}\ndata: {value: selected}\n")
@@ -1255,13 +1258,15 @@ func TestE2E_SelectedKustomizeRootDiff(t *testing.T) {
 			if len(result.Changes) != len(tc.want) || len(result.Suppressed) != 0 {
 				t.Fatalf("unexpected paired diff: %s", out)
 			}
+			parent := map[string]any{"kind": "", "name": "", "path": "app"}
+			if tc.plain {
+				parent = map[string]any{"group": "kustomize.toolkit.fluxcd.io", "kind": manifest.KindKustomization, "namespace": "apps", "name": "owner", "path": "app"}
+			}
 			for _, change := range result.Changes {
 				if tc.want[change.Name] != change.Status {
 					t.Fatalf("change did not retain resource identity: %s", out)
 				}
-				if change.Parent["kind"] != manifest.KindKustomization || change.Parent["path"] != "app" {
-					t.Fatalf("entry resource lost ordinary producer attribution: %s", out)
-				}
+				assert.Diff(t, change.Parent, parent)
 			}
 			if tc.list {
 				reversed, _ := harness.RequireCLIOK(t, "diff", "all", "-o", "json", "--path", filepath.Join(orig, "app"), "--path-orig", filepath.Join(current, "app"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
@@ -1472,6 +1477,7 @@ func TestE2E_RootLayerDeclarations(t *testing.T) {
 	roots := [2]string{t.TempDir(), t.TempDir()}
 	for _, root := range roots {
 		testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [first, second]\n")
 		for _, name := range []string{"first", "second"} {
 			testutil.WriteFile(t, root, "apps/"+name+"/kustomization.yaml", "resources: [ks.yaml, plain.yaml]\n")
 			testutil.WriteFile(t, root, "apps/"+name+"/ks.yaml", testutil.KustomizationYAML(name, "apps", "  path: ./workloads/"+name+"\n  interval: 1m\n"))
@@ -1512,6 +1518,7 @@ func TestE2E_RootLayerDeclarations(t *testing.T) {
 
 func TestE2E_LiteralRootOverlayCollision(t *testing.T) {
 	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [production, staging]\n")
 	for _, overlay := range []string{"production", "staging"} {
 		testutil.WriteFile(t, root, overlay+"/kustomization.yaml", "resources: [cm.yaml]\n")
 		testutil.WriteFile(t, root, overlay+"/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: collision, namespace: apps}\n")
@@ -1700,7 +1707,7 @@ func TestE2E_UnownedMalformedEntryAuthority(t *testing.T) {
 						if unreadable {
 							want = "bad.yaml"
 						}
-						if code != 1 || !strings.Contains(stderr, want) || !strings.Contains(stderr, "Kustomization") || !strings.Contains(stderr, "entry") || !unreadable && !strings.Contains(stderr, "line 1") || strings.Contains(stderr, "flux-system/owner") {
+						if code != 1 || !strings.Contains(stderr, want) || strings.Contains(stderr, "Kustomization entry") || !unreadable && !strings.Contains(stderr, "document 1") || strings.Contains(stderr, "flux-system/owner") {
 							t.Fatalf("explicit entry lost its input failure: exit=%d\n%s\n%s", code, stdout, stderr)
 						}
 					} else if code != 0 || !strings.Contains(stdout, "healthy-output") || strings.Contains(stderr, "bad.yaml") {
@@ -1776,4 +1783,145 @@ func TestE2E_Diff_MalformedManifestTransitions(t *testing.T) {
 			assert.Equal(t, nextErr, stderr)
 		})
 	}
+}
+
+func TestE2E_EntryPackageJSON(t *testing.T) {
+	for _, verb := range []string{"build", "diff"} {
+		t.Run(verb, func(t *testing.T) {
+			root := t.TempDir()
+			repo := testutil.GitInit(t, root)
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml]\n")
+			document := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {value: before}\n"
+			testutil.WriteFile(t, root, "cm.yaml", document)
+			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.WriteFile(t, root, "cm.yaml", strings.ReplaceAll(document, "before", "after"))
+			t.Chdir(root)
+			args := []string{verb, "--path", ".", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "-o", "json"}
+			if verb == "diff" {
+				args = append(args, "--base", "HEAD")
+			}
+			stdout, stderr := harness.RequireCLIOK(t, args...)
+			for _, forbidden := range []string{`\u0000`, "\x00", "entry"} {
+				if strings.Contains(stdout+stderr, forbidden) {
+					t.Errorf("output contains %q:\n%s\n%s", forbidden, stdout, stderr)
+				}
+			}
+			want := map[string]any{
+				"apiVersion": "v1", "kind": "ConfigMap",
+				"metadata": map[string]any{"name": "settings"},
+				"data":     map[string]any{"value": "after"},
+			}
+			if verb == "build" {
+				var documents []map[string]any
+				assert.NoError(t, json.Unmarshal([]byte(stdout), &documents))
+				assert.Diff(t, documents, []map[string]any{want})
+				return
+			}
+			var result struct {
+				Changes []struct {
+					APIVersion, Kind, Namespace, Name, Status string
+					Parent                                    struct{ Group, Kind, Namespace, Name, Path string }
+					Old, New                                  map[string]any
+				}
+				Suppressed []any
+			}
+			assert.NoError(t, json.Unmarshal([]byte(stdout), &result))
+			if len(result.Changes) != 1 || len(result.Suppressed) != 0 {
+				t.Fatalf("unexpected ConfigMap diff:\n%s", stdout)
+			}
+			change := result.Changes[0]
+			assert.Equal(t, change.APIVersion, "v1")
+			assert.Equal(t, change.Kind, "ConfigMap")
+			assert.Equal(t, change.Namespace, "")
+			assert.Equal(t, change.Name, "settings")
+			assert.Equal(t, change.Status, "changed")
+			assert.Diff(t, change.Parent, struct{ Group, Kind, Namespace, Name, Path string }{Path: "."})
+			assert.Diff(t, change.New, want)
+			want["data"] = map[string]any{"value": "before"}
+			assert.Diff(t, change.Old, want)
+		})
+	}
+}
+
+func TestE2E_EntryPackageFailure(t *testing.T) {
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	for _, root := range roots {
+		testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [child.yaml]\nconfigMapGenerator: [{name: settings, envs: [.cluster-vars.env]}]\n")
+		testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./workload\n"))
+		testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: []\n")
+	}
+	for _, tc := range []struct{ verb, format string }{{verb: "test"}, {verb: "diff"}, {verb: "diff", format: "json"}} {
+		t.Run(tc.verb+"/"+tc.format, func(t *testing.T) {
+			args := []string{tc.verb, "all", "--path", filepath.Join(roots[1], "entry"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			if tc.verb == "diff" {
+				args = append(args, "--path-orig", filepath.Join(roots[0], "entry"))
+			}
+			if tc.format != "" {
+				args = append(args, "-o", tc.format)
+			}
+			out, stderr, code := harness.RunCLIBuffers(args...)
+			if code != 1 || !strings.Contains(out+stderr, ".cluster-vars.env") || !strings.Contains(out+stderr, "entry") || strings.Contains(stderr, "discovery package") || strings.Contains(out+stderr, "Kustomization entry") || strings.Contains(out+stderr, "Kustomization.kustomize.toolkit.fluxcd.io entry") {
+				t.Fatalf("package failure lost producer authority: exit=%d stdout=%s stderr=%s", code, out, stderr)
+			}
+			if tc.verb == "test" && !strings.Contains(out, "1 failed") {
+				t.Fatalf("package failure lost its status table: %s", out)
+			}
+			if tc.format == "json" {
+				var report struct {
+					Suppressed []struct {
+						Parent struct{ Name, Path string }
+					}
+				}
+				if err := json.Unmarshal([]byte(out), &report); err != nil || len(report.Suppressed) != 1 || report.Suppressed[0].Parent.Name != "" || report.Suppressed[0].Parent.Path != "entry" {
+					t.Fatalf("JSON exposed the internal producer: %s; err=%v", out, err)
+				}
+			}
+		})
+	}
+}
+
+func TestE2E_EntryApplicationRendered(t *testing.T) {
+	for _, kind := range []string{"FluxInstance", "Kustomization"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			repo := testutil.GitInit(t, root)
+			if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/entry/repo"}}); err != nil {
+				t.Fatal(err)
+			}
+			testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: https://example.test/entry/repo}\n")
+			application := "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: https://example.test/entry/repo, ref: main, path: ./entry}\n"
+			if kind == "Kustomization" {
+				application = testutil.KustomizationYAML("sync", "apps", "  path: ./entry\n  sourceRef: {kind: GitRepository, name: self}\n")
+			}
+			testutil.WriteFile(t, root, "entry/generator.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n")
+			testutil.WriteFile(t, root, "charts/bootstrap/Chart.yaml", "apiVersion: v2\nname: bootstrap\nversion: 1.0.0\n")
+			testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application)+" }}")
+			testutil.WriteFile(t, root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal-layer, namespace: apps}\n")
+			args := []string{"build", "all", "--path", filepath.Join(root, "entry"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+			out, stderr := harness.RequireCLIOK(t, args...)
+			if !strings.Contains(out, "name: literal-layer") || strings.Contains(out, "\x00") || strings.Contains(stderr, "ConflictingProducers") {
+				t.Fatalf("late application lost the literal layer: %s\n%s", out, stderr)
+			}
+			again, _ := harness.RequireCLIOK(t, args...)
+			assert.Equal(t, again, out)
+		})
+	}
+}
+
+func TestE2E_DiscoveryRootPlainPackages(t *testing.T) {
+	root := t.TempDir()
+	testutil.GitInit(t, root)
+	testutil.WriteFile(t, root, "entry/Taskfile.yaml", "version: '3'\ntasks: {}\n")
+	for _, name := range []string{"one", "two"} {
+		testutil.WriteFile(t, root, "entry/"+name+"/kustomization.yaml", "resources: [role.yaml]\nnamePrefix: "+name+"-\n")
+		testutil.WriteFile(t, root, "entry/"+name+"/role.yaml", "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata: {name: retained}\nrules: []\n")
+	}
+	args := []string{"build", "all", "--path", filepath.Join(root, "entry"), "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir()}
+	out, stderr := harness.RequireCLIOK(t, args...)
+	if strings.Count(out, "kind: ClusterRole") != 2 || !strings.Contains(out, "name: one-retained") || !strings.Contains(out, "name: two-retained") || strings.Contains(stderr, "Taskfile") {
+		t.Fatalf("plain package retention failed: %s\n%s", out, stderr)
+	}
+	again, _ := harness.RequireCLIOK(t, args...)
+	assert.Equal(t, again, out)
 }

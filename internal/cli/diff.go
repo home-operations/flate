@@ -86,8 +86,8 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, includeRemoved bool) erro
 		for i, group := range inv.groups {
 			orig, current := group.sides[0], group.sides[1]
 			imgs, suppressed, err := diff.CompareImages(
-				diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
-				diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys},
+				diff.Snapshot{Subjects: orig.Subjects, Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
+				diff.Snapshot{Subjects: current.Subjects, Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys},
 				nil, includeRemoved,
 			)
 			groups[i] = output.ImageGroup{Cluster: group.cluster, Images: imgs, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead]}
@@ -127,21 +127,21 @@ func (d *diffFlags) run(cmd *cobra.Command, c *commonFlags, root manifest.NamedR
 			orig, current := group.sides[0], group.sides[1]
 			if format == output.FormatJSON {
 				body, warnings, suppressed, err := diff.Compare(
-					diff.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
-					diff.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys}, nil,
+					diff.Snapshot{Subjects: orig.Subjects, Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
+					diff.Snapshot{Subjects: current.Subjects, Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys}, nil,
 					diff.Options{Format: diff.FormatJSON, StripAttrs: d.stripAttrs, StripFields: d.stripFields})
 				groups[i] = output.DiffGroup{Cluster: group.cluster, Added: group.absent[manifest.TreeBase], Removed: group.absent[manifest.TreeHead], Body: body}
 				result.warnings[i] = appendSuppressionWarnings(warnings, suppressed)
 				result.err = errors.Join(result.err, err)
 				continue
 			}
-			left, right, notes := diffprep.Suppress(diffprep.Snapshot{Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
-				diffprep.Snapshot{Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys})
-			p := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), diffprep.Options{StripAttrs: d.stripAttrs, StripFields: d.stripFields})
+			left, right, notes := diffprep.Suppress(diffprep.Snapshot{Subjects: orig.Subjects, Manifests: orig.Manifests, Unavailable: orig.Unavailable, ProducerKeys: orig.ProducerKeys},
+				diffprep.Snapshot{Subjects: current.Subjects, Manifests: current.Manifests, Unavailable: current.Unavailable, ProducerKeys: current.ProducerKeys})
+			p := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), diffprep.Options{Subjects: [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}, StripAttrs: d.stripAttrs, StripFields: d.stripFields})
 			result.warnings[i] = slices.Grow(p.Warnings, len(notes))
 			for _, note := range notes {
 				result.warnings[i] = append(result.warnings[i], manifest.Warning{
-					Resource: note.Parent.NamedResource, Category: manifest.WarnDiffSuppressed, Message: note.String(),
+					Resource: note.Parent.NamedResource, Subject: note.Subject, Category: manifest.WarnDiffSuppressed, Message: note.String(),
 				})
 			}
 			slices.SortFunc(result.warnings[i], manifest.CompareWarning)
@@ -212,7 +212,7 @@ func appendSuppressionWarnings(warnings []manifest.Warning, suppressed []diff.Su
 	warnings = slices.Grow(warnings, len(suppressed))
 	for _, note := range suppressed {
 		warnings = append(warnings, manifest.Warning{
-			Resource: note.Parent.NamedResource, Category: manifest.WarnDiffSuppressed,
+			Resource: note.Parent.NamedResource, Subject: note.Subject, Category: manifest.WarnDiffSuppressed,
 			Message: note.String(),
 		})
 	}

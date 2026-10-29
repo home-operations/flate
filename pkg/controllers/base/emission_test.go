@@ -516,6 +516,7 @@ func TestFingerprintDedup_WarningsRebind(t *testing.T) {
 			second.Reads.Accept()
 			defer second.Close()
 			warning.Count = 1
+			warning.Subject = manifest.DiagnosticFor(obj.Named(), obj)
 			assert.Diff(t, s.Warnings(), []manifest.Warning{warning})
 			assert.Diff(t, s.AdvisoryEvidence(), store.AdvisoryEvidence{Overrides: []store.SuppliedOverride{current}})
 			assert.Equal(t, second.Valid(), true)

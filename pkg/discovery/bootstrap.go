@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/transport"
@@ -126,6 +127,11 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 			evidence[child.Obj.Named()] = child
 		}
 		for _, child := range d.loader.PathObjects() {
+			if applier, ok := child.Obj.(entryApplication); ok {
+				if application, valid := applier.EntryApplication(); valid && application.Declaration != nil {
+					continue
+				}
+			}
 			ref, _, _ := child.Obj.SourcePath()
 			if allowMissing || evidence[ref].Obj != nil || d.cfg.Store.GetObject(ref) != nil {
 				add(ref, child.Obj)
@@ -235,10 +241,13 @@ func (d *discoverer) resolveEntrySources(ctx context.Context, allowMissing bool)
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	input      *store.SourceArtifact
-	path       string
-	remotes    map[string]struct{}
-	aliasViews map[string]*store.SourceArtifact
+	applications atomic.Pointer[applicationEvidence]
+	entryBound   atomic.Bool
+	sources      map[manifest.NamedResource]entryResolution
+	input        *store.SourceArtifact
+	path         string
+	remotes      map[string]struct{}
+	aliasViews   map[string]*store.SourceArtifact
 }
 
 func (d *discoverer) admission() *Admission {
@@ -246,7 +255,7 @@ func (d *discoverer) admission() *Admission {
 	if input == nil {
 		input = d.cfg.Input
 	}
-	return &Admission{input: input, path: d.cfg.Path, remotes: maps.Clone(d.remotes), aliasViews: maps.Clone(d.aliasViews)}
+	return &Admission{input: input, path: d.cfg.Path, remotes: maps.Clone(d.remotes), aliasViews: maps.Clone(d.aliasViews), sources: maps.Clone(d.resolvedSources)}
 }
 
 // Resolve admits a known source or a missing source reference with its requesting witnesses.

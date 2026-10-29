@@ -194,7 +194,7 @@ func TestLogResourceFailures_Deterministic(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
 	hr := testutil.HelmReleaseID("apps", "z")
-	o := &Orchestrator{index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+	o := &Orchestrator{store: store.New(), index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 		hr: {File: "release.yaml"},
 		a:  {File: "a.yaml"},
 	}}}

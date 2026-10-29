@@ -121,6 +121,15 @@ func childFootprint(entries []admission, origin manifest.NamedResource) iter.Seq
 		for _, entry := range entries {
 			id := entry.child.Obj.Named()
 			record := records[id]
+			if applier, ok := entry.child.Obj.(interface {
+				EntryApplication() (manifest.EntryApplication, bool)
+			}); ok {
+				if _, valid := applier.EntryApplication(); valid && entry.child.Doc != nil {
+					if data, err := json.Marshal(entry.child.Doc); err == nil {
+						record.Application = string(data)
+					}
+				}
+			}
 			if !slices.ContainsFunc(entry.child.Productions, func(p manifest.Production) bool { return p.Owner == origin }) {
 				record.Productions = append(record.Productions, manifest.Production{Owner: origin, Source: entry.binding.source})
 			}
@@ -371,7 +380,7 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 			if a, ok := getArtifact(ref.NamedResource, ArtifactContent).(*SourceArtifact); ok {
 				e.binding.artifact = a
 				if a.Content == "" {
-					e.binding.mutable = a
+					e.binding.mutable = a.mutableMaterial()
 				}
 			}
 			break
@@ -382,7 +391,7 @@ func (s *Store) getEmission(reads *ReadSet, id manifest.NamedResource) (manifest
 		if a, ok := getArtifact(manifest.BootstrapSourceID, ArtifactContent).(*SourceArtifact); ok {
 			e.binding.artifact = a
 			if a.Content == "" {
-				e.binding.mutable = a
+				e.binding.mutable = a.mutableMaterial()
 			}
 		}
 	}
@@ -486,7 +495,7 @@ func (s *Store) referenceData(id manifest.NamedResource, index *manifest.Discove
 				artifact, _ := getArtifact(candidate.Production.Source, ArtifactContent).(*SourceArtifact)
 				binding := sourceBinding{source: candidate.Production.Source, artifact: artifact}
 				if artifact != nil && artifact.Content == "" {
-					binding.mutable = artifact
+					binding.mutable = artifact.mutableMaterial()
 				}
 				if !c.binding.equal(&binding) {
 					candidate.DeclaredKeys, candidate.OfflineData = nil, nil
@@ -743,7 +752,7 @@ func (s *Store) SetDiscoveryIndex(index *manifest.DiscoveryIndex) {
 			if a, ok := s.GetArtifact(p.Source, ArtifactContent).(*SourceArtifact); ok {
 				c.binding.artifact = a
 				if a.Content == "" {
-					c.binding.mutable = a
+					c.binding.mutable = a.mutableMaterial()
 				}
 			}
 		}

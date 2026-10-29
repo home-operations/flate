@@ -109,7 +109,7 @@ func TestCollectManifests_FailedSuccessorRetainsCompleted(t *testing.T) {
 		assert.Diff(t, outputByParent(o.collectManifests()), map[manifest.NamedResource][]map[string]any{parent: winningDocs})
 		assert.Equal(t, st.GetObject(winningChild.Obj.Named()), winningChild.Obj)
 		assert.Equal(t, st.EmissionOwner(winningChild.Obj.Named()), winner)
-		assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: winningChild.Obj.Named(), Category: manifest.WarnConflictingProducers, Count: 1,
+		assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: winningChild.Obj.Named(), Subject: manifest.DiagnosticFor(winningChild.Obj.Named(), nil), Related: []manifest.NamedResource{owners[0].Named(), winner, winner}, Category: manifest.WarnConflictingProducers, Count: 1,
 			Message: "conflicting producers; using " + winner.String(), Detail: []string{owners[0].Named().String(), winner.String()}}})
 		info, ok := st.FailedResources()[winner]
 		assert.Equal(t, ok, true)
@@ -315,7 +315,7 @@ func TestCollectManifests_ResourceSetConflictingProducers(t *testing.T) {
 					assert.Equal(t, st.GetObject(id), emissions[winner].Children[0].Obj)
 				}
 				check(1)
-				assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: id, Category: manifest.WarnConflictingProducers, Count: 1,
+				assert.Diff(t, st.Warnings(), []manifest.Warning{{Resource: id, Subject: manifest.DiagnosticFor(id, nil), Related: []manifest.NamedResource{owners[0].Named(), owners[1].Named(), owners[1].Named()}, Category: manifest.WarnConflictingProducers, Count: 1,
 					Message: "conflicting producers; using " + owners[1].Named().String(), Detail: []string{owners[0].Named().String(), owners[1].Named().String()}}})
 				st.RecordEmitted(owners[1].Named(), &store.Emission{Complete: true}, nil)
 				check(0)
@@ -407,7 +407,7 @@ spec:
 			})
 			_, _, after := st.GetEmission(rs.Named())
 			after.Finish()
-			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreUnexported(store.Child{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"), cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
+			if diff := cmp.Diff(after.Children, before.Children, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreUnexported(store.Child{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"), cmpopts.IgnoreUnexported(manifest.HelmRelease{}, manifest.OCIRepository{}, manifest.HelmChartSource{})); diff != "" {
 				t.Fatalf("retained children changed (-want +got): %s", diff)
 			}
 			assert.Diff(t, after.Manifests, before.Manifests)
@@ -523,7 +523,7 @@ func TestCollectManifests_ArtifactGenerators(t *testing.T) {
 			if tc.emitted {
 				want[parent.Named()] = append(generated, generatorDocs...)
 			}
-			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".")
+			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
 			st.AddObject(entry)
 			bare := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "bare"}}
 			children, docs, failures := base.New(st, nil).ParseChildren(entry, testutil.DocumentOccurrences([]map[string]any{bare}), manifest.ParseDocOptions{})

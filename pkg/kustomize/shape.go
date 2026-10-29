@@ -31,7 +31,7 @@ func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict boo
 		}
 		substituted, err := substituteDoc(doc, vars, strict)
 		if err != nil {
-			return fmt.Errorf("%w: Kustomization %s: %w", manifest.ErrInvalidSubstituteReference, ks.Named().NamespacedName(), err)
+			return fmt.Errorf("%w: %s: %w", manifest.ErrInvalidSubstituteReference, manifest.DiagnosticFor(ks.Named(), ks).Label(), err)
 		}
 		docs[i].Document = substituted
 	}

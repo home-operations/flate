@@ -29,6 +29,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
@@ -1344,7 +1346,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				case "layer body", "neutral body", "canceled body":
 					prefix = ""
 				}
-				if err == nil || !strings.HasPrefix(err.Error(), source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name)+" "+prefix) || stage != "canceled body" && strings.Contains(err.Error(), "cache:") {
+				if err == nil || !strings.HasPrefix(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()+" "+prefix) || stage != "canceled body" && strings.Contains(err.Error(), "cache:") {
 					t.Fatalf("failure identity: %v", err)
 				}
 				if !errors.Is(err, manifest.ErrFlux) {
@@ -1488,7 +1490,9 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 				if first != nil {
 					before, after := *first, *got
 					before.FS, after.FS = nil, nil
-					assert.Diff(t, after, before)
+					if diff := cmp.Diff(before, after, cmpopts.IgnoreFields(store.SourceArtifact{}, "material")); diff != "" {
+						t.Errorf("acquired artifact mismatch (-want +got):\n%s", diff)
+					}
 				}
 				first = got
 			}
@@ -1521,7 +1525,9 @@ func TestFetcher_LayerSelectionAndIgnoreFlavor(t *testing.T) {
 				}
 				before, after := *copied, *warm
 				before.FS, after.FS = nil, nil
-				assert.Diff(t, after, before)
+				if diff := cmp.Diff(before, after, cmpopts.IgnoreFields(store.SourceArtifact{}, "material")); diff != "" {
+					t.Errorf("acquired artifact mismatch (-want +got):\n%s", diff)
+				}
 			}
 		})
 	}

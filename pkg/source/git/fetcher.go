@@ -98,7 +98,7 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisiti
 		inputs = append(inputs, source.TransportInput{Reference: repo.SecretRef, Use: source.TransportSecret, OptionalTLS: true, CAFallback: true})
 	}
 	inputs = append(inputs, source.TransportInput{Reference: repo.ProxySecretRef, Use: source.TransportProxy})
-	owner := repo.Named()
+	owner := manifest.DiagnosticFor(repo.Named(), repo)
 	resolved, err := source.ResolveTransport(secrets, owner, inputs)
 	if err != nil {
 		return gitAcquisition{}, err
@@ -118,7 +118,7 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisiti
 	} else if target, err := url.Parse(repo.URL); err == nil && (target.Scheme == "http" || target.Scheme == "https") {
 		selected, err := resolved.ProxyURL(target)
 		if err != nil {
-			return gitAcquisition{}, fmt.Errorf("%w: %s: resolve proxy: invalid proxy configuration", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name))
+			return gitAcquisition{}, fmt.Errorf("%w: %s: resolve proxy: invalid proxy configuration", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label())
 		}
 		if selected != nil {
 			opts.ProxyOptions.URL = selected.String()
@@ -133,7 +133,7 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisiti
 		material = [2]any{secretMaterial, opts.ProxyOptions}
 	}
 	if authErr == nil && auth == nil && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
-		authErr = source.MissingSecretErr(repo.Named(), "", "provider authentication unavailable offline")
+		authErr = source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "provider authentication unavailable offline")
 	}
 	request := gitAcquisition{spec: repo, options: opts, material: material}
 	if authErr != nil && skipTLS {
@@ -172,7 +172,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 			}
 			socket := os.Getenv("SSH_AUTH_SOCK")
 			if socket == "" {
-				return plumbing.ZeroHash, source.MissingSecretErr(repo.Named(), "", "SSH agent unavailable")
+				return plumbing.ZeroHash, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
 			}
 			var dialer net.Dialer
 			conn, err := dialer.DialContext(ctx, "unix", socket)
@@ -181,7 +181,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 					return plumbing.ZeroHash, ctx.Err()
 				}
 				if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
-					return plumbing.ZeroHash, source.MissingSecretErr(repo.Named(), "", "SSH agent unavailable")
+					return plumbing.ZeroHash, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
 				}
 				return plumbing.ZeroHash, err
 			}
@@ -198,7 +198,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 				return plumbing.ZeroHash, err
 			}
 			if len(signers) == 0 {
-				return plumbing.ZeroHash, source.MissingSecretErr(repo.Named(), "", "SSH agent has no identities")
+				return plumbing.ZeroHash, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent has no identities")
 			}
 			homeDir, err := os.UserHomeDir()
 			if err != nil {
@@ -237,7 +237,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		return hash, nil
 	})
 	if err != nil {
-		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%s: %w", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
+		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 	}
 
 	viewOptions.Worktree = generation.Worktree
@@ -245,7 +245,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		input, identity, err = gittree.New(ctx, generation.Backing, generation.Commit, viewOptions)
 	}
 	if err != nil {
-		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%w: %s: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
+		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%w: %s: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 	}
 
 	warnings := gitWarnings(input, repo.Named(), repo.URL, refLabel)
@@ -393,18 +393,18 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoin
 		return nil, errors.New("git repository is nil")
 	}
 	if repo.URL == "" {
-		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name))
+		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label())
 	}
 	endpoint, err := transport.NewEndpoint(repo.URL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), err)
+		return nil, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 	}
 	if f.RestrictSchemes {
 		// Restricted scp-style remotes require an explicit user.
 		ssh := endpoint.Protocol == "ssh" && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
 		if endpoint.Protocol != "https" && !ssh {
 			return nil, fmt.Errorf("%w: %s url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
-				manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.URL)
+				manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.URL)
 		}
 	}
 	return endpoint, nil

@@ -329,7 +329,7 @@ func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) b
 		if p.Declaration != (manifest.NamedResource{}) {
 			owner = p.Declaration
 		}
-		unchanged := p.Owner == record.BuilderOwner && unchangedDeclaration(record, obj)
+		unchanged := (record.BuilderOwner == (manifest.NamedResource{}) || p.Owner == record.BuilderOwner) && unchangedDeclaration(record, obj)
 		if owner != id && !unchanged {
 			state := s.states[owner]
 			state.consumers = append(state.consumers, id)
@@ -346,7 +346,7 @@ func (s *selection) link(id manifest.NamedResource, obj manifest.BaseManifest) b
 }
 
 func unchangedDeclaration(record manifest.DiscoveryRecord, obj manifest.BaseManifest) bool {
-	return record.Builder != "" && record.File != record.Builder && record.Declaration != nil && manifest.Equal(record.Declaration, obj)
+	return record.File != record.Builder && record.Declaration != nil && manifest.Equal(record.Declaration, obj)
 }
 
 func (s *selection) admit() role {
@@ -363,7 +363,7 @@ func (s *selection) admit() role {
 		}
 	}
 	for _, p := range s.productions(id) {
-		if (!unchanged || p.Owner != record.BuilderOwner) && s.read(p.Materializer(id)) == primary || s.read(p.Declaration) == primary || p.Authored != (manifest.NamedResource{}) && s.read(p.Authored) == primary {
+		if (!unchanged || record.BuilderOwner != (manifest.NamedResource{}) && p.Owner != record.BuilderOwner) && s.read(p.Materializer(id)) == primary || s.read(p.Declaration) == primary || p.Authored != (manifest.NamedResource{}) && s.read(p.Authored) == primary {
 			return primary
 		}
 		relative, file := s.coordinates(p)
@@ -668,7 +668,7 @@ func (s *selection) walk() {
 			_, _, output := s.objects.GetEmission(id)
 			for _, child := range output.Children {
 				record, _ := s.filter.index.Lookup(child.Obj.Named())
-				if id != record.BuilderOwner || !unchangedDeclaration(record, child.Obj) {
+				if record.BuilderOwner != (manifest.NamedResource{}) && id != record.BuilderOwner || !unchangedDeclaration(record, child.Obj) {
 					s.add(child.Obj.Named(), primary)
 				}
 			}

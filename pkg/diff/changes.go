@@ -62,12 +62,28 @@ func Changes(left, right []Doc, opts Options) ([]Change, []manifest.Warning) {
 	return publicChanges(prepared), prepared.Warnings
 }
 
-func renderJSON(changes []Change, suppressed []Suppression) ([]byte, error) {
+func renderJSON(changes []Change, suppressed []Suppression, subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity) ([]byte, error) {
+	for i := range changes {
+		subject, ok := subjects[1][changes[i].Parent.NamedResource]
+		if !ok {
+			subject, ok = subjects[0][changes[i].Parent.NamedResource]
+		}
+		if ok {
+			changes[i].Parent = Parent{NamedResource: subject.Resource, Path: subject.Path}
+		}
+	}
+	notes := append([]Suppression{}, suppressed...)
+	for i := range notes {
+		if subject := notes[i].Subject; subject.ID != (manifest.NamedResource{}) {
+			notes[i].Parent.NamedResource = subject.Resource
+			notes[i].Parent.Path = subject.Path
+		}
+	}
 	var buf bytes.Buffer
 	err := (output.Encoder{Writer: &buf}).JSON(struct {
 		Changes    []Change      `json:"changes"`
 		Suppressed []Suppression `json:"suppressed"`
-	}{changes, append([]Suppression{}, suppressed...)})
+	}{changes, notes})
 	return buf.Bytes(), err
 }
 

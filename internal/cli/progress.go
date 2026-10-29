@@ -60,7 +60,7 @@ func (w *barWriter) Write(p []byte) (int, error) {
 	return w.out.Write(p)
 }
 
-func (w *barWriter) progress(ctx context.Context) (func(manifest.TreeID, manifest.NamedResource, store.StatusInfo), func()) {
+func (w *barWriter) progress(ctx context.Context) (func(manifest.TreeID, manifest.DiagnosticIdentity, store.StatusInfo), func()) {
 	m := newBarModel(w.color)
 	events := m.events
 	restore := captureStderr(func(line string) { slog.Debug(line) })
@@ -78,15 +78,22 @@ func (w *barWriter) progress(ctx context.Context) (func(manifest.TreeID, manifes
 	}
 }
 
-func (e *progressEvents) observe(tree manifest.TreeID, id manifest.NamedResource, info store.StatusInfo) {
+func (e *progressEvents) observe(tree manifest.TreeID, subject manifest.DiagnosticIdentity, info store.StatusInfo) {
+	id := subject.ID
+	label := subject.Resource.Name
+	if subject.Path != "" || subject.Resource == (manifest.NamedResource{}) {
+		label = subject.String()
+	}
 	if tree.Cluster != "." || tree.Side != manifest.TreeHead {
 		side := "current"
 		if tree.Side == manifest.TreeBase {
 			side = "orig"
 		}
-		id.Name = string(tree.Cluster) + "/" + side + ":" + id.Name
+		prefix := string(tree.Cluster) + "/" + side + ":"
+		id.Name = prefix + id.Name
+		label = prefix + label
 	}
-	e.publish(id, info.Status, time.Now())
+	e.publish(id, info.Status, time.Now(), label)
 }
 
 func (w *barWriter) runProgress(ctx context.Context, m barModel, completed, finish <-chan struct{}) {

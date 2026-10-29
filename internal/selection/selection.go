@@ -9,6 +9,8 @@ import (
 // Selection contains the objects and diagnostics projected onto requested roots.
 // Borrowed manifests and document batches MUST remain immutable in use.
 type Selection struct {
+	// Subjects maps raw identities to captured display context.
+	Subjects        map[manifest.NamedResource]manifest.DiagnosticIdentity
 	Manifests       []manifest.DocumentBatch
 	Failed          map[manifest.NamedResource]store.StatusInfo
 	Blocked         map[manifest.NamedResource][]manifest.NamedResource
@@ -48,4 +50,12 @@ func (r *Selection) BlockedCount() int {
 		}
 	}
 	return count
+}
+
+// Diagnostic returns prepared display context, including ordinary absent objects.
+func (r *Selection) Diagnostic(id manifest.NamedResource) manifest.DiagnosticIdentity {
+	if subject, ok := r.Subjects[id]; ok {
+		return subject
+	}
+	return manifest.DiagnosticFor(id, nil)
 }

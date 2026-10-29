@@ -141,9 +141,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 		}
 		if art.FS != nil && c.run.Reads.Matches(art.Reads) {
 			c.run.Reads.CarryAdvisories(art.Reads)
-			captured := *art
-			captured.Reads = &c.run.Reads
-			c.Store.SetArtifact(id, &captured)
+			c.Store.SetArtifact(id, art.WithReads(&c.run.Reads))
 			for _, warning := range art.Warnings {
 				c.run.Reads.AddWarning(warning)
 			}
@@ -231,9 +229,13 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	if err != nil {
 		if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (c.allowMissingSecrets || c.producerBacked(err)) {
 			if c.run.Reads.Valid() {
-				slog.Info("source: skipped (missing secret)", "id", obj.Named().String(), "err", err)
+				slog.Info("source: skipped (missing secret)", "id", manifest.DiagnosticFor(obj.Named(), obj).String(), "err", err)
 			}
-			c.run.Reads.AddWarning(manifest.Warning{Resource: obj.Named(), Category: manifest.WarnSourceCredentialsUnavailable,
+			var related []manifest.NamedResource
+			if missing, ok := errors.AsType[*src.MissingSecretError](err); ok && missing.Secret != (manifest.NamedResource{}) {
+				related = []manifest.NamedResource{missing.Secret}
+			}
+			c.run.Reads.AddWarning(manifest.Warning{Resource: obj.Named(), Related: related, Subject: manifest.DiagnosticFor(obj.Named(), obj), Category: manifest.WarnSourceCredentialsUnavailable,
 				Message: manifest.TrimSentinelPrefix(err.Error())})
 			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(err.Error()))
 		}
@@ -244,11 +246,9 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 			c.acquired = artifact
 			return nil
 		}
-		captured := *artifact
-		captured.Reads = &c.run.Reads
-		c.Store.SetArtifact(obj.Named(), &captured)
+		c.Store.SetArtifact(obj.Named(), artifact.WithReads(&c.run.Reads))
 	}
-	slog.Debug("source: fetch complete", "id", obj.Named().String())
+	slog.Debug("source: fetch complete", "id", manifest.DiagnosticFor(obj.Named(), obj).String())
 	return nil
 }
 

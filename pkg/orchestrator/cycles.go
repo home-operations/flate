@@ -1,8 +1,6 @@
 package orchestrator
 
 import (
-	"maps"
-	"slices"
 	"strings"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -40,13 +38,28 @@ func (o *Orchestrator) updateDependencyGraphFor(id manifest.NamedResource) {
 }
 
 func (o *Orchestrator) syncPreflightFailures() {
-	failures := o.depGraph.Failures()
+	paths := o.depGraph.Failures()
+	var failures map[manifest.NamedResource]string
+	if len(paths) != 0 || o.entryBinding.Failure != nil {
+		failures = make(map[manifest.NamedResource]string, len(paths))
+	}
+	if o.entryBinding.Failure != nil {
+		failures[o.entryBinding.Producer] = manifest.TrimSentinelPrefix(o.entryBinding.Failure.Error())
+	}
+	for id, cycle := range paths {
+		failures[id] = cycle.diagnostic(o)
+	}
 	o.preflightMu.Lock()
 	cleared := o.replacePreflightFailures(failures)
 	o.preflightMu.Unlock()
-	for _, message := range slices.Compact(slices.Sorted(maps.Values(failures))) {
-		o.store.AddWarning(manifest.Warning{Category: manifest.WarnDependencyCycle, Message: "dependency cycle detected", Detail: []string{message}})
+	unique := make(map[*dependencyCycle]struct{})
+	for _, cycle := range paths {
+		unique[cycle] = struct{}{}
 	}
+	for cycle := range unique {
+		o.store.AddWarning(manifest.Warning{Related: cycle.path, Category: manifest.WarnDependencyCycle, Message: "dependency cycle detected", Detail: []string{cycle.diagnostic(o)}})
+	}
+
 	for id, message := range failures {
 		o.store.SetPreflight(id, message)
 	}
@@ -84,10 +97,10 @@ func sameKindDepTargets(obj manifest.BaseManifest, out []manifest.NamedResource)
 }
 
 // formatCyclePath returns the cycle as "A → B → C → A" for log output.
-func formatCyclePath(path []manifest.NamedResource) string {
+func (o *Orchestrator) formatCyclePath(path []manifest.NamedResource) string {
 	parts := make([]string, len(path))
 	for i, id := range path {
-		parts[i] = id.String()
+		parts[i] = o.diagnostic(id).String()
 	}
 	return strings.Join(parts, " → ")
 }

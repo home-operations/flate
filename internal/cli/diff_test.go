@@ -364,7 +364,7 @@ func TestRun_DiffJSON(t *testing.T) {
 	}
 	assert.Equal(t, got.Suppressed[0]["side"], any("current"))
 	assert.Diff(t, slices.Sorted(maps.Keys(got.Changes[0])), []string{"apiVersion", "kind", "name", "namespace", "new", "newChart", "old", "oldChart", "parent", "status"})
-	assert.Diff(t, slices.Sorted(maps.Keys(got.Changes[0]["parent"].(map[string]any))), []string{"group", "kind", "name", "namespace", "path"})
+	assert.Diff(t, got.Changes[0]["parent"], any(map[string]any{"kind": "", "name": "", "path": "."}))
 	assert.Diff(t, slices.Sorted(maps.Keys(got.Suppressed[0])), []string{"count", "parent", "reason", "side"})
 }
 

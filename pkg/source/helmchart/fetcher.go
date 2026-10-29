@@ -65,10 +65,11 @@ func (f *Fetcher) Fetch(ctx context.Context, hc *manifest.HelmChartSource, reads
 }
 
 func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSource, policy cache.Policy) (*store.SourceArtifact, error) {
-	r, _ := f.reads.Get[*manifest.HelmRepository](manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: hc.Namespace, Name: hc.SourceRef.Name})
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: hc.Namespace, Name: hc.SourceRef.Name}
+	r, _ := f.reads.Get[*manifest.HelmRepository](id)
 	if r == nil {
-		return nil, fmt.Errorf("%w: %s backing HelmChart %s", manifest.ErrObjectNotFound,
-			source.QualifiedName("HelmRepository", hc.Namespace, hc.SourceRef.Name), hc.Named().String())
+		return nil, fmt.Errorf("%w: %s backing %s", manifest.ErrObjectNotFound,
+			manifest.DiagnosticFor(id, nil).Label(), manifest.DiagnosticFor(hc.Named(), hc).Label())
 	}
 	policy.MaxAge = r.SourceInterval()
 	if f.disableChartDigestTracking && hc.ExactVersion() {

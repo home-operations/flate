@@ -390,7 +390,7 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 		if err != nil {
 			if errors.Is(err, manifest.ErrInvalidValuesReference) {
 				slog.Debug("values: unsupported SubstituteReference kind",
-					"id", ks.Named().String(), "kind", ref.Kind)
+					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "kind", ref.Kind)
 				continue
 			}
 			return err
@@ -398,7 +398,7 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 		if data == nil || !data.HasKeys() {
 			if !ref.Optional && ref.Kind != manifest.KindSecret {
 				slog.Debug("values: SubstituteReference not found",
-					"id", ks.Named().String(), "ref", ref.Name)
+					"id", manifest.DiagnosticFor(ks.Named(), ks).String(), "ref", ref.Name)
 			}
 			continue
 		}

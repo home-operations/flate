@@ -161,7 +161,7 @@ func assertIssueChildren(t *testing.T, o *Orchestrator) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if diff := cmp.Diff(o.store.GetObject(obj.Named()), obj, cmp.AllowUnexported(manifest.Kustomization{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"), cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
+		if diff := cmp.Diff(o.store.GetObject(obj.Named()), obj, cmp.AllowUnexported(manifest.Kustomization{}, manifest.OCIRepository{}, manifest.HelmChartSource{}), cmpopts.IgnoreFields(manifest.Kustomization{}, "projection"), cmpopts.IgnoreUnexported(manifest.HelmRelease{})); diff != "" {
 			t.Fatalf("stored objects changed (-want +got): %s", diff)
 		}
 	}
@@ -222,7 +222,7 @@ func TestMissingCRDs_ChildrenAndProducers(t *testing.T) {
 				}
 			}
 			if tc.mode == "absent" || tc.mode == "unreferenced" {
-				assert.Diff(t, warnings, []manifest.Warning{{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"}})
+				assert.Diff(t, warnings, []manifest.Warning{{Resource: crd, Subject: manifest.DiagnosticFor(crd, nil), Related: []manifest.NamedResource{{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "flux-operator"}}, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/flux-operator"}})
 				assert.Equal(t, o.store.GetObject(crd) == nil, true)
 			} else {
 				assert.Equal(t, len(warnings), 0)
@@ -330,7 +330,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 	o.warnMissingCRDs()
 	want := []manifest.Warning{}
 	for _, crd := range []manifest.NamedResource{crdA, crdB} {
-		want = append(want, manifest.Warning{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/ns/a, ResourceSet.fluxcd.controlplane.io/ns/z"})
+		want = append(want, manifest.Warning{Resource: crd, Subject: manifest.DiagnosticFor(crd, nil), Related: []manifest.NamedResource{{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "ns", Name: "a"}, {Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "ns", Name: "z"}}, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/ns/a, ResourceSet.fluxcd.controlplane.io/ns/z"})
 	}
 	assert.Diff(t, s.Warnings(), want)
 	for _, tc := range []struct {
@@ -401,7 +401,7 @@ func TestWarnMissingCRDs_FinalEligibilityAndOrdering(t *testing.T) {
 			var want []manifest.Warning
 			for _, crd := range tc.warned {
 				want = append(want, manifest.Warning{
-					Resource: crd, Category: manifest.WarnMissingCRD, Count: 1,
+					Resource: crd, Subject: manifest.DiagnosticFor(crd, nil), Related: []manifest.NamedResource{owner.Named()}, Category: manifest.WarnMissingCRD, Count: 1,
 					Message: "CRD " + crd.String() + " absent from offline inputs; accepted for " + owner.Named().String(),
 				})
 			}
@@ -622,7 +622,7 @@ spec:
 		want := []manifest.Warning{}
 		for _, name := range []string{"a.example.com", "z.example.com"} {
 			crd := manifest.NamedResource{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: name}
-			want = append(want, manifest.Warning{Resource: crd, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/a, ResourceSet.fluxcd.controlplane.io/flux-system/z"})
+			want = append(want, manifest.Warning{Resource: crd, Subject: manifest.DiagnosticFor(crd, nil), Related: []manifest.NamedResource{{Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "a"}, {Group: "fluxcd.controlplane.io", Kind: manifest.KindResourceSet, Namespace: "flux-system", Name: "z"}}, Category: manifest.WarnMissingCRD, Count: 1, Message: "CRD " + crd.String() + " absent from offline inputs; accepted for ResourceSet.fluxcd.controlplane.io/flux-system/a, ResourceSet.fluxcd.controlplane.io/flux-system/z"})
 		}
 		assert.Diff(t, res.Warnings, want)
 		for _, name := range []string{"a", "z", "unrelated"} {

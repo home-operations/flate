@@ -24,7 +24,7 @@ func visibleLen(s string) int { return len([]rune(ansiRE.ReplaceAllString(s, "")
 func inflightModel(color bool, names ...string) barModel {
 	m := newBarModel(color)
 	for _, n := range names {
-		m.events.publish(testutil.KustomizationID("ns", n), store.StatusPending, time.Now())
+		m.events.publish(testutil.KustomizationID("ns", n), store.StatusPending, time.Now(), testutil.KustomizationID("ns", n).Name)
 	}
 	m.drainEvents()
 	return m
@@ -141,11 +141,11 @@ func TestModel_Counts(t *testing.T) {
 	t.Parallel()
 	m := newBarModel(false)
 	a, b, s := testutil.KustomizationID("ns", "a"), testutil.KustomizationID("ns", "b"), testutil.KustomizationID("ns", "suspended")
-	m.events.publish(a, store.StatusPending, time.Now())
-	m.events.publish(b, store.StatusPending, time.Now())
-	m.events.publish(a, store.StatusReady, time.Now())
-	m.events.publish(b, store.StatusFailed, time.Now())
-	m.events.publish(s, store.StatusReady, time.Now())
+	m.events.publish(a, store.StatusPending, time.Now(), a.Name)
+	m.events.publish(b, store.StatusPending, time.Now(), b.Name)
+	m.events.publish(a, store.StatusReady, time.Now(), a.Name)
+	m.events.publish(b, store.StatusFailed, time.Now(), b.Name)
+	m.events.publish(s, store.StatusReady, time.Now(), s.Name)
 
 	m.drainEvents()
 	if m.done != 3 || m.total != 3 {
@@ -162,13 +162,13 @@ func TestModel_DedupAndInflight(t *testing.T) {
 	m := newBarModel(false)
 	a := testutil.KustomizationID("ns", "a")
 	first := time.Unix(10, 0)
-	m.events.publish(a, store.StatusPending, first)
+	m.events.publish(a, store.StatusPending, first, a.Name)
 	updated, _ := m.Update(m.spinner.Tick())
 	m = updated.(barModel)
 	assert.Diff(t, m.inflightLabels(), []string{"a"})
-	m.events.publish(a, store.StatusPending, first.Add(-time.Second))
-	m.events.publish(a, store.StatusReady, first.Add(time.Second))
-	m.events.publish(a, store.StatusReady, first.Add(2*time.Second))
+	m.events.publish(a, store.StatusPending, first.Add(-time.Second), a.Name)
+	m.events.publish(a, store.StatusReady, first.Add(time.Second), a.Name)
+	m.events.publish(a, store.StatusReady, first.Add(2*time.Second), a.Name)
 	updated, _ = m.Update(m.spinner.Tick())
 	m = updated.(barModel)
 	assert.Equal(t, m.first[a], first.Add(-time.Second))
@@ -198,7 +198,7 @@ func TestModel_InflightLabelsFirstSeenOrder(t *testing.T) {
 				if name == "alpha" {
 					observedAt = first.Add(time.Second)
 				}
-				m.events.publish(testutil.KustomizationID("ns", name), store.StatusPending, observedAt)
+				m.events.publish(testutil.KustomizationID("ns", name), store.StatusPending, observedAt, testutil.KustomizationID("ns", name).Name)
 			}
 			m.drainEvents()
 			assert.Diff(t, m.inflightLabels(), []string{"bravo", "charlie", "alpha"})
@@ -220,14 +220,14 @@ func TestModel_TracksAdmittedEvents(t *testing.T) {
 	ids := append([]manifest.NamedResource{boot, chart}, declared...)
 
 	for _, id := range ids {
-		m.events.publish(id, store.StatusPending, time.Now())
+		m.events.publish(id, store.StatusPending, time.Now(), id.Name)
 	}
 	m.drainEvents()
 	if got := m.inflightLabels(); len(got) != len(ids) {
 		t.Fatalf("in-flight labels = %v, want %d admitted resources", got, len(ids))
 	}
 	for _, id := range ids {
-		m.events.publish(id, store.StatusReady, time.Now())
+		m.events.publish(id, store.StatusReady, time.Now(), id.Name)
 	}
 	m.drainEvents()
 	if m.done != len(ids) || m.total != len(ids) {
@@ -235,8 +235,8 @@ func TestModel_TracksAdmittedEvents(t *testing.T) {
 	}
 
 	m2 := newBarModel(false)
-	m2.events.publish(boot, store.StatusPending, time.Now())
-	m2.events.publish(chart, store.StatusPending, time.Now())
+	m2.events.publish(boot, store.StatusPending, time.Now(), boot.Name)
+	m2.events.publish(chart, store.StatusPending, time.Now(), chart.Name)
 	m2.drainEvents()
 	if got := m2.inflightLabels(); len(got) != 2 {
 		t.Errorf("admitted events missing in-flight: %v", got)

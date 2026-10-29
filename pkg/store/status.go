@@ -98,10 +98,27 @@ func (i StatusInfo) BlockedBy() []manifest.NamedResource {
 	if i.failure == nil {
 		return nil
 	}
-	return slices.Clone(i.failure.ids)
+	ids := make([]manifest.NamedResource, len(i.failure.causes))
+	for index := range i.failure.causes {
+		ids[index] = i.failure.causes[index].id
+	}
+	return ids
 }
 
-// Failure IDs are immutable so StatusInfo can retain them after the shard unlocks.
+// DependencyReason returns detached failure context for nested dependency propagation.
+func (i StatusInfo) DependencyReason(subject manifest.DiagnosticIdentity) manifest.DiagnosticReason {
+	reason := manifest.DiagnosticReason{Subject: subject, Message: i.String()}
+	if i.failure != nil {
+		reason.Message = ""
+		reason.Causes = make([]manifest.DiagnosticReason, len(i.failure.causes))
+		for index := range i.failure.causes {
+			reason.Causes[index] = i.failure.causes[index].reason.Clone()
+		}
+	}
+	return reason
+}
+
+// Failure provenance is immutable so snapshots can retain it after unlocking.
 type conditionRecord struct {
 	state           *conditionState
 	applyingObjects int
@@ -129,23 +146,46 @@ func (r conditionRecord) advanceLocked(sh *shard) {
 	r.state.authority = sh.advanceLocked(r.state.authority)
 }
 
-type dependencyFailure struct {
-	ids []manifest.NamedResource
+// Raw blocker keys MUST remain independent of diagnostic context.
+type dependencyCause struct {
+	id     manifest.NamedResource
+	reason manifest.DiagnosticReason
 }
 
-func newDependencyFailure(err error) *dependencyFailure {
-	dep, ok := errors.AsType[*manifest.DependencyFailedError](err)
-	if !ok || len(dep.Failed) == 0 {
+type dependencyFailure struct {
+	causes []dependencyCause
+}
+
+func newDependencyFailure(dep *manifest.DependencyFailedError) *dependencyFailure {
+	if len(dep.Failed) == 0 {
 		return nil
 	}
-	ids := slices.Clone(dep.Failed)
-	slices.SortFunc(ids, manifest.NamedResource.Compare)
-	return &dependencyFailure{ids: ids}
+	causes := make([]dependencyCause, len(dep.Failed))
+	for index, id := range dep.Failed {
+		reason := dep.Reasons[id]
+		if reason.Subject.ID == (manifest.NamedResource{}) {
+			reason.Subject = manifest.DiagnosticFor(id, nil)
+		}
+		causes[index] = dependencyCause{id: id, reason: reason.Clone()}
+	}
+	slices.SortFunc(causes, func(a, b dependencyCause) int { return a.id.Compare(b.id) })
+	return &dependencyFailure{causes: causes}
 }
 
 // same reports whether f and o record the same failed dependencies; nil means none.
 func (f *dependencyFailure) same(o *dependencyFailure) bool {
-	return f == o || f != nil && o != nil && slices.Equal(f.ids, o.ids)
+	if f == o {
+		return true
+	}
+	if f == nil || o == nil || len(f.causes) != len(o.causes) {
+		return false
+	}
+	for index := range f.causes {
+		if f.causes[index].id != o.causes[index].id {
+			return false
+		}
+	}
+	return true
 }
 
 // Condition is an alias for k8s metav1.Condition. flate stores
@@ -230,7 +270,12 @@ func (s *Store) ReportProgress(id manifest.NamedResource, message string) {
 
 // UpdateFailure atomically records a terminal error and its immediate failed dependencies.
 func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
-	s.setCondition(id, readyCondition(StatusFailed, "", err.Error()), 0, newDependencyFailure(err))
+	message := err.Error()
+	var failure *dependencyFailure
+	if dep, ok := errors.AsType[*manifest.DependencyFailedError](err); ok {
+		failure = newDependencyFailure(dep)
+	}
+	s.setCondition(id, readyCondition(StatusFailed, "", message), 0, failure)
 }
 
 // SetCondition upserts cond into the resource's condition list keyed

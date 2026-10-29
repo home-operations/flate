@@ -406,6 +406,7 @@ func TestExecution_Dispatch(t *testing.T) {
 		run       bool
 	}{
 		{"filtered", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "active"}, true, false, "unchanged", store.OutcomeUnchanged, false},
+		{"preflight before filter", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "invalid"}, true, true, fmt.Errorf("%w: cycle", manifest.ErrInput).Error(), store.OutcomeFailed, false},
 		{"suspended before filter", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Suspend: true}, true, false, "suspended", store.OutcomeSuspended, false},
 		{"suspended before preflight", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Suspend: true}, false, true, "suspended", store.OutcomeSuspended, false},
 		{"suspended chart before filter", chart, true, false, "suspended", store.OutcomeSuspended, false},
@@ -426,14 +427,16 @@ func TestExecution_Dispatch(t *testing.T) {
 			st.AddObject(tc.obj)
 			id := tc.obj.Named()
 			c := base.New(st, nil)
+			opts := base.Options{}
 			if tc.filtered {
-				c.Configure(base.Options{Filter: change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
+				opts.Filter = change.NewFilter(change.NewSet([]string{"other.yaml"}), &manifest.DiscoveryIndex{
 					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "consumer.yaml"}},
-				}, st, "")})
+				}, st, "")
 			}
 			if tc.preflight {
-				c.Configure(base.Options{PreflightFailure: func(manifest.NamedResource) (string, bool) { return "cycle", true }})
+				opts.PreflightFailure = func(manifest.NamedResource) (string, bool) { return "cycle", true }
 			}
+			c.Configure(opts)
 			c.StartLifecycle()
 			ran := false
 			controllertest.NewExecution(c, id).Dispatch(t.Context(), manifest.DrainNone, t, func(_ *testing.T, _ context.Context, _ manifest.BaseManifest, _ manifest.DrainLevel) error {

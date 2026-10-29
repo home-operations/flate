@@ -2,7 +2,7 @@ package manifest
 
 // SourcePath returns the resolved source identity and authored path, including an empty path.
 func (k *Kustomization) SourcePath() (NamedResource, string, bool) {
-	return k.SourceID(), k.Path, true
+	return k.SourceID(), k.Path, !k.standalone
 }
 
 // SourcePath reports no source-qualified path for this manifest.
@@ -60,7 +60,8 @@ func (*Secret) SourcePath() (NamedResource, string, bool) {
 	return NamedResource{}, "", false
 }
 
-// SourcePath reports no source-qualified path for this manifest.
-func (*RawObject) SourcePath() (NamedResource, string, bool) {
-	return NamedResource{}, "", false
+// SourcePath returns the source-qualified path of a FluxInstance sync.
+func (r *RawObject) SourcePath() (NamedResource, string, bool) {
+	application, ok := r.EntryApplication()
+	return application.Source, application.Path, ok
 }

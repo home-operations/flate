@@ -95,6 +95,15 @@ type BuiltInput struct {
 // Documents MUST be sanitized immutable build output.
 func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	root := input.Root
+	parent := l.Store.GetObject(input.Owner)
+	standalone := false
+	if parent != nil {
+		_, _, applies := parent.SourcePath()
+		standalone = !applies
+	}
+	if standalone {
+		input.Owner = manifest.NamedResource{}
+	}
 	l.ensureScopes()
 	sourceRoot := cmp.Or(l.documents.mountedRoot(root), l.SourceRoot, root)
 	l.Admit(sourceRoot)
@@ -138,6 +147,9 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
+		if standalone && manifest.KindOf(obj).Data {
+			continue
+		}
 		record := manifest.DiscoveryRecord{File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
 		if raw, ok := l.Index.Lookup(id); ok {
 			original := l.IndexedObject(id, raw)
@@ -169,7 +181,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 		records[i] = record
 	}
 	for id, record := range l.Index.Files() {
-		if id == input.Owner {
+		if id == input.Owner || standalone && id.KindInfo().Data {
 			continue
 		}
 		if record.Path == "" || !l.documents.cache[record.Path].selected {
@@ -193,7 +205,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		if id == input.Owner {
+		if id == input.Owner || standalone && manifest.KindOf(obj).Data {
 			continue
 		}
 		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.candidates[id].Obj || existing == l.admitted[id]) {
@@ -210,10 +222,18 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	l.admit(sourceRoot)
 }
 
-// BuiltDocuments returns the authoritative package batch for an indexed built object.
-func (l *Loader) BuiltDocuments(id manifest.NamedResource) []store.Child {
+// PromotionDocuments returns the immutable indexed batch used to promote id.
+func (l *Loader) PromotionDocuments(id manifest.NamedResource) []store.Child {
 	r, ok := l.Index.Lookup(id)
-	if !ok || r.Builder == "" {
+	if !ok {
+		return nil
+	}
+	if r.Builder == "" {
+		if r.Declaration != nil {
+			if child := l.IndexedObject(id, r); child.Obj != nil {
+				return []store.Child{child}
+			}
+		}
 		return nil
 	}
 	for root, doc := range l.documents.cache {

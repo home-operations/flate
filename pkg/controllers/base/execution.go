@@ -123,11 +123,12 @@ func (e *Execution) classify(ctx context.Context, level manifest.DrainLevel) err
 		switch cl.Kind {
 		case schedule.DependencyFailed:
 			if failed == nil {
-				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Reasons: make(map[manifest.NamedResource]string)}
+				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())), Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason)}
 			}
 			failed.Failed = append(failed.Failed, dep.NamedResource)
-			if prior, exists := failed.Reasons[dep.NamedResource]; !exists || cl.Message < prior {
-				failed.Reasons[dep.NamedResource] = cl.Message
+			reason := cl.DiagnosticReason(dep.NamedResource)
+			if prior, exists := failed.Reasons[dep.NamedResource]; !exists || reason.Compare(prior) < 0 {
+				failed.Reasons[dep.NamedResource] = reason
 			}
 		case schedule.Blocked:
 			blocked = append(blocked, dep.NamedResource)
@@ -221,8 +222,9 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 	id := e.Reads.ID()
 	defer func() {
 		if recovered := recover(); recovered != nil {
+			subject := manifest.DiagnosticFor(id, e.Reads.GetObject(id))
 			e.Reads.Retire()
-			slog.Error("base: panic during reconcile", "id", id.String(), "panic", recovered)
+			slog.Error("base: panic during reconcile", "id", subject.String(), "panic", recovered)
 			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusFailed, Message: fmt.Sprintf("panic: %v", recovered)})
 			panic(recovered)
 		}
@@ -237,6 +239,10 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 		e.Reads.Accept()
 		return
 	}
+	if err := e.Checkpoint(); err != nil {
+		e.finish(err)
+		return
+	}
 	if !e.Reads.Admitted() {
 		if ok {
 			for dep := range manifest.ContentInputs(obj, false) {
@@ -246,13 +252,6 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 		e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"})
 		e.withdrawInvalid()
 		e.Reads.Accept()
-		return
-	}
-	if !e.Reads.Valid() {
-		return
-	}
-	if err := e.Checkpoint(); err != nil {
-		e.finish(err)
 		return
 	}
 	if !ok {
@@ -359,12 +358,12 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 		return err
 	}
 	if !ok {
-		failed = &manifest.DependencyFailedError{Parent: id, Reasons: make(map[manifest.NamedResource]string)}
+		failed = &manifest.DependencyFailedError{Parent: id, Subject: manifest.DiagnosticFor(id, e.Reads.GetObject(id)), Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason)}
 	}
 	failed.Failed = owners
 	for _, owner := range owners {
 		if _, exists := failed.Reasons[owner]; !exists {
-			failed.Reasons[owner] = "declaration not emitted"
+			failed.Reasons[owner] = manifest.DiagnosticReason{Subject: manifest.DiagnosticFor(owner, e.Reads.GetObject(owner)), Message: "declaration not emitted"}
 		}
 	}
 	return failed
@@ -501,7 +500,7 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 			p.blocked = append(p.blocked, result.Blocked...)
 		case schedule.DependencyFailed:
 			if failed == nil {
-				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Reasons: make(map[manifest.NamedResource]string)}
+				failed = &manifest.DependencyFailedError{Parent: e.Reads.ID(), Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())), Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason)}
 			}
 			causes := result.Failed
 			if len(causes) == 0 {
@@ -509,7 +508,7 @@ func (p *pendingData) Settle(ctx context.Context, level manifest.DrainLevel) err
 			}
 			for _, cause := range causes {
 				failed.Failed = append(failed.Failed, cause)
-				failed.Reasons[cause] = result.Message
+				failed.Reasons[cause] = result.Reason
 			}
 		default:
 			if result.Omit && !input.Optional {

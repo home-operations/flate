@@ -152,7 +152,9 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 		if spec.LayerSelector == nil {
 			spec.LayerSelector = &sourcev1.OCILayerSelector{MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", Operation: sourcev1.OCILayerCopy}
 		}
-		object = NewOCIRepository(sourcev1.OCIRepository{ObjectMeta: metadata, Spec: spec})
+		generated := NewOCIRepository(sourcev1.OCIRepository{ObjectMeta: metadata, Spec: spec})
+		generated.diagnosticOwner, generated.hasDiagnostic = h.Named(), true
+		object = generated
 	} else {
 		spec := sourcev1.HelmChartSpec{Chart: template.Spec.Chart, Version: template.Spec.GetVersion(), Interval: interval,
 			ReconcileStrategy: template.Spec.GetReconcileStrategy(), ValuesFiles: template.Spec.ValuesFiles, IgnoreMissingValuesFiles: template.Spec.IgnoreMissingValuesFiles,
@@ -160,7 +162,9 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 		if verify := template.Spec.Verify; verify != nil {
 			spec.Verify = &sourcev1.HelmChartVerification{Provider: cmp.Or(verify.Provider, "cosign"), SecretRef: verify.SecretRef}
 		}
-		object = NewHelmChartSource(sourcev1.HelmChart{ObjectMeta: metadata, Spec: spec})
+		generated := NewHelmChartSource(sourcev1.HelmChart{ObjectMeta: metadata, Spec: spec})
+		generated.diagnosticOwner, generated.hasDiagnostic = h.Named(), true
+		object = generated
 	}
 	return []BaseManifest{object}, nil
 }
@@ -182,7 +186,7 @@ func (h *HelmChartSource) OCIRepository(repository *HelmRepository) *OCIReposito
 			ref.Tag = h.Version
 		}
 	}
-	return NewOCIRepository(sourcev1.OCIRepository{
+	repo := NewOCIRepository(sourcev1.OCIRepository{
 		Name: h.Name, Namespace: h.Namespace,
 		Spec: sourcev1.OCIRepositorySpec{
 			URL:       strings.TrimSuffix(repository.URL, "/") + "/" + h.Chart,
@@ -193,4 +197,7 @@ func (h *HelmChartSource) OCIRepository(repository *HelmRepository) *OCIReposito
 			Interval: &metav1.Duration{Duration: repository.SourceInterval()},
 		},
 	})
+	subject := DiagnosticFor(h.Named(), h)
+	repo.diagnosticOwner, repo.diagnosticPath, repo.hasDiagnostic = subject.Resource, subject.Path, true
+	return repo
 }

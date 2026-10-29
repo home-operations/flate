@@ -17,29 +17,29 @@ import (
 func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secret, endpoint *transport.Endpoint) (transport.AuthMethod, error) {
 	if repo.SecretRef == nil {
 		if endpoint.Protocol == "ssh" {
-			return nil, source.MissingSecretErr(repo.Named(), "", "SSH credentials unavailable")
+			return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH credentials unavailable")
 		}
 		return nil, nil
 	}
 	if f.secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name))
+		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", manifest.DiagnosticFor(repo.Named(), repo).Label())
 	}
 	if sec == nil {
-		return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "not found")
+		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "not found")
 	}
 	var err error
 	if endpoint.Protocol == "ssh" {
 		identity, _, err := sec.Value("identity")
 		if err != nil {
-			return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.Namespace, repo.SecretRef.Name, err)
+			return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
 		}
 		password, _, err := sec.Value("password")
 		if err != nil {
-			return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.Namespace, repo.SecretRef.Name, err)
+			return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
 		}
 		kh, _, err := sec.Value("known_hosts")
 		if err != nil {
-			return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.Namespace, repo.SecretRef.Name, err)
+			return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
 		}
 		var auth *gitssh.PublicKeys
 		if identity != "" && !manifest.HasValuePlaceholder(identity) {
@@ -54,39 +54,39 @@ func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secr
 				auth, err = gitssh.NewPublicKeys(user, []byte(identity), password)
 			}
 			if err != nil {
-				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse SSH identity: invalid private key", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.Namespace, repo.SecretRef.Name)
+				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse SSH identity: invalid private key", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name)
 			}
 		}
 		var cb ssh.HostKeyCallback = insecureIgnoreHostKey
 		if kh != "" && !manifest.HasValuePlaceholder(kh) {
 			cb, err = knownHostsCallback([]byte(kh))
 			if err != nil {
-				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse known_hosts: invalid host data", manifest.ErrInput, source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.Namespace, repo.SecretRef.Name)
+				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse known_hosts: invalid host data", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name)
 			}
 		}
 		if identity == "" || manifest.HasValuePlaceholder(identity) {
-			return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "missing 'identity' for SSH auth")
+			return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "missing 'identity' for SSH auth")
 		}
 		if manifest.HasValuePlaceholder(password) {
-			return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "SSH password unavailable")
+			return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "SSH password unavailable")
 		}
 		if manifest.HasValuePlaceholder(kh) {
-			return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "known_hosts unavailable")
+			return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "known_hosts unavailable")
 		}
 		auth.HostKeyCallback = cb
 		return auth, nil
 	}
 	token, _, err := sec.Value("bearerToken")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", source.QualifiedName(manifest.KindGitRepository, repo.Namespace, repo.Name), repo.Namespace, repo.SecretRef.Name, err)
+		return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
 	}
 	if manifest.HasValuePlaceholder(token) {
-		return nil, source.MissingSecretErr(repo.Named(), repo.SecretRef.Name, "bearerToken unavailable")
+		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "bearerToken unavailable")
 	}
 	if token != "" {
 		return &githttp.TokenAuth{Token: token}, nil
 	}
-	username, password, err := source.BasicAuthFromSecret(sec, repo.Named(), repo.SecretRef.Name)
+	username, password, err := source.BasicAuthFromSecret(sec, manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name)
 	if err != nil {
 		return nil, err
 	}

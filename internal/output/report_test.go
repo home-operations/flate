@@ -292,3 +292,47 @@ func TestEncoderReport_AdvisoryNames(t *testing.T) {
 		})
 	}
 }
+
+func TestReport_SyntheticSubjectsRemainDistinct(t *testing.T) {
+	t.Parallel()
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
+	first := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
+	second := first.WithNamespace("other")
+	ids := []manifest.NamedResource{first.Named(), second.Named()}
+	subjects := map[manifest.NamedResource]manifest.DiagnosticIdentity{}
+	for _, obj := range []manifest.BaseManifest{first, second} {
+		subjects[obj.Named()] = manifest.DiagnosticFor(obj.Named(), obj)
+	}
+	entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "clusters/test", manifest.NamedResource{})
+	subjects[entry.Named()] = manifest.DiagnosticFor(entry.Named(), entry)
+	report := Report{Groups: []ReportGroup{{Subjects: subjects, Models: []Model{{Primary: []Primary{{ID: ids[0], Msg: "first failed"}, {ID: ids[1], Msg: "second failed"}, {ID: entry.Named(), Msg: "root failed"}}}}}}}
+	report.Prepare(nil)
+	var out bytes.Buffer
+	encoder := Encoder{Writer: &out}
+	if err := encoder.Report(report, encoder); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if strings.Contains(text, "OCIRepository") || strings.Contains(text, "Kustomization entry") || !strings.Contains(text, `path "clusters/test"`) || strings.Count(text, "HelmChart") < 2 || !strings.Contains(text, "3 failed") {
+		t.Fatalf("raw causes collapsed or leaked: %s", text)
+	}
+}
+
+func TestReport_SnapshotSpecificAttribution(t *testing.T) {
+	t.Parallel()
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "sources"}
+	synthetic := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
+	raw := synthetic.Named()
+	subjects := map[manifest.NamedResource]manifest.DiagnosticIdentity{raw: manifest.DiagnosticFor(raw, synthetic)}
+	report := Report{Groups: []ReportGroup{{Subjects: subjects, Models: []Model{{Context: "orig snapshot", Subjects: map[manifest.NamedResource]manifest.DiagnosticIdentity{}, Primary: []Primary{{ID: raw, Msg: "ordinary source failed"}}}, {Context: "current snapshot", Subjects: subjects, Primary: []Primary{{ID: raw, Msg: "synthetic source failed"}}}}}}}
+	report.Prepare(nil)
+	var out bytes.Buffer
+	encoder := Encoder{Writer: &out}
+	if err := encoder.Report(report, encoder); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "OCIRepository") || !strings.Contains(text, "HelmChart") || !strings.Contains(text, "ordinary source failed") || !strings.Contains(text, "synthetic source failed") {
+		t.Fatalf("snapshot provenance crossed sides: %s", text)
+	}
+}

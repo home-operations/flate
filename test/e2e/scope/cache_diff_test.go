@@ -48,6 +48,7 @@ spec:
 						cluster = strings.Replace(cluster, "  path: ./apps", "  suspend: true\n  path: ./apps", 1)
 					}
 					testutil.WriteFile(t, repoRoot, "flux/cluster.yaml", cluster)
+					testutil.WriteFile(t, repoRoot, "flux/kustomization.yaml", "resources: [cluster.yaml]\n")
 					testutil.WriteFile(t, repoRoot, "apps/kustomization.yaml", "resources:\n- cm.yaml\n")
 					testutil.WriteFile(t, repoRoot, "apps/cm.yaml", `apiVersion: v1
 kind: ConfigMap

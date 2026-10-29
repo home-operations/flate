@@ -29,7 +29,7 @@ import (
 
 func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, selected *auth.Credential, policy cache.Policy) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
-		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name))
+		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label())
 	}
 	request, err := f.newRepoClient(ctx, repo, selected, policy)
 	if err != nil {
@@ -95,14 +95,14 @@ func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, req
 	case sourcev1.OCILayerCopy:
 		generation, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
-			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
+			return nil, fmt.Errorf("%s %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 		}
 		input, descriptor, id = cache.NameBlob(source.OCICopiedLayerFilename, generation), desc, key
 	case sourcev1.OCILayerExtract:
 		var err error
 		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, Policy: "source", Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
-			return nil, fmt.Errorf("%s %w", source.QualifiedName(manifest.KindOCIRepository, repo.Namespace, repo.Name), err)
+			return nil, fmt.Errorf("%s %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 		}
 	default:
 		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, repo.LayerOperation())

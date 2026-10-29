@@ -385,7 +385,7 @@ func (d *discoverer) bindEntry(ctx context.Context, repoRoot string) (*manifest.
 	var internal *manifest.Kustomization
 	if d.binding == (Binding{}) {
 		var err error
-		internal, err = d.admission().entry(ctx, d.cfg.Store, d.applications())
+		internal, _, err = d.admission().entry(ctx, d.cfg.Store, d.applications())
 		if err != nil || internal == nil {
 			return nil, err
 		}

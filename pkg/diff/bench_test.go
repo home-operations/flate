@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 // BenchmarkDiff_LargeTree measures RenderDocs against two 100-resource
@@ -24,6 +25,31 @@ func BenchmarkDiff_LargeTree(b *testing.B) {
 		if len(out) == 0 {
 			b.Fatalf("expected at least one diff")
 		}
+	}
+}
+
+func BenchmarkDiff_PreparedSubjects(b *testing.B) {
+	for _, format := range []Format{FormatJSON, FormatHTML} {
+		b.Run(string(format), func(b *testing.B) {
+			left, right := buildDiffCorpus(3, 1)
+			left = left[:2]
+			right = append(right[:1], right[2:]...)
+			id := left[0].Parent.NamedResource
+			opts := Options{Format: format, subjects: [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{
+				{id: {ID: id, Resource: testutil.KustomizationID("apps", "original"), Path: "original/path"}},
+				{id: {ID: id, Resource: testutil.KustomizationID("apps", "current"), Path: "current/path"}},
+			}}
+			b.ReportAllocs()
+			for b.Loop() {
+				out, _, err := RenderDocs(left, right, opts)
+				if err != nil {
+					b.Fatalf("RenderDocs: %v", err)
+				}
+				if len(out) == 0 {
+					b.Fatal("expected at least one diff")
+				}
+			}
+		})
 	}
 }
 

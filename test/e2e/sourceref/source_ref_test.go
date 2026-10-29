@@ -39,6 +39,85 @@ import (
 	"github.com/home-operations/flate/test/e2e/internal/harness"
 )
 
+func TestE2E_SourceRef_IgnoreNegation(t *testing.T) {
+	const crd = `apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: network-attachment-definitions.k8s.cni.cncf.io
+spec:
+  group: k8s.cni.cncf.io
+  scope: Namespaced
+  names:
+    plural: network-attachment-definitions
+    singular: network-attachment-definition
+    kind: NetworkAttachmentDefinition
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                config:
+                  type: string
+`
+	sourceRoot := t.TempDir()
+	repo := testutil.GitInit(t, sourceRoot)
+	testutil.WriteFile(t, sourceRoot, "artifacts/networks-crd.yaml", crd)
+	testutil.WriteFile(t, sourceRoot, "artifacts/excluded.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: excluded}\n")
+	commit := testutil.GitCommitAll(t, repo, "source", &gogit.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+	})
+	assert.NoError(t, repo.Storer.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.7.7"), commit)))
+	installSourceRefTransport(t, repo.Storer)
+	want, err := testutil.DecodeDocs(strings.NewReader(crd))
+	assert.NoError(t, err)
+	want[0]["metadata"].(map[string]any)["labels"] = map[string]any{
+		"kustomize.toolkit.fluxcd.io/name":      "multus-crd",
+		"kustomize.toolkit.fluxcd.io/namespace": "flux-system",
+	}
+	for _, tc := range []struct {
+		name, path, ignore string
+		excluded           bool
+	}{
+		{name: "omitted", ignore: "    /*\n    !artifacts/networks-crd.yaml\n"},
+		{name: "explicit", path: "  path: ./artifacts\n", ignore: "    /*\n    !artifacts/networks-crd.yaml\n"},
+		{name: "excluded", ignore: "    /*\n", excluded: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			testutil.GitInit(t, root)
+			testutil.WriteFile(t, root, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: upstream, namespace: flux-system}
+spec:
+  interval: 10m
+  url: git://fixture.invalid/cluster
+  ref: {tag: v1.7.7}
+  ignore: |
+`+tc.ignore)
+			testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("multus-crd", "flux-system",
+				"  interval: 10m\n"+tc.path+"  sourceRef: {kind: GitRepository, name: upstream}\n"))
+			args := []string{"build", "ks", "multus-crd", "--path", filepath.Join(root, "flux"),
+				"--concurrency", "2", "--git-depth", "0", "--skip-kinds", "", "--cache-dir", t.TempDir()}
+			out, _ := harness.RequireCLIOK(t, args...)
+			again, _ := harness.RequireCLIOK(t, args...)
+			assert.Equal(t, again, out)
+			docs, err := testutil.DecodeDocs(strings.NewReader(out))
+			assert.NoError(t, err)
+			if tc.excluded {
+				assert.Equal(t, len(docs), 0)
+			} else {
+				assert.Diff(t, docs, want)
+			}
+		})
+	}
+}
+
 func TestE2E_SourceRef_EmptyPathMatchesRoot(t *testing.T) {
 	fixture := func(t *testing.T, field string) (string, *store.Store, *discovery.Result) {
 		t.Helper()

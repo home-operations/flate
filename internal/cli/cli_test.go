@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -297,18 +298,64 @@ func TestRun_BuildAll_OnlyKinds_JSONEmptyArray(t *testing.T) {
 	}
 }
 
-// TestRun_GetKS exercises the get-ks command, default table output.
 func TestRun_GetKS(t *testing.T) {
-	path := writeFixture(t)
-	stdout, stderr, code := runCLI(t, "get", "ks", "--path", path)
-	if code != 0 {
-		t.Fatalf("get ks exited %d: %s", code, stderr)
-	}
-	if !strings.Contains(stdout, "NAMESPACE") || !strings.Contains(stdout, "NAME") {
-		t.Errorf("table header missing:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "apps") {
-		t.Errorf("expected ks 'apps' in output:\n%s", stdout)
+	for _, tc := range []struct {
+		name, path, wantPath string
+	}{
+		{name: "omitted", wantPath: "./"},
+		{name: "root", path: "./", wantPath: "./"},
+		{name: "apps", path: "./apps", wantPath: "./apps"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			pathField := ""
+			if tc.path != "" {
+				pathField = "  path: " + tc.path + "\n"
+			}
+			files := map[string]string{
+				"kustomization.yaml": "resources: [cluster.yaml]\n",
+				"cluster.yaml": testutil.KustomizationYAML("apps", "flux-system",
+					"  interval: 10m\n"+pathField+"  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"),
+				"apps/kustomization.yaml": "resources: [cm.yaml]\n",
+				"apps/cm.yaml":            "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hello, namespace: apps}\n",
+			}
+			for name, content := range files {
+				testutil.WriteFile(t, root, name, content)
+			}
+			for _, command := range []string{"get ks", "get", "get all"} {
+				t.Run(command, func(t *testing.T) {
+					for _, format := range []string{"table", "json", "yaml"} {
+						t.Run(format, func(t *testing.T) {
+							args := append(strings.Fields(command), "--path", root, "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", format)
+							stdout, stderr, code := runCLI(t, args...)
+							if code != 0 {
+								t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+							}
+							if format == "table" {
+								name, width := "apps", 8
+								if command != "get ks" {
+									name, width = "Kustomization/apps", 22
+								}
+								want := fmt.Sprintf("NAMESPACE      %-*sPATH\nflux-system    %-*s%s\n", width, "NAME", width, name, tc.wantPath)
+								assert.Equal(t, stdout, want)
+							} else {
+								groups := decodeGetDocuments(t, stdout, format, []string{""})
+								assert.Diff(t, groups[0].Documents, []map[string]any{{
+									"kind": "Kustomization", "name": "apps", "namespace": "flux-system", "path": tc.path,
+									"sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system", "namespace": "flux-system"},
+									"prune":     false, "wait": false,
+								}})
+							}
+							for name, want := range files {
+								got, err := os.ReadFile(filepath.Join(root, name))
+								assert.NoError(t, err)
+								assert.Equal(t, string(got), want)
+							}
+						})
+					}
+				})
+			}
+		})
 	}
 }
 

@@ -62,6 +62,12 @@ func (r *RawObject) producerTargets(candidates []NamedResource) []ProducerTarget
 	switch {
 	case r.isArtifactGenerator():
 		return r.artifactTargets(candidates)
+	case r.Named().Group == FluxOperatorDomain && r.Kind == "FluxInstance":
+		application, ok := r.EntryApplication()
+		if !ok {
+			return nil
+		}
+		return []ProducerTarget{{NamedResource: application.Source}}
 	case r.Kind == "ExternalSecret" && apiGroup(r.APIVersion) == "external-secrets.io":
 		name := cmp.Or(spec.child("target").str("name"), r.Name)
 		// Template output keys take precedence over explicit data inputs; an empty

@@ -77,6 +77,38 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 
 }
 
+func TestResolveEntrySources_DeclarationReplacesSynthetic(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: apps, uid: source-evidence}\nspec: {url: 'https://example.test/foreign'}\n")
+	st := store.New()
+	l := loader.New(st)
+	l.SourceRoot = root
+	d := discoverer{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st}, loader: l}
+	st.AddObject(&manifest.Kustomization{Name: "child", Namespace: "apps", Path: "./leaf", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "cluster"}})
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "cluster"}
+	if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
+		t.Fatal(err)
+	}
+	if artifact, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact); !ok || !artifact.InputAlias {
+		t.Fatalf("missing reference has no bootstrap alias: %+v", artifact)
+	}
+	if _, err := l.Load(t.Context(), d.cfg.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
+		t.Fatal(err)
+	}
+	obj, doc, attempt := st.GetEmission(id)
+	attempt.Finish()
+	if obj.(*manifest.GitRepository).URL != "https://example.test/foreign" || doc["metadata"].(map[string]any)["uid"] != "source-evidence" {
+		t.Fatalf("source declaration did not replace the bootstrap alias: %v", obj)
+	}
+	if st.GetArtifact(id, store.ArtifactContent) != nil {
+		t.Fatal("foreign source declaration retained bootstrap content")
+	}
+}
+
 func TestResolveEntrySources_IndexedRoots(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -174,7 +206,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0 {
+	if len(entries) != 1 || entries[0].prepared.aliasViews == nil || len(*entries[0].prepared.aliasViews) == 0 {
 		t.Fatalf("plan did not prepare the indexed source: %+v", entries)
 	}
 	id := testutil.HelmReleaseID("projected", "orphan")
@@ -255,6 +287,24 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			obj := st.GetObject(ks.SourceID())
 			if tc.want && (obj == nil || obj.Named() != ks.SourceID()) || !tc.want && (obj != nil || st.GetArtifact(ks.SourceID(), store.ArtifactContent) != nil) {
 				t.Fatalf("identity = %v", obj)
+			}
+			if tc.want {
+				id := ks.SourceID()
+				document := map[string]any{"apiVersion": manifest.SourceDomain + "/v1", "kind": id.Kind, "metadata": map[string]any{"name": id.Name, "namespace": id.Namespace}, "spec": map[string]any{"url": "https://foreign.invalid/repository", "endpoint": "foreign.invalid", "bucketName": "repository"}}
+				declared, _, _, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				other := ks.Clone()
+				other.Path = "./apps"
+				st.AddObject(other)
+				st.AddObject(declared)
+				if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
+					t.Fatal(err)
+				}
+				if st.GetArtifact(id, store.ArtifactContent) != nil {
+					t.Fatal("declared external source retained the missing reference's bootstrap material")
+				}
 			}
 		})
 	}
@@ -572,12 +622,11 @@ func TestResolveEntrySources_Content(t *testing.T) {
 	for _, phase := range []string{"warm", "metadata", "subtree", "mutable"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
-			d := Admission{aliasViews: map[string]*store.SourceArtifact{}}
-			first, key, err := d.entrySourceView(t.Context(), candidate)
+			d := Admission{}
+			first, err := d.entrySourceView(t.Context(), candidate)
 			if err != nil {
 				t.Fatal(err)
 			}
-			d.aliasViews[key] = first
 			selected := candidate
 			cloned := *bootstrap
 			selected.input = &cloned
@@ -592,9 +641,12 @@ func TestResolveEntrySources_Content(t *testing.T) {
 				cloned.Key = ""
 				cloned.FS = fstest.MapFS{"apps/file": {Data: []byte("selected")}}
 			}
-			got, _, err := d.entrySourceView(t.Context(), selected)
+			got, err := d.entrySourceView(t.Context(), selected)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if got.Revision != selected.input.Revision || got.Metadata["org.opencontainers.image.revision"] != selected.input.Metadata["org.opencontainers.image.revision"] {
+				t.Fatal("cached alias retained stale source metadata")
 			}
 			_, identity, err := source.OperationView(t.Context(), got.FS)
 			if err != nil || got.Content != identity {
@@ -608,5 +660,79 @@ func TestResolveEntrySources_Content(t *testing.T) {
 				t.Fatalf("shaped identity = %q, first %q", got.Content, first.Content)
 			}
 		})
+	}
+}
+
+func TestResolveEntrySources_SelfEntryRefs(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, kind, ref string
+		alias           bool
+	}{
+		{name: "absent", kind: manifest.KindGitRepository, alias: true},
+		{name: "unavailable branch", kind: manifest.KindGitRepository, ref: "{branch: unavailable}", alias: true},
+		{name: "named head", kind: manifest.KindGitRepository, ref: "{name: refs/heads/unavailable}", alias: true},
+		{name: "named tag", kind: manifest.KindGitRepository, ref: "{name: refs/tags/pinned}"},
+		{name: "other name", kind: manifest.KindGitRepository, ref: "{name: refs/pull/1/head}"},
+		{name: "tag", kind: manifest.KindGitRepository, ref: "{tag: pinned}"},
+		{name: "semver", kind: manifest.KindGitRepository, ref: "{semver: '>=1.0.0'}"},
+		{name: "commit precedence", kind: manifest.KindGitRepository, ref: "{commit: '0123456789abcdef0123456789abcdef01234567', name: refs/heads/main}"},
+		{name: "oci absent", kind: manifest.KindOCIRepository, alias: true},
+		{name: "oci tag", kind: manifest.KindOCIRepository, ref: "{tag: pinned}"},
+		{name: "oci semver", kind: manifest.KindOCIRepository, ref: "{semver: '>=1.0.0'}"},
+		{name: "oci digest", kind: manifest.KindOCIRepository, ref: "{digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123'}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			ref := ""
+			if tc.ref != "" {
+				ref = "  ref: " + tc.ref + "\n"
+			}
+			url := "https://unreachable.invalid/self"
+			if tc.kind == manifest.KindOCIRepository {
+				url = "oci://unreachable.invalid/self"
+			}
+			testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: "+tc.kind+"\nmetadata: {name: self, namespace: apps}\nspec:\n  url: "+url+"\n"+ref)
+			testutil.WriteFile(t, root, "entry/root.yaml", testutil.KustomizationYAML("root", "apps", "  path: ./entry\n  sourceRef: {kind: "+tc.kind+", name: self}\n"))
+			s := store.New()
+			_, err := Run(t.Context(), Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: s})
+			if err != nil {
+				t.Fatal(err)
+			}
+			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "apps", Name: "self"}
+			artifact, _ := s.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+			if (artifact != nil && artifact.InputAlias) != tc.alias {
+				t.Fatalf("self-entry reference %s: artifact=%+v, want alias=%t", tc.ref, artifact, tc.alias)
+			}
+		})
+	}
+}
+
+func TestResolveEntrySources_OneBootstrapSource(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "entry/sources.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: flux-system, namespace: flux-system}
+spec: {url: https://fixture.invalid/self, ref: {branch: main}}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: other, namespace: flux-system}
+spec: {url: https://fixture.invalid/other, ref: {branch: main}}
+`)
+	testutil.WriteFile(t, root, "entry/roots.yaml", testutil.KustomizationYAML("a", "flux-system", "  path: ./entry\n  sourceRef: {kind: GitRepository, name: flux-system}\n")+"---\n"+testutil.KustomizationYAML("z", "flux-system", "  path: ./entry\n  sourceRef: {kind: GitRepository, name: other}\n"))
+	s := store.New()
+	result, err := Run(t.Context(), Config{Store: s, Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{"https://fixture.invalid/self"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Binding.Producer != testutil.KustomizationID("flux-system", "a") {
+		t.Fatalf("wrong literal root: %+v", result.Binding)
+	}
+	other := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "other"}
+	if artifact := s.GetArtifact(other, store.ArtifactContent); artifact != nil {
+		t.Fatalf("unselected source acquired bootstrap bytes: %+v", artifact)
 	}
 }

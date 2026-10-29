@@ -30,7 +30,7 @@ func BenchmarkBindEntry_Evidence(b *testing.B) {
 			for b.Loop() {
 				a := &Admission{input: input, path: filepath.Join(repo, "entry")}
 				if history {
-					a.AddHistory(st, owner.Named(), record)
+					a.AddHistory(owner.Named(), record)
 				} else {
 					a.AddApplication(st, evidence)
 				}

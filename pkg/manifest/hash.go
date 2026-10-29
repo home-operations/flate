@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
+	"log/slog"
 )
 
 // SHA256Hex returns the hex-encoded SHA-256 identity of buffered bytes.
@@ -18,6 +19,7 @@ func SHA256Hex(data []byte) string {
 // Fingerprint hashes structured content with stable JSON framing. Cache owners
 // MUST bypass lookup and publication when marshaling returns an empty key.
 func Fingerprint(payload any) string {
+	slog.Debug("manifest: fingerprint")
 	h := sha256.New()
 	if err := jsonv2.MarshalWrite(h, payload, json.DefaultOptionsV1()); err != nil {
 		return ""

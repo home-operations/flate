@@ -165,3 +165,49 @@ spec:
 	close(start)
 	wg.Wait()
 }
+
+func TestKustomizePostRenderer_Chain(t *testing.T) {
+	t.Parallel()
+	pr := newPostRenderer([]helmv2.PostRenderer{
+		{},
+		{Kustomize: &helmv2.Kustomize{Patches: []kustomize.Patch{{
+			Target: &kustomize.Selector{Kind: "ConfigMap", Name: "app"},
+			Patch:  "- op: replace\n  path: /metadata/name\n  value: renamed",
+		}}}},
+		{},
+		{Kustomize: &helmv2.Kustomize{Patches: []kustomize.Patch{{
+			Target: &kustomize.Selector{Kind: "ConfigMap", Name: "renamed"},
+			Patch:  "- op: replace\n  path: /data/greeting\n  value: bonjour",
+		}}}},
+		{},
+	})
+	out, err := pr.Run(bytes.NewBufferString("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\ndata: {greeting: hello}\n"))
+	assert.NoError(t, err)
+	if !strings.Contains(out.String(), "name: renamed") || !strings.Contains(out.String(), "greeting: bonjour") {
+		t.Fatalf("chained output: %s", out)
+	}
+}
+
+func TestKustomizePostRenderer_Errors(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		patch kustomize.Patch
+	}{
+		{name: "absent target", patch: kustomize.Patch{Patch: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: absent}\ndata: {greeting: bonjour}"}},
+		{name: "malformed", patch: kustomize.Patch{Patch: "metadata: ["}},
+		{name: "present invalid operation", patch: kustomize.Patch{
+			Target: &kustomize.Selector{Kind: "ConfigMap", Name: "app"},
+			Patch:  "- op: replace\n  path: /data/absent/value\n  value: broken",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pr := newPostRenderer([]helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{Patches: []kustomize.Patch{tc.patch}}}})
+			out, err := pr.Run(bytes.NewBufferString("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app}\ndata: {greeting: hello}\n"))
+			if err == nil || !strings.HasPrefix(err.Error(), "postRenderer: ") || out != nil {
+				t.Fatalf("output %v; error %v", out, err)
+			}
+		})
+	}
+}

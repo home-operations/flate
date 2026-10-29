@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,11 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
+
+	gitlib "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -149,6 +155,7 @@ func TestRender_EntryApplicationConflictingProducers(t *testing.T) {
 		testutil.WriteFile(t, root, "entry/literal.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal, namespace: apps}\n")
 		testutil.WriteFile(t, root, "entry/workload.yaml", testutil.KustomizationYAML("workload", "apps", "  path: ./workload\n"))
 		testutil.WriteFile(t, root, "workload/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, root, "elsewhere/kustomization.yaml", "resources: []\n")
 		for _, producer := range []struct{ name, path string }{
 			{name: "a", path: "./entry"},
 			{name: "z", path: "./elsewhere"},
@@ -163,9 +170,12 @@ spec:
       kind: FluxInstance
       metadata: {name: flux, namespace: apps}
       spec:
-        sync: {name: self, kind: GitRepository, url: '%s', ref: main, path: %s}
+        sync: {name: self, kind: GitRepository, url: '%s', ref: refs/heads/main, path: %s}
 `, producer.name, url, producer.path))
 		}
+		repo := testutil.GitInit(t, root)
+		assert.NoError(t, repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))))
+		testutil.GitCommitAll(t, repo, "fixture", &gitlib.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}})
 		o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{url}}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 		assert.NoError(t, err)
 		assert.NoError(t, o.bootstrap(t.Context()))
@@ -283,6 +293,13 @@ func TestCollectManifests_ConflictingProducers(t *testing.T) {
 				}
 				wg.Wait()
 				o := &Orchestrator{store: st}
+				shared := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "shared"}
+				assert.Equal(t, st.EmissionOwner(shared), owners[workers-1])
+				warnings := st.Warnings()
+				assert.Equal(t, len(warnings), 1)
+				assert.Equal(t, warnings[0].Category, manifest.WarnConflictingProducers)
+				assert.Equal(t, warnings[0].Resource, shared)
+				assert.Equal(t, warnings[0].Message, "conflicting producers; using "+owners[workers-1].String())
 				got := outputByParent(o.collectManifests())
 				if len(got) != workers {
 					t.Fatalf("output lost producer documents: %v", got)
@@ -689,5 +706,39 @@ func TestCollectManifests_CoveredRetainedOutput(t *testing.T) {
 				t.Fatal("coverage visibility and runnable authority were conflated")
 			}
 		})
+	}
+}
+
+func TestRender_EntryApplicationDistinctRoots(t *testing.T) {
+	t.Parallel()
+	var previous []byte
+	var previousWarnings []manifest.Warning
+	for _, order := range [][]string{{"z", "a"}, {"a", "z"}} {
+		dir := t.TempDir()
+		testutil.WriteFile(t, dir, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal, namespace: apps}\n")
+		o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(dir, "entry"), RepoRoot: dir}, Config{Concurrency: 2})
+		assert.NoError(t, err)
+		assert.NoError(t, o.bootstrap(t.Context()))
+		owner := &manifest.RawObject{APIVersion: "example.test/v1", Kind: "FixtureProducer", Namespace: "apps", Name: "owner"}
+		o.store.AddObject(owner)
+		var children []store.Child
+		for _, name := range order {
+			children = append(children, store.Child{Obj: &manifest.Kustomization{Name: name, Namespace: "apps", Path: "./entry"}})
+		}
+		o.ksc.Emit(owner.Named(), &store.Emission{Children: children, Complete: true}, nil)
+		result, err := o.collectResult(o.run(t.Context()))
+		assert.NoError(t, err)
+		assert.Equal(t, o.entryBinding.Producer, testutil.KustomizationID("apps", "a"))
+		assert.Equal(t, o.store.EmissionOwner(o.entryBinding.Producer), owner.Named())
+		assert.Equal(t, len(result.Warnings), 1)
+		assert.Equal(t, result.Warnings[0].Category, manifest.WarnConflictingProducers)
+		output, err := json.Marshal(canonicalBatches(result))
+		assert.NoError(t, err)
+		if previous != nil {
+			assert.Equal(t, string(output), string(previous))
+			assert.Diff(t, result.Warnings, previousWarnings)
+		}
+		previous, previousWarnings = output, result.Warnings
+		o.stop()
 	}
 }

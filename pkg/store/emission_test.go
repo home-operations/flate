@@ -4475,3 +4475,58 @@ func TestRecordEmitted_ConflictingProducers_SyntheticOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordEmitted_GeneratedSourceRefresh(t *testing.T) {
+	t.Parallel()
+	for _, generated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("generated=%t", generated), func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+			authority := &manifest.Kustomization{Name: "authority", Namespace: "apps", Path: "."}
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: source.Name}}
+			s.AddObjects([]manifest.BaseManifest{source, authority, parent})
+			var first, previous, waiting, renewal, later ReadSet
+			first.Init(s, source.Named(), nil)
+			previous.Init(s, parent.Named(), nil)
+			waiting.Init(s, parent.Named(), nil)
+			renewal.Init(s, source.Named(), nil)
+			later.Init(s, parent.Named(), nil)
+			defer first.Close()
+			defer previous.Close()
+			defer waiting.Close()
+			defer renewal.Close()
+			defer later.Close()
+			first.GetObject(authority.Named())
+			artifact := &SourceArtifact{Reads: &first, Content: "same", FS: fstest.MapFS{}}
+			s.SetArtifact(source.Named(), artifact)
+			child := emissionChild("generated", "same")
+			child.Generated = generated
+			_, _, initial := previous.GetEmission(parent.Named())
+			defer initial.Finish()
+			initial.Children, initial.Complete = []Child{child}, true
+			previous.Bind(&initial)
+			s.RecordEmitted(parent.Named(), &initial, nil)
+			accepted := s.GetArtifact(parent.Named(), ArtifactContent)
+			changed := authority.Clone()
+			changed.Path = "changed"
+			s.AddObject(changed)
+			_, _, pending := waiting.GetEmission(parent.Named())
+			defer pending.Finish()
+			pending.Children, pending.Complete = []Child{child}, false
+			waiting.Bind(&pending)
+			s.RecordEmitted(parent.Named(), &pending, nil)
+			assert.Equal(t, waiting.Valid(), true)
+			assert.Equal(t, s.GetArtifact(parent.Named(), ArtifactContent) == accepted, generated)
+			renewal.GetObject(authority.Named())
+			s.SetArtifact(source.Named(), artifact.WithReads(&renewal))
+			_, _, ready := later.GetEmission(parent.Named())
+			defer ready.Finish()
+			ready.Children, ready.Complete = []Child{child}, false
+			later.Bind(&ready)
+			s.RecordEmitted(parent.Named(), &ready, nil)
+			output, ok := s.GetArtifact(parent.Named(), ArtifactContent).(*Emission)
+			assert.Equal(t, ok && output.Reads == &later && output.Reads.Valid(), true)
+		})
+	}
+}

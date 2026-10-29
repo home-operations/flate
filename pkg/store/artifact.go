@@ -117,7 +117,7 @@ type artifactRecord struct {
 	effective        Artifact
 	inventoryVisible bool
 	authority
-	revisionHead, originHead authority
+	revisionHead, originHead, acquisitionHead authority
 }
 
 // SetArtifact stores acquired content and notifies readers of selected source facts.
@@ -185,7 +185,13 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 	if origin != input.Origin || originPresent != input.OriginPresent {
 		changed |= ArtifactOrigin
 	}
-	heads := [3]*authority{&record.authority, &record.revisionHead, &record.originHead}
+	previousSource, _ := record.effective.(*SourceArtifact)
+	nextSource, _ := value.(*SourceArtifact)
+	acquisitionChanged := previousSource != nextSource
+	if acquisitionChanged {
+		changed |= 1 << 3
+	}
+	heads := [4]*authority{&record.authority, &record.revisionHead, &record.originHead, &record.acquisitionHead}
 	var admissions uint64
 	for i, head := range heads {
 		if changed&(1<<i) != 0 {
@@ -209,7 +215,7 @@ func (sh *shard) publishArtifactLocked(id manifest.NamedResource, record *artifa
 		}
 	}
 	record.effective = value
-	return changed != 0
+	return changed&(ArtifactContent|ArtifactRevision|ArtifactOrigin) != 0 || acquisitionChanged && record.acquisitionHead.links != nil && record.acquisitionHead.links.pending.Load()
 }
 
 // GetArtifact returns the artifact for id, or nil if none was set.
@@ -327,7 +333,7 @@ func emissionCurrent(e *Emission, view capture) bool {
 }
 
 func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
-	sh.requireCapacityLocked(sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead)
+	sh.requireCapacityLocked(sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead, sh.artifacts[id].acquisitionHead)
 	if record := sh.conditions[id]; len(record.conditions) > 0 || record.failure != nil {
 		record.advanceLocked(sh)
 		record.conditions, record.failure = record.conditions[:0], nil

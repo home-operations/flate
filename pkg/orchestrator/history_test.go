@@ -31,16 +31,21 @@ import (
 )
 
 func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
-	t.Parallel()
-	for _, mode := range []string{"direct", "deferred_required", "deferred_optional", "cycle"} {
+	for _, mode := range []string{"direct", "deferred_required", "deferred_optional", "missing_input", "cycle"} {
 		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
 			root := t.TempDir()
-			testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [owner.yaml, sibling.yaml, settings.yaml]\n")
+			testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [owner.yaml, sibling.yaml, settings.yaml, child.yaml]\n")
 			extra := ""
 			if mode == "deferred_required" || mode == "deferred_optional" {
 				extra = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings, optional: " + fmt.Sprint(mode == "deferred_optional") + "}]}\n"
 			}
+			if mode == "missing_input" {
+				extra = "  postBuild: {substituteFrom: [{kind: ConfigMap, name: absent}]}\n"
+			}
+			extra += "  patches:\n  - target: {kind: Kustomization, name: child}\n    patch: '[{\"op\":\"add\",\"path\":\"/spec/postBuild\",\"value\":{\"substitute\":{\"VALUE\":\"effective\"}}}]'\n"
+			testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./child\n"))
+			testutil.WriteFile(t, root, "child/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "child/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: child-output, namespace: apps}\ndata: {value: '${VALUE:=raw}'}\n")
 			testutil.WriteFile(t, root, "entry/owner.yaml", testutil.KustomizationYAML("owner", "apps", "  path: ./entry\n  dependsOn: [{name: sibling}]\n"+extra))
 			testutil.WriteFile(t, root, "entry/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {SIBLING: sibling}\n")
 			siblingExtra := ""
@@ -60,8 +65,9 @@ func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
 			assert.NoError(t, err)
 			t.Cleanup(o.stop)
 			assert.NoError(t, o.bootstrap(t.Context()))
-			if !o.entryBinding.Producer.ReportHidden() {
-				t.Fatalf("entry prerequisite reused its owner: %+v", o.entryBinding)
+			assert.Equal(t, o.entryBinding.Producer, testutil.KustomizationID("apps", "owner"))
+			if o.store.GetObject(testutil.KustomizationID("apps", "child")) != nil {
+				t.Fatal("unrelated bootstrap child was admitted before its root emitted it")
 			}
 			owner := testutil.KustomizationID("apps", "owner")
 			if mode == "deferred_required" || mode == "deferred_optional" {
@@ -82,6 +88,12 @@ func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
 				}
 			}
 			result, err := o.collectResult(o.run(t.Context()))
+			if mode == "missing_input" {
+				if err == nil || !strings.Contains(result.Failed[owner].Message, "absent") {
+					t.Fatalf("real entry lost missing-input diagnosis: err=%v failed=%v", err, result.Failed)
+				}
+				return
+			}
 			if mode == "cycle" {
 				if err == nil {
 					t.Fatal("authored cycle rendered successfully")
@@ -94,6 +106,10 @@ func TestRender_EntryOwnerDependsOnSibling(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
+			childDocs := outputByParent(result.Manifests)[testutil.KustomizationID("apps", "child")]
+			if len(childDocs) != 1 || childDocs[0]["data"].(map[string]any)["value"] != "effective" {
+				t.Fatalf("bootstrap child overrode the root's accepted policy: %v", childDocs)
+			}
 			sibling := testutil.KustomizationID("apps", "sibling")
 			if mode == "deferred_required" || mode == "deferred_optional" {
 				assert.Equal(t, o.store.EmissionOwner(sibling), testutil.KustomizationID("apps", "declare-sibling"))

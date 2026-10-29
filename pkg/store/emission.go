@@ -127,6 +127,9 @@ func childFootprint(entries []admission, origin manifest.NamedResource) iter.Seq
 				if _, valid := applier.EntryApplication(); valid && entry.child.Doc != nil {
 					if data, err := json.Marshal(entry.child.Doc); err == nil {
 						record.Application = string(data)
+						if !entry.independent && origin != id {
+							record.ApplicationOwner = origin
+						}
 					}
 				}
 			}
@@ -575,8 +578,9 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 	var evidence, bare []manifest.Production
 	provisional := false
 	if index != nil {
-		evidence = index.Records[id].Productions
-		provisional = bootstrapSeed(evidence)
+		record := index.Records[id]
+		evidence = record.Productions
+		provisional = bootstrapSeed(record)
 		if id.Namespace != "" {
 			key := id
 			key.Namespace = ""
@@ -596,7 +600,9 @@ func (s *Store) visitProductions(id manifest.NamedResource, index *manifest.Disc
 		if reads != nil {
 			for _, productions := range [2][]manifest.Production{evidence, bare} {
 				for _, p := range productions {
-					reads.GetArtifact(p.Source, ArtifactContent)
+					if p.Source != reads.ID() {
+						reads.GetArtifact(p.Source, ArtifactContent)
+					}
 				}
 			}
 		}
@@ -794,10 +800,21 @@ func (s *Store) contributionBinding(id manifest.NamedResource) sourceBinding {
 }
 
 // Bootstrap promotion alone supplies no independent authority against accepted output.
-func bootstrapSeed(productions []manifest.Production) bool {
-	return len(productions) > 0 && !slices.ContainsFunc(productions, func(p manifest.Production) bool {
-		return p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) || p.Source != manifest.BootstrapSourceID
-	})
+func bootstrapSeed(record manifest.DiscoveryRecord) bool {
+	seed := false
+	for _, p := range record.Productions {
+		if p.Owner != (manifest.NamedResource{}) || p.Declaration != (manifest.NamedResource{}) {
+			if record.Parent == (manifest.NamedResource{}) {
+				return false
+			}
+			continue
+		}
+		if p.Source != manifest.BootstrapSourceID {
+			return false
+		}
+		seed = true
+	}
+	return seed
 }
 
 // RecordEmitted atomically accepts completed work, replacing complete inventories and
@@ -810,6 +827,7 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 		reads.Bind(next)
 	}
 	if !next.Reads.Valid() {
+		s.Retire(next.Reads)
 		return
 	}
 	if len(next.Failures) != 0 {
@@ -817,6 +835,15 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 	}
 	if !next.Complete {
 		next.Fingerprint = ""
+		if len(next.Failures) == 0 && next.Reads != nil && slices.ContainsFunc(next.Children, func(child Child) bool { return child.Generated }) {
+			for input := next.Reads.inputs; input != nil; input = input.next {
+				if details := input.details.Load(); details != nil && input.derived&4 == 0 {
+					if artifact, ok := details.artifact.(*SourceArtifact); ok && !artifact.Reads.Valid() {
+						return
+					}
+				}
+			}
+		}
 	}
 	ps := s.shardFor(id)
 	for {
@@ -844,7 +871,7 @@ func (s *Store) RecordEmitted(id manifest.NamedResource, next *Emission, payload
 			}
 			if payload == nil && !supplied && next.Reads != nil && prev != nil {
 				for _, old := range prev.Children {
-					if old.Obj.Named() == child.Obj.Named() && old.payload != nil && old.output == next.Reads {
+					if old.payload != nil && old.output == next.Reads && old.Obj.Named() == child.Obj.Named() {
 						payload, output = old.payload, old.output
 						break
 					}
@@ -1320,12 +1347,12 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 		r, _ := s.index.Load().Lookup(target)
 		sh := s.shardFor(target)
 		cell := sh.cells[target]
-		if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
+		if bootstrapSeed(r) && cell.static != nil && (!cell.rooted || r.Parent == id) && !cell.retired {
 			position, _ := region.position(target)
 			if region.states[position].supportsProducer {
 				continue
 			}
-			cell.retired = true
+			cell.retired, cell.rooted = true, false
 			sh.cells[target] = cell
 			region.states[position].seed = true
 		}
@@ -1870,7 +1897,7 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 			admissions[kindShardIndex(id.Kind)]++
 		}
 		artifact := sh.artifacts[id]
-		for _, head := range []authority{artifact.authority, artifact.revisionHead, artifact.originHead} {
+		for _, head := range []authority{artifact.authority, artifact.revisionHead, artifact.originHead, artifact.acquisitionHead} {
 			if head.generation == 0 {
 				admissions[kindShardIndex(id.Kind)]++
 			}
@@ -1892,7 +1919,7 @@ func (s *Store) affectedLocked(region objectRegion, producer manifest.NamedResou
 		state.before, state.document, state.payload = before.Obj, before.Doc, view.payload
 		state.owner, state.source = view.owner, view.source
 		state.visible = !state.cell.hidden && (state.cell.static != nil || len(sh.members[id]) > 0)
-		if state.cell.publication == ^uint64(0) || artifact.publication == ^uint64(0) || state.cell.generation == ^uint64(0) || sh.conditions[id].stamp().generation == ^uint64(0) || artifact.generation == ^uint64(0) || artifact.revisionHead.generation == ^uint64(0) || artifact.originHead.generation == ^uint64(0) || state.bucketGeneration == ^uint64(0) {
+		if state.cell.publication == ^uint64(0) || artifact.publication == ^uint64(0) || state.cell.generation == ^uint64(0) || sh.conditions[id].stamp().generation == ^uint64(0) || artifact.generation == ^uint64(0) || artifact.revisionHead.generation == ^uint64(0) || artifact.originHead.generation == ^uint64(0) || artifact.acquisitionHead.generation == ^uint64(0) || state.bucketGeneration == ^uint64(0) {
 			s.unlockAll()
 			panic("store: authority generation exhausted")
 		}
@@ -1922,7 +1949,7 @@ func (s *Store) staticAnchorLocked(id manifest.NamedResource, support objectRegi
 	if !ok {
 		return true
 	}
-	if cell.retired && bootstrapSeed(r.Productions) {
+	if cell.retired && bootstrapSeed(r) {
 		return false
 	}
 	for _, p := range r.Productions {

@@ -316,11 +316,15 @@ func parseRawObject(doc map[string]any) (*RawObject, error) {
 }
 
 func (r *RawObject) kind() KindInfo {
-	info := KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind, apiVersion: r.APIVersion}
-	if r.Kind == kindTable[kindArtifactGenerator].Kind && info.Group == kindTable[kindArtifactGenerator].Group {
-		info = kindTable[kindArtifactGenerator].KindInfo
-		info.apiVersion = r.APIVersion
+	info := KindInfo{Group: apiGroup(r.APIVersion), Kind: r.Kind}
+	for _, i := range rawKinds {
+		entry := &kindTable[i]
+		if entry.Kind == r.Kind && entry.Group == info.Group {
+			info = entry.KindInfo
+			break
+		}
 	}
+	info.apiVersion = r.APIVersion
 	return info
 }
 

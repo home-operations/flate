@@ -745,7 +745,7 @@ spec:
   secretRef:
     name: ghcr-creds
 `)
-	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("private-app", "default", "  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n"))
+	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("private-app", "default", "  interval: 5m\n  path: ./external\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n"))
 
 	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	if len(renderedSingleton4) != 1 {

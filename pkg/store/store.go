@@ -574,7 +574,7 @@ func (sh *shard) deleteLocked(id manifest.NamedResource) bool {
 		sh.mu.Unlock()
 		panic("store: publication revision exhausted")
 	}
-	sh.requireCapacityLocked(cell.authority, sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead, bucket.authority)
+	sh.requireCapacityLocked(cell.authority, sh.conditions[id].stamp(), sh.artifacts[id].authority, sh.artifacts[id].revisionHead, sh.artifacts[id].originHead, sh.artifacts[id].acquisitionHead, bucket.authority)
 	cell.authority = cell.current().nextGeneration()
 	if cell.links != nil {
 		cell.authority = sh.enqueueLocked(cell.authority)

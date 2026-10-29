@@ -50,6 +50,7 @@ func (k KindInfo) APIVersion() string {
 
 type kindEntry struct {
 	KindInfo
+	raw       bool
 	decode    func(map[string]any) (BaseManifest, error)
 	bindLocal func(NamedResource, string) BaseManifest
 }
@@ -68,11 +69,13 @@ const (
 	kindConfigMap
 	kindSecret
 	kindArtifactGenerator
+	kindFluxInstance
 )
 
 var (
-	kindTable [kindArtifactGenerator + 1]kindEntry
+	kindTable [kindFluxInstance + 1]kindEntry
 	kindIndex map[string]int
+	rawKinds  []int
 )
 
 // Decoders initialize after package variables because parsing reads this registry.
@@ -93,7 +96,8 @@ func init() {
 		kindConfigMap: {KindInfo: KindInfo{Group: "", Kind: KindConfigMap, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) {
 			return parseConfigMap(d)
 		}},
-		kindArtifactGenerator: {KindInfo: KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Runnable: true, Status: true, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseRawObject(d) }},
+		kindArtifactGenerator: {raw: true, KindInfo: KindInfo{Group: "source.extensions.fluxcd.io", Kind: "ArtifactGenerator", Tracked: true, Runnable: true, Status: true, Discovery: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseRawObject(d) }},
+		kindFluxInstance:      {raw: true, KindInfo: KindInfo{Group: FluxOperatorDomain, Kind: "FluxInstance", Tracked: true, Runnable: true, Discovery: true, Parent: true, Render: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseRawObject(d) }},
 		kindSecret:            {KindInfo: KindInfo{Group: "", Kind: KindSecret, Tracked: true, Runnable: false, Status: false, Data: true}, decode: func(d map[string]any) (BaseManifest, error) { return parseSecret(d) }},
 	}
 	kindTable[kindGitRepository].bindLocal = func(id NamedResource, root string) BaseManifest {
@@ -110,6 +114,9 @@ func init() {
 	for i := range kindTable {
 		entry := &kindTable[i]
 		kindIndex[entry.Kind] = i
+		if entry.raw {
+			rawKinds = append(rawKinds, i)
+		}
 	}
 }
 

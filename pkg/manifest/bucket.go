@@ -44,11 +44,28 @@ func (b *Bucket) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindBucket].Group, Kind: KindBucket, Namespace: b.Namespace, Name: b.Name}
 }
 
-// BootstrapAlias returns a local copy; a nil Git descriptor selects a derived frozen root.
-func (b *Bucket) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
+// BootstrapAlias returns a local copy.
+func (b *Bucket) BootstrapAlias(root string) BaseManifest {
 	spec := b.BucketSpec
 	spec.Endpoint, spec.BucketName = "file://"+root, b.Name
-	return NewBucket(sourcev1.Bucket{Name: b.Name, Namespace: b.Namespace, Labels: b.Labels, Annotations: b.Annotations, Spec: spec}), nil
+	return NewBucket(sourcev1.Bucket{Name: b.Name, Namespace: b.Namespace, Labels: b.Labels, Annotations: b.Annotations, Spec: spec})
+}
+
+// BootstrapFacts returns the borrowed immutable Bucket view inputs.
+func (b *Bucket) BootstrapFacts() BootstrapFacts {
+	facts := BootstrapFacts{URL: b.Endpoint, DerivedRoot: true}
+	if b.Ignore != nil {
+		facts.Ignore = *b.Ignore
+	}
+	return facts
+}
+
+// BootstrapInput returns the authored inputs that shape a local Bucket alias.
+func (b *Bucket) BootstrapInput() any {
+	return struct {
+		Content any
+		Ignore  string
+	}{b.Content(b.Endpoint, !b.Insecure), b.BootstrapFacts().Ignore}
 }
 
 // Content returns the source inputs for the effective bucket endpoint.

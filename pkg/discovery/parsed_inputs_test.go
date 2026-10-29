@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"io/fs"
+	"maps"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -32,7 +33,7 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 	input := &store.SourceArtifact{LocalPath: root, FS: view}
 	entries, err := Plan(t.Context(), Config{Input: input, Path: root, WipeSecrets: true})
 	assert.NoError(t, err)
-	if len(entries) != 1 || len(entries[0].prepared.aliasViews) == 0 {
+	if len(entries) != 1 || entries[0].prepared.aliasViews == nil || len(*entries[0].prepared.aliasViews) == 0 {
 		t.Fatalf("expected one literal entry with prepared aliases: %+v", entries)
 	}
 	before := map[string]int64{}
@@ -72,10 +73,13 @@ func TestPlan_ParsedInputHandoff(t *testing.T) {
 						t.Fatalf("%s leaf evidence missing", side)
 					}
 				}
-				for key, view := range entry.prepared.aliasViews {
-					assert.Equal(t, d.aliasViews[key], view)
-					delete(d.aliasViews, key)
-					if entry.prepared.aliasViews[key] == nil {
+				for key, view := range *entry.prepared.aliasViews {
+					assert.Equal(t, (*d.aliasViews)[key].material, view.material)
+					assert.Equal(t, maps.Equal((*d.aliasViews)[key].identities, view.identities), true)
+					views := maps.Clone(*d.aliasViews)
+					delete(views, key)
+					d.aliasViews = &views
+					if (*entry.prepared.aliasViews)[key].material == nil {
 						t.Fatal("native admission mutated the prepared alias map")
 					}
 				}

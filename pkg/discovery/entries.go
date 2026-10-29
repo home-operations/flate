@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"context"
-	"maps"
 
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -19,7 +18,7 @@ type Entry struct {
 type entryInputs struct {
 	input       store.SourceArtifact
 	parsed      *loader.ParsedInputs
-	aliasViews  map[string]*store.SourceArtifact
+	aliasViews  *map[string]aliasView
 	wipeSecrets bool
 }
 
@@ -45,6 +44,6 @@ func Plan(ctx context.Context, cfg Config) ([]Entry, error) {
 	if err := d.loadManifests(ctx, input.LocalPath, false); err != nil {
 		return nil, err
 	}
-	prepared := &entryInputs{input: *input, parsed: l.ParsedInputs(), aliasViews: maps.Clone(d.aliasViews), wipeSecrets: cfg.WipeSecrets}
+	prepared := &entryInputs{input: *input, parsed: l.ParsedInputs(), aliasViews: d.aliasViews, wipeSecrets: cfg.WipeSecrets}
 	return []Entry{{Path: d.cfg.Path, Input: input, prepared: prepared}}, nil
 }

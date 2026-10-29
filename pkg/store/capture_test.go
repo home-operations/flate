@@ -1653,6 +1653,10 @@ func TestReadRegistration_StableWithdrawalNoABA(t *testing.T) {
 		t.Fatal("withdrawal reused a captured stable-publication stamp")
 	}
 	assert.Equal(t, earlier.Valid(), false)
+	notified := slices.Collect(st.Sweep())
+	slices.SortFunc(notified, manifest.NamedResource.Compare)
+	assert.Diff(t, notified, []manifest.NamedResource{current.id, earlier.id})
+	assert.Equal(t, len(slices.Collect(st.Sweep())), 0)
 }
 
 func TestReadSet_ProducedArtifact(t *testing.T) {
@@ -1684,6 +1688,169 @@ func TestReadSet_ProducedArtifact(t *testing.T) {
 			if reads.Valid() == consumed {
 				t.Fatalf("self-publication validity=%v with prior consumption=%v", reads.Valid(), consumed)
 			}
+		})
+	}
+}
+
+func TestGetEmission_CrossExecutionAuthority(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"absent", "inventory", "declaration"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "."}
+			s.AddObject(producer)
+			child := emissionChild("source", "equal")
+			if phase != "absent" {
+				s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child, emissionChild("root", "old")}, Complete: true}, nil)
+			}
+			var reads ReadSet
+			reads.Init(s, ownerID("observer"), nil)
+			defer reads.Close()
+			obj, _, output := reads.GetEmission(producer.Named())
+			defer output.Finish()
+			assert.Equal(t, obj, manifest.BaseManifest(producer))
+			assert.Equal(t, output.Complete, phase != "absent")
+			assert.Equal(t, reads.Valid(), true)
+			_ = slices.Collect(s.Sweep())
+			if phase == "declaration" {
+				next := producer.Clone()
+				next.Path = "changed"
+				s.AddObject(next)
+			} else {
+				s.RecordEmitted(producer.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
+			}
+			assert.Equal(t, reads.Valid(), false)
+			assert.Diff(t, slices.Collect(s.Sweep()), []manifest.NamedResource{reads.ID()})
+		})
+	}
+}
+
+func TestCapture_AcquiringOwnSource(t *testing.T) {
+	t.Parallel()
+	s := New()
+	source := &manifest.GitRepository{Name: "source", Namespace: "apps", URL: "file:///input"}
+	root := &manifest.Kustomization{Name: "root", Namespace: "apps", Path: "."}
+	s.AddObject(source)
+	s.AddObject(root)
+	s.SetArtifact(source.Named(), &SourceArtifact{Key: "old"})
+	var admission, acquisition ReadSet
+	admission.Init(s, root.Named(), nil)
+	acquisition.Init(s, source.Named(), nil)
+	defer admission.Close()
+	defer acquisition.Close()
+	admission.Admit(root, source.Named(), manifest.NamedResource{})
+	assert.Equal(t, acquisition.GetDeclaration(root.Named()), manifest.BaseManifest(root))
+	assert.Equal(t, acquisition.Valid(), true)
+	s.SetArtifact(source.Named(), &SourceArtifact{Key: "new"})
+	assert.Equal(t, acquisition.Valid(), true)
+	changed := root.Clone()
+	changed.Path = "changed"
+	s.AddObject(changed)
+	assert.Equal(t, acquisition.Valid(), false)
+}
+
+func TestIncomingProductions_OwnArtifact(t *testing.T) {
+	t.Parallel()
+	s := New()
+	source := &manifest.GitRepository{Name: "self", Namespace: "apps", URL: "https://fixture.invalid/self"}
+	owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "."}
+	s.AddObject(source)
+	s.AddObject(owner)
+	var old, current ReadSet
+	old.Init(s, source.Named(), nil)
+	current.Init(s, source.Named(), nil)
+	defer old.Close()
+	defer current.Close()
+	old.GetDeclaration(owner.Named())
+	previous := &SourceArtifact{Reads: &old, Key: "old"}
+	s.SetArtifact(source.Named(), previous)
+	var consumer ReadSet
+	consumer.Init(s, ownerID("consumer"), nil)
+	defer consumer.Close()
+	assert.Equal(t, consumer.GetArtifact(source.Named(), ArtifactContent), Artifact(previous))
+	changed := owner.Clone()
+	changed.TargetNamespace = "changed"
+	s.AddObject(changed)
+	assert.Equal(t, old.Valid(), false)
+	production := manifest.Production{Owner: owner.Named(), Source: source.Named()}
+	child := Child{Obj: source, Productions: []manifest.Production{production}}
+	s.RecordEmitted(owner.Named(), &Emission{Children: []Child{child}, Complete: true}, nil)
+	current.GetDeclaration(owner.Named())
+	assert.Diff(t, current.IncomingProductions(child, nil), []manifest.Production{production})
+	assert.Equal(t, current.GetArtifact(source.Named(), ArtifactContent), Artifact(previous))
+	assert.Equal(t, current.Valid(), true)
+	assert.Equal(t, consumer.GetArtifact(source.Named(), ArtifactContent), Artifact(nil))
+	assert.Equal(t, consumer.Valid(), false)
+	changed = changed.Clone()
+	changed.TargetNamespace = "again"
+	s.AddObject(changed)
+	assert.Equal(t, current.Valid(), false)
+}
+
+func TestReadSet_SourceAvailability(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"renewal", "changed", "unavailable", "withdrawal"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			s := New()
+			source := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+			authority := &manifest.Kustomization{Name: "entry", Namespace: "apps", Path: "."}
+			s.AddObjects([]manifest.BaseManifest{source, authority})
+			var first, next, waiting, consumed, renewed ReadSet
+			first.Init(s, source.Named(), nil)
+			next.Init(s, source.Named(), nil)
+			waiting.Init(s, ownerID("waiting"), nil)
+			consumed.Init(s, ownerID("consumed"), nil)
+			renewed.Init(s, ownerID("renewed"), nil)
+			defer first.Close()
+			defer next.Close()
+			defer waiting.Close()
+			defer consumed.Close()
+			defer renewed.Close()
+			first.GetObject(authority.Named())
+			artifact := &SourceArtifact{Reads: &first, Key: "source", Content: "same", FS: fstest.MapFS{}}
+			s.SetArtifact(source.Named(), artifact)
+			assert.Equal(t, consumed.GetArtifact(source.Named(), ArtifactContent), Artifact(artifact))
+			changed := authority.Clone()
+			changed.Path = "changed"
+			s.AddObject(changed)
+			assert.Equal(t, consumed.GetArtifact(source.Named(), ArtifactContent), nil)
+			assert.Equal(t, consumed.Valid(), false)
+			assert.Equal(t, s.GetArtifact(source.Named(), ArtifactContent), Artifact(artifact))
+			assert.Equal(t, waiting.Matches(&consumed), false)
+			assert.Equal(t, waiting.Valid(), true)
+			assert.Equal(t, waiting.GetArtifact(source.Named(), ArtifactContent), nil)
+			assert.Equal(t, waiting.Valid(), true)
+			assert.Equal(t, waiting.GetArtifact(source.Named(), ArtifactContent), nil)
+			assert.Equal(t, waiting.Valid(), true)
+			next.GetObject(authority.Named())
+			replacement := artifact.WithReads(&next)
+			switch phase {
+			case "changed":
+				replacement.Content = "changed"
+			case "unavailable":
+				replacement.FS = nil
+			case "withdrawal":
+				replacement = nil
+			}
+			s.SetArtifact(source.Named(), replacement)
+			assert.Equal(t, first.retired.Load(), true)
+			if replacement == nil {
+				assert.Equal(t, waiting.GetArtifact(source.Named(), ArtifactContent), nil)
+			} else {
+				assert.Equal(t, waiting.GetArtifact(source.Named(), ArtifactContent), Artifact(replacement))
+			}
+			assert.Equal(t, waiting.Valid(), false)
+			if replacement == nil {
+				assert.Equal(t, renewed.GetArtifact(source.Named(), ArtifactContent), nil)
+			} else {
+				assert.Equal(t, renewed.GetArtifact(source.Named(), ArtifactContent), Artifact(replacement))
+				assert.Equal(t, replacement.Reads.Valid(), true)
+			}
+			assert.Equal(t, renewed.Valid(), true)
+			s.SetArtifact(source.Named(), &SourceArtifact{Reads: &next, Key: "source", Content: "after", FS: fstest.MapFS{}})
+			assert.Equal(t, renewed.Valid(), false)
 		})
 	}
 }

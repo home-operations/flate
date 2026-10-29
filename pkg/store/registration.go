@@ -15,6 +15,7 @@ const (
 	contentFacet
 	revisionFacet
 	originFacet
+	acquisitionFacet
 	producerFacet
 	bucketFacet
 )
@@ -105,6 +106,8 @@ func (sh *shard) headLocked(key headKey) authority {
 		return sh.artifacts[key.id].revisionHead
 	case originFacet:
 		return sh.artifacts[key.id].originHead
+	case acquisitionFacet:
+		return sh.artifacts[key.id].acquisitionHead
 	case producerFacet:
 		return sh.slots[key.id].authority
 	case bucketFacet:
@@ -232,7 +235,7 @@ func (r *ReadSet) Valid() bool {
 		return false
 	}
 	for input := r.inputs; input != nil; input = input.next {
-		if !input.current() || input.view.bound && (input.view.binding != nil && !input.view.binding.current() || input.view.support != nil && !input.view.support.productionCurrent()) {
+		if !input.current() || input.view.bound && (input.view.binding != nil && input.view.binding.Ref.NamedResource != r.id && !input.view.binding.current() || input.view.support != nil && input.view.support.Ref.NamedResource != r.id && !input.view.support.productionCurrent()) {
 			r.invalid.Store(true)
 			return false
 		}
@@ -289,9 +292,10 @@ func (s *Store) Sweep() iter.Seq[manifest.NamedResource] {
 						changed = generation != 0 && generation <= cutoff
 					}
 					if !cell.owner.retired.Load() {
-						if changed && !cell.owner.invalid.Load() {
+						if changed && !cell.owner.delivered.Load() {
 							if deliver {
-								if cell.owner.invalid.CompareAndSwap(false, true) {
+								cell.owner.invalid.Store(true)
+								if cell.owner.delivered.CompareAndSwap(false, true) {
 									deliver = yield(cell.owner.id)
 								}
 							} else {

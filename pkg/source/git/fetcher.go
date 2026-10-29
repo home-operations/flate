@@ -294,6 +294,9 @@ type gitAcquisition struct {
 func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree billy.Filesystem, request gitAcquisition) (*git.Repository, error) {
 	ref := (*manifest.GitRepositoryRef)(request.spec.Reference)
 	kind, value := ref.Effective()
+	if normalized := ref.Normalized(); normalized.Name != "" {
+		kind, value = "name", normalized.Name
+	}
 	options := request.options
 	fetch := &git.FetchOptions{
 		Auth: options.Auth, ProxyOptions: options.ProxyOptions, CABundle: options.CABundle,

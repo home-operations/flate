@@ -15,6 +15,7 @@ type ReadSet struct {
 	advisories   AdvisoryEvidence
 	produced     []admission
 	invalid      atomic.Bool
+	delivered    atomic.Bool
 	retired      atomic.Bool
 	store        *Store
 	id           manifest.NamedResource
@@ -47,7 +48,7 @@ type Input struct {
 }
 
 type inputDetails struct {
-	cells        [6]registration
+	cells        [7]registration
 	gates        *readinessGate
 	productions  []manifest.Production
 	objects      []manifest.BaseManifest
@@ -79,6 +80,7 @@ type Gate struct {
 // Reused storage MUST have no live or detached registration or output borrower.
 func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.invalid.Store(false)
+	r.delivered.Store(false)
 	r.retired.Store(false)
 	r.local = Input{}
 	r.localDetails = inputDetails{}
@@ -288,14 +290,14 @@ func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 		r.activate(input, objectFacet, view.generation)
 	}
 	input.view, input.derived = view, input.derived|1
-	if view.binding != nil {
+	if view.binding != nil && view.binding.Ref.NamedResource != r.id {
 		r.GetObject(view.binding.Ref.NamedResource)
 		r.GetArtifact(view.binding.Ref.NamedResource, ArtifactContent)
 		if view.bound && !view.binding.current() {
 			r.invalid.Store(true)
 		}
 	}
-	if view.support != nil {
+	if view.support != nil && view.support.Ref.NamedResource != r.id {
 		r.GetObject(view.support.Ref.NamedResource)
 		r.GetArtifact(view.support.Ref.NamedResource, ArtifactContent)
 		if view.bound && !view.support.productionCurrent() {
@@ -371,6 +373,7 @@ func (r *ReadSet) status(input *Input) (StatusInfo, bool) {
 func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Artifact {
 	input := r.input(id)
 	details := r.details(input)
+	var acquisition uint64
 	if input.derived&4 == 0 {
 		r.GetObject(id)
 		if input.object.head == nil {
@@ -382,15 +385,24 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 		if !sh.cells[id].hidden {
 			details.artifact = record.effective
 		}
+		acquisition = record.acquisitionHead.generation
 		for i, generation := range [3]uint64{record.generation, record.revisionHead.generation, record.originHead.generation} {
 			input.cell(contentFacet + facet(i)).generation.Store(generation)
 		}
 		sh.mu.RUnlock()
-		input.derived |= 4
 		if e, ok := details.artifact.(*Emission); ok && !emissionCurrent(e, input.view) {
 			details.artifact = nil
 		}
 	}
+	if source, ok := details.artifact.(*SourceArtifact); ok && id != r.id && !source.Reads.Valid() {
+		if input.derived&4 != 0 {
+			r.invalid.Store(true)
+		} else {
+			r.observe(input, acquisitionFacet, acquisition)
+		}
+		return nil
+	}
+	input.derived |= 4
 	added := read &^ details.artifactRead
 	details.artifactRead |= read
 	for i := range 3 {
@@ -518,9 +530,26 @@ func (r *ReadSet) ListObjects(group, kind string) []manifest.BaseManifest {
 	return out
 }
 
-// GetEmission binds candidate output to this execution's captured declaration and source.
+// GetEmission captures accepted output, or binds this producer's own attempt.
 func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest, map[string]any, Emission) {
-	return r.store.getEmission(r, id)
+	if id == r.id {
+		return r.store.getEmission(r, id)
+	}
+	obj := r.GetDeclaration(id)
+	doc := r.input(id).view.child.Doc
+	output, _ := r.GetArtifact(id, ArtifactContent).(*Emission)
+	captured := Emission{Reads: r, input: obj, inputDoc: doc}
+	if output != nil {
+		captured.OutputReads = output.OutputReads
+		if output.OutputReads.Valid() {
+			captured = *output
+			captured.Reads, captured.input, captured.inputDoc = r, obj, doc
+			captured.previous = nil
+		}
+	}
+	view := r.input(id).view
+	captured.inputHead = inputStamp{owner: view.owner, generation: view.generation, revision: view.revision, binding: view.sourceBinding()}
+	return obj, doc, captured
 }
 
 // ID identifies the execution that owns these inputs.

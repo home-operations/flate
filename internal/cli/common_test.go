@@ -293,7 +293,13 @@ func TestResolveBaseline_DebugRevision(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, c.baseInput.Revision, pin.String())
 	var record map[string]any
-	assert.NoError(t, json.Unmarshal(output.Bytes(), &record))
+	decoder := json.NewDecoder(&output)
+	for decoder.More() {
+		assert.NoError(t, decoder.Decode(&record))
+		if record["msg"] == "baseline" {
+			break
+		}
+	}
 	delete(record, "time")
 	assert.Diff(t, record, map[string]any{
 		"level": "DEBUG", "msg": "baseline", "source": "explicit --base=HEAD",

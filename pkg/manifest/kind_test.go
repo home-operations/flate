@@ -28,7 +28,7 @@ func TestKindInfo_Rosters(t *testing.T) {
 		{&Secret{}, KindInfo{Kind: KindSecret, Tracked: true, Data: true}, ""},
 	}
 	registry := slices.Collect(Kinds())
-	assert.Equal(t, len(registry), len(cases)+1)
+	assert.Equal(t, len(registry), len(cases)+2)
 	for i, tc := range cases {
 		t.Run(tc.want.Kind, func(t *testing.T) {
 			t.Parallel()
@@ -61,7 +61,7 @@ func TestNamedResource_ReportHidden(t *testing.T) {
 		want bool
 	}{
 		{"bootstrap", BootstrapSourceID, true},
-		{"internal entry", NewEntryKustomization(BootstrapSourceID, ".", NamedResource{}).Named(), true},
+		{"internal entry", EntryKustomizationID("."), true},
 		{"authored entry label", NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "entry"}, false},
 		{"chart", NamedResource{Group: SourceDomain, Kind: KindHelmChart, Namespace: "apps", Name: "chart"}, false},
 		{"foreign chart", NamedResource{Group: "foreign.example", Kind: KindHelmChart, Namespace: "apps", Name: "chart"}, false},
@@ -122,6 +122,21 @@ func TestKindInfo_RawIdentity(t *testing.T) {
 			assert.Equal(t, ProducerNeedsCandidates(raw), tc.tracked)
 			targets := ProducerTargets(raw, NamedResource{Group: SourceDomain, Kind: KindExternalArtifact, Namespace: "apps", Name: "app-api"})
 			assert.Equal(t, len(targets) == 1, tc.tracked)
+		})
+	}
+}
+
+func TestKindInfo_FluxInstance(t *testing.T) {
+	t.Parallel()
+	for _, group := range []string{FluxOperatorDomain, "foreign.example"} {
+		t.Run(group, func(t *testing.T) {
+			t.Parallel()
+			obj, _, _, err := ParseDoc(map[string]any{"apiVersion": group + "/v1", "kind": "FluxInstance", "metadata": map[string]any{"name": "flux", "namespace": "control"}, "spec": map[string]any{}}, ParseDocOptions{})
+			assert.NoError(t, err)
+			facts := KindOf(obj)
+			assert.Equal(t, facts.Tracked, group == FluxOperatorDomain)
+			assert.Equal(t, facts.Runnable, group == FluxOperatorDomain)
+			assert.Equal(t, facts.Parent, group == FluxOperatorDomain)
 		})
 	}
 }

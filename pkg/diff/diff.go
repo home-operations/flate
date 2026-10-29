@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"maps"
 
 	"github.com/home-operations/flate/internal/diffprep"
 	"github.com/home-operations/flate/internal/output"
@@ -86,7 +87,14 @@ func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
 		lines, lineErr := output.PrepareLines(prepared)
 		err = lineErr
 		if err == nil {
-			names := output.PrepareNames([]string{""}, [][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)}, nil)
+			subjects := prepared.Subjects[0]
+			if subjects == nil {
+				subjects = prepared.Subjects[1]
+			} else if prepared.Subjects[1] != nil {
+				subjects = maps.Clone(subjects)
+				maps.Copy(subjects, prepared.Subjects[1])
+			}
+			names := output.PrepareNames([]string{""}, [][]manifest.NamedResource{output.LineSubjects(lines, encoder.Format)}, []map[manifest.NamedResource]manifest.DiagnosticIdentity{subjects})
 			output.NameLines(lines, names[0])
 			err = encoder.Lines(lines)
 		}

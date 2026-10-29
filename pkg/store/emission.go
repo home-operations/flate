@@ -1303,15 +1303,30 @@ func (s *Store) commitReplacement(id manifest.NamedResource, prev, proposal *Emi
 		sh := s.shardFor(target)
 		sh.members[target] = slices.DeleteFunc(sh.members[target], func(m membership) bool { return m.slot == slot })
 	}
+	// A publication MUST retain the bootstrap authority supporting its own declaration.
+	for ancestor, inside := region.position(id); inside; {
+		state := &region.states[ancestor]
+		if state.before == nil || state.supportsProducer {
+			break
+		}
+		state.supportsProducer = true
+		if state.owner == nil {
+			break
+		}
+		ancestor, inside = region.position(state.owner.id)
+	}
 	for _, entry := range proposal.entries {
 		target := entry.child.Obj.Named()
 		r, _ := s.index.Load().Lookup(target)
 		sh := s.shardFor(target)
 		cell := sh.cells[target]
 		if bootstrapSeed(r.Productions) && cell.static != nil && !cell.rooted && !cell.retired {
+			position, _ := region.position(target)
+			if region.states[position].supportsProducer {
+				continue
+			}
 			cell.retired = true
 			sh.cells[target] = cell
-			position, _ := region.position(target)
 			region.states[position].seed = true
 		}
 	}
@@ -1739,7 +1754,7 @@ type regionState struct {
 	payload                             *SourceArtifact
 	cell                                objectCell
 	live, static, direct, visible, seed bool
-	independent                         bool
+	independent, supportsProducer       bool
 	producerGeneration                  uint64
 	owner                               *producerSlot
 	source                              *sourceBinding

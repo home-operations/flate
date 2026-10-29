@@ -2,12 +2,16 @@ package diff
 
 import (
 	"fmt"
+	"html"
+	"maps"
 	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
 
 func htmlDoc(t *testing.T, y string) Doc {
@@ -170,5 +174,52 @@ func TestRenderHTML_Identical(t *testing.T) {
 
 	if len(out) != 0 {
 		t.Errorf("identical docs should render empty, got:\n%s", out)
+	}
+}
+
+func TestRenderHTML_PreparedSubjects(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name              string
+		original, current bool
+		shared, removed   string
+	}{
+		{name: "neither", shared: "Kustomization apps/shared", removed: "Kustomization apps/removed"},
+		{name: "original only", original: true, shared: `entry path "original"`, removed: `entry path "removed"`},
+		{name: "current only", current: true, shared: `entry path "current"`, removed: "Kustomization apps/removed"},
+		{name: "both", original: true, current: true, shared: `entry path "current"`, removed: `entry path "removed"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			shared := Parent{NamedResource: testutil.KustomizationID("apps", "shared")}
+			removed := Parent{NamedResource: testutil.KustomizationID("apps", "removed")}
+			var subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
+			if tc.original {
+				subjects[0] = map[manifest.NamedResource]manifest.DiagnosticIdentity{
+					shared.NamedResource:  {ID: shared.NamedResource, Path: "original"},
+					removed.NamedResource: {ID: removed.NamedResource, Path: "removed"},
+				}
+			}
+			if tc.current {
+				subjects[1] = map[manifest.NamedResource]manifest.DiagnosticIdentity{
+					shared.NamedResource: {ID: shared.NamedResource, Path: "current"},
+				}
+			}
+			before := [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{maps.Clone(subjects[0]), maps.Clone(subjects[1])}
+			left := []Doc{
+				cmDoc(shared, manifest.NamedResource{Name: "shared"}, "before", ""),
+				cmDoc(removed, manifest.NamedResource{Name: "removed"}, "before", ""),
+			}
+			right := []Doc{cmDoc(shared, manifest.NamedResource{Name: "shared"}, "after", "")}
+			out, _, err := RenderDocs(left, right, Options{Format: FormatHTML, subjects: subjects})
+			assert.NoError(t, err)
+			for _, label := range []string{tc.shared, tc.removed} {
+				heading := `<div class="rparent">` + html.EscapeString(label) + `</div>`
+				if !strings.Contains(string(out), heading) {
+					t.Errorf("HTML missing parent heading %q", heading)
+				}
+			}
+			assert.Diff(t, subjects, before)
+		})
 	}
 }

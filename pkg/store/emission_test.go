@@ -1199,6 +1199,50 @@ func TestRecordEmitted_CoverageAndStaticBoundary(t *testing.T) {
 	}
 }
 
+func TestRecordEmitted_DescendantRetainsBootstrapAuthority(t *testing.T) {
+	t.Parallel()
+
+	s := New()
+	seed := &manifest.Kustomization{Name: "generator", Namespace: "apps"}
+	middle := &manifest.Kustomization{Name: "middle", Namespace: "apps"}
+	applier := &manifest.Kustomization{Name: "sync", Namespace: "apps"}
+	stale := emissionChild("stale", "seed")
+	s.AddObjects([]manifest.BaseManifest{seed, stale.Obj})
+	s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		seed.Named():      {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
+		stale.Obj.Named(): {Productions: []manifest.Production{{Source: manifest.BootstrapSourceID}}},
+	}})
+	s.RecordEmitted(seed.Named(), &Emission{Children: []Child{{Obj: middle}}, Complete: true}, nil)
+	s.RecordEmitted(middle.Named(), &Emission{Children: []Child{{Obj: applier}}, Complete: true}, nil)
+	s.RecordEmitted(applier.Named(), &Emission{Children: []Child{{Obj: seed}, stale}, Complete: true}, nil)
+	for _, obj := range []manifest.BaseManifest{seed, middle, applier, stale.Obj} {
+		if s.GetObject(obj.Named()) != obj {
+			t.Fatalf("descendant publication lost its bootstrap authority: %v", obj.Named())
+		}
+	}
+	s.RecordEmitted(applier.Named(), &Emission{Children: []Child{{Obj: seed}}, Complete: true}, nil)
+	if s.GetObject(stale.Obj.Named()) != nil {
+		t.Fatal("withdrawal revived an unrelated bootstrap seed")
+	}
+	s.RecordEmitted(seed.Named(), &Emission{Complete: true}, nil)
+	if s.GetObject(middle.Named()) != nil || s.GetObject(applier.Named()) != nil || s.GetObject(seed.Named()) != seed {
+		t.Fatal("producer withdrawal retained emitted descendants or retired its own authority")
+	}
+	s.RecordEmitted(seed.Named(), &Emission{Children: []Child{{Obj: middle}}, Complete: true}, nil)
+	if s.GetObject(applier.Named()) != applier {
+		t.Fatal("producer replay did not restore its emitted descendant")
+	}
+	independent := &manifest.Kustomization{Name: "z-root", Namespace: "apps"}
+	s.AddObject(independent)
+	s.RecordEmitted(independent.Named(), &Emission{Children: []Child{{Obj: seed}}, Complete: true}, nil)
+	s.RecordEmitted(independent.Named(), &Emission{Complete: true}, nil)
+	for _, obj := range []manifest.BaseManifest{seed, middle, applier} {
+		if s.GetObject(obj.Named()) != nil {
+			t.Fatalf("withdrawn independent producer retained a detached cycle: %v", obj.Named())
+		}
+	}
+}
+
 func TestRecordEmitted_DirectWritesPreserveSiblings(t *testing.T) {
 	t.Parallel()
 

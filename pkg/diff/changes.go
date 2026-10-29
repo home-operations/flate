@@ -64,11 +64,11 @@ func Changes(left, right []Doc, opts Options) ([]Change, []manifest.Warning) {
 
 func renderJSON(changes []Change, suppressed []Suppression, subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity) ([]byte, error) {
 	for i := range changes {
-		subject, ok := subjects[1][changes[i].Parent.NamedResource]
-		if !ok {
-			subject, ok = subjects[0][changes[i].Parent.NamedResource]
+		selected := subjects[1]
+		if changes[i].Status == StatusRemoved {
+			selected = subjects[0]
 		}
-		if ok {
+		if subject, ok := selected[changes[i].Parent.NamedResource]; ok {
 			changes[i].Parent = Parent{NamedResource: subject.Resource, Path: subject.Path}
 		}
 	}

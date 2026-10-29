@@ -50,11 +50,16 @@ type applicationEvidence struct {
 	object      manifest.BaseManifest
 	application manifest.EntryApplication
 	source      entryResolution
+	history     bool
 	next        *applicationEvidence
 }
 
 // AddApplication captures published application evidence without resolving or rendering it.
 func (a *Admission) AddApplication(st *store.Store, obj manifest.BaseManifest) {
+	a.addApplication(st, obj, false)
+}
+
+func (a *Admission) addApplication(st *store.Store, obj manifest.BaseManifest, history bool) {
 	if a == nil || a.entryBound.Load() {
 		return
 	}
@@ -66,7 +71,7 @@ func (a *Admission) AddApplication(st *store.Store, obj manifest.BaseManifest) {
 	if !valid {
 		return
 	}
-	evidence := &applicationEvidence{object: obj, application: application, source: a.applicationSource(st, application)}
+	evidence := &applicationEvidence{object: obj, application: application, source: a.applicationSource(st, application), history: history}
 	for {
 		evidence.next = a.applications.Load()
 		if a.applications.CompareAndSwap(evidence.next, evidence) {
@@ -86,7 +91,7 @@ func (a *Admission) AddHistory(st *store.Store, id manifest.NamedResource, recor
 	}
 	obj, _, _, err := manifest.ParseDoc(document, manifest.ParseDocOptions{})
 	if err == nil && obj != nil && obj.Named() == id {
-		a.AddApplication(st, obj)
+		a.addApplication(st, obj, true)
 	}
 }
 
@@ -102,9 +107,9 @@ func (a *Admission) applicationSource(st *store.Store, application manifest.Entr
 	return resolved
 }
 
-func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects []manifest.BaseManifest) ([]manifest.NamedResource, error) {
+func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects []manifest.BaseManifest) ([]manifest.BaseManifest, error) {
 	repoRoot := a.input.LocalPath
-	var appliers []manifest.NamedResource
+	var appliers []manifest.BaseManifest
 	qualify := func(obj manifest.BaseManifest, application manifest.EntryApplication, resolved entryResolution) error {
 		artifact := resolved.artifact
 		if artifact == nil {
@@ -124,7 +129,7 @@ func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects [
 		}
 		target := filepath.Join(root, manifest.NormalizeClaimBase(application.Path))
 		if safepath.Contains(root, target) && loader.OriginPath(artifact, target) == loader.OriginPath(a.input, a.path) {
-			appliers = append(appliers, obj.Named())
+			appliers = append(appliers, obj)
 		}
 		return nil
 	}
@@ -141,12 +146,17 @@ func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects [
 		}
 	}
 	for evidence := a.applications.Load(); evidence != nil; evidence = evidence.next {
+		if !evidence.history {
+			if current := st.GetObject(evidence.object.Named()); current == nil || !manifest.Equal(current, evidence.object) {
+				continue
+			}
+		}
 		if err := qualify(evidence.object, evidence.application, evidence.source); err != nil {
 			return nil, err
 		}
 	}
-	slices.SortFunc(appliers, manifest.NamedResource.Compare)
-	return slices.Compact(appliers), nil
+	slices.SortStableFunc(appliers, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
+	return slices.CompactFunc(appliers, func(a, b manifest.BaseManifest) bool { return a.Named() == b.Named() }), nil
 }
 
 func (r entryResolution) GetObject(manifest.NamedResource) manifest.BaseManifest {
@@ -160,10 +170,10 @@ func (r entryResolution) GetArtifact(manifest.NamedResource, store.ArtifactRead)
 	return r.artifact
 }
 
-func (a *Admission) entry(ctx context.Context, st *store.Store, objects []manifest.BaseManifest) (*manifest.Kustomization, error) {
+func (a *Admission) entry(ctx context.Context, st *store.Store, objects []manifest.BaseManifest) (*manifest.Kustomization, manifest.BaseManifest, error) {
 	appliers, err := a.qualifyEntry(ctx, st, objects)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	relative, _ := filepath.Rel(a.input.LocalPath, a.path)
 	if len(appliers) == 0 {
@@ -171,7 +181,7 @@ func (a *Admission) entry(ctx context.Context, st *store.Store, objects []manife
 		for _, filename := range manifest.KustomizeBuilderFilenames {
 			_, err := fs.ReadFile(a.input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return nil, fmt.Errorf("%w: inspect entry package: %w", manifest.ErrInput, err)
+				return nil, nil, fmt.Errorf("%w: inspect entry package: %w", manifest.ErrInput, err)
 			}
 			if err == nil {
 				found = true
@@ -179,14 +189,16 @@ func (a *Admission) entry(ctx context.Context, st *store.Store, objects []manife
 			}
 		}
 		if !found {
-			return nil, nil
+			return nil, nil, nil
 		}
 	}
+	var owner manifest.BaseManifest
 	var applier manifest.NamedResource
 	if len(appliers) != 0 {
-		applier = appliers[0]
+		owner = appliers[0]
+		applier = owner.Named()
 	}
-	return manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), applier), nil
+	return manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), applier), owner, nil
 }
 
 // BindEntry qualifies the admitted entry against the current declaration fixed point.
@@ -195,23 +207,15 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	if a == nil {
 		return nil, Binding{}, nil
 	}
-	root, err := a.entry(ctx, st, st.ListObjects("", ""))
+	root, owner, err := a.entry(ctx, st, st.ListObjects("", ""))
 	if err != nil || root == nil {
 		return nil, Binding{}, err
 	}
 	key := root.Named()
-	subject := manifest.DiagnosticFor(key, root)
-	owner := st.GetObject(subject.Resource)
-	if owner == nil {
-		for evidence := a.applications.Load(); evidence != nil; evidence = evidence.next {
-			if evidence.object.Named() == subject.Resource {
-				owner = evidence.object
-				break
-			}
-		}
-	}
 	if candidate, ok := owner.(*manifest.Kustomization); ok && len(candidate.DependsOn) == 0 && (candidate.PostBuild == nil || len(candidate.PostBuild.SubstituteFrom) == 0) {
-		root = candidate
+		if current := st.GetObject(candidate.Named()); current == nil || manifest.Equal(current, candidate) {
+			root = candidate
+		}
 	}
 	a.entryBound.Store(true)
 	a.applications.Store(nil)

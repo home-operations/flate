@@ -87,6 +87,65 @@ func TestChanges_Classification(t *testing.T) {
 	assert.Diff(t, got, map[string]ChangeStatus{"edit-normalized": StatusChanged, "gone-normalized": StatusRemoved, "fresh-normalized": StatusAdded})
 }
 
+func TestRenderJSON_SubjectSides(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name              string
+		original, current bool
+	}{
+		{name: "both", original: true, current: true},
+		{name: "missing original", current: true},
+		{name: "missing current", original: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parent := Parent{NamedResource: testutil.KustomizationID("apps", "paired"), Path: "raw/path"}
+			original := Parent{NamedResource: testutil.KustomizationID("apps", "original"), Path: "original/path"}
+			current := Parent{NamedResource: testutil.KustomizationID("apps", "current"), Path: "current/path"}
+			var subjects [2]map[manifest.NamedResource]manifest.DiagnosticIdentity
+			if tc.original {
+				subjects[0] = map[manifest.NamedResource]manifest.DiagnosticIdentity{
+					parent.NamedResource: {ID: parent.NamedResource, Resource: original.NamedResource, Path: original.Path},
+				}
+			} else {
+				original = parent
+			}
+			if tc.current {
+				subjects[1] = map[manifest.NamedResource]manifest.DiagnosticIdentity{
+					parent.NamedResource: {ID: parent.NamedResource, Resource: current.NamedResource, Path: current.Path},
+				}
+			} else {
+				current = parent
+			}
+			left := []Doc{
+				cmDoc(parent, manifest.NamedResource{Name: "removed"}, "before", ""),
+				cmDoc(parent, manifest.NamedResource{Name: "changed"}, "before", ""),
+			}
+			right := []Doc{
+				cmDoc(parent, manifest.NamedResource{Name: "added"}, "after", ""),
+				cmDoc(parent, manifest.NamedResource{Name: "changed"}, "after", ""),
+			}
+			changes := jsonChanges(t, left, right, Options{subjects: subjects})
+			assert.Equal(t, len(changes), 3)
+			for _, change := range changes {
+				want := current
+				status := StatusChanged
+				switch change.Name {
+				case "removed":
+					want, status = original, StatusRemoved
+				case "added":
+					status = StatusAdded
+				case "changed":
+				default:
+					t.Fatalf("unexpected change: %+v", change)
+				}
+				assert.Equal(t, change.Status, status)
+				assert.Equal(t, change.Parent, want)
+			}
+		})
+	}
+}
+
 func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {

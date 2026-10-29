@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"html"
+	"maps"
 	"reflect"
 	"slices"
 	"testing"
@@ -448,7 +450,10 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 			left := selectedSnapshot(parent, []Doc{before, before}, store.StatusInfo{})
 			right := selectedSnapshot(parent, []Doc{after, after}, store.StatusInfo{})
 			left.Subjects = map[manifest.NamedResource]manifest.DiagnosticIdentity{root.Named(): subject}
-			right.Subjects = left.Subjects
+			right.Subjects = maps.Clone(left.Subjects)
+			originalLeft := manifest.DeepCopyMap(before.Manifest)
+			originalRight := manifest.DeepCopyMap(after.Manifest)
+			originalSubjects := maps.Clone(left.Subjects)
 			out, warnings, _, err := Compare(left, right, nil, Options{Format: FormatJSON})
 			if err != nil {
 				t.Fatal(err)
@@ -467,6 +472,29 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 				if !slices.Contains(warning.Detail, "parent: "+subject.String()) {
 					t.Fatalf("warning lost captured parent: %+v", warning)
 				}
+			}
+			for _, format := range []Format{FormatHTML, FormatDiff} {
+				out, _, _, err := Compare(left, right, nil, Options{Format: format})
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "--- ConfigMap changed (cluster)\n+++ ConfigMap changed (cluster)\n"
+				if format == FormatHTML {
+					label := `entry path "cluster"`
+					if applier != (manifest.NamedResource{}) {
+						label = `FluxInstance apps/cluster (entry path "cluster")`
+					}
+					want = `<div class="rparent">` + html.EscapeString(label+" (cluster)") + `</div>`
+				}
+				if !bytes.Contains(out, []byte(want)) {
+					t.Errorf("%s missing heading %q", format, want)
+				}
+			}
+			if !reflect.DeepEqual(left.Manifests[0].Documents[0], originalLeft) || !reflect.DeepEqual(right.Manifests[0].Documents[0], originalRight) {
+				t.Error("display projection changed snapshot documents")
+			}
+			if !maps.Equal(left.Subjects, originalSubjects) || !maps.Equal(right.Subjects, originalSubjects) {
+				t.Error("display projection changed snapshot subjects")
 			}
 			if left.Manifests[0].Parent.Named() != root.Named() || right.Manifests[0].Parent.Named() != root.Named() {
 				t.Fatal("display projection changed raw snapshot parents")

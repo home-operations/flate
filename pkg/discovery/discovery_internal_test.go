@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -975,6 +976,157 @@ func TestRun_EntryApplication(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBindEntry_EvidenceAuthority(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		publication  bool
+		livePath     string
+		history      bool
+		historyFirst bool
+		dependent    bool
+		substitution bool
+		invalid      string
+		qualified    bool
+		reuse        string
+	}{
+		{name: "retired_publication", publication: true, livePath: "./elsewhere"},
+		{name: "withdrawn_publication", publication: true},
+		{name: "effective_publication", publication: true, livePath: "./entry", qualified: true, reuse: "current"},
+		{name: "same_content_replacement", publication: true, livePath: "./entry", qualified: true, reuse: "current"},
+		{name: "receipt_only", history: true, qualified: true, reuse: "history"},
+		{name: "receipt_unrelated_live", history: true, livePath: "./elsewhere", qualified: true},
+		{name: "current_then_receipt", history: true, livePath: "./entry", qualified: true, reuse: "current"},
+		{name: "receipt_then_current", history: true, historyFirst: true, livePath: "./entry", qualified: true, reuse: "current"},
+		{name: "dependent_receipt", history: true, dependent: true, qualified: true},
+		{name: "substituted_receipt", history: true, substitution: true, qualified: true},
+		{name: "malformed_history", history: true, invalid: "malformed"},
+		{name: "wrong_id_history", history: true, invalid: "wrong_id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			const repo = "/virtual/evidence-authority"
+			input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{
+				"entry/literal.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n")},
+			}}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			a := &Admission{input: input, path: filepath.Join(repo, "entry")}
+			current := &manifest.Kustomization{Name: "applier", Namespace: "apps", Path: tc.livePath, TargetNamespace: "current"}
+			if tc.publication {
+				previous := current.Clone()
+				previous.Path = "./entry"
+				st.AddObject(previous)
+				a.AddApplication(st, previous)
+				if tc.name == "same_content_replacement" || tc.livePath == "" {
+					st.DeleteObject(previous.Named())
+				}
+			}
+			spec := map[string]any{"path": "./entry", "targetNamespace": "history"}
+			if tc.dependent {
+				spec["dependsOn"] = []any{map[string]any{"name": "sibling"}}
+			}
+			if tc.substitution {
+				spec["postBuild"] = map[string]any{"substituteFrom": []any{map[string]any{"kind": "ConfigMap", "name": "settings"}}}
+			}
+			document := map[string]any{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization",
+				"metadata": map[string]any{"name": current.Name, "namespace": current.Namespace}, "spec": spec}
+			data, err := json.Marshal(document)
+			assert.NoError(t, err)
+			record := manifest.DiscoveryRecord{Application: string(data)}
+			id := current.Named()
+			switch tc.invalid {
+			case "malformed":
+				record.Application = "{"
+			case "wrong_id":
+				id.Name = "different"
+			}
+			addHistory := func() {
+				if tc.history {
+					a.AddHistory(st, id, record)
+				}
+			}
+			if tc.historyFirst {
+				addHistory()
+			}
+			if tc.livePath != "" {
+				st.AddObject(current)
+				current = st.GetObject(current.Named()).(*manifest.Kustomization)
+				a.AddApplication(st, current)
+			}
+			if !tc.historyFirst {
+				addHistory()
+			}
+			root, binding, err := a.BindEntry(t.Context(), st)
+			assert.NoError(t, err)
+			if !tc.qualified {
+				assert.Equal(t, root, (*manifest.Kustomization)(nil))
+				assert.Equal(t, binding, Binding{})
+				return
+			}
+			if root == nil {
+				t.Fatal("qualifying evidence lost its entry")
+			}
+			key := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", current.Named()).Named()
+			assert.Equal(t, binding.Key, key)
+			assert.Equal(t, binding.Path, "entry")
+			assert.Equal(t, root.Named().ReportHidden(), tc.reuse == "")
+			switch tc.reuse {
+			case "current":
+				assert.Equal(t, root, current)
+			case "history":
+				assert.Equal(t, root.TargetNamespace, "history")
+			}
+			assert.Equal(t, a.entryBound.Load(), true)
+			assert.Equal(t, a.applications.Load(), (*applicationEvidence)(nil))
+		})
+	}
+}
+
+func TestBindEntry_ReemittedPublication(t *testing.T) {
+	t.Parallel()
+	const repo = "/virtual/reemitted-publication"
+	input := &store.SourceArtifact{LocalPath: repo, FS: fstest.MapFS{}}
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	producer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./generator"}
+	st.AddObject(producer)
+	a := &Admission{input: input, path: filepath.Join(repo, "entry")}
+	applier := &manifest.Kustomization{Name: "applier", Namespace: "apps", Path: "./entry"}
+	sibling := &manifest.ConfigMap{Name: "sibling", Namespace: "apps", Data: map[string]any{"value": "old"}}
+	var publications int
+	unsubscribe := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
+		if obj, ok := payload.(manifest.BaseManifest); ok {
+			a.AddApplication(st, obj)
+		}
+		if id == applier.Named() {
+			publications++
+		}
+	}, false)
+	defer unsubscribe()
+	st.RecordEmitted(producer.Named(), &store.Emission{
+		Children: []store.Child{{Obj: applier}, {Obj: sibling}}, Complete: true,
+	}, nil)
+	replacement := applier.Clone()
+	st.RecordEmitted(producer.Named(), &store.Emission{
+		Children: []store.Child{{Obj: replacement}, {Obj: &manifest.ConfigMap{
+			Name: sibling.Name, Namespace: sibling.Namespace, Data: map[string]any{"value": "new"},
+		}}}, Complete: true,
+	}, nil)
+	assert.Equal(t, publications, 1)
+	assert.Equal(t, st.GetObject(applier.Named()), manifest.BaseManifest(replacement))
+	appliers, err := a.qualifyEntry(t.Context(), st, nil)
+	assert.NoError(t, err)
+	if len(appliers) != 1 {
+		t.Fatalf("qualifying publications: got %d, want 1", len(appliers))
+	}
+	assert.Equal(t, appliers[0], manifest.BaseManifest(applier))
+	root, binding, err := a.BindEntry(t.Context(), st)
+	assert.NoError(t, err)
+	assert.Equal(t, root, replacement)
+	assert.Equal(t, binding.Producer, replacement.Named())
 }
 
 func TestRun_EntryPackage(t *testing.T) {

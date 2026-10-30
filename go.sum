@@ -1,5 +1,5 @@
-cel.dev/cel-go v0.33.0 h1:dVJNaNetMyzFG8iz7ZxOJDVvRHxpzwA4rrxxkTcsWQ0=
-cel.dev/cel-go v0.33.0/go.mod h1:DnVip7tpJSsgZymwfT+m1tnEVy3ivAjSMXPx12YrMkU=
+cel.dev/cel-go v0.33.1 h1:xRL3XUfZ3DXxWFLUsM2uavmtRBwrhlBBc+GEL1b9CIQ=
+cel.dev/cel-go v0.33.1/go.mod h1:DnVip7tpJSsgZymwfT+m1tnEVy3ivAjSMXPx12YrMkU=
 cel.dev/expr v0.25.2 h1:K6j46C81hXtZQfuX60cVWQFBJahKSE2gfRbNuvr5bFs=
 cel.dev/expr v0.25.2/go.mod h1:hrXvqGP6G6gyx8UAHSHJ5RGk//1Oj5nXQ2NI02Nrsg4=
 charm.land/bubbles/v2 v2.2.1 h1:Fq1+qm5hV6GkvzLQDhCBpXXE5tLgvh1PRriCLwSvIQU=

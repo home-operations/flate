@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"path"
 	"slices"
 	"strings"
@@ -99,6 +100,9 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		inst, disableHooks := newInstallAction(cfg, hr, opts, caps)
 		inst.SkipSchemaValidation = schemaValidationSkipped(hr, hrValues)
 
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			slog.Debug("helm: render", "release", hr.Named().String())
+		}
 		rel, err := inst.RunWithContext(ctx, ch, finalValues)
 		if err != nil {
 			return nil, nil, fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, schemaError(err))

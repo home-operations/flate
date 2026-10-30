@@ -37,7 +37,7 @@ func ParseChildren(parent manifest.BaseManifest, docs []manifest.DocOccurrence, 
 				if policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
 					child.Obj = obj.WithNamespace(policy.Namespace)
 				}
-				if policy.SelectChild(child.Obj) && child.Obj.Named() != parent.Named() {
+				if child.Obj.Named() != parent.Named() {
 					children = append(children, child)
 				}
 			}

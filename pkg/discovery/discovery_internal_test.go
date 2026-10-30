@@ -724,6 +724,29 @@ func TestAdmitEntry_BuildFailurePreservesRawErrors(t *testing.T) {
 	}
 }
 
+func TestRun_UnappliedPackage(t *testing.T) {
+	t.Parallel()
+	const root = "/virtual/unapplied-package"
+	input := fstest.MapFS{
+		"entry/source.yaml":                  {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: https://fixture.invalid/self}\n")},
+		"entry/generator.yaml":               {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self}\n")},
+		"entry/unapplied/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\npatches: [{path: missing.yaml}]\n")},
+		"entry/unapplied/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unused}\n")},
+	}
+	st := store.New()
+	result, err := Run(t.Context(), Config{
+		Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: filepath.Join(root, "entry"),
+		Store: st, Trees: testTrees(t), SelfURLs: []string{"https://fixture.invalid/self"},
+	})
+	assert.NoError(t, err)
+	if result.Binding != (Binding{}) {
+		t.Fatal("unrendered application qualified the entry")
+	}
+	if st.GetObject(testutil.HelmReleaseID("apps", "generator")) == nil {
+		t.Fatal("unapplied package hid the application producer")
+	}
+}
+
 func TestRun_BuiltPackages(t *testing.T) {
 	t.Parallel()
 	for _, selected := range []string{".", "a"} {

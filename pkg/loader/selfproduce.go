@@ -308,33 +308,6 @@ func (v graphVisit) localCoordinate() string {
 	return path.Join(v.localBase, local)
 }
 
-// StandalonePackages returns authored packages without an applying owner.
-func (l *Loader) StandalonePackages(repoRoot string) []string {
-	l.Admit(repoRoot)
-	var roots []string
-	for _, dir := range l.scopes.roots {
-		root := filepath.Join(repoRoot, filepath.FromSlash(dir))
-		doc := l.documents.cache[root]
-		if root == l.entryPath || doc.buildExcluded || doc.selected || doc.built != nil || isKustomizeComponent(doc.body) {
-			continue
-		}
-		owned := false
-		for _, visit := range l.scopeWalk(graphVisit{root: repoRoot, dir: dir}) {
-			if visit.role != kustomizeinput.Resource {
-				continue
-			}
-			l.fileOwners(visit.file, visit.coordinate, func(manifest.NamedResource) bool { owned = true; return false })
-			if owned {
-				break
-			}
-		}
-		if !owned {
-			roots = append(roots, dir)
-		}
-	}
-	return roots
-}
-
 func (l *Loader) packageRoots(repoRoot string, kss []store.Child) []string {
 	if len(l.documents.cache) == 0 {
 		return nil

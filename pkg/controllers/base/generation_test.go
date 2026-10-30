@@ -199,49 +199,72 @@ func TestGeneratedObjects_AdmissionWithdrawsPartialRule(t *testing.T) {
 	}
 }
 
-func TestGeneratedObjects_ReplayKeepsRenderReceipt(t *testing.T) {
+func TestGeneratedObjects_ReplayReadinessAndReceipt(t *testing.T) {
 	t.Parallel()
-	s := store.New()
-	c := New(s, task.NewBounded(2))
-	var calls atomic.Int64
-	child := manifest.NewConfigMap(manifest.NamedResource{Name: "auxiliary", Namespace: "apps"}, nil)
-	object := &configGenerator{Kustomization: &manifest.Kustomization{Name: "owner", Namespace: "apps"}, objects: []manifest.BaseManifest{child}, calls: &calls}
-	s.AddObject(object)
-	receipt := &manifest.RenderReceipt{}
-	first := newExecution(c, object.Named())
-	first.Dispatch(t.Context(), manifest.DrainNone, first, func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
-		_, _, output := run.Reads.GetEmission(object.Named())
-		defer output.Finish()
-		doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "rendered", "namespace": "apps"}, "data": map[string]any{"VALUE": "output"}}
-		output.Children = append(output.Children, store.Child{Obj: manifest.NewConfigMap(manifest.NamedResource{Name: "rendered", Namespace: "apps"}, map[string]any{"VALUE": "output"}), Doc: doc})
-		output.Manifests = []manifest.DocOccurrence{{Document: doc}}
-		output.Complete, output.Fingerprint, output.Render = true, manifest.Fingerprint("same"), receipt
-		return run.Emit(object.Named(), &output, nil)
-	})
-	var authority store.ReadSet
-	authority.Init(s, manifest.NamedResource{Name: "artifact-reader"}, nil)
-	defer authority.Retire()
-	authority.GetArtifact(object.Named(), store.ArtifactContent)
-	var events atomic.Int64
-	stop := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
-		if id == object.Named() {
-			events.Add(1)
-		}
-	}, false)
-	defer stop()
-	second := newExecution(c, object.Named())
-	defer second.Close()
-	second.Dispatch(t.Context(), manifest.DrainNone, second, func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
-		_, handled, err := run.FingerprintDedup(object.Named(), "same", &store.Emission{})
-		if !handled {
-			t.Error("completed render was unavailable after provisional publication")
-		}
-		return err
-	})
-	if !authority.Valid() || events.Load() != 0 {
-		t.Fatalf("unchanged generated preparation invalidated output: valid=%t events=%d", authority.Valid(), events.Load())
-	}
-	if output, _ := s.GetArtifact(object.Named(), store.ArtifactContent).(*store.Emission); output == nil || output.Render != receipt || !second.Reused {
-		t.Fatal("generated-source preparation discarded the accepted render receipt")
+	for _, tc := range []struct {
+		name       string
+		readmitted bool
+	}{{name: "unchanged"}, {name: "readmitted", readmitted: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := store.New()
+			c := New(s, task.NewBounded(2))
+			var calls atomic.Int64
+			child := manifest.NewConfigMap(manifest.NamedResource{Name: "auxiliary", Namespace: "apps"}, nil)
+			object := &configGenerator{Kustomization: &manifest.Kustomization{Name: "owner", Namespace: "apps"}, objects: []manifest.BaseManifest{child}, calls: &calls}
+			s.AddObject(object)
+			receipt := &manifest.RenderReceipt{}
+			first := newExecution(c, object.Named())
+			first.Dispatch(t.Context(), manifest.DrainNone, first, func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
+				_, _, output := run.Reads.GetEmission(object.Named())
+				defer output.Finish()
+				doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "rendered", "namespace": "apps"}, "data": map[string]any{"VALUE": "output"}}
+				output.Children = append(output.Children, store.Child{Obj: manifest.NewConfigMap(manifest.NamedResource{Name: "rendered", Namespace: "apps"}, map[string]any{"VALUE": "output"}), Doc: doc})
+				output.Manifests = []manifest.DocOccurrence{{Document: doc}}
+				output.Complete, output.Fingerprint, output.Render = true, manifest.Fingerprint("same"), receipt
+				return run.Emit(object.Named(), &output, nil)
+			})
+			if tc.readmitted {
+				s.SetIncluded(object.Named(), false)
+				s.UpdateStatus(object.Named(), store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged})
+				s.SetIncluded(object.Named(), true)
+				if info, _ := s.GetStatus(object.Named()); info.Outcome() != store.OutcomePending {
+					t.Fatalf("readmitted output remained ready: %+v", info)
+				}
+			}
+			var authority store.ReadSet
+			authority.Init(s, manifest.NamedResource{Name: "artifact-reader"}, nil)
+			defer authority.Retire()
+			authority.GetArtifact(object.Named(), store.ArtifactContent)
+			var events atomic.Int64
+			stop := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
+				if id == object.Named() {
+					events.Add(1)
+				}
+			}, false)
+			defer stop()
+			second := newExecution(c, object.Named())
+			defer second.Close()
+			second.Dispatch(t.Context(), manifest.DrainNone, second, func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
+				_, handled, err := run.FingerprintDedup(object.Named(), "same", &store.Emission{})
+				if !handled {
+					t.Error("completed render was unavailable after provisional publication")
+				}
+				return err
+			})
+			if !tc.readmitted && (!authority.Valid() || events.Load() != 0) {
+				t.Fatalf("unchanged generated preparation invalidated output: valid=%t events=%d", authority.Valid(), events.Load())
+			}
+			wantReceipt := receipt
+			if tc.readmitted {
+				wantReceipt = nil
+			}
+			if output, _ := s.GetArtifact(object.Named(), store.ArtifactContent).(*store.Emission); output == nil || output.Render != wantReceipt || !second.Reused {
+				t.Fatalf("replay receipt = %v, reused = %t", output, second.Reused)
+			}
+			if info, _ := s.GetStatus(object.Named()); info.Outcome() != store.OutcomePassed {
+				t.Fatalf("accepted replay did not restore readiness: %+v", info)
+			}
+		})
 	}
 }

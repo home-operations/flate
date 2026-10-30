@@ -24,25 +24,14 @@ type EmissionPolicy struct {
 	Namespace                   string
 	InternalNamespace           bool
 	ExcludeChildren             bool
-	ExcludeDiscovery            bool
 	StringLabels                bool
 	DocumentScope               bool
 }
 
 // SelectDocument reports output and child admission for a document.
 func (p EmissionPolicy) SelectDocument(doc map[string]any, skipKinds []string) (bool, bool) {
-	if p.ExcludeDiscovery {
-		if info := DocIdentity(doc).KindInfo(); info.Tracked && !info.Data {
-			return false, false
-		}
-	}
 	visible := len(skipKinds) == 0 || !slices.Contains(skipKinds, DocKind(doc))
 	return visible, visible || !p.ExcludeChildren
-}
-
-// SelectChild reports whether parsed output establishes an effective child declaration.
-func (p EmissionPolicy) SelectChild(obj BaseManifest) bool {
-	return !p.ExcludeDiscovery || !KindOf(obj).Data
 }
 
 // IsOwnershipLabel reports whether semantic comparison ignores an owner stamp.
@@ -58,7 +47,7 @@ func IsOwnershipLabel(key string) bool {
 // EmissionPolicy returns Kustomization overlays and target-namespace admission.
 func (k *Kustomization) EmissionPolicy() EmissionPolicy {
 	p := EmissionPolicy{OwnerKeys: ownershipKeys[0], OwnerValues: [2]string{k.Name, k.Namespace}, Owner: k.Name != "" && !k.hasDiagnostic, Namespace: k.TargetNamespace}
-	p.DocumentScope, p.ExcludeDiscovery = k.hasDiagnostic, k.standalone
+	p.DocumentScope = k.hasDiagnostic
 	if k.CommonMetadata != nil {
 		p.Labels, p.Annotations = k.CommonMetadata.Labels, k.CommonMetadata.Annotations
 	}

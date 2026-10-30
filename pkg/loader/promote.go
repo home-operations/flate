@@ -95,15 +95,6 @@ type BuiltInput struct {
 // Documents MUST be sanitized immutable build output.
 func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	root := input.Root
-	parent := l.Store.GetObject(input.Owner)
-	standalone := false
-	if parent != nil {
-		_, _, applies := parent.SourcePath()
-		standalone = !applies
-	}
-	if standalone {
-		input.Owner = manifest.NamedResource{}
-	}
 	l.ensureScopes()
 	sourceRoot := cmp.Or(l.documents.mountedRoot(root), l.SourceRoot, root)
 	l.Admit(sourceRoot)
@@ -147,9 +138,6 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		if standalone && manifest.KindOf(obj).Data {
-			continue
-		}
 		record := manifest.DiscoveryRecord{File: builder, Builder: builder, BuilderOwner: input.Owner, Inputs: inputs}
 		if raw, ok := l.Index.Lookup(id); ok {
 			original := l.IndexedObject(id, raw)
@@ -181,7 +169,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 		records[i] = record
 	}
 	for id, record := range l.Index.Files() {
-		if id == input.Owner || standalone && id.KindInfo().Data {
+		if id == input.Owner {
 			continue
 		}
 		if record.Path == "" || !l.documents.cache[record.Path].selected {
@@ -205,7 +193,7 @@ func (l *Loader) RegisterBuilt(input BuiltInput, docs []store.Child) {
 	for i, child := range docs {
 		obj := child.Obj
 		id := obj.Named()
-		if id == input.Owner || standalone && manifest.KindOf(obj).Data {
+		if id == input.Owner {
 			continue
 		}
 		if existing := l.Store.GetObject(id); existing != nil && l.Store.GetArtifact(id, store.ArtifactContent) == nil && (existing == l.candidates[id].Obj || existing == l.admitted[id]) {

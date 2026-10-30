@@ -481,7 +481,7 @@ func TestStore_AddListener_Flush(t *testing.T) {
 	assert.Equal(t, len(got), 2) // both seeds replayed
 }
 
-func TestStore_AdmissionInvalidatesWithoutStatusReset(t *testing.T) {
+func TestStore_AdmissionResetsUnchangedReadiness(t *testing.T) {
 	t.Parallel()
 	s := New()
 	obj := &manifest.OCIRepository{Name: "source", Namespace: "apps"}
@@ -491,19 +491,49 @@ func TestStore_AdmissionInvalidatesWithoutStatusReset(t *testing.T) {
 	s.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: ReasonUnchanged, Message: "unchanged"})
 	var reads ReadSet
 	reads.Init(s, id, nil)
-	reads.GetObject(id)
+	defer reads.Retire()
+	_, previous := reads.Snapshot(id, true)
 	if reads.Admitted() {
 		t.Fatal("excluded execution admitted")
 	}
 	arrivals := 0
 	s.AddListener(EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
+	published, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(resume) })
+	defer release()
+	var statuses atomic.Int32
+	s.AddListener(EventStatusUpdated, func(got manifest.NamedResource, payload any) {
+		if got != id || statuses.Add(1) != 1 {
+			t.Error("unexpected status publication")
+			return
+		}
+		info, _ := s.GetStatus(id)
+		assert.Equal(t, payload.(StatusInfo), info)
+		assert.Equal(t, info.Outcome(), OutcomePending)
+		close(published)
+		<-resume
+	}, false)
+	go func() {
+		defer close(done)
+		s.SetIncluded(id, true)
+	}()
+	<-published
+	var current ReadSet
+	current.Init(s, id, nil)
+	defer current.Retire()
+	_, observed := current.Snapshot(id, true)
+	assert.Equal(t, current.Admitted(), true)
+	assert.Equal(t, observed.Outcome(), OutcomePending)
+	assert.Equal(t, observed.Conditions[0].Status, metav1.ConditionUnknown)
 	s.SetIncluded(id, true)
-	if reads.Valid() || arrivals != 0 {
-		t.Fatalf("valid=%t arrivals=%d", reads.Valid(), arrivals)
+	assert.Equal(t, current.Valid(), true)
+	release()
+	<-done
+	if reads.Valid() || arrivals != 0 || statuses.Load() != 1 {
+		t.Fatalf("valid=%t arrivals=%d statuses=%d", reads.Valid(), arrivals, statuses.Load())
 	}
-	if info, _ := s.GetStatus(id); info.Status != StatusReady || info.Outcome() != OutcomeUnchanged {
-		t.Fatalf("admission rewrote status: %+v", info)
-	}
+	assert.Equal(t, previous.Outcome(), OutcomeUnchanged)
+	assert.Equal(t, previous.Conditions[0].Status, metav1.ConditionTrue)
 }
 
 func TestStore_UpdateStatus_Idempotent(t *testing.T) { //nolint:tparallel // Subtests exercise one ordered transition history.

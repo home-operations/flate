@@ -110,33 +110,56 @@ func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
 			}
 		}
 	}
-	for _, w := range r.Warnings {
+	var overrides [][]int
+	for i, w := range r.Warnings {
 		if w.Group >= 0 && w.Warning.Resource != (manifest.NamedResource{}) {
 			inventory[w.Group] = append(inventory[w.Group], w.Warning.Resource)
+			prepared := manifest.DiagnosticFor(w.Warning.Resource, nil)
+			if subject, ok := r.Groups[w.Group].Subjects[w.Warning.Resource]; ok {
+				prepared = subject
+			}
+			if w.Warning.Subject.ID != (manifest.NamedResource{}) && w.Warning.Subject != prepared {
+				if overrides == nil {
+					overrides = make([][]int, len(r.Groups))
+				}
+				overrides[w.Group] = append(overrides[w.Group], i)
+			}
 		}
 	}
 	var subjects []map[manifest.NamedResource]manifest.DiagnosticIdentity
+	var occurrences []map[manifest.NamedResource]int
 	for i, group := range r.Groups {
-		if len(group.Subjects) != 0 {
+		adjust := overrides != nil && len(overrides[i]) > 0
+		for _, model := range group.Models {
+			adjust = adjust || model.Subjects != nil
+		}
+		if len(group.Subjects) != 0 || adjust {
 			if subjects == nil {
 				subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
 			}
 			subjects[i] = group.Subjects
 		}
+		if adjust {
+			if occurrences == nil {
+				occurrences = make([]map[manifest.NamedResource]int, len(inventory))
+			}
+			occurrences[i] = make(map[manifest.NamedResource]int, len(inventory[i]))
+			for _, raw := range inventory[i] {
+				occurrences[i][raw]++
+			}
+		}
 	}
-	names := PrepareNames(clusters, inventory, subjects)
+	collisions, update := nameOccurrenceUpdater()
+	collectNameOccurrences(inventory, subjects, update)
+	names := prepareNames(clusters, inventory, subjects, collisions)
 	for i := range r.Groups {
 		r.Groups[i].Names = names[i]
 		for j, model := range r.Groups[i].Models {
 			if model.Subjects != nil {
-				if subjects == nil {
-					subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
-				}
-				previous := subjects[i]
-				subjects[i] = model.Subjects
-				prepared := PrepareNames(clusters, inventory, subjects)[i]
+				adjustNameOccurrences(occurrences[i], subjects[i], model.Subjects, update)
+				prepared := prepareGroupNames(names[i].Prefix, inventory[i], model.Subjects, collisions)
 				r.Groups[i].Models[j].Names = &prepared
-				subjects[i] = previous
+				adjustNameOccurrences(occurrences[i], model.Subjects, subjects[i], update)
 			}
 		}
 	}
@@ -148,24 +171,25 @@ func (r *Report) Prepare(extra [][]manifest.NamedResource) []Names {
 		if w.Warning.Resource == (manifest.NamedResource{}) {
 			r.Warnings[i].prefix = names[w.Group].Prefix
 		} else {
-			prepared := manifest.DiagnosticFor(w.Warning.Resource, nil)
-			if len(subjects) > w.Group {
-				if subject, ok := subjects[w.Group][w.Warning.Resource]; ok {
-					prepared = subject
-				}
-			}
-			if w.Warning.Subject.ID != (manifest.NamedResource{}) && w.Warning.Subject != prepared {
-				if subjects == nil {
-					subjects = make([]map[manifest.NamedResource]manifest.DiagnosticIdentity, len(r.Groups))
-				}
-				previous := subjects[w.Group]
-				subjects[w.Group] = map[manifest.NamedResource]manifest.DiagnosticIdentity{w.Warning.Resource: w.Warning.Subject}
-				r.Warnings[i].Subject = PrepareNames(clusters, inventory, subjects)[w.Group].Subjects[w.Warning.Resource]
-				subjects[w.Group] = previous
-			} else {
-				r.Warnings[i].Subject = names[w.Group].Subjects[w.Warning.Resource]
-			}
+			r.Warnings[i].Subject = names[w.Group].Subjects[w.Warning.Resource]
 		}
+	}
+	for group, indices := range overrides {
+		if len(indices) == 0 {
+			continue
+		}
+		adjustNameOccurrences(occurrences[group], subjects[group], nil, update)
+		for _, i := range indices {
+			w := r.Warnings[i].Warning
+			count := occurrences[group][w.Resource]
+			update(w.Resource.Kind, w.Resource.Group, -count)
+			update(w.Subject.Resource.Kind, w.Subject.Resource.Group, count)
+			kind, name := subjectLabels(&w.Subject.Resource, w.Subject.Path, names[group].Prefix, collisions)
+			r.Warnings[i].Subject = Subject{ID: w.Resource, Kind: kind, Name: name}
+			update(w.Subject.Resource.Kind, w.Subject.Resource.Group, -count)
+			update(w.Resource.Kind, w.Resource.Group, count)
+		}
+		adjustNameOccurrences(occurrences[group], nil, subjects[group], update)
 	}
 	return names
 }

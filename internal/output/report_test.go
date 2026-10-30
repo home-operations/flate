@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -334,5 +337,196 @@ func TestReport_SnapshotSpecificAttribution(t *testing.T) {
 	text := out.String()
 	if !strings.Contains(text, "OCIRepository") || !strings.Contains(text, "HelmChart") || !strings.Contains(text, "ordinary source failed") || !strings.Contains(text, "synthetic source failed") {
 		t.Fatalf("snapshot provenance crossed sides: %s", text)
+	}
+}
+
+func TestReport_OverrideCollisions(t *testing.T) {
+	t.Parallel()
+	raw := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "source"}
+	a := manifest.NamedResource{Group: "a.example", Kind: "Widget", Namespace: "apps", Name: "a"}
+	b := manifest.NamedResource{Group: "b.example", Kind: "Widget", Namespace: "apps", Name: "b"}
+	c := manifest.NamedResource{Group: "c.example", Kind: "Widget", Namespace: "apps", Name: "c"}
+	capture := func(resource manifest.NamedResource) map[manifest.NamedResource]manifest.DiagnosticIdentity {
+		return map[manifest.NamedResource]manifest.DiagnosticIdentity{raw: {ID: raw, Resource: resource}}
+	}
+	model := func(context string, subjects map[manifest.NamedResource]manifest.DiagnosticIdentity) Model {
+		return Model{Context: context, Subjects: subjects, Primary: []Primary{{ID: raw, Msg: "failed"}}}
+	}
+	labels := func(prefix string, entries ...Subject) *Names {
+		n := &Names{Prefix: prefix, Subjects: make(map[manifest.NamedResource]Subject, len(entries))}
+		for _, subject := range entries {
+			n.Subjects[subject.ID] = subject
+		}
+		return n
+	}
+	alphaRaw := labels("alpha: ", Subject{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"})
+	alphaA := labels("alpha: ", Subject{ID: raw, Kind: "Widget.a.example", Name: "alpha: apps/a"})
+	alphaB := labels("alpha: ", Subject{ID: raw, Kind: "Widget", Name: "alpha: apps/b"})
+	betaB := labels("beta: ", Subject{ID: b, Kind: "Widget.b.example", Name: "beta: apps/b"})
+	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
+	synthetic := chart.OCIRepository(&manifest.HelmRepository{URL: "oci://registry.example/charts"})
+	chartRaw := synthetic.Named()
+	otherChart := manifest.NamedResource{Group: "custom.example", Kind: manifest.KindHelmChart, Namespace: "apps", Name: "other"}
+	for _, tc := range []struct {
+		name         string
+		report       Report
+		extra        [][]manifest.NamedResource
+		wantNames    []Names
+		wantModels   [][]*Names
+		wantWarnings []Subject
+		wantText     string
+	}{
+		{
+			name: "model introduces collision and restores raw contexts",
+			report: Report{Groups: []ReportGroup{
+				{Cluster: "alpha", Models: []Model{model("baseline", nil), model("empty", capture(raw)), model("captured", capture(a)), model("restored", map[manifest.NamedResource]manifest.DiagnosticIdentity{})}},
+				{Cluster: "beta"},
+			}},
+			extra:      [][]manifest.NamedResource{nil, {b}},
+			wantNames:  []Names{*alphaRaw, *labels("beta: ", Subject{ID: b, Kind: "Widget", Name: "beta: apps/b"})},
+			wantModels: [][]*Names{{nil, alphaRaw, alphaA, alphaRaw}, nil},
+			wantText: "\n  ✗  baseline: OCIRepository  alpha: apps/source  failed\n\n" +
+				"  ✗  empty: OCIRepository  alpha: apps/source  failed\n\n" +
+				"  ✗  captured: Widget.a.example  alpha: apps/a  failed\n\n" +
+				"  ✗  restored: OCIRepository  alpha: apps/source  failed\n\n" +
+				"  alpha: ✗ 4 failed\n\n  beta: ✓ 0 failed\n",
+		},
+		{
+			name: "model removes final contribution with duplicate raw IDs",
+			report: Report{Groups: []ReportGroup{
+				{Cluster: "alpha", Subjects: capture(a), Models: []Model{model("baseline", nil), model("empty", map[manifest.NamedResource]manifest.DiagnosticIdentity{}), model("captured", capture(b)), model("restored", capture(a))}},
+				{Cluster: "beta"},
+			}},
+			extra:      [][]manifest.NamedResource{{raw, raw}, {b}},
+			wantNames:  []Names{*alphaA, *betaB},
+			wantModels: [][]*Names{{nil, alphaRaw, alphaB, alphaA}, nil},
+			wantText: "\n  ✗  baseline: Widget.a.example  alpha: apps/a  failed\n\n" +
+				"  ✗  empty: OCIRepository  alpha: apps/source  failed\n\n" +
+				"  ✗  captured: Widget  alpha: apps/b  failed\n\n" +
+				"  ✗  restored: Widget.a.example  alpha: apps/a  failed\n\n" +
+				"  alpha: ✗ 4 failed\n\n  beta: ✓ 0 failed\n",
+		},
+		{
+			name: "model removes singleton contribution",
+			report: Report{Groups: []ReportGroup{
+				{Cluster: "alpha", Subjects: capture(a), Models: []Model{model("captured", capture(b))}},
+				{Cluster: "beta"},
+			}},
+			extra:      [][]manifest.NamedResource{nil, {b}},
+			wantNames:  []Names{*alphaA, *betaB},
+			wantModels: [][]*Names{{alphaB}, nil},
+			wantText: "\n  ✗  captured: Widget  alpha: apps/b  failed\n\n" +
+				"  alpha: ✗ 1 failed\n\n  beta: ✓ 0 failed\n",
+		},
+		{
+			name: "another group retains the removed contributor",
+			report: Report{Groups: []ReportGroup{
+				{Cluster: "alpha", Subjects: capture(a), Models: []Model{model("captured", capture(b))}},
+				{Cluster: "beta"}, {Cluster: "gamma"},
+			}},
+			extra:      [][]manifest.NamedResource{nil, {b}, {a}},
+			wantNames:  []Names{*alphaA, *betaB, *labels("gamma: ", Subject{ID: a, Kind: "Widget.a.example", Name: "gamma: apps/a"})},
+			wantModels: [][]*Names{{labels("alpha: ", Subject{ID: raw, Kind: "Widget.b.example", Name: "alpha: apps/b"})}, nil, nil},
+			wantText: "\n  ✗  captured: Widget.b.example  alpha: apps/b  failed\n\n" +
+				"  alpha: ✗ 1 failed\n\n  beta: ✓ 0 failed\n\n  gamma: ✓ 0 failed\n",
+		},
+		{
+			name: "interleaved singleton warnings reset other captures and restore each group",
+			report: Report{
+				Groups: []ReportGroup{{Cluster: "alpha", Subjects: map[manifest.NamedResource]manifest.DiagnosticIdentity{b: {ID: b, Resource: a}}}, {Cluster: "beta"}},
+				Warnings: []Warning{
+					{Warning: manifest.Warning{Resource: raw, Subject: manifest.DiagnosticIdentity{ID: raw, Resource: b}, Category: "Captured", Message: "first", Detail: []string{"kept"}, Related: []manifest.NamedResource{b}, Count: 2}},
+					{Group: 1, Warning: manifest.Warning{Resource: b, Subject: manifest.DiagnosticIdentity{ID: b, Resource: a}, Message: "second"}},
+					{Warning: manifest.Warning{Resource: raw, Subject: manifest.DiagnosticIdentity{ID: raw, Resource: a, Path: "warning/a"}, Message: "third"}},
+					{Group: 1, Warning: manifest.Warning{Resource: b, Subject: manifest.DiagnosticIdentity{ID: b, Resource: c}, Message: "fourth"}},
+					{Warning: manifest.Warning{Resource: raw, Message: "ordinary"}},
+					{Warning: manifest.Warning{Resource: b, Subject: manifest.DiagnosticIdentity{ID: b, Resource: a}, Message: "matching"}},
+					{Group: 1, Warning: manifest.Warning{Message: "cluster"}},
+					{Group: -1, Warning: manifest.Warning{Message: "invocation"}},
+				},
+			},
+			extra:      [][]manifest.NamedResource{{raw, b, b}, {b}},
+			wantNames:  []Names{*labels("alpha: ", Subject{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"}, Subject{ID: b, Kind: "Widget.a.example", Name: "alpha: apps/a"}), *betaB},
+			wantModels: [][]*Names{nil, nil},
+			wantWarnings: []Subject{
+				{ID: raw, Kind: "Widget", Name: "alpha: apps/b"},
+				{ID: b, Kind: "Widget", Name: "beta: apps/a"},
+				{ID: raw, Kind: "Widget.a.example", Name: `alpha: apps/a (entry path "warning/a")`},
+				{ID: b, Kind: "Widget.c.example", Name: "beta: apps/c"},
+				{ID: raw, Kind: "OCIRepository", Name: "alpha: apps/source"},
+				{ID: b, Kind: "Widget.a.example", Name: "alpha: apps/a"}, {}, {},
+			},
+			wantText: "\n  ⚠ warnings (8)\n    [Captured] Widget alpha: apps/b: first (×2)\n      kept\n" +
+				"    Widget beta: apps/a: second\n" +
+				"    Widget.a.example alpha: apps/a (entry path \"warning/a\"): third\n" +
+				"    Widget.c.example beta: apps/c: fourth\n" +
+				"    OCIRepository alpha: apps/source: ordinary\n" +
+				"    Widget.a.example alpha: apps/a: matching\n    beta: cluster\n    invocation\n\n" +
+				"  alpha: ✓ 0 failed\n\n  beta: ✓ 0 failed\n",
+		},
+		{
+			name: "captured HelmChart warning introduces collision without changing beta",
+			report: Report{
+				Groups:   []ReportGroup{{Cluster: "alpha"}, {Cluster: "beta"}},
+				Warnings: []Warning{{Warning: manifest.Warning{Resource: chartRaw, Subject: manifest.DiagnosticFor(chartRaw, synthetic), Message: "captured"}}},
+			},
+			extra: [][]manifest.NamedResource{nil, {otherChart}},
+			wantNames: []Names{
+				*labels("alpha: ", Subject{ID: chartRaw, Kind: "OCIRepository", Name: "alpha: apps/chart"}),
+				*labels("beta: ", Subject{ID: otherChart, Kind: "HelmChart", Name: "beta: apps/other"}),
+			},
+			wantModels:   [][]*Names{nil, nil},
+			wantWarnings: []Subject{{ID: chartRaw, Kind: "HelmChart.source.toolkit.fluxcd.io", Name: "alpha: apps/chart"}},
+			wantText: "\n  ⚠ warnings (1)\n    HelmChart.source.toolkit.fluxcd.io alpha: apps/chart: captured\n\n" +
+				"  alpha: ✓ 0 failed\n\n  beta: ✓ 0 failed\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clone := func() Report {
+				r := tc.report
+				r.Groups = slices.Clone(r.Groups)
+				for i := range r.Groups {
+					r.Groups[i].Subjects = maps.Clone(r.Groups[i].Subjects)
+					r.Groups[i].Models = slices.Clone(r.Groups[i].Models)
+					for j := range r.Groups[i].Models {
+						r.Groups[i].Models[j].Subjects = maps.Clone(r.Groups[i].Models[j].Subjects)
+					}
+				}
+				r.Warnings = slices.Clone(r.Warnings)
+				for i := range r.Warnings {
+					r.Warnings[i].Warning.Detail = slices.Clone(r.Warnings[i].Warning.Detail)
+					r.Warnings[i].Warning.Related = slices.Clone(r.Warnings[i].Warning.Related)
+				}
+				return r
+			}
+			want := clone()
+			for i := range want.Groups {
+				want.Groups[i].Names = tc.wantNames[i]
+				for j := range want.Groups[i].Models {
+					want.Groups[i].Models[j].Names = tc.wantModels[i][j]
+				}
+			}
+			for i := range want.Warnings {
+				want.Warnings[i].Subject = tc.wantWarnings[i]
+				if want.Warnings[i].Group >= 0 && want.Warnings[i].Warning.Resource == (manifest.NamedResource{}) {
+					want.Warnings[i].prefix = tc.wantNames[want.Warnings[i].Group].Prefix
+				}
+			}
+			first, second := clone(), clone()
+			for _, report := range []*Report{&first, &second} {
+				assert.Diff(t, report.Prepare(tc.extra), tc.wantNames)
+				if diff := cmp.Diff(want, *report, cmp.AllowUnexported(Warning{})); diff != "" {
+					t.Errorf("prepared report (-want +got):\n%s", diff)
+				}
+				var out bytes.Buffer
+				encoder := Encoder{Writer: &out}
+				assert.NoError(t, encoder.Report(*report, encoder))
+				assert.Equal(t, out.String(), tc.wantText)
+			}
+			if diff := cmp.Diff(first, second, cmp.AllowUnexported(Warning{})); diff != "" {
+				t.Errorf("preparation is not deterministic (-first +second):\n%s", diff)
+			}
+		})
 	}
 }

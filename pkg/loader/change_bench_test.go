@@ -240,6 +240,21 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 	if len(slices.Collect(changes.Sources())) == 0 {
 		b.Fatal("supplier fixture has no one-sided inputs")
 	}
+	var observations [2]manifest.DiscoveryIndex
+	for source := range changes.Sources() {
+		if source == manifest.BootstrapSourceID {
+			continue
+		}
+		visible := manifest.InputVisibility{Source: source, Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {"inputs/optional.yaml"}}}
+		empty := visible
+		empty.Inputs = nil
+		observations[0].Visibility = append(observations[0].Visibility, visible)
+		observations[1].Visibility = append(observations[1].Visibility, empty)
+	}
+	changes, err = changes.WithReaders(b.Context(), &observations[0], &observations[1])
+	if err != nil {
+		b.Fatal(err)
+	}
 	return changes, stores[1], index, roots[1]
 }
 
@@ -296,14 +311,21 @@ func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 	testutil.WriteFile(b, root, "input.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: large, namespace: apps}\ndata:\n  value: "+strings.Repeat("x", 256*1024)+"\n")
 	input := os.DirFS(root)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "large"}
+	var set change.Set
 	b.ReportAllocs()
 	for b.Loop() {
-		var set change.Set
+		set = change.Set{}
 		if err := set.CollectInputs(b.Context(), input, "input.yaml", false); err != nil {
 			b.Fatal(err)
 		}
-		if _, ok := inputMap(&set)[id]; !ok || len(inputMap(&set)) != 1 {
-			b.Fatalf("collected inputs=%v", inputMap(&set))
-		}
+	}
+	visible := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"input.yaml"}}}}}
+	empty := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}}}
+	resolved, err := set.WithReaders(b.Context(), empty, visible)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, ok := inputMap(resolved)[id]; !ok || len(inputMap(resolved)) != 1 {
+		b.Fatalf("collected inputs=%v", inputMap(resolved))
 	}
 }

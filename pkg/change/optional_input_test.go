@@ -35,7 +35,7 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 	supplier := (&manifest.GitRepository{Name: "supplier", Namespace: "flux-system"}).Named()
 	for side, root := range roots {
 		stores[side] = store.New()
-		result, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: stores[side]})
+		result, err := discovery.Run(t.Context(), discovery.Config{Path: filepath.Join(root, "flux"), Store: stores[side], Selection: manifest.Selection{Changed: true}})
 		assert.NoError(t, err)
 		indexes[side] = result.Index
 		selected[side], _ = stores[side].GetArtifact(supplier, store.ArtifactContent).(*store.SourceArtifact)
@@ -52,9 +52,23 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "optional", Namespace: "flux-system"}
 	probe := store.New()
 	probe.SetArtifact(manifest.BootstrapSourceID, selected[0])
+	observations := [2]*manifest.DiscoveryIndex{}
+	for side, index := range indexes {
+		observations[side] = &manifest.DiscoveryIndex{}
+		for _, observation := range index.Visibility {
+			if observation.Source == supplier {
+				observation.Source = manifest.BootstrapSourceID
+				observations[side].Visibility = append(observations[side].Visibility, observation)
+			}
+		}
+	}
+	delta, err = delta.WithReaders(t.Context(), observations[0], observations[1])
+	assert.NoError(t, err)
 	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: delta, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), true)
 	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: bootstrap, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), false)
 	changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
+	assert.NoError(t, err)
+	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
 	assert.NoError(t, err)
 	for side, st := range stores {
 		filter := admissiontest.Filter(t, admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: st, Root: roots[side]})
@@ -107,7 +121,7 @@ data: {VALUE: available}
 			st := store.New()
 			discovered, err := discovery.Run(t.Context(), discovery.Config{
 				Input: inputs.Source, Path: inputs.ScanPath, Store: st,
-				SelfURLs: []string{"https://example.test/cluster.git"},
+				SelfURLs: []string{"https://example.test/cluster.git"}, Selection: manifest.Selection{Changed: true},
 			})
 			assert.NoError(t, err)
 			app := testutil.KustomizationID("flux-system", "app")
@@ -140,8 +154,8 @@ data: {VALUE: available}
 			if unchanged.ShouldReconcile(app) || unchanged.ShouldReconcile(cluster) {
 				t.Fatal("unchanged input selects app or cluster")
 			}
-			for side, source := range []*store.SourceArtifact{inputs.BaseInput, inputs.Source} {
-				filter, _ := optionalInputFilter(t, source, changes)
+			filters, _ := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
+			for side, filter := range filters {
 				if side == 1 && !filter.ShouldReconcile(input) {
 					t.Error("changed optional input was not selected")
 				}
@@ -213,7 +227,8 @@ func TestFilter_OptionalInputChanges(t *testing.T) {
 			assert.NoError(t, err)
 			changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
 			assert.NoError(t, err)
-			f, l := optionalInputFilter(t, inputs.Source, changes)
+			filters, loaders := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
+			f, l := filters[1], loaders[1]
 			index := l.Index
 			app := testutil.KustomizationID("flux-system", "app")
 			cluster := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}
@@ -289,10 +304,10 @@ func TestOptionalInput_PairedSides(t *testing.T) {
 					changes, err = change.Detect(t.Context(), pair[0], pair[1])
 					assert.NoError(t, err)
 				}
-				for _, side := range pair {
-					f, _ := optionalInputFilter(t, side, changes)
+				filters, _ := optionalInputFilters(t, pair, changes)
+				for _, f := range filters {
 					assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), tc.inputName == "optional")
-					assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("other", "other")), tc.projected)
+					assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("other", "other")), false)
 					assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}), tc.inputName == "optional")
 				}
 			}
@@ -316,18 +331,33 @@ func TestFilter_OrderingOnlySiblingExcluded(t *testing.T) {
 	assert.NoError(t, err)
 	changes, err := change.Detect(t.Context(), inputs.BaseInput, inputs.Source)
 	assert.NoError(t, err)
-	f, _ := optionalInputFilter(t, inputs.Source, changes)
+	filters, _ := optionalInputFilters(t, [2]*store.SourceArtifact{inputs.BaseInput, inputs.Source}, changes)
+	f := filters[1]
 	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "sibling")), true)
 	assert.Equal(t, f.ShouldReconcile(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "cluster"}), true)
 	assert.Equal(t, f.ShouldReconcile(testutil.KustomizationID("flux-system", "app")), false)
 }
 
-func optionalInputFilter(t *testing.T, input *store.SourceArtifact, changes *change.Set) (*change.Filter, *loader.Loader) {
+func optionalInputFilters(t *testing.T, inputs [2]*store.SourceArtifact, changes *change.Set) ([2]*change.Filter, [2]*loader.Loader) {
 	t.Helper()
-	st := store.New()
-	result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st, SelfURLs: []string{"https://example.test/cluster.git"}})
+	var stores [2]*store.Store
+	var indexes [2]*manifest.DiscoveryIndex
+	var filters [2]*change.Filter
+	var loaders [2]*loader.Loader
+	for side, input := range inputs {
+		st := store.New()
+		stores[side] = st
+		result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st, SelfURLs: []string{"https://example.test/cluster.git"}, Selection: manifest.Selection{Changed: true}})
+		assert.NoError(t, err)
+		indexes[side] = result.Index
+	}
+	var err error
+	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
 	assert.NoError(t, err)
-	l := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: result.Index, Inventory: st, Root: input.LocalPath})
-	admissiontest.Commit(t, l, nil)
-	return l.Options.Filter, l
+	for side, input := range inputs {
+		l := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: stores[side], Root: input.LocalPath})
+		admissiontest.Commit(t, l, nil)
+		filters[side], loaders[side] = l.Options.Filter, l
+	}
+	return filters, loaders
 }

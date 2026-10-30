@@ -67,6 +67,16 @@ type FileReader struct {
 	Materialize                 bool // The producer supplies another reader, not the changed content itself.
 }
 
+// InputVisibility records the visible physical inputs in one source load domain.
+// Inputs and their sorted contribution paths MUST remain immutable after publication.
+type InputVisibility struct {
+	Source   NamedResource
+	Root     string
+	Ignore   string
+	Complete bool
+	Inputs   map[NamedResource][]string
+}
+
 // DiscoveryIndex owns immutable discovery records, canonical claims and file readers.
 // Construction writes these maps directly before publication; queries never mutate them.
 type DiscoveryIndex struct {
@@ -74,6 +84,7 @@ type DiscoveryIndex struct {
 	Claims          map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
 	Readers         map[string][]FileReader           // Graph and declared source-input readers by file or missing directory.
 	CompleteSources map[NamedResource]bool            // Sources whose declared-object census completed without missing input.
+	Visibility      []InputVisibility                 // Completed and incomplete observations of physical input availability.
 }
 
 // Lookup returns the borrowed record for id and reports whether it exists.

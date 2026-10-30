@@ -943,14 +943,14 @@ func (c *admissionClosure) start(ctx context.Context, materializers func(materia
 			if !c.reverse(id, obj, ref) {
 				continue
 			}
-			if c.changedInput(id, ref.NamedResource) {
-				seeds = append(seeds, seed{target: ref.NamedResource, origin: id, generation: c.states[id].generation})
-			}
 			inputs, err := c.matchingInputs(ref, true)
 			if err != nil {
 				continue
 			}
 			for _, input := range inputs {
+				if c.changedInput(id, input) {
+					seeds = append(seeds, seed{target: input, origin: id, generation: c.states[id].generation})
+				}
 				link(input, id)
 			}
 		}
@@ -1500,10 +1500,12 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 			c.add(ref.NamedResource, admissionRole{needed: true, dirty: c.states[ref.NamedResource].changed})
 			if !ref.Ordering && (!wasNeeded || !ref.Optional && !ref.Acquisition && ref.ContentInput()) {
 				if _, indexed := c.loader.Index.Lookup(ref.NamedResource); !indexed && !c.loader.IsFileIndexed(ref.NamedResource) && c.object(ref.NamedResource) == nil && c.objects.GetArtifact(ref.NamedResource, store.ArtifactContent) == nil && c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index).Supplied == nil {
-					required := !ref.Optional && !ref.Acquisition && ref.ContentInput() && (ref.Use != "valuesFrom" || !slices.Contains(c.loader.Options.AllowMissingKinds, ref.Kind))
+					requiredContent := !ref.Optional && !ref.Acquisition && ref.ContentInput()
+					allowedMissing := ref.Use == "valuesFrom" && slices.Contains(c.loader.Options.AllowMissingKinds, ref.Kind)
+					required := requiredContent && !allowedMissing
 					if required {
 						input := values.NewInput(c.objects.ReferenceFacts(ref.NamedResource, c.loader.Index), id)
-						required = input.Data == nil && !input.AllowsAbsence()
+						required = input.Data == nil && !input.AllowsAbsence() && !c.changedInput(id, ref.NamedResource)
 					}
 					materializers(materializerDemand{target: ref.NamedResource, source: c.declarationSource(id), required: required}, id)
 				}
@@ -1823,19 +1825,25 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 	}
 	var inputs []manifest.NamedResource
 	target := ref.NamedResource
-	matches := func(id manifest.NamedResource, values map[string]string) {
+	matches := func(source, id manifest.NamedResource) {
 		if id.Group != target.Group || id.Kind != target.Kind || id.Namespace != target.Namespace || slices.Contains(inputs, id) {
 			return
 		}
-		matched := matcher.Matches(id, values)
+		object := c.object(id)
+		if object == nil {
+			object = c.loader.candidates[id].Obj
+		}
+		matched := false
+		if object != nil {
+			if labeled, ok := object.(interface{ GetLabels() map[string]string }); ok {
+				matched = matcher.Matches(id, labeled.GetLabels())
+			}
+		} else if occurrence := c.loader.locations[id]; occurrence.facts != nil {
+			matched = matcher.Matches(id, occurrence.facts.labels)
+		}
 		if !matched && reverse && c.loader.sideKnown {
-			source := c.source(id)
 			if _, _, paired := c.delta(source); paired {
-				object := c.object(id)
-				if object == nil {
-					object = c.loader.candidates[id].Obj
-				}
-				opposite := c.loader.Options.Changes.OppositeDeclaration(c.loader.side, source, object)
+				opposite := c.loader.Options.Changes.OppositeDeclaration(c.loader.side, source, id, object)
 				if labeled, ok := opposite.(interface{ GetLabels() map[string]string }); ok {
 					matched = matcher.Matches(id, labeled.GetLabels())
 				}
@@ -1846,10 +1854,8 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 		}
 	}
 	for _, object := range c.objects.ListObjects(ref.Group, ref.Kind) {
-		object = c.object(object.Named())
-		if labeled, ok := object.(interface{ GetLabels() map[string]string }); ok {
-			matches(object.Named(), labeled.GetLabels())
-		}
+		id := object.Named()
+		matches(c.source(id), id)
 	}
 	candidates := func(yield func(manifest.NamedResource) bool) {
 		for id := range c.loader.locations {
@@ -1867,26 +1873,22 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 		candidates = slices.Values(c.loader.inputObjects[ref.NamedResource])
 	}
 	for id := range candidates {
-		occurrence := c.loader.locations[id]
-		if id.Group != target.Group || id.Kind != target.Kind || id.Namespace != target.Namespace {
-			continue
-		}
-		if object := c.object(id); object != nil {
-			if labeled, ok := object.(interface{ GetLabels() map[string]string }); ok {
-				matches(id, labeled.GetLabels())
+		matches(c.source(id), id)
+	}
+	if reverse && c.loader.sideKnown {
+		for i := range c.comparisonSources().names {
+			evidence := c.bindSource(c.comparisons.names[i])
+			if !evidence.paired {
+				continue
 			}
-		} else if candidate := c.loader.candidates[id]; candidate.Obj != nil {
-			if labeled, ok := candidate.Obj.(interface{ GetLabels() map[string]string }); ok {
-				matches(id, labeled.GetLabels())
+			for id := range evidence.delta.Inputs(ref.NamedResource) {
+				matches(evidence.source, id)
 			}
-		} else if occurrence.facts != nil {
-			matches(id, occurrence.facts.labels)
 		}
 	}
 	if c.incoming.Obj != nil {
-		if labeled, ok := c.incoming.Obj.(interface{ GetLabels() map[string]string }); ok {
-			matches(c.incoming.Obj.Named(), labeled.GetLabels())
-		}
+		id := c.incoming.Obj.Named()
+		matches(c.source(id), id)
 	}
 	slices.SortFunc(inputs, manifest.NamedResource.Compare)
 	return inputs, nil

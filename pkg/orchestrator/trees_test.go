@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,7 +84,11 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 				{Reader: from, Source: manifest.BootstrapSourceID, Declaration: manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}, Exact: true},
 				{Reader: other, Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "other"}},
 			}
-			index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"removed.yaml": readers}}
+			physical := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "removed"}
+			visible := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{physical: {"removed.yaml"}}}
+			empty := visible
+			empty.Inputs = nil
+			index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"removed.yaml": readers}, Visibility: []manifest.InputVisibility{visible}}
 			projected := projectEntryReaders(index, discovery.Binding{Producer: from}, discovery.Binding{Producer: to})
 			assert.Diff(t, index.Readers["removed.yaml"], readers)
 			want := append([]manifest.FileReader{}, readers...)
@@ -92,8 +97,16 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 
 			changes := change.NewSet([]string{"removed.yaml"})
 			assert.NoError(t, changes.CollectInputs(t.Context(), fstest.MapFS{"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")}}, "removed.yaml", true))
-			paired, err := changes.WithReaders(t.Context(), projected, &manifest.DiscoveryIndex{})
+			opposite := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{empty}}
+			paired, err := changes.WithReaders(t.Context(), projected, opposite)
 			assert.NoError(t, err)
+			replaced := projectEntryReaders(index, discovery.Binding{Producer: from}, discovery.Binding{Producer: other})
+			current, err := paired.WithReaders(t.Context(), replaced, opposite)
+			assert.NoError(t, err)
+			assert.Diff(t, maps.Collect(current.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]change.InputChange{physical: {File: "removed.yaml"}, other: {File: "removed.yaml"}})
+			assert.Diff(t, maps.Collect(paired.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]change.InputChange{physical: {File: "removed.yaml"}, to: {File: "removed.yaml"}})
+			assert.Diff(t, projected.Visibility, index.Visibility)
+			assert.Diff(t, index.Visibility[0].Inputs[physical], []string{"removed.yaml"})
 			st := store.New()
 			local := &manifest.Kustomization{Name: to.Name, Namespace: to.Namespace}
 			st.AddObject(local)
@@ -1655,6 +1668,89 @@ func TestRenderTrees_EntryQualificationTransitions(t *testing.T) {
 					assert.Equal(t, string(body), string(previous))
 				}
 				previous = body
+			}
+		})
+	}
+}
+
+func TestRenderTrees_IgnoredSelectorInput(t *testing.T) {
+	t.Parallel()
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	consumer := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "consumer"}
+	nonmatching := consumer
+	nonmatching.Name = "nonmatching"
+	for side, root := range roots {
+		for _, name := range []string{"consumer", "nonmatching"} {
+			role := "selected"
+			if name == "nonmatching" {
+				role = "other"
+			}
+			testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name+"-owner", "apps", "  path: ./"+name+"\n"))
+			testutil.WriteFile(t, root, name+"/kustomization.yaml", "resources: [set.yaml]\n")
+			testutil.WriteFile(t, root, name+"/set.yaml", fmt.Sprintf(`apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: %s, namespace: apps}
+spec:
+  inputsFrom:
+    - kind: ResourceSetInputProvider
+      selector: {matchLabels: {role: %s}}
+  resourcesTemplate: |
+    << if inputs >>
+    apiVersion: v1
+    kind: ConfigMap
+    metadata: {name: %s-output, namespace: apps}
+    data: {value: '<< inputs.value >>'}
+    << end >>
+`, name, role, name))
+		}
+		testutil.WriteFile(t, root, "flux/input.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSetInputProvider\nmetadata: {name: input, namespace: apps, labels: {role: selected}}\nspec: {type: Static, defaultValues: {value: ready}}\n")
+		ignore := ""
+		if side == 1 {
+			ignore = "input.yaml\n"
+		}
+		testutil.WriteFile(t, root, "flux/.krmignore", ignore)
+	}
+	var fullResults [2]*Result
+	for side, root := range roots {
+		full, err := RenderTrees(t.Context(), []Tree{{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, RepoRoot: root, Path: filepath.Join(root, "flux")}}, Config{Concurrency: 2})
+		assert.NoError(t, err)
+		fullResults[side] = full[0].Result
+		assert.Equal(t, configMapNames(full[0].Result)["consumer-output"], side == 0)
+		assert.Equal(t, configMapNames(full[0].Result)["nonmatching-output"], false)
+	}
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
+			t.Parallel()
+			pair := roots
+			if reverse {
+				pair[0], pair[1] = pair[1], pair[0]
+			}
+			var trees []Tree
+			for side, root := range pair {
+				trees = append(trees, Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, RepoRoot: root, Path: filepath.Join(root, "flux")})
+			}
+			runs, err := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+			assert.NoError(t, err)
+			for side, run := range runs {
+				needed, selected, _, _ := run.filter.Membership(consumer)
+				t.Logf("selector visibility: side=%d needed=%t selected=%t output=%t", run.ID.Side, needed, selected, configMapNames(run.Result)["consumer-output"])
+				visible := side == 0 != reverse
+				assert.Equal(t, needed, true)
+				assert.Equal(t, selected, true)
+				assert.Equal(t, configMapNames(run.Result)["consumer-output"], visible)
+				owner := testutil.KustomizationID("apps", "consumer-owner")
+				fullSide := side
+				if reverse {
+					fullSide = 1 - side
+				}
+				oracle := outputByParent(fullResults[fullSide].Manifests)[owner]
+				actual := outputByParent(run.Result.Manifests)[owner]
+				assert.Diff(t, actual, oracle)
+				otherNeeded, otherSelected, otherDirty, _ := run.filter.Membership(nonmatching)
+				t.Logf("nonmatching declaration support: needed=%t selected=%t dirty=%t", otherNeeded, otherSelected, otherDirty)
+				assert.Equal(t, otherSelected, false)
+				assert.Equal(t, otherDirty, false)
+				assert.Equal(t, configMapNames(run.Result)["nonmatching-output"], false)
 			}
 		})
 	}

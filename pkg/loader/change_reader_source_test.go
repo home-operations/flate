@@ -2,7 +2,6 @@ package loader
 
 import (
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"maps"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -23,6 +23,7 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*sto
 	tb.Helper()
 	var stores [2]*store.Store
 	var roots [2]string
+	var indexes [2]*manifest.DiscoveryIndex
 	source := &manifest.GitRepository{Name: "supplier", Namespace: "infra"}
 	for side := range stores {
 		root := tb.TempDir()
@@ -41,8 +42,18 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*sto
 			files["inputs/optional.yaml"] = &fstest.MapFile{Data: fmt.Appendf(nil, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: optional, namespace: %q}\ndata: {VALUE: available}\n", namespace)}
 		}
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(root, ".supplier"), LocalRoot: root, Key: fmt.Sprint(side), Content: fmt.Sprint(side), FS: files})
+		observation := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true}
+		if side == 0 {
+			observation.Inputs = map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Namespace: namespace, Name: "optional"}: {"inputs/optional.yaml"}}
+		}
+		indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
+
 	}
 	changes, err := change.Qualify(tb.Context(), nil, stores[0], stores[1])
+	if err != nil {
+		tb.Fatal(err)
+	}
+	changes, err = changes.WithReaders(tb.Context(), indexes[0], indexes[1])
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -51,7 +62,7 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*sto
 
 func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"exact_removed", "deferred_consumer", "wrong_namespace", "unrelated_blank_namespace", "artifact_replaced", "declaration_replaced", "stale_bootstrap_alternative"} {
+	for _, mode := range []string{"exact_removed", "deferred_consumer", "wrong_namespace", "unrelated_blank_namespace", "artifact_replaced", "declaration_replaced", "stale_bootstrap_alternative", "foreign_duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			namespace := "apps"
@@ -63,6 +74,24 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 			}
 			changes, stores, roots, source := optionalSupplierPair(t, namespace)
 			input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: namespace, Name: "optional"}
+			if mode == "foreign_duplicate" {
+				foreign := &manifest.GitRepository{Name: "foreign", Namespace: "infra"}
+				var indexes [2]*manifest.DiscoveryIndex
+				for side, st := range stores {
+					st.AddObject(foreign)
+					st.SetArtifact(foreign.Named(), &store.SourceArtifact{LocalPath: filepath.Join(roots[side], ".foreign"), Content: "same", Key: "same", FS: fstest.MapFS{"inputs/optional.yaml": {Data: []byte("same")}}})
+					observation := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true}
+					if side == 0 {
+						observation.Inputs = map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}
+					}
+					indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation, {Source: foreign.Named(), Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}}}}
+				}
+				var err error
+				changes, err = change.Qualify(t.Context(), changes, stores[0], stores[1])
+				assert.NoError(t, err)
+				changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
+				assert.NoError(t, err)
+			}
 			assert.Equal(t, inputMap(sourceChanges(changes, source.Named()))[input], "inputs/optional.yaml")
 			assert.Equal(t, len(inputMap(changes)), 0)
 			assert.Equal(t, changes.Len(), 0)
@@ -79,6 +108,11 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 				}
 				var err error
 				changes, err = change.Qualify(t.Context(), nil, stores[0], stores[1])
+				assert.NoError(t, err)
+				before := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}}
+				after := before
+				after.Inputs = nil
+				changes, err = changes.WithReaders(t.Context(), &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{before}}, &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{after}})
 				assert.NoError(t, err)
 				for side, st := range stores {
 					st.SetArtifact(manifest.BootstrapSourceID, original[side].(*store.SourceArtifact))
@@ -104,7 +138,7 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 					st.AddObject(&replacement)
 				}
 				filter := newAdmission(t, admissionConfig{changes: changes, index: index, inventory: st, root: roots[side]})
-				want := mode == "exact_removed" || mode == "deferred_consumer" || mode == "stale_bootstrap_alternative"
+				want := mode == "exact_removed" || mode == "deferred_consumer" || mode == "stale_bootstrap_alternative" || mode == "foreign_duplicate"
 				if got := filter.ShouldReconcile(consumer.Named()); got != want {
 					t.Errorf("side %d consumer selected=%t, want %t: %v", side, got, want, filter.KeepNames())
 				}
@@ -144,8 +178,15 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 				indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					consumer.Named(): {File: "consumer.yaml", Productions: []manifest.Production{{Authored: consumer.Named(), Source: origin, File: "consumer.yaml"}}},
 				}}
+				observation := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}
+				if side == 1 {
+					observation.Inputs = map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Name: "settings"}: {"input.yaml"}}
+				}
+				indexes[side].Visibility = []manifest.InputVisibility{observation}
 			}
 			changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+			assert.NoError(t, err)
+			changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
 			assert.NoError(t, err)
 			for side, st := range stores {
 				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})

@@ -809,3 +809,42 @@ func TestRender_RootSecretOverridesProducerPlaceholder(t *testing.T) {
 	assert.Equal(t, input.StringData["VALUE"], "private-value")
 
 }
+
+func TestRenderTrees_IgnoredRequiredSubstitution(t *testing.T) {
+	t.Parallel()
+	roots := [2]string{t.TempDir(), t.TempDir()}
+	trees := make([]Tree, 2)
+	for side, root := range roots {
+		testutil.WriteFile(t, root, "flux/consumer.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: flux-system}\nspec:\n interval: 10m\n path: ./app\n sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n postBuild:\n  substituteFrom: [{kind: ConfigMap, name: vars}]\n")
+		testutil.WriteFile(t, root, "flux/vars.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: flux-system}\ndata:\n FLAG: old\n")
+		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumed, namespace: apps}\ndata:\n flag: ${FLAG}\n")
+		ignore := ""
+		if side == 1 {
+			ignore = "vars.yaml\n"
+		}
+		testutil.WriteFile(t, root, "flux/.krmignore", ignore)
+		trees[side] = Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, RepoRoot: root, Path: filepath.Join(root, "flux")}
+	}
+	runs, runErr := RenderTrees(t.Context(), trees, Config{Concurrency: 2})
+	if len(runs) != 2 {
+		t.Fatalf("runs=%v err=%v", runs, runErr)
+	}
+	consumer := testutil.KustomizationID("flux-system", "consumer")
+	selected, selectedErr, remainder := Select(runs, runErr, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+	for _, run := range runs {
+		needed, output, _, _ := run.filter.Membership(consumer)
+		status, present := run.Store().GetStatus(consumer)
+		t.Logf("side=%d needed=%t selected=%t status=%s present=%t rawFailure=%v selectedFailure=%v rawError=%v selectedError=%v", run.ID.Side, needed, output, status.Status, present, run.Result.Failed[consumer], selected[run.ID.Side].Failed[consumer], run.Err, selectedErr)
+		assert.Equal(t, needed, true)
+		assert.Equal(t, output, true)
+	}
+	assert.Equal(t, runs[1].Result.Failed[consumer].Status, store.StatusFailed)
+	assert.Equal(t, selected[1].Failed[consumer], runs[1].Result.Failed[consumer])
+	assert.Equal(t, len(outputByParent(runs[1].Result.Manifests)[consumer]), 0)
+	assert.Diff(t, selected[1].Blocked[consumer], []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "vars"}})
+	if !errors.Is(selectedErr, manifest.ErrFlux) {
+		t.Fatalf("selected failure lost: %v", selectedErr)
+	}
+	assert.NoError(t, remainder)
+}

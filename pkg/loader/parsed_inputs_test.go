@@ -1,9 +1,11 @@
 package loader
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
@@ -44,6 +46,9 @@ func TestParsedInputs_ContentAndAdmissionIsolation(t *testing.T) {
 		_, err := planner.Load(t.Context(), filepath.Join(root, side))
 		assert.NoError(t, err)
 	}
+	assert.Equal(t, planner.facts, (*ParsedInputs)(nil))
+	assert.NoError(t, planner.FinalizeIndex(t.Context(), root, false))
+	assert.Equal(t, len(planner.Index.Visibility), 0)
 	inputs := planner.ParsedInputs()
 	file := filepath.Join(root, "shared/objects.yaml")
 	snapshot := inputs.sources[root].documents[file]
@@ -246,4 +251,72 @@ func TestParsedInputs_CompactPhysicalFacts(t *testing.T) {
 	if _, ok := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "other"}); !ok {
 		t.Fatal("borrowed facts from another source view")
 	}
+
+	visibilityRoot := t.TempDir()
+	data := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\n")
+	original := &store.SourceArtifact{LocalPath: visibilityRoot, FS: fstest.MapFS{"left/a.yaml": {Data: data}, "right/b.yaml": {Data: data}}}
+	physical := newLoader(original, nil)
+	for _, dir := range []string{"left", "right"} {
+		_, err := physical.Load(t.Context(), filepath.Join(visibilityRoot, dir))
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, physical.FinalizeIndex(t.Context(), visibilityRoot, false))
+	observations := slices.Clone(physical.Index.Visibility)
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	assert.Equal(t, len(observations), 2)
+	for i, dir := range []string{"left", "right"} {
+		assert.Equal(t, observations[i].Complete, true)
+		assert.Equal(t, observations[i].Root, dir)
+		assert.Equal(t, len(observations[i].Inputs[id]), 1)
+	}
+	partial := newLoader(original, physical.ParsedInputs())
+	_, err = partial.Load(t.Context(), filepath.Join(visibilityRoot, "left"))
+	assert.NoError(t, err)
+	assert.NoError(t, partial.FinalizeIndex(t.Context(), visibilityRoot, false))
+	assert.Diff(t, partial.Index.Visibility, observations[:1])
+
+	canceled := newLoader(original, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = canceled.Load(ctx, filepath.Join(visibilityRoot, "left"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled load: %v", err)
+	}
+	assert.NoError(t, canceled.FinalizeIndex(t.Context(), visibilityRoot, false))
+	assert.Equal(t, len(canceled.Index.Visibility), 1)
+	assert.Equal(t, canceled.Index.Visibility[0].Complete, false)
+	incomplete := canceled.ParsedInputs()
+	canceledVisibility := slices.Clone(canceled.Index.Visibility)
+	recovered := newLoader(original, incomplete)
+	_, err = recovered.Load(t.Context(), filepath.Join(visibilityRoot, "left"))
+	assert.NoError(t, err)
+	assert.Equal(t, len(recovered.Index.Records), 1)
+	_, found := recovered.Index.Lookup(id)
+	assert.Equal(t, found, true)
+	assert.NoError(t, recovered.FinalizeIndex(t.Context(), visibilityRoot, false))
+	assert.Diff(t, recovered.Index.Visibility, observations[:1])
+	canceledFacts := incomplete.sources[visibilityRoot].loads[loadContext{path: filepath.Join(visibilityRoot, "left")}]
+	assert.Equal(t, canceledFacts.complete, false)
+	assert.Equal(t, canceledFacts.observed, true)
+	assert.Equal(t, len(canceledFacts.files), 0)
+	assert.Equal(t, len(canceledFacts.directories), 0)
+	assert.Diff(t, canceled.Index.Visibility, canceledVisibility)
+
+	replayed := newLoader(original, physical.ParsedInputs())
+	for _, dir := range []string{"left", "right"} {
+		_, err := replayed.Load(t.Context(), filepath.Join(visibilityRoot, dir))
+		assert.NoError(t, err)
+	}
+	assert.NoError(t, replayed.FinalizeIndex(t.Context(), visibilityRoot, false))
+	assert.Diff(t, replayed.Index.Visibility, observations)
+	replayed.Store.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: visibilityRoot, FS: fstest.MapFS{".krmignore": {Data: []byte("*.yaml\n")}, "hidden.yaml": {Data: data}}})
+	assert.NoError(t, replayed.FinalizeIndex(t.Context(), visibilityRoot, false))
+	assert.Equal(t, len(replayed.Index.Visibility), 0)
+	_, err = replayed.Load(t.Context(), visibilityRoot)
+	assert.NoError(t, err)
+	assert.NoError(t, replayed.FinalizeIndex(t.Context(), visibilityRoot, true))
+	assert.Diff(t, replayed.Index.Visibility, []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}})
+	assert.Diff(t, physical.Index.Visibility, observations)
+	assert.Diff(t, observations[0].Inputs[id], []string{"left/a.yaml"})
+	assert.Diff(t, observations[1].Inputs[id], []string{"right/b.yaml"})
 }

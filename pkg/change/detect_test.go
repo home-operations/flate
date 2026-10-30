@@ -444,9 +444,9 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 		{"multiple documents", "input.YML", cm + "---\n- noise\n---\n" + secret, false, []manifest.NamedResource{cmID, secretID}},
 		{"json", "input.JSON", `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"optional","namespace":"apps"}}`, false, []manifest.NamedResource{cmID}},
 		{"wrong suffix", "input.txt", cm, false, nil},
-		{"foreign group", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: foreign.test/v1", 1), false, nil},
-		{"noncanonical core", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: v2", 1), false, nil},
-		{"nondata", "input.yaml", strings.Replace(cm, "kind: ConfigMap", "kind: Pod", 1), false, nil},
+		{"foreign group", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: foreign.test/v1", 1), false, []manifest.NamedResource{{Group: "foreign.test", Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}}},
+		{"noncanonical core", "input.yaml", strings.Replace(cm, "apiVersion: v1", "apiVersion: v2", 1), false, []manifest.NamedResource{cmID}},
+		{"nondata", "input.yaml", strings.Replace(cm, "kind: ConfigMap", "kind: Pod", 1), false, []manifest.NamedResource{{Kind: "Pod", Namespace: "apps", Name: "optional"}}},
 		{"empty name", "input.yaml", strings.Replace(cm, "name: optional", "name: ''", 1), false, nil},
 		{"template name", "input.yaml", strings.Replace(cm, "name: optional", "name: '${NAME}'", 1), false, nil},
 		{"template namespace", "input.yaml", strings.Replace(cm, "namespace: apps", "namespace: '${NAMESPACE}'", 1), false, nil},
@@ -466,14 +466,12 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 			assert.NoError(t, err)
 			assert.Diff(t, set.Paths(), []string{tc.file})
-			var want map[manifest.NamedResource]InputChange
-			if len(tc.want) > 0 {
-				want = make(map[manifest.NamedResource]InputChange)
-				for _, id := range tc.want {
-					want[id] = InputChange{File: tc.file, Unbound: true}
-				}
+			side := 0
+			if tc.after {
+				side = 1
 			}
-			assert.Diff(t, set.inputs, want)
+			assert.Diff(t, slices.SortedFunc(maps.Keys(set.oneSided[side][tc.file]), manifest.NamedResource.Compare), tc.want)
+			assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
 		})
 	}
 }
@@ -761,15 +759,14 @@ func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 			assert.NoError(t, err)
 			assert.Equal(t, set.Contains("input.yaml"), ignored != "both")
-			var want map[manifest.NamedResource]InputChange
 			if ignored != "both" {
-				name := "after"
+				side, name := 1, "after"
 				if ignored == "after" {
-					name = "before"
+					side, name = 0, "before"
 				}
-				want = map[manifest.NamedResource]InputChange{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}: {File: "input.yaml", Unbound: true}}
+				assert.Diff(t, slices.SortedFunc(maps.Keys(set.oneSided[side]["input.yaml"]), manifest.NamedResource.Compare), []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}})
 			}
-			assert.Diff(t, set.inputs, want)
+			assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
 		})
 	}
 }
@@ -946,7 +943,7 @@ func TestCollectInputs_ReadResults(t *testing.T) {
 			err := set.CollectInputs(checked, input, "input.yaml", false)
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
-				assert.Diff(t, set.inputs, map[manifest.NamedResource]InputChange{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {File: "input.yaml", Unbound: true}})
+				assert.Diff(t, slices.SortedFunc(maps.Keys(set.oneSided[1]["input.yaml"]), manifest.NamedResource.Compare), []manifest.NamedResource{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}})
 			} else {
 				if !errors.Is(err, tc.wantErr) || len(set.inputs) != 0 {
 					t.Fatalf("collected inputs=%v error=%v", set.inputs, err)
@@ -1171,7 +1168,7 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 	assert.NoError(t, err)
 	for side, reader := range readers {
 		reader.opens.Store(0)
-		declared, _, err := collectInput(t.Context(), reader, "changed.yaml", true)
+		declared, err := collectInput(t.Context(), reader, "changed.yaml")
 		assert.NoError(t, err)
 		record := indexes[side].Records[changed]
 		record.Declared = declared[changed]
@@ -1192,4 +1189,167 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("WithReaders error = %v, want canceled", err)
 	}
+}
+
+func TestSet_InputVisibilityAvailability(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	foreign := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "other"}
+	empty := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}
+	visible := empty
+	visible.Inputs = map[manifest.NamedResource][]string{id: {"z.yaml", "a.yaml"}}
+	incomplete := visible
+	incomplete.Complete = false
+	moved := visible
+	moved.Root = "other"
+	otherEmpty := empty
+	otherEmpty.Root = "other"
+	otherSource := visible
+	otherSource.Source = foreign
+	for _, tc := range []struct {
+		name          string
+		before, after []manifest.InputVisibility
+		want          bool
+	}{
+		{"hidden", []manifest.InputVisibility{visible}, []manifest.InputVisibility{empty}, true},
+		{"revealed", []manifest.InputVisibility{empty}, []manifest.InputVisibility{visible}, true},
+		{"unchanged", []manifest.InputVisibility{visible}, []manifest.InputVisibility{visible}, false},
+		{"missing", []manifest.InputVisibility{visible}, nil, false},
+		{"incomplete_absence", []manifest.InputVisibility{visible}, []manifest.InputVisibility{incomplete}, false},
+		{"incomplete_contribution", []manifest.InputVisibility{incomplete}, []manifest.InputVisibility{empty}, false},
+		{"completed_empty", []manifest.InputVisibility{empty}, []manifest.InputVisibility{empty}, false},
+		{"domain_move", []manifest.InputVisibility{visible, otherEmpty}, []manifest.InputVisibility{empty, moved}, false},
+		{"unmatched_domain", []manifest.InputVisibility{visible, otherEmpty}, []manifest.InputVisibility{empty}, false},
+		{"available_with_incomplete_domain", []manifest.InputVisibility{visible, {Source: manifest.BootstrapSourceID, Root: "other"}}, []manifest.InputVisibility{empty, otherEmpty}, true},
+		{"foreign_duplicate", []manifest.InputVisibility{visible, otherSource}, []manifest.InputVisibility{empty, otherSource}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			set := NewSet([]string{".krmignore"})
+			indexes := [2]*manifest.DiscoveryIndex{{Visibility: tc.before}, {Visibility: tc.after}}
+			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
+			want := map[manifest.NamedResource]InputChange{}
+			if tc.want {
+				want[id] = InputChange{File: "a.yaml", Unbound: true}
+			}
+			assert.Diff(t, maps.Collect(resolved.Inputs(manifest.NamedResource{})), want)
+			assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
+			assert.Diff(t, resolved.Paths(), []string{".krmignore"})
+		})
+	}
+}
+
+func TestSet_WithReadersRequalification(t *testing.T) {
+	t.Parallel()
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	oldReader := testutil.KustomizationID("apps", "old")
+	newReader := testutil.KustomizationID("apps", "new")
+	set := NewSet([]string{"removed.yaml"})
+	assert.NoError(t, set.CollectInputs(t.Context(), fstest.MapFS{"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\n")}}, "removed.yaml", true))
+	visible := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{input: {"removed.yaml"}}}
+	empty := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}
+	before := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{visible}, Readers: map[string][]manifest.FileReader{"removed.yaml": {{Reader: oldReader, Source: manifest.BootstrapSourceID}}}}
+	after := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{empty}}
+	first, err := set.WithReaders(t.Context(), before, after)
+	assert.NoError(t, err)
+	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}})
+	next := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{visible}, Readers: map[string][]manifest.FileReader{"removed.yaml": {{Reader: newReader, Source: manifest.BootstrapSourceID}}}}
+	second, err := first.WithReaders(t.Context(), next, next)
+	assert.NoError(t, err)
+	assert.Diff(t, maps.Collect(second.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{newReader: {File: "removed.yaml"}})
+	fresh, err := set.WithReaders(t.Context(), next, next)
+	assert.NoError(t, err)
+	assert.Diff(t, maps.Collect(second.Inputs(manifest.NamedResource{})), maps.Collect(fresh.Inputs(manifest.NamedResource{})))
+	repeated, err := second.WithReaders(t.Context(), next, next)
+	assert.NoError(t, err)
+	assert.Diff(t, maps.Collect(repeated.Inputs(manifest.NamedResource{})), maps.Collect(second.Inputs(manifest.NamedResource{})))
+	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}})
+	assert.Equal(t, before.Readers["removed.yaml"][0].Reader, oldReader)
+	assert.Diff(t, before.Visibility[0].Inputs[input], []string{"removed.yaml"})
+	frozen, err := first.WithDeclarations(t.Context(), nil, nil, [2]map[manifest.NamedResource]store.Child{})
+	assert.NoError(t, err)
+	qualified, err := frozen.WithReaders(t.Context(), next, next)
+	assert.NoError(t, err)
+	assert.Diff(t, maps.Collect(qualified.Inputs(manifest.NamedResource{})), maps.Collect(second.Inputs(manifest.NamedResource{})))
+}
+
+func TestSet_InputVisibilityDuplicateSourcePolicy(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	foreign := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "foreign"}
+	for _, reverse := range []bool{false, true} {
+		for _, last := range []bool{false, true} {
+			t.Run(fmt.Sprintf("reverse=%t/last=%t", reverse, last), func(t *testing.T) {
+				t.Parallel()
+				body := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\n")
+				before := fstest.MapFS{"a/input.yaml": {Data: body}, "b/input.yaml": {Data: body}, ".sourceignore": {}}
+				after := maps.Clone(before)
+				ignore := "a/input.yaml\n"
+				if last {
+					ignore += "b/input.yaml\n"
+				}
+				after[".sourceignore"] = &fstest.MapFile{Data: []byte(ignore)}
+				left := []manifest.InputVisibility{
+					{Source: manifest.BootstrapSourceID, Root: "a", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"a/input.yaml"}}},
+					{Source: manifest.BootstrapSourceID, Root: "b", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"b/input.yaml"}}},
+					{Source: foreign, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"foreign.yaml"}}},
+				}
+				right := slices.Clone(left)
+				right[0].Inputs = nil
+				if last {
+					right[1].Inputs = nil
+				}
+				if reverse {
+					before, after, left, right = after, before, right, left
+				}
+				set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
+				assert.NoError(t, err)
+				assert.Equal(t, set.Contains("a/input.yaml"), true)
+				assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
+				resolved, err := set.WithReaders(t.Context(), &manifest.DiscoveryIndex{Visibility: left}, &manifest.DiscoveryIndex{Visibility: right})
+				assert.NoError(t, err)
+				want := map[manifest.NamedResource]InputChange{}
+				if last {
+					want[id] = InputChange{File: "a/input.yaml", Unbound: true}
+				}
+				assert.Diff(t, maps.Collect(resolved.Inputs(manifest.NamedResource{})), want)
+			})
+		}
+	}
+}
+
+func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	var stores [2]*store.Store
+	for side := range stores {
+		stores[side] = store.New()
+		files := fstest.MapFS{".sourceignore": {}}
+		if side == 0 {
+			files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\n")}
+		}
+		stores[side].SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
+	}
+	raw, err := Qualify(t.Context(), nil, stores[0], stores[1])
+	assert.NoError(t, err)
+	before := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"input.yaml"}}}}}
+	after := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}}}
+	first, err := raw.WithReaders(t.Context(), before, after)
+	assert.NoError(t, err)
+	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}})
+	reused, err := Qualify(t.Context(), first, stores[0], stores[1])
+	assert.NoError(t, err)
+	current, err := reused.WithReaders(t.Context(), after, after)
+	assert.NoError(t, err)
+	assert.Diff(t, maps.Collect(current.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{})
+	for _, st := range stores {
+		st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{"unchanged.txt": {Data: []byte("same")}}})
+	}
+	replaced, err := Qualify(t.Context(), first, stores[0], stores[1])
+	assert.NoError(t, err)
+	assert.Equal(t, replaced.Len(), 0)
+	assert.Equal(t, len(replaced.oneSided[0])+len(replaced.oneSided[1]), 0)
+	assert.Equal(t, len(maps.Collect(replaced.Inputs(manifest.NamedResource{}))), 0)
+	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}})
 }

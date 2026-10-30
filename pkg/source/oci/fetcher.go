@@ -26,9 +26,11 @@ type Fetcher struct {
 
 type operation struct {
 	*Fetcher
-	reads      *store.ReadSet
-	secrets    source.SecretGetter
-	mediaTypes []string
+	reads                *store.ReadSet
+	secrets              source.SecretGetter
+	mediaTypes           []string
+	allowAnonymousDenied bool
+	produce              func(context.Context, registryAcquisition, cache.Policy) (*store.SourceArtifact, error)
 }
 
 // Fetch acquires content using one execution's captured credentials and declarations.
@@ -49,16 +51,8 @@ func (f *Fetcher) FetchChart(ctx context.Context, repo *manifest.OCIRepository, 
 }
 
 func (f *operation) fetchSource(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	f.produce = func(ctx context.Context, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+		return f.fetchLayer(ctx, repo, request, policy)
 	}
-	if f.secrets != nil {
-		for _, ref := range []*manifest.LocalObjectReference{repo.SecretRef, repo.CertSecretRef, repo.ProxySecretRef} {
-			if ref != nil {
-				f.secrets(repo.Namespace, ref.Name)
-			}
-		}
-	}
-
-	return f.fetchWithCredentials(ctx, repo, policy)
+	return f.acquire(ctx, repo.RegistryAccess(), policy)
 }

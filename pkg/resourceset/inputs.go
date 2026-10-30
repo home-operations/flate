@@ -7,15 +7,30 @@ import (
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-type providerContent struct {
-	ID     manifest.NamedResource
-	Type   string
-	Inputs []map[string]any
+// ProviderInputState distinguishes evaluated content from unavailable inputs.
+type ProviderInputState uint8
+
+const (
+	// ProviderInputEvaluated includes a successful empty evaluation.
+	ProviderInputEvaluated ProviderInputState = iota
+	// ProviderInputUnsupported identifies a provider requiring an unsupported remote API.
+	ProviderInputUnsupported
+	// ProviderInputUnavailable identifies unavailable credential material.
+	ProviderInputUnavailable
+)
+
+// ProviderInputs contains captured, evaluated inputs for one provider.
+type ProviderInputs struct {
+	// Declaration is the captured provider before evaluation and is excluded from content identity.
+	Declaration *manifest.ResourceSetInputProvider `json:"-"`
+	ID          manifest.NamedResource
+	Type        string
+	State       ProviderInputState
+	Inputs      []map[string]any
 }
 
 type providerInputs struct {
@@ -27,7 +42,7 @@ func isPermute(rs *manifest.ResourceSet) bool {
 	return rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute
 }
 
-func buildInputSets(rs *manifest.ResourceSet, providers []providerContent) ([]map[string]any, error) {
+func buildInputSets(rs *manifest.ResourceSet, providers []ProviderInputs) ([]map[string]any, error) {
 	groups := make([]providerInputs, 0, 1+len(providers))
 	inlineProv := providerBlock(manifest.KindResourceSet, rs.Name, rs.Namespace)
 	inline := make([]map[string]any, 0, len(rs.Inputs))
@@ -38,7 +53,10 @@ func buildInputSets(rs *manifest.ResourceSet, providers []providerContent) ([]ma
 	}
 	groups = append(groups, providerInputs{name: rs.Name, inputs: inline})
 	for _, p := range providers {
-		exported := p.Inputs
+		exported := make([]map[string]any, 0, len(p.Inputs))
+		for _, input := range p.Inputs {
+			exported = append(exported, manifest.DeepCopyMap(input))
+		}
 		provBlock := providerBlock(p.ID.Kind, p.ID.Name, p.ID.Namespace)
 		for _, set := range exported {
 			set["provider"] = provBlock
@@ -60,7 +78,8 @@ func buildInputSets(rs *manifest.ResourceSet, providers []providerContent) ([]ma
 	return out, nil
 }
 
-func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) ([]providerContent, error) {
+// CollectProviders resolves unique provider declarations in canonical order.
+func CollectProviders(rs *manifest.ResourceSet, resolve ProviderResolver) ([]ProviderInputs, error) {
 	if resolve == nil || len(rs.InputsFrom) == 0 {
 		return nil, nil
 	}
@@ -84,21 +103,11 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 			}
 		}
 	}
-	var content []providerContent
-	for id := range providers {
-		content = append(content, providerContent{ID: id})
+	content := make([]ProviderInputs, 0, len(providers))
+	for _, provider := range providers {
+		content = append(content, ProviderInputs{Declaration: provider, ID: provider.Named(), Type: provider.Type})
 	}
-	slices.SortFunc(content, func(a, b providerContent) int {
-		return a.ID.Compare(b.ID)
-	})
-	for i := range content {
-		p := providers[content[i].ID]
-		inputs, err := p.ExportedInputs()
-		if err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("ResourceSetInputProvider %s: %w", p.Named().NamespacedName(), err), "")
-		}
-		content[i].Type, content[i].Inputs = p.Type, inputs
-	}
+	slices.SortFunc(content, func(a, b ProviderInputs) int { return a.ID.Compare(b.ID) })
 	return content, nil
 }
 
@@ -139,12 +148,16 @@ type providerReader interface {
 // References MUST remain immutable, and the resolver MUST be used sequentially.
 func StoreResolver(s providerReader) ProviderResolver {
 	type compilation struct {
-		selector labels.Selector
-		err      error
+		matcher manifest.ReferenceMatcher
+		err     error
 	}
-	var firstSelector *metav1.LabelSelector
+	type query struct {
+		id       manifest.NamedResource
+		selector *metav1.LabelSelector
+	}
+	var firstQuery query
 	var firstCompilation compilation
-	var selectors map[*metav1.LabelSelector]compilation
+	var selectors map[query]compilation
 	return func(ref fluxopv1.InputProviderReference, id manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		if id.Name != "" {
 			obj, ok := s.GetObject(id).(*manifest.ResourceSetInputProvider)
@@ -156,19 +169,20 @@ func StoreResolver(s providerReader) ProviderResolver {
 		if ref.Selector == nil {
 			return nil, nil
 		}
+		key := query{id: id, selector: ref.Selector}
 		compiled := firstCompilation
-		if ref.Selector != firstSelector {
+		if key != firstQuery {
 			var ok bool
-			compiled, ok = selectors[ref.Selector]
+			compiled, ok = selectors[key]
 			if !ok {
-				compiled.selector, compiled.err = metav1.LabelSelectorAsSelector(ref.Selector)
-				if firstSelector == nil {
-					firstSelector, firstCompilation = ref.Selector, compiled
+				compiled.matcher, compiled.err = id.Matcher(ref.Selector)
+				if firstQuery.selector == nil {
+					firstQuery, firstCompilation = key, compiled
 				} else {
 					if selectors == nil {
-						selectors = make(map[*metav1.LabelSelector]compilation)
+						selectors = make(map[query]compilation)
 					}
-					selectors[ref.Selector] = compiled
+					selectors[key] = compiled
 				}
 			}
 		}
@@ -178,7 +192,7 @@ func StoreResolver(s providerReader) ProviderResolver {
 		var out []*manifest.ResourceSetInputProvider
 		for _, object := range s.ListObjects(id.Group, id.Kind) {
 			p, ok := object.(*manifest.ResourceSetInputProvider)
-			if ok && p.Namespace == id.Namespace && compiled.selector.Matches(labels.Set(p.Labels)) {
+			if ok && compiled.matcher.Matches(p.Named(), p.Labels) {
 				out = append(out, p)
 			}
 		}

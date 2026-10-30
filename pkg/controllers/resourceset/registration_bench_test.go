@@ -164,7 +164,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 							defer execution.run.Close()
 							resolve := resourceset.StoreResolver(s)
 							var fp string
-							docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
+							docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
 								var err error
 								fp, _, err = execution.run.FingerprintDedup(b.Context(), rs.Named(), content, &store.Emission{})
 								return false, err
@@ -286,7 +286,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	}
 	replay := c.newExecution(rs.Named())
 	defer replay.run.Close()
-	if _, _, err := resourceset.Render(rs, resourceset.StoreResolver(&replay.run.Reads), func(content any) (bool, error) {
+	if _, _, err := renderProviders(rs, resourceset.StoreResolver(&replay.run.Reads), func(content any) (bool, error) {
 		if manifest.Fingerprint(content) != initial.Fingerprint {
 			t.Fatal("metadata refresh changed the rendered input projection")
 		}

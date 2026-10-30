@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -25,8 +24,6 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 	"github.com/home-operations/flate/pkg/values"
 )
-
-var errUncacheableRender = errors.New("uncacheable kustomize render")
 
 // RenderRequest carries the authoritative source and its mount label. Label is
 // metadata and need not name an existing host path.
@@ -186,7 +183,8 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 				return sourcecache.ProducerResult{}, err
 			}
 			if manifest.DocumentFailure(docs) != nil {
-				return sourcecache.ProducerResult{}, errUncacheableRender
+				// Incomplete renders MUST fail frame validation to preserve each caller's local output.
+				return sourcecache.ProducerResult{}, nil
 			}
 			payload, err := manifest.EncodeRender(docs)
 			if err != nil {
@@ -203,9 +201,6 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		req.HeldSlot.YieldSlot(acquire)
 	} else {
 		acquire()
-	}
-	if errors.Is(err, errUncacheableRender) {
-		return docs, nil, nil
 	}
 	if err != nil {
 		return nil, nil, err

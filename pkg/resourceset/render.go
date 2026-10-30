@@ -8,10 +8,7 @@
 //
 // Supported:
 //   - spec.inputs (in-YAML inline inputs)
-//   - spec.inputsFrom (ResourceSetInputProvider, Static type) — resolved
-//     via the ProviderResolver passed to Render. Dynamic providers
-//     (GitHubBranch, OCIArtifactTag, ExternalService, …) need network
-//     access flate doesn't have and contribute zero input sets.
+//   - spec.inputsFrom with captured provider inputs evaluated before rendering.
 //   - spec.inputStrategy: Flatten (default) AND Permute. Permute
 //     Cartesian-products inputs across providers and scopes each
 //     under its normalized name; templates access values via
@@ -53,8 +50,8 @@ type ProviderResolver func(ref fluxopv1.InputProviderReference, id manifest.Name
 // Controller metadata belongs to the shared emission operation.
 // Referenced providers with no combined inputs produce no resources.
 // admit receives borrowed canonical content before matrix/template work; true skips rendering.
-// resolve is optional and supplies providers referenced by spec.inputsFrom.
-func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) (bool, error)) ([]manifest.DocOccurrence, []manifest.Warning, error) {
+// providers contains evaluated input records in canonical order.
+func Render(rs *manifest.ResourceSet, providers []ProviderInputs, admit func(any) (bool, error)) ([]manifest.DocOccurrence, []manifest.Warning, error) {
 	if rs == nil {
 		return nil, nil, nil
 	}
@@ -66,13 +63,9 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 			return nil, nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("step %q: at least one of resources or resourcesTemplate must be set", step.Name))
 		}
 	}
-	providers, err := collectProviderInputs(rs, resolve)
-	if err != nil {
-		return nil, nil, err
-	}
 	var warnings []manifest.Warning
 	for _, provider := range providers {
-		if provider.Inputs == nil && provider.Type != "" && provider.Type != fluxopv1.InputProviderStatic {
+		if provider.State == ProviderInputUnsupported {
 			warnings = append(warnings, manifest.Warning{Resource: rs.Named(), Category: manifest.WarnOfflineInputProvider,
 				Message: "dynamic input provider contributes no inputs offline", Detail: []string{provider.ID.String(), provider.Type}})
 		}
@@ -82,7 +75,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 			Name      string
 			Namespace string
 			Spec      *fluxopv1.ResourceSetSpec
-			Providers []providerContent
+			Providers []ProviderInputs
 		}{rs.Name, rs.Namespace, &rs.ResourceSetSpec, providers})
 		if handled || err != nil {
 			return nil, warnings, err

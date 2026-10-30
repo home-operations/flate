@@ -319,6 +319,9 @@ func (o *Orchestrator) completeBootstrap() {
 		o.store.UpdateStatus(o.entryBinding.Producer, store.StatusInfo{Status: store.StatusFailed, Message: o.entryBinding.Failure.Error()})
 	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
+	o.rsc.Inputs = ociFetcher
+	o.rsc.Retry = o.cfg.SourceRetry
+	o.rsc.AllowMissingSecrets = slices.Contains(o.cfg.AllowMissingKinds, manifest.KindSecret)
 	for kind, f := range map[string]source.Fetcher{
 		manifest.KindBucket: source.Wrap(manifest.KindBucket,
 			&bucket.Fetcher{Cache: o.cache, Network: o.cfg.Network}),

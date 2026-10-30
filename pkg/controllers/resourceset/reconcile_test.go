@@ -104,7 +104,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 					return
 				}
 				_, _, attempt := runState.run.Reads.GetEmission(id)
-				docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&runState.run.Reads), func(content any) (bool, error) {
+				docs, warnings, err := renderProviders(rs, resourceset.StoreResolver(&runState.run.Reads), func(content any) (bool, error) {
 					fp, hit, err := runState.run.FingerprintDedup(t.Context(), id, content, &store.Emission{})
 					if hit || err != nil {
 						return hit, err

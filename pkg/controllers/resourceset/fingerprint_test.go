@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -254,11 +255,30 @@ func renderWithAdmission(rs *manifest.ResourceSet, resolve resourceset.ProviderR
 	run := controllertest.NewExecution(c, rs.Named())
 	defer run.Close()
 	var fp string
-	docs, _, err := resourceset.Render(rs, resolve, func(content any) (bool, error) {
+	docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
 		var hit bool
 		var err error
 		fp, hit, err = run.FingerprintDedup(context.TODO(), rs.Named(), content, &store.Emission{})
 		return hit, err
 	})
 	return testutil.DocumentMaps(docs), fp, err
+}
+
+func renderProviders(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver, admit func(any) (bool, error)) ([]manifest.DocOccurrence, []manifest.Warning, error) {
+	inputs, err := resourceset.CollectProviders(rs, resolve)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range inputs {
+		input := &inputs[i]
+		plan, err := input.Declaration.InputPlan()
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
+		}
+		input.Inputs = plan.Inputs
+		if plan.Kind == manifest.ProviderInputUnsupported {
+			input.State = resourceset.ProviderInputUnsupported
+		}
+	}
+	return resourceset.Render(rs, inputs, admit)
 }

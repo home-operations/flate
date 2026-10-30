@@ -833,11 +833,7 @@ func TestBlob_RenderValidation(t *testing.T) {
 				close(release)
 				wg.Wait()
 				assert.Equal(t, calls.Load(), int64(2))
-				wantValidations := int64(4)
-				if backing == "identified disk due" {
-					wantValidations = 5
-				}
-				assert.Equal(t, validations.Load(), wantValidations)
+				assert.Equal(t, validations.Load(), int64(5))
 				run(func() string { return "new" }, false)
 				assert.Equal(t, calls.Load(), int64(2))
 				failure := errors.New("caller validation failed")
@@ -1553,6 +1549,80 @@ func TestRenderMetadata_CurrentDirectory(t *testing.T) {
 			}
 			if name == "canceled" && !errors.Is(err, context.Canceled) {
 				t.Fatalf("metadata failure lost cancellation: %v", err)
+			}
+		})
+	}
+}
+
+func TestBlob_AcquisitionWaves(t *testing.T) {
+	t.Parallel()
+	for _, backing := range []string{"memory", "disk"} {
+		t.Run(backing, func(t *testing.T) {
+			t.Parallel()
+			for _, failed := range []bool{false, true} {
+				t.Run(fmt.Sprint(failed), func(t *testing.T) {
+					t.Parallel()
+					root := ""
+					if backing == "disk" {
+						root = t.TempDir()
+					}
+					c := cachetest.New(t, root, New)
+					synctest.Test(t, func(t *testing.T) {
+						entered, release := make(chan struct{}), make(chan struct{})
+						var calls atomic.Int64
+						cause := errors.New("acquisition failure")
+						produce := func(_ context.Context, w ProducerInput) (ProducerResult, error) {
+							call := calls.Add(1)
+							if call == 1 {
+								close(entered)
+								<-release
+							}
+							if failed {
+								return ProducerResult{}, cause
+							}
+							_, err := fmt.Fprint(w, call)
+							return ProducerResult{}, err
+						}
+						key := BlobKey{Content: "acquisition-wave"}
+						var generations [2]fs.FS
+						var failures [2]error
+						var wg sync.WaitGroup
+						wg.Go(func() { generations[0], _, _, failures[0] = c.Blob(t.Context(), key, Policy{}, produce) })
+						<-entered
+						wg.Go(func() { generations[1], _, _, failures[1] = c.Blob(t.Context(), key, Policy{}, produce) })
+						synctest.Wait()
+						close(release)
+						wg.Wait()
+						assert.Equal(t, calls.Load(), int64(1))
+						for i, generation := range generations {
+							if failed {
+								if generation != nil || !errors.Is(failures[i], cause) {
+									t.Fatalf("caller %d: generation=%v error=%v", i, generation, failures[i])
+								}
+								continue
+							}
+							assert.NoError(t, failures[i])
+							body, err := fs.ReadFile(generation, "content")
+							assert.NoError(t, err)
+							assert.Equal(t, string(body), "1")
+						}
+						generation, _, _, err := c.Blob(t.Context(), key, Policy{}, produce)
+						assert.Equal(t, calls.Load(), int64(2))
+						if failed {
+							if generation != nil || !errors.Is(err, cause) {
+								t.Fatalf("later caller: generation=%v error=%v", generation, err)
+							}
+							return
+						}
+						assert.NoError(t, err)
+						body, err := fs.ReadFile(generation, "content")
+						assert.NoError(t, err)
+						assert.Equal(t, string(body), "2")
+						body, err = fs.ReadFile(generations[0], "content")
+						assert.NoError(t, err)
+						assert.Equal(t, string(body), "1")
+					})
+				})
 			}
 		})
 	}

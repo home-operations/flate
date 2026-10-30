@@ -22,6 +22,10 @@ type MissingSecretError struct {
 	Secret manifest.NamedResource
 	// Detail is the human reason ("not found", "missing username/password").
 	Detail string
+	// AnonymousDenied records a typed registry denial after no credential was selected.
+	AnonymousDenied bool
+	// Cause preserves the acquisition owner's typed failure.
+	Cause error
 	// RetryAmbient attempts the acquisition owner's eligible ambient credentials.
 	RetryAmbient func(context.Context) (*store.SourceArtifact, error)
 }
@@ -35,7 +39,12 @@ func (e *MissingSecretError) Error() string {
 }
 
 // Unwrap keeps errors.Is(err, manifest.ErrMissingSecret) working.
-func (e *MissingSecretError) Unwrap() error { return manifest.ErrMissingSecret }
+func (e *MissingSecretError) Unwrap() error {
+	if e.Cause != nil {
+		return errors.Join(manifest.ErrMissingSecret, e.Cause)
+	}
+	return manifest.ErrMissingSecret
+}
 
 // ProducerBacked reports whether captured declarations can supply the missing Secret.
 func (e *MissingSecretError) ProducerBacked(reads *store.ReadSet) bool {
@@ -59,6 +68,9 @@ func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.Read
 	}
 	artifact, err := e.RetryAmbient(ctx)
 	if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if missing, ok := errors.AsType[*MissingSecretError](err); ok && missing.AnonymousDenied && e.Secret == (manifest.NamedResource{}) {
+			return artifact, err
+		}
 		return artifact, e
 	}
 	return artifact, err

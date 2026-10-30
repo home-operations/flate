@@ -557,7 +557,7 @@ func TestReconcile_WarningsBeforeExit(t *testing.T) {
 			s.AddObjects([]manifest.BaseManifest{rs, provider})
 			s.UpdateStatus(provider.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			if hit {
-				_, _, err := resourceset.Render(rs, resourceset.StoreResolver(s), func(content any) (bool, error) {
+				_, _, err := renderProviders(rs, resourceset.StoreResolver(s), func(content any) (bool, error) {
 					s.RecordEmitted(rs.Named(), &store.Emission{Fingerprint: manifest.Fingerprint(content), Complete: true}, nil)
 					return true, nil
 				})

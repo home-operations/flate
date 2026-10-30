@@ -1,7 +1,6 @@
 package oci
 
 import (
-	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -258,7 +257,7 @@ func TestResolveRef_SemverPrecedence(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 			repo := &manifest.OCIRepository{URL: "oci://" + strings.TrimPrefix(srv.URL, "http://") + "/chart"}
-			request, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo, sourcecache.Policy{})
+			request, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(t.Context(), repo.RegistryAccess())
 			if err != nil {
 				t.Fatal(err)
 			}

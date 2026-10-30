@@ -41,6 +41,28 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 	slices.Sort(names)
 	assert.Diff(t, names, []string{"app", "chosen"})
 
+	t.Run("compact records", func(t *testing.T) {
+		t.Parallel()
+		st := store.New()
+		l := New(st)
+		l.locations = map[manifest.NamedResource]Occurrence{}
+		for _, name := range []string{"z", "a"} {
+			provider := &manifest.ResourceSetInputProvider{Name: name, Labels: map[string]string{"app": "selected"}}
+			occurrence := compactOccurrence(provider)
+			occurrence.Identity.Namespace = "apps"
+			l.locations[occurrence.Identity] = occurrence
+		}
+		query := manifest.Reference{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}}
+		closure := admissionClosure{loader: l, objects: st}
+		got, err := closure.matchingInputs(query, false)
+		assert.NoError(t, err)
+		assert.Diff(t, got, []manifest.NamedResource{
+			{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "a"},
+			{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "z"},
+		})
+		assert.Equal(t, len(st.Objects()), 0)
+	})
+
 	for _, tc := range []struct {
 		name string
 		side manifest.TreeSide

@@ -46,6 +46,7 @@ func TestReferenceCapacity_DataInputBounds(t *testing.T) {
 		{"selector", &ResourceSet{InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{}}}}, 0},
 		{"chart", &HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}}, 0},
 		{"credentials", &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, 0},
+		{"provider credentials", &ResourceSetInputProvider{Type: fluxopv1.InputProviderOCIArtifactTag, SecretRef: &LocalObjectReference{Name: "auth"}, CertSecretRef: &LocalObjectReference{Name: "cert"}}, 0},
 		{"substitution", &Kustomization{PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "config"}, {Kind: KindSecret, Name: "secret", Optional: true}}}}, 2},
 		{"values", &HelmRelease{ValuesFrom: []ValuesReference{{Kind: KindConfigMap, Name: "values"}}}, 1},
 	} {
@@ -163,7 +164,7 @@ func TestReferences_EffectiveNamespace(t *testing.T) {
 			{Group: "foreign.example", Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", Position: 11},
 			{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "ready", Use: "dependsOn", Position: 12},
 			{Kind: "Unsupported", Namespace: "apps", Name: "inputs", Use: "inputsFrom", Content: true},
-			{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Namespace: "apps", Use: "inputsFrom", Position: 1, Content: true},
+			{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Namespace: "apps", Selector: r.InputsFrom[1].Selector, Use: "inputsFrom", Position: 1, Content: true},
 			{Group: FluxOperatorDomain, Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Position: 2, Content: true},
 			{Kind: KindResourceSetInputProvider, Namespace: "apps", Name: "inputs", Use: "inputsFrom", Position: 3, Content: true},
 			{Group: SourceDomain, Kind: KindGitRepository, Namespace: "apps", Name: "source", Use: "inputsFrom", Position: 4, Content: true},
@@ -288,6 +289,38 @@ func TestResolveChartSource_EffectiveNamespace(t *testing.T) {
 
 func TestReferences_ActiveCredentials(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name, providerType string
+		status             []fluxopv1.ResourceSetInput
+		active             bool
+	}{
+		{"registry", fluxopv1.InputProviderOCIArtifactTag, nil, true},
+		{"empty_status", fluxopv1.InputProviderOCIArtifactTag, []fluxopv1.ResourceSetInput{}, true},
+		{"pre_baked", fluxopv1.InputProviderOCIArtifactTag, []fluxopv1.ResourceSetInput{{"bad": {Raw: []byte(`invalid`)}}}, false},
+		{"static", fluxopv1.InputProviderStatic, nil, false},
+		{"omitted", "", nil, false},
+		{"unsupported", fluxopv1.InputProviderACRArtifactTag, nil, false},
+	} {
+		t.Run("provider/"+tc.name, func(t *testing.T) {
+			t.Parallel()
+			provider := (&ResourceSetInputProvider{Namespace: "authored", Type: tc.providerType,
+				SecretRef: &LocalObjectReference{Name: "auth"}, CertSecretRef: &LocalObjectReference{Name: "cert"},
+				DefaultValues: fluxopv1.ResourceSetInput{"bad": {Raw: []byte(`invalid`)}},
+				Status:        fluxopv1.ResourceSetInputProviderStatus{ExportedInputs: tc.status},
+			}).WithNamespace("effective")
+			var want []Reference
+			if tc.active {
+				want = []Reference{
+					{Kind: KindSecret, Namespace: "effective", Name: "auth", Use: "secretRef", Content: true, Acquisition: true},
+					{Kind: KindSecret, Namespace: "effective", Name: "cert", Use: "certSecretRef", Position: 1, Content: true, Acquisition: true},
+				}
+			}
+			assertReferenceEdges(t, slices.Collect(References(provider, ReferenceRelations)), want)
+			capacity, data := provider.ReferenceCapacity()
+			assert.Equal(t, capacity, len(want))
+			assert.Equal(t, data, 0)
+		})
+	}
 	o := &OCIRepository{Namespace: "effective"}
 	o.SecretRef, o.CertSecretRef, o.ProxySecretRef = &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}
 	o.Verify = &sourcev1.OCIRepositoryVerification{Provider: "cosign", SecretRef: &LocalObjectReference{Name: "ignored"}}
@@ -438,6 +471,55 @@ func TestReferences_NoAllocations(t *testing.T) {
 			References(obj, ReferenceRelations)(func(Reference) bool { stops++; return false })
 			assert.Equal(t, stops, 1)
 			assert.Equal(t, count > 0, true)
+		})
+	}
+	for _, tc := range []struct {
+		name, providerType string
+		status             []fluxopv1.ResourceSetInput
+		want               int
+	}{
+		{"active", fluxopv1.InputProviderOCIArtifactTag, nil, 2},
+		{"pre_baked", fluxopv1.InputProviderOCIArtifactTag, []fluxopv1.ResourceSetInput{{"bad": {Raw: []byte(`invalid`)}}}, 0},
+		{"static", fluxopv1.InputProviderStatic, nil, 0},
+		{"unsupported", fluxopv1.InputProviderGitHubTag, nil, 0},
+	} {
+		t.Run("provider/"+tc.name, func(t *testing.T) {
+			provider := &ResourceSetInputProvider{Type: tc.providerType, SecretRef: &LocalObjectReference{Name: "auth"},
+				CertSecretRef: &LocalObjectReference{Name: "cert"},
+				DefaultValues: fluxopv1.ResourceSetInput{"bad": {Raw: []byte(`invalid`)}},
+				Status:        fluxopv1.ResourceSetInputProviderStatus{ExportedInputs: tc.status},
+			}
+			assert.Equal(t, testing.AllocsPerRun(100, func() {
+				count := 0
+				for range References(provider, ReferenceRelations) {
+					count++
+				}
+				if count != tc.want {
+					t.Fatalf("reference count = %d, want %d", count, tc.want)
+				}
+			}), float64(0))
+			stops := 0
+			References(provider, ReferenceRelations)(func(Reference) bool { stops++; return false })
+			assert.Equal(t, stops, min(tc.want, 1))
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		ref  fluxopv1.InputProviderReference
+	}{
+		{"named", fluxopv1.InputProviderReference{Name: "input"}},
+		{"selector", fluxopv1.InputProviderReference{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "images"}}}},
+		{"invalid_selector", fluxopv1.InputProviderReference{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}}},
+	} {
+		t.Run("input/"+tc.name, func(t *testing.T) {
+			set := &ResourceSet{Name: "set", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{tc.ref}}
+			assert.Equal(t, testing.AllocsPerRun(100, func() {
+				for ref := range References(set, ReferenceRelations) {
+					if ref.Selector != tc.ref.Selector {
+						t.Fatal("reference did not borrow the authored selector")
+					}
+				}
+			}), float64(0))
 		})
 	}
 }

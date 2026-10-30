@@ -868,7 +868,7 @@ func TestController_AmbientPolicy(t *testing.T) {
 	}
 }
 
-func TestPendingSource_AmbientContextError(t *testing.T) {
+func TestController_AmbientContextError(t *testing.T) {
 	t.Parallel()
 	for _, cause := range []error{context.DeadlineExceeded, context.Canceled} {
 		t.Run(cause.Error(), func(t *testing.T) {
@@ -882,9 +882,18 @@ func TestPendingSource_AmbientContextError(t *testing.T) {
 			c := &execution{Controller: controller}
 			c.run.Init(controller.Controller, repo.Named())
 			defer c.run.Close()
-			pending := &pendingSource{execution: c, object: repo, missing: missing}
 			var err error
-			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { err = pending.Settle(ctx, manifest.DrainCascade) })
+			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) {
+				err = c.run.Acquire(ctx, repo, base.Acquisition{
+					AllowMissingSecrets: true,
+					Fetch: func(context.Context) (*store.SourceArtifact, error) {
+						return nil, missing
+					},
+					Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+						return c.completeFetch(repo, artifact, unavailable)
+					},
+				}, manifest.DrainCascade)
+			})
 			c.Tasks.BlockTillDone()
 			if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrSourceSkipped) {
 				t.Fatalf("default settlement error = %v; want %v and ErrFlux", err, cause)
@@ -1194,7 +1203,7 @@ func TestController_SyntheticCredentialSkip(t *testing.T) {
 	}
 }
 
-func TestPendingSource_AmbientFailureRetainsCause(t *testing.T) {
+func TestController_AmbientFailureRetainsCause(t *testing.T) {
 	t.Parallel()
 	for _, rejected := range []bool{false, true} {
 		t.Run(fmt.Sprint(rejected), func(t *testing.T) {
@@ -1216,9 +1225,15 @@ func TestPendingSource_AmbientFailureRetainsCause(t *testing.T) {
 			c := &execution{Controller: controller}
 			c.run.Init(controller.Controller, repo.Named())
 			defer c.run.Close()
-			pending := &pendingSource{execution: c, object: repo, missing: missing}
+			acquisition := base.Acquisition{
+				AllowMissingSecrets: true,
+				Fetch:               func(context.Context) (*store.SourceArtifact, error) { return nil, missing },
+				Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+					return c.completeFetch(repo, artifact, unavailable)
+				},
+			}
 			var err error
-			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { err = pending.Settle(ctx, manifest.DrainCascade) })
+			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { err = c.run.Acquire(ctx, repo, acquisition, manifest.DrainCascade) })
 			c.Tasks.BlockTillDone()
 			if err == nil || err.Error() != "secret flux-system/kubernetes-secrets not found" || !errors.Is(err, cause) || errors.Is(err, manifest.ErrSourceSkipped) == rejected {
 				t.Fatalf("ambient classification: %v", err)

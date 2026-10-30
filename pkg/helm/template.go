@@ -35,8 +35,6 @@ var envSettings = sync.OnceValue(cli.New)
 
 const sourceHeader = "# Source: "
 
-var errUncacheableRender = errors.New("uncacheable helm render")
-
 // Template renders a HelmRelease and returns independently owned documents.
 // The immutable receipt may be persisted after complete accepted publication.
 func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValues map[string]any, input RenderOptions) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
@@ -208,7 +206,8 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			return cache.ProducerResult{}, err
 		}
 		if result.receipt == nil {
-			return cache.ProducerResult{}, errUncacheableRender
+			// Incomplete renders MUST fail frame validation to preserve each caller's local output.
+			return cache.ProducerResult{}, nil
 		}
 		frame := result.receipt.Value().(renderFrame)
 		if frame.header.Analysis == nil {
@@ -226,9 +225,6 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 	})
 	if err != nil {
 		if _, storage := errors.AsType[*cache.CacheError](err); !storage {
-			if errors.Is(err, errUncacheableRender) {
-				return result.docs, nil, nil
-			}
 			return nil, nil, err
 		}
 		return render(ctx, err)

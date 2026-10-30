@@ -2,9 +2,11 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
 )
@@ -38,6 +40,66 @@ func (e *MissingSecretError) Error() string {
 
 // Unwrap keeps errors.Is(err, manifest.ErrMissingSecret) working.
 func (e *MissingSecretError) Unwrap() error { return manifest.ErrMissingSecret }
+
+// ProducerBacked reports whether captured declarations can supply the missing Secret.
+func (e *MissingSecretError) ProducerBacked(reads *store.ReadSet) bool {
+	if reads != nil && e.Secret != (manifest.NamedResource{}) {
+		for _, p := range reads.Productions(e.Secret, nil) {
+			if p.Declaration != (manifest.NamedResource{}) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RetryMachine runs the acquisition owner's continuation when no producer can supply material.
+func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.ReadSet) (*store.SourceArtifact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if e.RetryAmbient == nil || e.ProducerBacked(reads) {
+		return nil, e
+	}
+	artifact, err := e.RetryAmbient(ctx)
+	if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		return artifact, e
+	}
+	return artifact, err
+}
+
+// AcquireMachine selects credentials before acquisition and classifies machine failures.
+func AcquireMachine(ctx context.Context, policy cache.Policy, prepare func(context.Context) error, acquire func(context.Context, cache.Policy) (*store.SourceArtifact, error)) (*store.SourceArtifact, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %w", manifest.ErrFlux, err)
+	}
+	policy.Machine = true
+	preparation := ctx
+	var cancel context.CancelFunc
+	if policy.Timeout != nil {
+		preparation, cancel = context.WithTimeout(ctx, *policy.Timeout)
+	} else {
+		preparation, cancel = context.WithCancel(ctx)
+	}
+	err := prepare(preparation)
+	if preparation.Err() != nil {
+		err = errors.Join(err, preparation.Err())
+	}
+	cancel()
+	var artifact *store.SourceArtifact
+	if err == nil {
+		artifact, err = acquire(ctx, policy)
+	}
+	if err != nil && !errors.Is(err, manifest.ErrMissingSecret) {
+		if _, cached := errors.AsType[*cache.CacheError](err); !cached {
+			if !errors.Is(err, manifest.ErrFlux) {
+				err = fmt.Errorf("%w: %w", manifest.ErrFlux, err)
+			}
+			err = cache.MachineCredentialErr(err)
+		}
+	}
+	return artifact, err
+}
 
 // MissingSecretErr captures unavailable material with raw and display identities.
 func MissingSecretErr(owner manifest.DiagnosticIdentity, secretRef, reason string) error {

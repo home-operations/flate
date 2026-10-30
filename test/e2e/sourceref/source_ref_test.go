@@ -530,6 +530,11 @@ spec: {url: 'git://fixture.invalid/cluster', interval: 10m}
 kind: OCIRepository
 metadata: {name: second, namespace: flux-system}
 spec: {url: 'oci://fixture.invalid/second', interval: 10m, secretRef: {name: missing-auth}}
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata: {name: missing-auth, namespace: flux-system}
+spec: {target: {name: missing-auth}}
 `)
 			} else if tt.url != "" {
 				testutil.WriteFile(t, root, "flux/repo.yaml", `apiVersion: source.toolkit.fluxcd.io/v1

@@ -3,15 +3,22 @@ package bucket
 import (
 	"bufio"
 	"context"
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httptrace"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,6 +55,14 @@ func (p *machineProvider) Retrieve() (credentials.Value, error) {
 }
 
 func (p *machineProvider) IsExpired() bool { return false }
+
+func (f *operation) fetchMachine(ctx context.Context, request bucketAcquisition, providers []credentials.Provider, policy cache.Policy) (*store.SourceArtifact, error) {
+	timeout := request.bucket.OperationTimeout()
+	policy.Timeout = &timeout
+	return source.AcquireMachine(ctx, policy, func(ctx context.Context) error { return request.machineCredentials(ctx, providers) }, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
+		return f.fetch(ctx, request, policy)
+	})
+}
 
 type bucketTransport func(*http.Request) (*http.Response, error)
 
@@ -131,9 +146,9 @@ func TestFetcher_MachineProviders(t *testing.T) {
 		{name: "environment", first: credentials.Value{AccessKeyID: "environment", SecretAccessKey: "secret", SignerType: credentials.SignatureV4}, wantComplete: true},
 		{name: "IAM", next: credentials.Value{AccessKeyID: "IAM", SecretAccessKey: "secret", SignerType: credentials.SignatureV4}, wantNext: 1, wantComplete: true},
 		{name: "partial environment", first: credentials.Value{AccessKeyID: "partial", SignerType: credentials.SignatureAnonymous}, next: credentials.Value{AccessKeyID: "IAM", SecretAccessKey: "secret", SignerType: credentials.SignatureV4}, wantNext: 1, wantComplete: true},
-		{name: "anonymous", first: credentials.Value{AccessKeyID: "anonymous", SecretAccessKey: "secret", SignerType: credentials.SignatureAnonymous}, wantNext: 1, wantMissing: true},
+		{name: "anonymous", first: credentials.Value{AccessKeyID: "anonymous", SecretAccessKey: "secret", SignerType: credentials.SignatureAnonymous}, wantNext: 1, wantComplete: true},
 		{name: "incomplete signed value", first: credentials.Value{AccessKeyID: "partial", SignerType: credentials.SignatureV4}},
-		{name: "exhausted", wantNext: 1, wantMissing: true},
+		{name: "exhausted", wantNext: 1, wantComplete: true},
 		{name: "environment failure", firstErr: failure},
 		{name: "IAM failure", nextErr: failure, wantNext: 1},
 	} {
@@ -142,14 +157,15 @@ func TestFetcher_MachineProviders(t *testing.T) {
 			b := ambientBucket()
 			f := &operation{Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}, secrets: func(string, string) *manifest.Secret { return nil }}
 			request, err := f.prepare(b)
+			providers := []credentials.Provider{&credentials.EnvAWS{}, &credentials.FileAWSCredentials{}, &credentials.IAM{}}
 			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
-			if len(request.providers) != 2 {
-				t.Fatal("machine chain must contain only EnvAWS and IAM")
+			if len(providers) != 3 {
+				t.Fatal("machine chain must contain EnvAWS, FileAWSCredentials and IAM")
 			}
-			if _, ok := request.providers[0].(*credentials.EnvAWS); !ok {
+			if _, ok := providers[0].(*credentials.EnvAWS); !ok {
 				t.Fatal("first native provider is not EnvAWS")
 			}
-			if _, ok := request.providers[1].(*credentials.IAM); !ok {
+			if _, ok := providers[2].(*credentials.IAM); !ok {
 				t.Fatal("second native provider is not IAM")
 			}
 			if request.options.Creds != nil || request.material != nil {
@@ -158,7 +174,7 @@ func TestFetcher_MachineProviders(t *testing.T) {
 			first := &machineProvider{value: tc.first}
 			next := &machineProvider{value: tc.next}
 			first.get = func(cc *credentials.CredContext) (credentials.Value, error) {
-				if cc == nil || cc.Context == nil || cc.Client == nil {
+				if cc == nil || cc.Context == nil || cc.Client == nil || cc.Client.Transport != f.Network {
 					t.Error("provider lost the producer context or guarded client")
 				}
 				if _, ok := cc.Context.Deadline(); !ok {
@@ -166,17 +182,22 @@ func TestFetcher_MachineProviders(t *testing.T) {
 				}
 				return tc.first, tc.firstErr
 			}
-			next.get = func(*credentials.CredContext) (credentials.Value, error) { return tc.next, tc.nextErr }
-			request.providers = []credentials.Provider{first, next}
+			next.get = func(cc *credentials.CredContext) (credentials.Value, error) {
+				if cc.Client.Transport != f.Network {
+					t.Error("fallback provider bypassed the run transport")
+				}
+				return tc.next, tc.nextErr
+			}
+			providers = []credentials.Provider{first, next}
 			var signed atomic.Int32
 			request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
-				if r.Header.Get("Authorization") == "" {
+				if r.Header.Get("Authorization") == "" && tc.name != "anonymous" && tc.name != "exhausted" {
 					t.Error("machine request is unsigned")
 				}
 				signed.Add(1)
 				return bucketReply(r, 200, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`), nil
 			})
-			artifact, err := f.fetch(t.Context(), request, cache.Policy{MaxAge: time.Hour})
+			artifact, err := f.fetchMachine(t.Context(), request, providers, cache.Policy{MaxAge: time.Hour})
 			if (err == nil) != tc.wantComplete || (artifact != nil) != tc.wantComplete || first.calls.Load() != 1 || next.calls.Load() != tc.wantNext {
 				t.Fatalf("complete=%t calls=%d/%d: %v", artifact != nil, first.calls.Load(), next.calls.Load(), err)
 			}
@@ -209,7 +230,7 @@ func TestFetcher_MachineAcquisitionFailures(t *testing.T) {
 			f := &operation{Fetcher: &Fetcher{Cache: c, Network: newTestNetwork(t)}, secrets: func(string, string) *manifest.Secret { return nil }}
 			request, err := f.prepare(b)
 			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
-			request.providers = []credentials.Provider{&machineProvider{value: credentials.Value{AccessKeyID: "credential-canary", SecretAccessKey: "secret-canary", SignerType: credentials.SignatureV4}}}
+			providers := []credentials.Provider{&machineProvider{value: credentials.Value{AccessKeyID: "credential-canary", SecretAccessKey: "secret-canary", SignerType: credentials.SignatureV4}}}
 			request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
 				if stage == "listing" || r.URL.Query().Get("list-type") == "" {
 					return bucketReply(r, 403, `<Error><Code>AccessDenied</Code><Message>credential-canary secret-canary</Message></Error>`), nil
@@ -220,7 +241,7 @@ func TestFetcher_MachineAcquisitionFailures(t *testing.T) {
 				}
 				return bucketReply(r, 200, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>file.yaml</Key><Size>4</Size><ETag>"etag"</ETag></Contents></ListBucketResult>`), nil
 			})
-			artifact, err := f.fetch(t.Context(), request, cache.Policy{})
+			artifact, err := f.fetchMachine(t.Context(), request, providers, cache.Policy{})
 			if err == nil || artifact != nil || strings.Contains(err.Error(), "canary") {
 				t.Fatalf("failed acquisition published or exposed credentials: %v", err)
 			}
@@ -246,70 +267,167 @@ func TestFetcher_MachineAcquisitionFailures(t *testing.T) {
 
 func clearMachineEnvironment(t *testing.T) {
 	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(root, "config"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(root, "credentials"))
+	t.Setenv("AWS_PROFILE", "")
 	for _, key := range []string{"AWS_ACCESS_KEY_ID", "AWS_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY", "AWS_SECRET_KEY", "AWS_SESSION_TOKEN", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"} {
 		t.Setenv(key, "")
 	}
 }
 
-func TestFetcher_MachineProfilesIgnored(t *testing.T) {
-	clearMachineEnvironment(t)
-	for _, profile := range []string{"static", "process"} {
-		t.Run(profile, func(t *testing.T) {
+func TestFetcher_MachineProfiles(t *testing.T) {
+	for _, shape := range []string{"process", "static before process", "environment before files", "partial", "missing executable", "failing process", "missing profile", "no default profile", "selected profile", "shared credentials", "malformed INI", "no files", "absent SSO token"} {
+		t.Run(shape, func(t *testing.T) {
+			clearMachineEnvironment(t)
 			root := t.TempDir()
 			marker := filepath.Join(root, "executed")
 			program := filepath.Join(root, "credential-process")
-			testutil.WriteFileAt(t, program, "#!/bin/sh\nprintf called > '"+marker+"'\n")
-			assert.NoError(t, os.Chmod(program, 0o700))
-			path := filepath.Join(root, "credentials")
-			testutil.WriteFileAt(t, path, "[static]\naws_access_key_id = file-canary\naws_secret_access_key = file-secret\n[process]\ncredential_process = "+program+"\n")
-			t.Setenv("AWS_SHARED_CREDENTIALS_FILE", path)
-			t.Setenv("AWS_CONFIG_FILE", path)
-			t.Setenv("AWS_PROFILE", profile)
-			b := ambientBucket()
-			f := &operation{Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}, secrets: func(string, string) *manifest.Secret { return nil }}
-			request, err := f.prepare(b)
-			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
-			iam := &machineProvider{}
-			request.providers[1] = iam
-			artifact, err := f.fetch(t.Context(), request, cache.Policy{})
-			if artifact != nil || err == nil || iam.calls.Load() != 1 || strings.Contains(err.Error(), "file-canary") {
-				t.Fatalf("profile affected native machine selection: %v", err)
+			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > '" + filepath.Join(root, "args") + "'\n/bin/cat > '" + filepath.Join(root, "stdin") + "'\n/usr/bin/env > '" + filepath.Join(root, "environment") + "'\nprintf called > '" + marker + "'\nprintf '%s' '{\"Version\":1,\"AccessKeyId\":\"file-canary\",\"SecretAccessKey\":\"file-secret\"}'\n"
+			if shape == "failing process" {
+				script = "#!/bin/sh\nprintf '%s' 'credential-canary' >&2\nexit 1\n"
 			}
-			if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatal("credential process executed")
+			testutil.WriteFileAt(t, program, script)
+			assert.NoError(t, os.Chmod(program, 0o700))
+			profile := "[default]\ncredential_process = " + program + " argument\n"
+			switch shape {
+			case "static before process":
+				profile += "aws_access_key_id = file-canary\naws_secret_access_key = file-secret\n"
+			case "environment before files":
+				t.Setenv("AWS_ACCESS_KEY_ID", "environment")
+				t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+				profile = "invalid INI ["
+			case "partial":
+				profile += "aws_access_key_id = partial\n"
+			case "missing executable":
+				profile = "[default]\ncredential_process = " + filepath.Join(root, "absent") + " argument\n"
+			case "missing profile":
+				t.Setenv("AWS_PROFILE", "absent")
+			case "no default profile":
+				profile = "[profile other]\naws_access_key_id = file-canary\naws_secret_access_key = file-secret\n"
+			case "selected profile":
+				t.Setenv("AWS_PROFILE", "selected")
+				profile = "[profile selected]\naws_access_key_id = file-canary\naws_secret_access_key = file-secret\n"
+			case "shared credentials":
+				profile = "[default]\naws_access_key_id = file-canary\naws_secret_access_key = file-secret\n"
+			case "malformed INI":
+				profile = "[unterminated"
+			case "absent SSO token":
+				profile = "[default]\nsso_role_name = role\nsso_account_id = 123456789012\nsso_start_url = https://sso.invalid/start\nsso_region = us-east-1\n"
+			}
+			path := os.Getenv("AWS_CONFIG_FILE")
+			if shape == "shared credentials" {
+				path = os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
+			}
+			if shape != "no files" {
+				testutil.WriteFileAt(t, path, profile)
+			}
+			var remote, iam atomic.Int32
+			metadata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				iam.Add(1)
+				_, _ = io.WriteString(w, `{"Code":"Success","Expiration":"2099-01-01T00:00:00Z"}`)
+			}))
+			t.Cleanup(metadata.Close)
+			t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", metadata.URL)
+			var signer atomic.Value
+			signer.Store("file-canary")
+			switch shape {
+			case "environment before files":
+				signer.Store("environment")
+			case "no files":
+				signer.Store("")
+			}
+			endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				remote.Add(1)
+				access := signer.Load().(string)
+				if access == "" && r.Header.Get("Authorization") != "" || access != "" && !strings.Contains(r.Header.Get("Authorization"), "Credential="+access+"/") {
+					t.Error("profile acquisition used a different signer")
+				}
+				_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated></ListBucketResult>`)
+			}))
+			t.Cleanup(endpoint.Close)
+			b := ambientBucket()
+			b.Endpoint, b.Insecure = endpoint.URL, true
+			inputs := testInputs{}
+			ca, proxyAddress := "", ""
+			if shape == "process" {
+				t.Setenv("FLATE_PROCESS_MACHINE", "machine-environment")
+				ca = testutil.SelfSignedCA(t)
+				proxy := httptest.NewServer(endpoint.Config.Handler)
+				t.Cleanup(proxy.Close)
+				proxyAddress = proxy.URL
+				b.ProxySecretRef = &manifest.LocalObjectReference{Name: "transport"}
+				b.CertSecretRef = b.ProxySecretRef
+				inputs.secrets = func(string, string) *manifest.Secret {
+					return &manifest.Secret{StringData: map[string]any{
+						"address": proxy.URL, "username": "repository-proxy-user", "password": "repository-proxy-password", "ca.crt": ca,
+					}}
+				}
+			}
+			reads := inputs.readSet(b)
+			defer reads.Close()
+			f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
+			artifact, err := f.Fetch(t.Context(), b, reads, cache.Policy{MaxAge: time.Hour})
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			if !ok || missing.RetryAmbient == nil || artifact != nil || remote.Load() != 0 || iam.Load() != 0 {
+				t.Fatalf("profile lookup ran before continuation: %v", err)
+			}
+			artifact, err = missing.RetryMachine(t.Context(), reads)
+			success := shape == "process" || shape == "static before process" || shape == "environment before files" || shape == "selected profile" || shape == "shared credentials"
+			unavailable := shape == "no files"
+			var wantRemote, wantIAM int32
+			if success || unavailable {
+				wantRemote = 1
+			}
+			if unavailable {
+				wantIAM = 1
+			}
+			if (err == nil) != (success || unavailable) || (artifact != nil) != (success || unavailable) || errors.Is(err, manifest.ErrMissingSecret) || remote.Load() != wantRemote || iam.Load() != wantIAM {
+				t.Fatalf("profile selection: %v remote=%d IAM=%d", err, remote.Load(), iam.Load())
+			}
+			_, markerErr := os.Stat(marker)
+			if (markerErr == nil) != (shape == "process") {
+				t.Fatalf("credential_process precedence: %v", markerErr)
+			}
+			if shape == "process" {
+				args, err := os.ReadFile(filepath.Join(root, "args"))
+				assert.NoError(t, err)
+				assert.Equal(t, string(args), "argument\n")
+				stdin, err := os.ReadFile(filepath.Join(root, "stdin"))
+				assert.NoError(t, err)
+				assert.Equal(t, string(stdin), "")
+				environment, err := os.ReadFile(filepath.Join(root, "environment"))
+				assert.NoError(t, err)
+				if !strings.Contains(string(environment), "FLATE_PROCESS_MACHINE=machine-environment") {
+					t.Fatal("credential process lost the machine environment")
+				}
+				for _, canary := range []string{proxyAddress, "repository-proxy-user", "repository-proxy-password", ca, "-----BEGIN CERTIFICATE-----"} {
+					if strings.Contains(string(args)+string(stdin)+string(environment), canary) {
+						t.Fatal("repository transport material reached credential process inputs")
+					}
+				}
+			}
+			if success {
+				warm, err := missing.RetryMachine(t.Context(), reads)
+				assert.NoError(t, err)
+				if warm.Key != artifact.Key || remote.Load() != 1 {
+					t.Fatal("unchanged profile missed warm content")
+				}
+				signer.Store("rotated-canary")
+				if shape == "environment before files" {
+					t.Setenv("AWS_ACCESS_KEY_ID", "rotated-canary")
+				} else {
+					testutil.WriteFileAt(t, path, strings.ReplaceAll(profile, "file-canary", "rotated-canary"))
+					testutil.WriteFileAt(t, program, strings.ReplaceAll(script, "file-canary", "rotated-canary"))
+				}
+				rotated, err := missing.RetryMachine(t.Context(), reads)
+				assert.NoError(t, err)
+				if rotated.Key == warm.Key || remote.Load() != 2 || iam.Load() != 0 {
+					t.Fatal("rotated profile reused credential identity or skipped signing")
+				}
 			}
 		})
-	}
-}
-
-func TestFetcher_MachineIAMCancellation(t *testing.T) {
-	clearMachineEnvironment(t)
-	b := ambientBucket()
-	f := &operation{Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}, secrets: func(string, string) *manifest.Secret { return nil }}
-	request, err := f.prepare(b)
-	assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	entered := make(chan struct{})
-	request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
-		select {
-		case <-ctx.Done():
-		default:
-			close(entered)
-		}
-		<-r.Context().Done()
-		return nil, r.Context().Err()
-	})
-	request.providers[1].(*credentials.IAM).Endpoint = "http://iam.invalid"
-	finished := make(chan error, 1)
-	go func() {
-		_, err := f.fetch(ctx, request, cache.Policy{})
-		finished <- err
-	}()
-	<-entered
-	cancel()
-	if err := <-finished; !errors.Is(err, context.Canceled) {
-		t.Fatalf("native IAM lost operation cancellation: %v", err)
 	}
 }
 
@@ -330,25 +448,25 @@ func TestFetcher_MachineIAMFailures(t *testing.T) {
 		{name: "container HTTP", container: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.container {
-				t.Setenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "/credentials")
-			}
 			b := ambientBucket()
 			f := &operation{Fetcher: &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}, secrets: func(string, string) *manifest.Secret { return nil }}
 			request, err := f.prepare(b)
 			assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), true)
+			providers := []credentials.Provider{&machineProvider{get: func(*credentials.CredContext) (credentials.Value, error) {
+				endpoint := credentials.DefaultIAMRoleEndpoint
+				if tc.container {
+					endpoint = credentials.DefaultECSRoleEndpoint
+				}
+				cause := tc.cause
+				if cause == nil {
+					cause = errors.New("403 credential-canary")
+				}
+				return credentials.Value{}, &url.Error{Op: "Get", URL: endpoint + "/credentials", Err: cause}
+			}}}
 			request.options.Transport = bucketTransport(func(r *http.Request) (*http.Response, error) {
-				if r.URL.Host == "bucket.invalid" {
-					t.Error("failed IAM credentials reached the bucket")
-				}
-				if tc.cause != nil {
-					return nil, tc.cause
-				}
-				response := bucketReply(r, http.StatusForbidden, "credential-canary")
-				response.Status = "403 credential-canary"
-				return response, nil
+				return bucketReply(r, http.StatusForbidden, `<Error><Code>AccessDenied</Code></Error>`), nil
 			})
-			artifact, err := f.fetch(t.Context(), request, cache.Policy{})
+			artifact, err := f.fetchMachine(t.Context(), request, providers, cache.Policy{})
 			if artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != tc.missing || strings.Contains(err.Error(), "canary") {
 				t.Fatalf("missing=%t, acquisition lost its outcome or exposed credentials: %v", tc.missing, err)
 			}
@@ -461,7 +579,7 @@ func TestFetcher_MachineContinuation(t *testing.T) {
 			initialRequests := requests.Load()
 			artifact, err := f.Fetch(t.Context(), b, &reads, cache.Policy{MaxAge: time.Hour})
 			if tier == "rejected" {
-				if err == nil || artifact != nil || errors.Is(err, manifest.ErrMissingSecret) || requests.Load() != initialRequests+1 {
+				if err == nil || artifact != nil || !errors.Is(err, manifest.ErrMissingSecret) || requests.Load() != initialRequests+1 {
 					t.Fatalf("explicit rejection advanced credential tiers: %v", err)
 				}
 				return
@@ -507,10 +625,7 @@ func TestFetcher_MachineContinuation(t *testing.T) {
 				t.Fatal("machine credentials entered artifact identity or output")
 			}
 			before := requests.Load()
-			if tier == "machine" {
-				t.Setenv("AWS_ACCESS_KEY_ID", "rotated-canary")
-				t.Setenv("AWS_SECRET_ACCESS_KEY", "rotated-secret-canary")
-			}
+
 			warm, err := f.Fetch(t.Context(), b, &reads, cache.Policy{MaxAge: time.Hour})
 			if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && missing.RetryAmbient != nil {
 				warm, err = missing.RetryAmbient(t.Context())
@@ -518,6 +633,30 @@ func TestFetcher_MachineContinuation(t *testing.T) {
 			assert.NoError(t, err)
 			if warm.Key != artifact.Key || warm.Content != artifact.Content || len(warm.Warnings) != 0 || requests.Load() != before {
 				t.Fatal("warm acquisition consulted credentials, changed identity or repeated success information")
+			}
+
+			if tier == "machine" {
+				access = "rotated-canary"
+				t.Setenv("AWS_ACCESS_KEY_ID", access)
+				t.Setenv("AWS_SECRET_ACCESS_KEY", "rotated-secret-canary")
+				_, err := f.Fetch(t.Context(), b, &reads, cache.Policy{MaxAge: time.Hour})
+				missing, ok := errors.AsType[*source.MissingSecretError](err)
+				if !ok {
+					t.Fatal(err)
+				}
+				rotated, err := missing.RetryMachine(t.Context(), &reads)
+				assert.NoError(t, err)
+				if rotated.Key == warm.Key || requests.Load() == before {
+					t.Fatal("rotation reused credential identity or skipped signing")
+				}
+				t.Setenv("AWS_ACCESS_KEY_ID", "")
+				t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+				testutil.WriteFileAt(t, os.Getenv("AWS_CONFIG_FILE"), "[default]\naws_access_key_id = partial\n")
+				beforeFailure := requests.Load()
+				failed, err := missing.RetryMachine(t.Context(), &reads)
+				if failed != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) || requests.Load() != beforeFailure {
+					t.Fatalf("failed preparation reused warm content: %v", err)
+				}
 			}
 			warmData, err := fs.ReadFile(warm.FS, "file.yaml")
 			assert.NoError(t, err)
@@ -534,6 +673,164 @@ func TestFetcher_MachineContinuation(t *testing.T) {
 					return err
 				}))
 			}
+		})
+	}
+}
+
+func bucketCredentialRoute(t *testing.T, hostname string, handle func(*http.Request) *http.Response) {
+	t.Helper()
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"} {
+		t.Setenv(key, "")
+	}
+	previous := http.DefaultTransport
+	transport := previous.(*http.Transport).Clone()
+	transport.DialTLSContext = func(_ context.Context, _, address string) (net.Conn, error) {
+		if address != hostname+":443" {
+			return nil, fmt.Errorf("unexpected credential destination %s", address)
+		}
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			request, err := http.ReadRequest(bufio.NewReader(server))
+			if err != nil {
+				return
+			}
+			defer request.Body.Close()
+			response := handle(request)
+			response.Close = true
+			_ = response.Write(server)
+		}()
+		return client, nil
+	}
+	http.DefaultTransport = transport
+	t.Cleanup(func() { transport.CloseIdleConnections(); http.DefaultTransport = previous })
+}
+
+func bucketSourceProxy(t *testing.T, target string, observe func(*http.Request)) string {
+	t.Helper()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observe(r)
+		if r.Method != http.MethodConnect || r.Host != target {
+			http.Error(w, "unexpected proxy destination", http.StatusBadGateway)
+			return
+		}
+		remote, err := (&net.Dialer{}).DialContext(r.Context(), "tcp", target)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer remote.Close()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _ = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		go func() { _, _ = io.Copy(remote, conn); _ = remote.Close() }()
+		_, _ = io.Copy(conn, remote)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy.URL
+}
+
+func TestFetcher_MachineSSOTransport(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprint(canceled), func(t *testing.T) {
+			clearMachineEnvironment(t)
+			testutil.WriteFileAt(t, os.Getenv("AWS_CONFIG_FILE"), "[default]\nsso_session = fixture\nsso_role_name = role\nsso_account_id = 123456789012\n[sso-session fixture]\nsso_region = us-east-1\nsso_start_url = https://sso.invalid/start\n")
+			hash := sha1.Sum([]byte("fixture"))
+			testutil.WriteFile(t, os.Getenv("HOME"), fmt.Sprintf(".aws/sso/cache/%x.json", hash), `{"accessToken":"token-canary","expiresAt":"2099-01-01T00:00:00Z"}`)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Hour)
+			defer cancel()
+			const hostname = "portal.sso.us-east-1.amazonaws.com"
+			var calls, traced, dataCalls atomic.Int32
+			ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GetConn: func(address string) {
+				if address == hostname+":443" {
+					traced.Add(1)
+				}
+			}})
+			bucketCredentialRoute(t, hostname, func(r *http.Request) *http.Response {
+				calls.Add(1)
+				if r.Host != hostname || r.Header.Get("x-amz-sso_bearer_token") != "token-canary" {
+					t.Error("SSO lost its destination or fixture token")
+				}
+				if canceled {
+					cancel()
+				}
+				return bucketReply(r, http.StatusOK, `{"roleCredentials":{"accessKeyId":"sso-canary","secretAccessKey":"secret-canary","sessionToken":"session-canary","expiration":4102444800000}}`)
+			})
+			endpoint := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				dataCalls.Add(1)
+				if !strings.Contains(r.Header.Get("Authorization"), "Credential=sso-canary/") || strings.Contains(fmt.Sprint(r.Header, r.URL), "token-canary") {
+					t.Error("S3 lost its SSO signing credentials or received the bearer token")
+				}
+				if r.URL.Query().Get("list-type") != "" {
+					_, _ = io.WriteString(w, `<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated><Contents><Key>file.yaml</Key><Size>4</Size><ETag>"etag"</ETag></Contents></ListBucketResult>`)
+					return
+				}
+				w.Header().Set("ETag", `"etag"`)
+				w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+				_, _ = io.WriteString(w, "data")
+			}))
+			t.Cleanup(endpoint.Close)
+			target := strings.TrimPrefix(endpoint.URL, "https://")
+			var destinations sync.Map
+			proxy := bucketSourceProxy(t, target, func(r *http.Request) {
+				destinations.Store(r.Host, true)
+				if strings.Contains(fmt.Sprint(r.Header, r.URL), "token-canary") {
+					t.Error("SSO bearer token reached repository proxy")
+				}
+			})
+			ca := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: endpoint.Certificate().Raw}))
+			_, err := endpoint.Certificate().Verify(x509.VerifyOptions{DNSName: "127.0.0.1"})
+			if err == nil {
+				t.Fatal("S3 fixture is trusted without the source CA")
+			}
+			b := ambientBucket()
+			b.Endpoint = endpoint.URL
+			b.ProxySecretRef = &manifest.LocalObjectReference{Name: "route"}
+			b.CertSecretRef = &manifest.LocalObjectReference{Name: "tls"}
+			inputs := testInputs{secrets: func(_, name string) *manifest.Secret {
+				switch name {
+				case "route":
+					return &manifest.Secret{StringData: map[string]any{"address": proxy}}
+				case "tls":
+					return &manifest.Secret{StringData: map[string]any{"ca.crt": ca}}
+				default:
+					return nil
+				}
+			}}
+			reads := inputs.readSet(b)
+			defer reads.Close()
+			f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
+			artifact, err := f.Fetch(ctx, b, reads, cache.Policy{})
+			missing, ok := errors.AsType[*source.MissingSecretError](err)
+			if !ok || missing.RetryAmbient == nil || artifact != nil {
+				t.Fatalf("SSO continuation unavailable: %v", err)
+			}
+			artifact, err = missing.RetryMachine(ctx, reads)
+			destinations.Range(func(destination, _ any) bool {
+				if destination != target {
+					t.Errorf("credential request reached repository proxy: %s", destination)
+				}
+				return true
+			})
+			if calls.Load() != 1 || traced.Load() != 1 || canceled && !errors.Is(err, context.Canceled) || !canceled && err != nil {
+				t.Fatalf("SSO outcome: run calls=%d traced=%d: %v", calls.Load(), traced.Load(), err)
+			}
+			if canceled {
+				assert.Equal(t, dataCalls.Load(), int32(0))
+				return
+			}
+			_, proxied := destinations.Load(target)
+			if !proxied || dataCalls.Load() < 2 || artifact == nil {
+				t.Fatalf("S3 did not list and download through the source proxy: proxied=%t calls=%d", proxied, dataCalls.Load())
+			}
+			data, err := fs.ReadFile(artifact.FS, "file.yaml")
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), "data")
 		})
 	}
 }

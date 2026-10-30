@@ -23,7 +23,7 @@ func openGeneration(t *testing.T, f *Fetcher, spec *manifest.GitRepository, arti
 	if label := (*manifest.GitRepositoryRef)(spec.Reference).Label(); label != "" {
 		ref = label
 	}
-	request, err := (&operation{Fetcher: f}).resolveTransport(spec)
+	request, err := (&operation{Fetcher: f}).resolveTransport(spec, sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestResolveTransport_Depth(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := &Fetcher{Depth: tc.depth}
-			request, err := (&operation{Fetcher: f}).resolveTransport(&manifest.GitRepository{URL: "file:///repo", Reference: tc.ref})
+			request, err := (&operation{Fetcher: f}).resolveTransport(&manifest.GitRepository{URL: "file:///repo", Reference: tc.ref}, sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -76,7 +76,7 @@ func TestE2E_SourceWarnings(t *testing.T) {
 			}
 			ref, category, message := "", "BootstrapAliases", "aliased multiple bootstrap sources"
 			if condition == "unavailable-ref" {
-				ref = "  ref: {tag: missing}\n  secretRef: {name: unavailable-auth}\n"
+				ref = "  provider: github\n  ref: {tag: missing}\n  secretRef: {name: unavailable-auth}\n"
 				category, message = "SourceRefUnavailable", "declared source ref cannot be satisfied locally"
 			}
 			for _, name := range []string{"one", "two"} {

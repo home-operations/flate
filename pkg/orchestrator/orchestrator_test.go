@@ -726,28 +726,24 @@ func kindsOf(docs []map[string]any) []string {
 	return out
 }
 
-// TestOrchestrator_AllowMissingSecretsPropagates locks the #190 fix:
-// when --allow-missing-kinds Secret is on AND a source's auth Secret isn't
-// in the offline tree, the source soft-skips (Ready/ReasonSkipped) and
-// the downstream KS that consumes it propagates the skip rather than
-// failing with "source artifact not found". `flate test` then reports
-// SKIPPED, not FAILED.
 func TestOrchestrator_AllowMissingSecretsPropagates(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "oci.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+	registryURL, registryConfig := privateRegistry(t)
+	testutil.WriteFile(t, dir, "oci.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: private-app
   namespace: default
 spec:
   interval: 5m
-  url: oci://example.invalid/private/app
+  insecure: true
+  url: %s/private/app
   secretRef:
     name: ghcr-creds
-`)
+`, registryURL))
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("private-app", "default", "  interval: 5m\n  path: ./\n  sourceRef:\n    kind: OCIRepository\n    name: private-app\n    namespace: default\n"))
 
-	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+	renderedSingleton4, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{RegistryConfig: registryConfig, AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	if len(renderedSingleton4) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -777,28 +773,21 @@ spec:
 	}
 }
 
-// TestOrchestrator_AllowMissingSecretsHRSkipsBeforePull locks the
-// silent-anonymous-pull regression the iter-17 edge-case review
-// flagged: an HR with chartRef → OCIRepository whose auth Secret is
-// missing MUST propagate the skip BEFORE helm.Template runs.
-// Without the pre-check, the source-controller's soft-skip leaves
-// no on-disk artifact but the helm client's locateOCIChart would
-// still try an oras-pull against the registry — succeeding silently
-// against a public mirror, or failing with an opaque registry error.
-// Either way the user's "the auth is missing" signal is lost.
 func TestOrchestrator_AllowMissingSecretsHRSkipsBeforePull(t *testing.T) {
 	dir := t.TempDir()
-	testutil.WriteFile(t, dir, "oci.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+	registryURL, registryConfig := privateRegistry(t)
+	testutil.WriteFile(t, dir, "oci.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
   name: app-template
   namespace: flux-system
 spec:
   interval: 5m
-  url: oci://example.invalid/private/chart
+  insecure: true
+  url: %s/private/chart
   secretRef:
     name: ghcr-creds
-`)
+`, registryURL))
 	testutil.WriteFile(t, dir, "hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -812,7 +801,7 @@ spec:
     namespace: flux-system
 `)
 
-	renderedSingleton5, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
+	renderedSingleton5, err := RenderTrees(context.Background(), []Tree{{Path: dir, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{RegistryConfig: registryConfig, AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}})
 	if len(renderedSingleton5) != 1 {
 		t.Fatalf("missing render: %v", err)
 	}
@@ -2056,4 +2045,13 @@ func TestOrchestrator_Render_ResourceSetDocumentBoundary(t *testing.T) {
 		}
 		previous = outputByParent(result.Manifests)
 	}
+}
+
+func privateRegistry(t *testing.T) (string, string) {
+	t.Helper()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	t.Cleanup(server.Close)
+	registry := filepath.Join(t.TempDir(), "config.json")
+	testutil.WriteFileAt(t, registry, "{}")
+	return "oci://" + strings.TrimPrefix(server.URL, "https://"), registry
 }

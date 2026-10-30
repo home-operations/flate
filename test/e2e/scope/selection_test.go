@@ -454,6 +454,7 @@ func TestE2E_SecretMaterialPolicy(t *testing.T) {
 kind: GitRepository
 metadata: {name: external, namespace: flux-system}
 spec:
+  provider: github
   url: %s
   secretRef: {name: auth}
 `, url)+"---\n"+testutil.KustomizationYAML("consumer", "flux-system", "  path: ./external\n  sourceRef: {kind: GitRepository, name: external}\n"))
@@ -547,6 +548,7 @@ func TestE2E_OrphanParentSource(t *testing.T) {
 kind: GitRepository
 metadata: {name: external, namespace: flux-system}
 spec:
+  provider: github
   url: https://fixture.invalid/external
   secretRef: {name: missing-auth}
 `+"---\n"+

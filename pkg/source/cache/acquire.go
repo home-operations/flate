@@ -132,14 +132,6 @@ type acquireKey struct {
 
 type producerError struct{ error }
 
-type machineError struct{ cause error }
-
-func (e *machineError) Error() string { return "machine credential acquisition failed" }
-func (e *machineError) Unwrap() error { return e.cause }
-
-// MachineCredentialErr masks credential material while preserving the acquisition cause.
-func MachineCredentialErr(cause error) error { return &machineError{cause} }
-
 // readerError marks a failure of the archive consumer that the producer only observes as a failed write.
 type readerError struct{ error }
 
@@ -557,6 +549,9 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 	}
 	e, err := callbacks.produce(ctx, c, &staged)
 	if err != nil {
+		if producer, ok := errors.AsType[*producerError](err); ok && errors.Is(producer, err) && (key.policy.Machine || credentialsUnavailable(producer.error)) {
+			err = &producerError{MachineCredentialErr(producer.error)}
+		}
 		return nil, err
 	}
 	if key.policy.Timeout != nil && ctx.Err() != nil {

@@ -47,21 +47,8 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		}
 		return releaseIndex, nil
 	}
-	generation, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (result cache.ProducerResult, err error) {
-		attempt := r
-		defer func() {
-			if attempt.ambient && err != nil {
-				err = cache.MachineCredentialErr(err)
-			}
-		}()
-		if attempt.ambient {
-			local := *r
-			attempt = &local
-			if err := attempt.localCredentials(ctx); err != nil {
-				return cache.ProducerResult{}, err
-			}
-		}
-		idx, err := f.fetchIndex(ctx, attempt, policy.Retry)
+	generation, desc, id, err := f.cache.Blob(ctx, key, policy, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+		idx, err := f.fetchIndex(ctx, r, policy)
 		releaseIndex()
 		if err != nil {
 			return cache.ProducerResult{}, err
@@ -77,7 +64,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		if err != nil {
 			return cache.ProducerResult{}, err
 		}
-		desc, err := attempt.get(ctx, chartURL, w)
+		desc, err := r.get(ctx, chartURL, w)
 		if err != nil {
 			return cache.ProducerResult{Descriptor: desc}, err
 		}
@@ -97,9 +84,9 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 	return artifact, nil
 }
 
-func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, retry cache.RetryConfig) (*repo.IndexFile, error) {
+func (f *Fetcher) fetchIndex(ctx context.Context, r *httpRepository, policy cache.Policy) (*repo.IndexFile, error) {
 	indexURL := strings.TrimSuffix(r.URL, "/") + "/index.yaml"
-	generation, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: retry}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
+	generation, desc, _, err := f.cache.Blob(ctx, cache.BlobKey{Content: struct{ Repository, Transport any }{r.Content(), r.material}}, cache.Policy{MaxAge: r.Interval.Duration, Retry: policy.Retry, Machine: policy.Machine}, func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
 		_, descriptor, err := f.loadIndex(ctx, indexURL, func(input io.Writer) (ocispec.Descriptor, error) {
 			return r.get(ctx, indexURL, io.MultiWriter(w, input))
 		})

@@ -135,7 +135,7 @@ func TestFetcher_LocalAgentSSH(t *testing.T) {
 			if shape == "absent" {
 				t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "absent"))
 			} else {
-				closed, opened = acquisitionAgent(t, identity)
+				closed, opened, _ = acquisitionAgent(t, identity)
 			}
 			repo := gitRepoWithSecret("agent", url, "auth")
 			inputs := testInputs{}

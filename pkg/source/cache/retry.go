@@ -31,6 +31,8 @@ type RetryConfig struct {
 
 // Policy is the caller's immutable freshness, retry, admission and operation timeout policy.
 type Policy struct {
+	// Machine classifies producer failures before retry diagnostics and persistence.
+	Machine bool
 	// Admit runs before each production attempt's timeout and staged storage.
 	// Success MUST return a non-nil release, called once after cleanup/publication.
 	// On error the callback owns partial cleanup; cache failures do not retry or persist outcomes.

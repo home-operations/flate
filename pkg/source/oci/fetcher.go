@@ -60,5 +60,5 @@ func (f *operation) fetchSource(ctx context.Context, repo *manifest.OCIRepositor
 		}
 	}
 
-	return f.fetchWithCredentials(ctx, repo, nil, policy)
+	return f.fetchWithCredentials(ctx, repo, policy)
 }

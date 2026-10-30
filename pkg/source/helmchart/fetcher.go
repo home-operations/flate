@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/home-operations/flate/internal/keylock"
@@ -101,8 +102,22 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 	prepared, err := f.prepareHTTP(r)
 	if err != nil {
 		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && prepared != nil {
+			timeout := r.OperationTimeout()
+			policy.Timeout = &timeout
 			missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-				return f.fetchHTTPChart(ctx, prepared, hc, policy)
+				local := *prepared
+				return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
+					if err := local.localCredentials(ctx); err != nil {
+						return err
+					}
+					credentials := [2]string{local.username, local.password}
+					local.material = local.resolved.Identity(credentials)
+					tr, err := f.network.HTTPTransport(source.HTTPTransportConfig{Material: local.resolved, Credentials: credentials, DisableCompression: true})
+					local.client = &http.Client{Transport: tr}
+					return err
+				}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
+					return f.fetchHTTPChart(ctx, &local, hc, policy)
+				})
 			}
 		}
 		return nil, err

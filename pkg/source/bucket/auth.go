@@ -1,12 +1,15 @@
 package bucket
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
-	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/minio/minio-go/v7"
@@ -17,11 +20,12 @@ import (
 )
 
 type bucketAcquisition struct {
-	bucket    *manifest.Bucket
-	endpoint  string
-	options   minio.Options
-	material  any
-	providers []credentials.Provider
+	network  *source.Network
+	bucket   *manifest.Bucket
+	endpoint string
+	options  minio.Options
+	material any
+	resolved source.TransportMaterial
 }
 
 func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
@@ -51,7 +55,7 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 			material = value
 		}
 	}
-	if b.STS != nil || b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric && (b.Provider != sourcev1.BucketProviderAmazon || material == nil && authErr == nil) {
+	if b.STS != nil || b.Provider != "" && b.Provider != sourcev1.BucketProviderGeneric && b.Provider != sourcev1.BucketProviderAmazon {
 		if authErr == nil {
 			authErr = source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), "", "provider authentication unavailable offline")
 		}
@@ -62,23 +66,44 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 		return bucketAcquisition{}, err
 	}
 	request := bucketAcquisition{
-		bucket: b, endpoint: endpoint, material: resolved.Identity(material),
+		network: f.Network, bucket: b, endpoint: endpoint, material: resolved.Identity(material), resolved: resolved,
 		options: minio.Options{MaxRetries: 1, Creds: creds, Secure: secure, Region: b.Region, Transport: tr},
-	}
-	if authErr != nil {
-		request.providers = []credentials.Provider{&credentials.EnvAWS{}, &credentials.IAM{}}
 	}
 	return request, authErr
 }
 
-func (r bucketAcquisition) machineCredentials(ctx context.Context) (*credentials.Credentials, error) {
-	cc := &credentials.CredContext{Context: ctx, Client: &http.Client{Transport: r.options.Transport}}
-	for _, provider := range r.providers {
-		value, err := provider.RetrieveWithCredContext(cc)
+func (r *bucketAcquisition) machineCredentials(ctx context.Context, providers []credentials.Provider) error {
+	for _, provider := range providers {
+		_, file := provider.(*credentials.FileAWSCredentials)
+		if file {
+			config, shared := os.Getenv("AWS_CONFIG_FILE"), os.Getenv("AWS_SHARED_CREDENTIALS_FILE")
+			if config == "" || shared == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				config, shared = cmp.Or(config, filepath.Join(home, ".aws", "config")), cmp.Or(shared, filepath.Join(home, ".aws", "credentials"))
+			}
+			configured := false
+			for _, path := range []string{config, shared} {
+				_, err := os.Stat(path) //nolint:gosec // Native AWS profiles accept user-selected paths; this only checks their presence.
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+				configured = configured || err == nil
+			}
+			if !configured {
+				continue
+			}
+		}
+		value, err := r.network.AWSCredentials(ctx, provider)
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return ctx.Err()
 		}
 		if err != nil {
+			if file {
+				return err
+			}
 			if request, ok := errors.AsType[*url.Error](err); ok {
 				target, parseErr := url.Parse(request.URL)
 				dial, isDial := errors.AsType[*net.OpError](request.Err)
@@ -88,17 +113,20 @@ func (r bucketAcquisition) machineCredentials(ctx context.Context) (*credentials
 					continue
 				}
 			}
-			return nil, err
+			return err
 		}
 		if value.SignerType == credentials.SignatureAnonymous || value.AccessKeyID == "" && value.SecretAccessKey == "" {
 			continue
 		}
 		if value.AccessKeyID == "" || value.SecretAccessKey == "" {
-			return nil, fmt.Errorf("%w: no usable machine AWS credentials", manifest.ErrInput)
+			return fmt.Errorf("%w: no usable machine AWS credentials", manifest.ErrInput)
 		}
-		return credentials.NewStatic(value.AccessKeyID, value.SecretAccessKey, value.SessionToken, value.SignerType), nil
+		r.options.Creds = credentials.NewStatic(value.AccessKeyID, value.SecretAccessKey, value.SessionToken, value.SignerType)
+		r.material = r.resolved.Identity(value)
+		return nil
 	}
-	return nil, source.MissingSecretErr(manifest.DiagnosticFor(r.bucket.Named(), r.bucket), "", "no machine AWS credentials")
+	r.options.Creds = credentials.NewStaticV4("", "", "")
+	return nil
 }
 
 func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credentials, error) {

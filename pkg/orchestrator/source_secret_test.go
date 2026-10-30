@@ -216,7 +216,7 @@ spec:
 	if requests.Load() == 0 {
 		t.Fatalf("OCI fetch never reached the TLS server: %v", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "charts:0.1.0: not found") {
-		t.Fatalf("Render error = %v, want the registry's not-found response", err)
+	if err == nil || !strings.Contains(err.Error(), "machine credential acquisition failed") {
+		t.Fatalf("Render error = %v, want a masked registry failure after successful TLS", err)
 	}
 }

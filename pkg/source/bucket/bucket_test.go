@@ -40,23 +40,6 @@ func newTestNetwork(tb testing.TB) *source.Network {
 	return network
 }
 
-func TestFetcher_ProviderUnavailable(t *testing.T) {
-	t.Parallel()
-	f := &bucket.Fetcher{Network: newTestNetwork(t)}
-	b := &manifest.Bucket{
-		Name: "b", Namespace: "ns",
-		Provider:   sourcev1.BucketProviderAmazon,
-		BucketName: "x", Endpoint: "s3.amazonaws.com",
-	}
-	_, err := f.Fetch(context.Background(), b, (testInputs{}).readSet(b), cache.Policy{MaxAge: b.SourceInterval()})
-	if err == nil {
-		t.Fatalf("expected error for unimplemented provider")
-	}
-	if !errors.Is(err, manifest.ErrMissingSecret) {
-		t.Errorf("expected missing provider credentials; got %v", err)
-	}
-}
-
 func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	t.Parallel()
 	fInputs := testInputs{secrets: func(_, _ string) *manifest.Secret { return nil }}
@@ -276,7 +259,7 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 				response, typed := errors.AsType[*fetcherr.ResponseError](err)
 				if !ok || !typed || response.StatusCode != tc.status || response.Op != http.MethodGet || !errors.Is(response.Err, cause) ||
 					cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
-					err.Error() != "Bucket test/retry: "+cause.Error() || calls.Load() != 1 {
+					!errors.Is(err, manifest.ErrMissingSecret) || err.Error() != "Bucket test/retry: machine credential acquisition failed" || calls.Load() != 1 {
 					t.Fatalf("permanent failure: %v, cause=%+v, requests=%d", err, cause, calls.Load())
 				}
 				return

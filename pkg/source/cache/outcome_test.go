@@ -385,11 +385,11 @@ func TestOutcome_MachineCooldown(t *testing.T) {
 		root := t.TempDir()
 		c := cachetest.New(t, root, New)
 		key := BlobKey{Content: "machine-cooldown"}
-		policy := Policy{Retry: fastRetry(2)}
+		policy := Policy{Retry: fastRetry(2), Machine: true}
 		calls := 0
 		produce := func(context.Context, ProducerInput) (ProducerResult, error) {
 			calls++
-			return ProducerResult{}, MachineCredentialErr(connReset())
+			return ProducerResult{}, connReset()
 		}
 		_, _, _, err := c.Blob(t.Context(), key, policy, produce)
 		if terminal, ok := errors.AsType[*TerminalError](err); !ok || !terminal.Attempted || calls != 2 {
@@ -414,6 +414,25 @@ func TestOutcome_MachineCooldown(t *testing.T) {
 		}
 		if _, ok := errors.AsType[*os.SyscallError](err); !ok {
 			t.Fatal("cooldown lost syscall cause")
+		}
+		var count func(error) int
+		count = func(err error) int {
+			n := 0
+			if _, ok := err.(*machineError); ok { //nolint:errorlint // Count concrete nodes, including duplicate wrappers, rather than wrapped matches.
+				n++
+			}
+			switch e := err.(type) { //nolint:errorlint // Count each concrete node exactly once.
+			case interface{ Unwrap() []error }:
+				for _, child := range e.Unwrap() {
+					n += count(child)
+				}
+			case interface{ Unwrap() error }:
+				n += count(e.Unwrap())
+			}
+			return n
+		}
+		if count(MachineCredentialErr(err)) != 1 {
+			t.Fatal("replayed outcome gained a machine wrapper")
 		}
 		if machine, ok := errors.AsType[*machineError](err); !ok || machine.Error() != "machine credential acquisition failed" || err.Error() != machine.Error() {
 			t.Fatalf("cooldown masking: %v", err)
@@ -937,5 +956,19 @@ func TestOutcome_AcquisitionValidity(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+func TestMachineCredentialErr_Idempotent(t *testing.T) {
+	t.Parallel()
+	if MachineCredentialErr(nil) != nil {
+		t.Fatal("nil became a failure")
+	}
+	cause := &fs.PathError{Op: "open", Path: "credential-canary", Err: fs.ErrPermission}
+	machine := MachineCredentialErr(cause)
+	terminal := &TerminalError{Err: machine, Attempted: true}
+	got := MachineCredentialErr(terminal)
+	if got != terminal || !errors.Is(got, cause) || strings.Contains(got.Error(), "canary") { //nolint:errorlint // Idempotence MUST preserve the exact outer error.
+		t.Fatalf("classification lost terminal or typed cause: %v", got)
 	}
 }

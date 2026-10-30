@@ -106,7 +106,7 @@ func TestFetcher_InsecureRegistry(t *testing.T) {
 			}
 			f := &Fetcher{Cache: cachetest.New(t, t.TempDir(), sourcecache.New), Network: newTestNetwork(t)}
 			failed, err := fetch(f, false)
-			if failed != nil || !errors.Is(err, http.ErrSchemeMismatch) || !strings.Contains(err.Error(), "http: server gave HTTP response to HTTPS client") || tags.Load() != 0 {
+			if failed != nil || !errors.Is(err, http.ErrSchemeMismatch) || tags.Load() != 0 {
 				t.Fatalf("secure default: artifact=%v error=%v tags=%d", failed, err, tags.Load())
 			}
 			var first *store.SourceArtifact
@@ -1072,7 +1072,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		if body != "first" {
 			continue
 		}
-		request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, nil, sourcecache.Policy{})
+		request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo, sourcecache.Policy{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1293,7 +1293,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 						t.Error(err)
 					}
 				})
-				request, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo, nil, sourcecache.Policy{})
+				request, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo, sourcecache.Policy{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1888,7 +1888,7 @@ func TestFetcher_SourceTimeout(t *testing.T) {
 				r.Timeout = &metav1.Duration{Duration: tc.timeout}
 			}
 			f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New)}
-			request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
+			request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, sourcecache.Policy{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1933,7 +1933,7 @@ func TestFetcher_PullTimeout(t *testing.T) {
 				root := t.TempDir()
 				f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, root, sourcecache.New)}
 				r := &manifest.OCIRepository{URL: "oci://registry.invalid/repository", Reference: &sourcev1.OCIRepositoryRef{SemVer: "*"}, Timeout: &metav1.Duration{Duration: 5 * time.Second}}
-				request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, nil, sourcecache.Policy{})
+				request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r, sourcecache.Policy{})
 				if err != nil {
 					t.Fatal(err)
 				}

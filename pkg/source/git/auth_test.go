@@ -116,10 +116,10 @@ func TestFetcher_SecretReferences(t *testing.T) {
 			if tc.proxy {
 				repo.Name, repo.SecretRef = "repo", nil
 				repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo)
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
 				owner.Name, secretName = "repo", "missing"
 			} else if tc.field == "tls.crt" {
-				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo)
+				_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
 			} else {
 				auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(repo, sec, testEndpoint(t, repo.URL))
 			}

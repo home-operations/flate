@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1153,10 +1155,12 @@ func TestRun_ClusterGroups_SuppliedPrecedence(t *testing.T) {
 }
 
 func TestRun_SyntheticDiagnosticsAcrossCommands(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	t.Cleanup(server.Close)
 	fixture := func() string {
 		root := t.TempDir()
 		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [release.yaml]\n")
-		testutil.WriteFile(t, root, "release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+		testutil.WriteFile(t, root, "release.yaml", fmt.Sprintf(`apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata: {name: release, namespace: apps}
 spec:
@@ -1164,10 +1168,11 @@ spec:
   chart:
     kind: OCIRepository
     spec:
-      url: oci://registry.example/charts/app
+      insecure: true
+      url: oci://%s/charts/app
       ref: {tag: 1.0.0}
       secretRef: {name: auth}
-`)
+`, strings.TrimPrefix(server.URL, "https://")))
 		return root
 	}
 	current, original := fixture(), fixture()

@@ -1,6 +1,7 @@
 package git
 
 import (
+	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"testing"
 
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
@@ -22,10 +23,10 @@ func TestFetcher_SuppliedHTTPSMaterial(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(s, repo.Named(), nil)
 	defer reads.Close()
-	prepared, err := (&operation{Fetcher: &Fetcher{}, secrets: source.SecretLookup(&reads)}).resolveTransport(repo)
+	prepared, err := (&operation{Fetcher: &Fetcher{}, secrets: source.SecretLookup(&reads)}).resolveTransport(repo, sourcecache.Policy{})
 	assert.NoError(t, err)
 	auth, ok := prepared.options.Auth.(*githttp.BasicAuth)
-	if !ok || auth.Username != "repository" || auth.Password != "filled" || prepared.ambientUser != "" {
+	if !ok || auth.Username != "repository" || auth.Password != "filled" {
 		t.Fatal("effective HTTPS auth was not fixed during preparation")
 	}
 }

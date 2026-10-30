@@ -626,9 +626,7 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 					slices.Reverse(runs)
 				}
 				results, err, _ := Select(runs, &FailuresError{Message: "raw failures"}, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Namespace: "apps"}}, nil)
-				if err != nil {
-					t.Fatalf("out-of-namespace owner made unnamed query fatal: %v", err)
-				}
+				assert.Equal(t, err != nil, disposition.Status == store.StatusFailed)
 				index := 1
 				if reverse {
 					index = 0
@@ -659,29 +657,44 @@ func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		required, paired bool
+		namespace        string
+		full             bool
 	}{
 		{name: "excluded"},
 		{name: "required", required: true},
 		{name: "required with other side", required: true, paired: true},
+		{name: "namespace excluded", namespace: "apps"},
+		{name: "namespace required", namespace: "apps", required: true},
+		{name: "namespace required with other side", namespace: "apps", required: true, paired: true},
+		{name: "namespace required full render", namespace: "apps", required: true, full: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			parent := testutil.KustomizationID("flux-system", "parent")
 			child := testutil.HelmReleaseID("apps", "child")
+			sibling := testutil.HelmReleaseID("monitoring", "excluded")
 			run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{
 				parent: {Status: store.StatusFailed, Message: "parent failed"},
 			}})
 			run.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
-			run.filter = change.NewFilter()
+			run.store.AddObject(&manifest.HelmRelease{Name: child.Name, Namespace: child.Namespace})
+			run.store.AddObject(&manifest.HelmRelease{Name: sibling.Name, Namespace: sibling.Namespace})
 			var needed []manifest.NamedResource
 			if tc.required {
 				needed = append(needed, parent)
 				run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 					child: {Parent: parent},
 				}}
+				if tc.namespace != "" {
+					run.index.Records[sibling] = manifest.DiscoveryRecord{Parent: child}
+					run.Result.Failed[sibling] = store.StatusInfo{Status: store.StatusFailed, Message: "independent child failed"}
+				}
 			}
-			_, retry := run.filter.AddEmitted(needed, []manifest.NamedResource{child}, nil, 0)
-			assert.Equal(t, retry, false)
+			if !tc.full {
+				run.filter = change.NewFilter()
+				_, retry := run.filter.AddEmitted(needed, []manifest.NamedResource{child}, nil, 0)
+				assert.Equal(t, retry, false)
+			}
 			run.Err = &FailuresError{Message: "parent failed"}
 			runs := []Rendered{run}
 			if tc.paired {
@@ -691,13 +704,46 @@ func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
 				assert.Equal(t, retry, false)
 				runs = append(runs, other)
 			}
-			selected, err, remainder := Select(runs, run.Err, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind}}, nil)
+			selected, err, remainder := Select(runs, run.Err, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind, Namespace: tc.namespace}}, nil)
 			assert.Equal(t, err != nil, tc.required)
 			assert.Equal(t, remainder == nil, true)
 			_, visible := selected[0].Failed[parent]
 			assert.Equal(t, visible, tc.required)
+			_, visible = selected[0].Failed[sibling]
+			assert.Equal(t, visible, false)
+			_, visible = selected[0].Causes[parent]
+			assert.Equal(t, visible, tc.required)
+			_, visible = selected[0].Causes[sibling]
+			assert.Equal(t, visible, false)
 		})
 	}
+	t.Run("unscoped required descendant", func(t *testing.T) {
+		t.Parallel()
+		parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
+		child := &manifest.HelmRelease{Name: "child", Namespace: "monitoring"}
+		run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{child.Named(): {Status: store.StatusFailed, Message: "required descendant failed"}}})
+		run.store.AddObjects([]manifest.BaseManifest{parent, child})
+		setParentsForTest(run.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child.Named(): parent.Named()})
+		var reads store.ReadSet
+		reads.Init(run.store, parent.Named(), nil)
+		reads.GetObject(parent.Named())
+		reads.GetObject(child.Named())
+		reads.RequireData(child.Named())
+		reads.Accept()
+		reads.Retire()
+		assert.Equal(t, slices.Contains(slices.Collect(run.store.RequiredInputs(parent.Named())), child.Named()), true)
+		run.filter = change.NewFilter()
+		_, retry := run.filter.AddEmitted([]manifest.NamedResource{parent.Named(), child.Named()}, []manifest.NamedResource{parent.Named()}, nil, 0)
+		assert.Equal(t, retry, false)
+		_, selectedChild, _, _ := run.filter.Membership(child.Named())
+		assert.Equal(t, selectedChild, false)
+		run.Err = &FailuresError{Message: "required descendant failed"}
+		selected, err, remainder := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+		assert.Equal(t, err != nil, true)
+		assert.NoError(t, remainder)
+		_, retained := selected[0].Failed[child.Named()]
+		assert.Equal(t, retained, true)
+	})
 }
 
 func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
@@ -740,6 +786,29 @@ func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
 			assert.Equal(t, failed, tc.selected || tc.named)
 		})
 	}
+	t.Run("namespace selected source descendant", func(t *testing.T) {
+		t.Parallel()
+		parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+		child := &manifest.GitRepository{Name: "source", Namespace: "apps"}
+		failure := store.StatusInfo{Status: store.StatusFailed, Message: "source failed"}
+		run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{child.Named(): failure}})
+		run.store.AddObjects([]manifest.BaseManifest{parent, child})
+		publishFixture(t, run.store, parent.Named(), []manifest.NamedResource{child.Named()})
+		run.filter = change.NewFilter()
+		_, retry := run.filter.AddEmitted(nil, []manifest.NamedResource{parent.Named(), child.Named()}, nil, 0)
+		assert.Equal(t, retry, false)
+		roots := []manifest.NamedResource{testutil.KustomizationID("apps", "")}
+		assert.Equal(t, (manifest.Selection{Roots: roots}).Matches(child.Named()), false)
+		_, selectedChild, _, _ := run.filter.Membership(child.Named())
+		assert.Equal(t, selectedChild, true)
+		run.Err = &FailuresError{Message: failure.Message}
+		result, err, remainder := Select([]Rendered{run}, run.Err, roots, nil)
+		assert.Equal(t, err != nil, true)
+		assert.NoError(t, remainder)
+		assert.Equal(t, len(result[0].Failed), 1)
+		assert.Equal(t, result[0].Failed[child.Named()].String(), failure.Message)
+		assert.Diff(t, result[0].Causes, map[manifest.NamedResource][]manifest.NamedResource{child.Named(): nil})
+	})
 }
 
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
@@ -1388,6 +1457,41 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 
 func TestSelect_ComparedRootFailureOutsideLocalNamespace(t *testing.T) {
 	t.Parallel()
+	for _, reverse := range []bool{false, true} {
+		for _, required := range []bool{false, true} {
+			t.Run(fmt.Sprintf("namespace/required=%t/reverse=%t", required, reverse), func(t *testing.T) {
+				t.Parallel()
+				parent := &manifest.Kustomization{Name: "parent", Namespace: "monitoring"}
+				child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+				failed, other := selectedRun(&Result{}), selectedRun(&Result{})
+				failed.filter, other.filter = change.NewFilter(), change.NewFilter()
+				failed.store.AddObject(parent)
+				failed.Result.Failed = map[manifest.NamedResource]store.StatusInfo{parent.Named(): {Status: store.StatusFailed, Message: "external producer failed"}}
+				failed.Err = &FailuresError{Message: "external producer failed"}
+				other.store.AddObject(child)
+				owner := parent.Named()
+				if !required {
+					owner.Name = "other"
+				}
+				setParentsForTest(other.Orchestrator, map[manifest.NamedResource]manifest.NamedResource{child.Named(): owner})
+				_, retry := other.filter.AddEmitted([]manifest.NamedResource{child.Named(), owner}, []manifest.NamedResource{child.Named()}, nil, 0)
+				assert.Equal(t, retry, false)
+				runs := []Rendered{failed, other}
+				index := 0
+				if reverse {
+					slices.Reverse(runs)
+					index = 1
+				}
+				selected, err, remainder := Select(runs, failed.Err, []manifest.NamedResource{testutil.HelmReleaseID("apps", "")}, nil)
+				assert.Equal(t, err != nil, required)
+				assert.NoError(t, remainder)
+				_, retained := selected[index].Failed[parent.Named()]
+				assert.Equal(t, retained, required)
+				_, cause := selected[index].Causes[parent.Named()]
+				assert.Equal(t, cause, required)
+			})
+		}
+	}
 	for _, compared := range []bool{true, false} {
 		t.Run(fmt.Sprintf("compared=%t", compared), func(t *testing.T) {
 			t.Parallel()

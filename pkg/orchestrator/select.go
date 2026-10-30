@@ -126,6 +126,7 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 		s.result.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{binding.Producer: binding.Key}
 	}
 	var emitters []manifest.BaseManifest
+	intent := manifest.Selection{Roots: roots}
 	for _, root := range roots {
 		objects := s.run.store.ListObjects(root.Group, root.Kind)
 		stored := len(objects)
@@ -151,7 +152,7 @@ func (s *selectionSide) collect(roots []manifest.NamedResource, labels map[strin
 				}
 				continue
 			}
-			if (root.Name != "" && id.Name != root.Name) || !s.includes(id.Namespace) {
+			if !intent.Matches(id) || !s.includes(id.Namespace) {
 				if root.Name == "" && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {
 					emitters = append(emitters, obj)
 				}
@@ -405,7 +406,7 @@ func (s *selectionSide) includes(namespace string) bool {
 func (s *selectionSide) prepareExternal(root manifest.NamedResource, obj manifest.BaseManifest) {
 	src, _, _ := obj.SourcePath()
 	id := obj.Named()
-	if (root.Name != "" && id.Name != root.Name) || (root.Namespace != "" && id.Namespace != "" && id.Namespace != root.Namespace) {
+	if !(manifest.Selection{Roots: []manifest.NamedResource{root}}).Matches(id) {
 		return
 	}
 	if _, _, external := loader.SourceView(s.run.store, src, s.run.repoRoot); !external {

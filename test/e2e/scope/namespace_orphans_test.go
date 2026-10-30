@@ -337,6 +337,31 @@ func TestE2E_NamespaceOrphans(t *testing.T) {
 			if !strings.Contains(out, fmt.Sprintf("%d passed", wantPassed)) {
 				t.Errorf("want %d real resources passed: %s", wantPassed, out)
 			}
+			if scenario == "shared" {
+				for _, namespace := range append(slices.Clone(namespaces), "absent") {
+					for _, selection := range [][]string{{"all"}, {"hr"}, {"hr", "demo"}} {
+						if namespace == "absent" && len(selection) > 1 {
+							continue
+						}
+						args := append(slices.Clone(selection), "--namespace", namespace)
+						args = append(args, flags...)
+						first, _ := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+						second, _ := harness.RequireCLIOK(t, append([]string{"build"}, args...)...)
+						assert.Equal(t, first, second)
+						objects, err := testutil.SplitDocs([]byte(first))
+						assert.NoError(t, err)
+						if namespace != "absent" {
+							assert.Equal(t, len(objects) > 0, true)
+						}
+						for _, object := range objects {
+							_, ns := manifest.DocMetadata(object)
+							assert.Equal(t, ns == "" || ns == namespace, true)
+						}
+						result, _ := harness.RequireCLIOK(t, append([]string{"test"}, args...)...)
+						assert.Equal(t, strings.Contains(result, "failed") || strings.Contains(result, "blocked"), false)
+					}
+				}
+			}
 		})
 	}
 	t.Run("terminal replay", func(t *testing.T) {

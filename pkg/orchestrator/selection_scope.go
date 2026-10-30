@@ -19,7 +19,7 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 	s.result.Failed = make(map[manifest.NamedResource]store.StatusInfo)
 	s.result.Blocked = make(map[manifest.NamedResource][]manifest.NamedResource)
 	var required map[manifest.NamedResource]struct{}
-	if roots[0].Name != "" || roots[0].Namespace == "" && s.run.filter.Enabled() {
+	if roots[0].Name != "" || roots[0].Namespace != "" || s.run.filter.Enabled() {
 		required = s.requiredClosure(roots, other)
 	}
 	unrelated := make(map[manifest.NamedResource]store.StatusInfo)
@@ -30,20 +30,6 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 				unrelated[id] = info
 			}
 			continue
-		}
-		if required == nil && !s.includes(id.Namespace) {
-			compared := false
-			if other != nil && other.includes(id.Namespace) {
-				_, compared, _, _ = other.run.filter.Membership(id)
-			}
-			if !compared {
-				producer, ok := s.run.store.GetObject(id).(interface {
-					EmissionPolicy() manifest.EmissionPolicy
-				})
-				if !ok || !producer.EmissionPolicy().DocumentScope {
-					continue
-				}
-			}
 		}
 		s.result.Failed[id] = info
 		if deps := s.run.Result.Blocked[id]; len(deps) > 0 {
@@ -65,17 +51,14 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 			work = append(work, id)
 		}
 	}
-	kinds := make(map[manifest.NamedResource]bool, len(roots))
-	for _, root := range roots {
-		kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] = true
-	}
+	intent := manifest.Selection{Roots: roots}
 	seed := func(id manifest.NamedResource) {
 		if roots[0].Name == "" && s.run.filter.Enabled() {
 			if _, selected, _, _ := s.run.filter.Membership(id); !selected {
 				return
 			}
 		}
-		if kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] && (roots[0].Name == "" || id.Name == roots[0].Name) && s.includes(id.Namespace) {
+		if intent.Matches(id) && s.includes(id.Namespace) {
 			add(id)
 		}
 	}
@@ -97,9 +80,18 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 		}
 	}
 	// Prerequisites MUST NOT expand downward into unrelated siblings.
-	if roots[0].Name != "" {
+	if roots[0].Name != "" || roots[0].Namespace != "" {
 		for i := 0; i < len(work); i++ { //nolint:intrange // Descendants extend this traversal.
 			for _, child := range children[work[i]] {
+				if roots[0].Name == "" {
+					if s.run.filter.Enabled() {
+						if _, selected, _, _ := s.run.filter.Membership(child); !selected {
+							continue
+						}
+					} else if !s.includes(child.Namespace) {
+						continue
+					}
+				}
 				add(child)
 			}
 		}

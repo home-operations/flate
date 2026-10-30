@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -128,6 +129,98 @@ func TestE2E_ChangedOnlyHRDependsOnUnchangedDep(t *testing.T) {
 	// the assertion above would pass trivially.
 	if line := harness.MustExtractSkipLine(t, out, "downloads/qbittorrent"); !strings.Contains(line, "‒") {
 		t.Errorf("expected qbittorrent KS skipped (unchanged); got: %s", line)
+	}
+}
+
+func TestE2E_ChangedOnlyRenderEmittedDependency(t *testing.T) {
+	before, after := t.TempDir(), t.TempDir()
+	repo := testutil.GitInit(t, after)
+	_, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/cluster.git"}})
+	assert.NoError(t, err)
+	testutil.WriteFile(t, after, "flux/source.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: cluster, namespace: flux-system}
+spec: {url: https://example.test/cluster.git}
+`)
+	testutil.WriteFile(t, after, "flux/emitter.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: emitter, namespace: flux-system}
+spec:
+  chart:
+    spec:
+      chart: charts/emitter
+      sourceRef: {kind: GitRepository, name: cluster}
+`)
+	testutil.WriteFile(t, after, "charts/emitter/Chart.yaml", "apiVersion: v2\nname: emitter\nversion: 1.0.0\n")
+	testutil.WriteFile(t, after, "charts/emitter/templates/dependency.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: {{ printf "rendered-%s" "dependency" }}
+  namespace: flux-system
+spec:
+  path: ./apps/dependency
+  sourceRef: {kind: GitRepository, name: cluster}
+`)
+	testutil.WriteFile(t, after, "apps/dependency/kustomization.yaml", "resources: [output.yaml]\n")
+	testutil.WriteFile(t, after, "apps/dependency/output.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: dependency-output, namespace: flux-system}
+data: {value: stable}
+`)
+	testutil.WriteFile(t, after, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", `  path: ./apps/consumer
+  sourceRef: {kind: GitRepository, name: cluster}
+  dependsOn: [{name: rendered-dependency}]
+  postBuild:
+    substitute: {VALUE: before}
+`))
+	testutil.WriteFile(t, after, "apps/consumer/kustomization.yaml", "resources: [output.yaml]\n")
+	testutil.WriteFile(t, after, "apps/consumer/output.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: consumer-output, namespace: flux-system}
+data: {value: '${VALUE}'}
+`)
+	base := testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{
+		Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)},
+	})
+	testutil.CopyTree(t, after, before)
+	harness.MutateFile(t, filepath.Join(after, "flux/consumer.yaml"), "VALUE: before", "VALUE: after")
+
+	var snapshots, unchanged [2]string
+	for i, root := range []string{before, after} {
+		full, _ := harness.RequireCLIOK(t, "build", "all", "--path", filepath.Join(root, "flux"),
+			"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+		value := []string{"before", "after"}[i]
+		if !strings.Contains(full, "name: dependency-output") || !strings.Contains(full, "value: stable") {
+			t.Fatalf("full %s build omitted dependency output:\n%s", value, full)
+		}
+		consumer := ""
+		for doc := range strings.SplitSeq(full, "---\n") {
+			if strings.Contains(doc, "name: consumer-output\n") {
+				consumer += "---\n" + doc
+			} else if doc != "" {
+				unchanged[i] += "---\n" + doc
+			}
+		}
+		if !strings.Contains(consumer, "value: "+value) {
+			t.Fatalf("full %s build omitted consumer value:\n%s", value, full)
+		}
+		snapshots[i] = t.TempDir()
+		testutil.GitInit(t, snapshots[i])
+		testutil.WriteFile(t, snapshots[i], "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./apps/consumer\n"))
+		testutil.WriteFile(t, snapshots[i], "apps/consumer/kustomization.yaml", "resources: [output.yaml]\n")
+		testutil.WriteFile(t, snapshots[i], "apps/consumer/output.yaml", consumer)
+	}
+	assert.Diff(t, unchanged[1], unchanged[0])
+	fullDiff, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(snapshots[1], "flux"),
+		"--path-orig", filepath.Join(snapshots[0], "flux"), "-o", "diff",
+		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+	if !strings.Contains(fullDiff, "-  value: before") || !strings.Contains(fullDiff, "+  value: after") {
+		t.Fatalf("full-render comparison omitted consumer change:\n%s", fullDiff)
+	}
+	for range 2 {
+		changed, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(after, "flux"),
+			"--base", base.String(), "-o", "diff", "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
+		assert.Equal(t, changed, fullDiff)
 	}
 }
 

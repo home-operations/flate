@@ -64,6 +64,8 @@ type admissionClosure struct {
 	result             Admission
 	counts             [3]int
 	collecting         bool
+	appKnown           bool
+	applied            bool
 	children           map[manifest.NamedResource]store.Child
 	queue              []manifest.NamedResource
 	roots              []string
@@ -143,11 +145,11 @@ func (c *admissionClosure) evaluate(ctx context.Context, reads *store.ReadSet) (
 	var candidatesKnown [2]bool
 	materializers := func(demand materializerDemand, consumer manifest.NamedResource) bool {
 		mode := 0
-		if demand.ordering {
+		if demand.ordering || demand.application != "" {
 			mode = 1
 		}
 		if !candidatesKnown[mode] {
-			candidates[mode] = c.materializerCandidates(demand.ordering)
+			candidates[mode] = c.materializerCandidates(mode == 1)
 			candidatesKnown[mode] = true
 		}
 		return c.materializers(new(demand), consumer, candidates[mode])

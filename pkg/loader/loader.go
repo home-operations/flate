@@ -74,7 +74,7 @@ type Loader struct {
 	bindings              atomic.Pointer[map[manifest.NamedResource]admissionSource]
 	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
 	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
-	templateTargets       map[manifest.NamedResource][]manifest.ProducerTarget
+	templateProjections   map[manifest.NamedResource]manifest.TemplateProjection
 	projections           manifest.ProducerProjections
 	producerFacts         atomic.Pointer[map[manifest.BaseManifest]producerFact]
 	construction, derived uint64
@@ -502,7 +502,7 @@ func (l *Loader) recordDataFile(ctx context.Context, absPath string) error {
 }
 
 func (l *Loader) recordOccurrence(path string, o *Occurrence) {
-	if o.facts.uncertain || !o.facts.tracked && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
+	if o.facts.uncertain || !o.facts.retained && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
 		return
 	}
 	if !l.acceptObject(o.Identity) {

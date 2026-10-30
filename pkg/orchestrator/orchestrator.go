@@ -144,12 +144,10 @@ type Orchestrator struct {
 	repoRoot string
 
 	// index is immutable after discovery.
-	index                 *manifest.DiscoveryIndex
-	entryDiscovery        *discovery.Result
-	entryBinding          discovery.Binding
-	entryAdmissionPending bool
-	entryFailure          error
-	admission             *discovery.Admission
+	index        *manifest.DiscoveryIndex
+	entryBinding discovery.Binding
+	entryFailure error
+	admission    *discovery.Admission
 
 	// orphans retain skipped failures for the completed result.
 	orphans map[manifest.NamedResource]string
@@ -336,7 +334,6 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.cfg.RepoRoot = res.RepoRoot
 	o.repoRoot = res.RepoRoot
 	o.index = res.Index
-	o.entryDiscovery = res
 	o.entryBinding = res.Binding
 	o.admission = res.Admission
 	o.dependencySubstitutions = res.DependencySubstitutions

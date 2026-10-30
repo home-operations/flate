@@ -119,6 +119,9 @@ func (c *admissionClosure) independent(id manifest.NamedResource, owners func() 
 	if c.states[id].staticOwner {
 		return false
 	}
+	if owners == nil {
+		return true
+	}
 	for _, owner := range owners() {
 		if owner.Named() != id && c.coversDeclaration(owner, id) {
 			return false

@@ -731,3 +731,45 @@ func testAdmissionEmittedNamespaceChildrenCase2(
 		assert.Equal(t, slices.Contains(proposal.Dirty, child.Obj.Named()), child.Obj == changed)
 	}
 }
+
+func TestAdmission_HistoryProductionRefresh(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(
+		manifest.BootstrapSourceID,
+		&store.SourceArtifact{
+			LocalPath: root,
+			FS: fstest.MapFS{
+				"owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./payload\n"))},
+			},
+		},
+	)
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Changes = change.NewSet([]string{"owner.yaml"})
+	l.Options.Filter = change.NewFilter()
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+	owner := testutil.KustomizationID("apps", "owner")
+	current := manifest.Production{Owner: owner, Authored: id, File: "current.yaml"}
+	accepted := manifest.Production{Owner: owner, Authored: id, File: "accepted.yaml"}
+	l.Index.Records[id] = manifest.DiscoveryRecord{Productions: []manifest.Production{current}}
+	c := admissionClosure{
+		loader:   l,
+		objects:  st,
+		proposal: &Admission{},
+		accepted: map[manifest.NamedResource]map[manifest.NamedResource]manifest.DiscoveryRecord{
+			owner: {id: {Productions: []manifest.Production{accepted}}},
+		},
+		replace: map[manifest.NamedResource]bool{owner: true},
+	}
+	assert.Diff(t, c.productions(id), []manifest.Production{accepted})
+	assert.NoError(t, c.start(t.Context(), func(materializerDemand, manifest.NamedResource) bool { return false }))
+	assert.Equal(t, c.states[owner].generation > 1, true)
+	assert.Equal(t, c.replace[owner], false)
+	assert.Diff(t, c.productions(id), []manifest.Production{current, accepted})
+}

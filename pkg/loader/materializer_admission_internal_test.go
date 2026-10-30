@@ -1,6 +1,8 @@
 package loader
 
 import (
+	"encoding/json"
+	"fmt"
 	"iter"
 	"path/filepath"
 	"slices"
@@ -112,15 +114,14 @@ func TestAdmission_MaterializerClassificationReused(t *testing.T) {
 
 func TestAdmission_MaterializerInventoryAuthority(t *testing.T) {
 	t.Parallel()
-	for _, scope := range []string{"named", "namespace"} {
-		t.Run(scope, func(t *testing.T) {
+	for _, tc := range []applicationInventoryCase{{"unknown", "unknown", true, true}, {"known_owner", "known_owner", true, false}, {"bound_entry", "bound_entry", false, false}, {"static_positive", "static", false, false}, {"retired_static", "static", true, true}, {"complete_positive", "emission", false, false}, {"complete_negative", "emission", false, true}, {"partial_positive", "emission", true, true}, {"stale", "emission", true, true}, {"history_positive", "history", false, false}, {"history_negative", "history", false, true}, {"history_partial", "history", true, true}, {"foreign", "emission", false, true}} {
+		t.Run("application/"+tc.name, func(t *testing.T) {
 			t.Parallel()
-			testAdmissionMaterializerInventoryAuthorityCase(
-				t,
-				&scope,
-			)
-		},
-		)
+			testApplicationInventoryCase(t, &tc)
+		})
+	}
+	for _, scope := range []string{"named", "namespace"} {
+		t.Run(scope, func(t *testing.T) { t.Parallel(); testAdmissionMaterializerInventoryAuthorityCase(t, &scope) })
 	}
 	t.Run(
 		"namespace generated root",
@@ -337,4 +338,285 @@ func registerMaterializerPrepared(t *testing.T, fixture preparedMaterializerInpu
 		},
 		docs,
 	)
+}
+
+func TestAdmission_ApplicationProducerEvidence(t *testing.T) {
+	t.Parallel()
+	for _, compact := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compact=%t", compact), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			input := &store.SourceArtifact{
+				LocalPath: root,
+				FS: fstest.MapFS{"flux/owner.yaml": {Data: []byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: factory, namespace: apps}
+spec: {path: ./application}
+`)}, "application/kustomization.yaml": {Data: []byte("resources: [flux.yaml]\n")}, "application/flux.yaml": {Data: []byte(`apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata: {name: flux, namespace: apps}
+spec:
+  sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: main, path: ./flux}
+`)}},
+			}
+			st.SetArtifact(manifest.BootstrapSourceID, input)
+			source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
+			st.AddObject(source)
+			st.SetArtifact(source.Named(), input)
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Filter = change.NewFilter()
+			l.Options.Selection = manifest.Selection{Changed: compact}
+			_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
+			assert.NoError(t, err)
+			_, err = l.Load(t.Context(), filepath.Join(root, "application"))
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "flux", manifest.NamedResource{}).
+				Named()
+			owner := manifest.NamedResource{
+				Group:     manifest.FluxKustomizeDomain,
+				Kind:      manifest.KindKustomization,
+				Name:      "factory",
+				Namespace: "apps",
+			}
+			application := manifest.NamedResource{
+				Group:     manifest.FluxOperatorDomain,
+				Kind:      "FluxInstance",
+				Name:      "flux",
+				Namespace: "apps",
+			}
+			assert.Equal(
+				t,
+				slices.ContainsFunc(
+					l.Index.Records[entry].Productions,
+					func(p manifest.Production) bool { return p.Owner == owner && p.Declaration == application },
+				),
+				true,
+			)
+			assert.Equal(
+				t,
+				slices.ContainsFunc(
+					l.Index.Records[source.Named()].Productions,
+					func(p manifest.Production) bool { return p.Declaration == application },
+				),
+				false,
+			)
+			closure := admissionClosure{loader: l, objects: st, proposal: &Admission{}}
+			closure.materializers(
+				&materializerDemand{
+					target:      source.Named(),
+					source:      root,
+					application: filepath.Join(root, "flux"),
+					required:    true,
+				},
+				manifest.NamedResource{},
+				closure.materializerCandidates(false),
+			)
+			assert.Equal(t, closure.role(owner).needed, true)
+		})
+	}
+	for _, namespace := range []string{"apps", ""} {
+		t.Run("resourceset/namespace="+namespace, func(t *testing.T) {
+			t.Parallel()
+			for range 2 {
+				root := t.TempDir()
+				st := store.New()
+				input := &store.SourceArtifact{
+					LocalPath: root,
+					FS: fstest.MapFS{
+						"application/kustomization.yaml": {Data: []byte("namespace: apps\nresources: [set.yaml]\n")},
+						"application/set.yaml": {Data: fmt.Appendf(nil, `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: factory, namespace: %q}
+spec:
+  inputs: [{}]
+  resourcesTemplate: |
+    apiVersion: fluxcd.controlplane.io/v1
+    kind: FluxInstance
+    metadata: {name: flux}
+    spec:
+      sync: {name: self, kind: GitRepository, url: https://fixture.invalid/repo, ref: main, path: ./flux}
+`, namespace)},
+					},
+				}
+				st.SetArtifact(manifest.BootstrapSourceID, input)
+				source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
+				st.AddObject(source)
+				st.SetArtifact(source.Named(), input)
+				l := New(st)
+				l.SourceRoot = root
+				l.Options.Filter = change.NewFilter()
+				l.Options.Selection = manifest.Selection{Changed: true}
+				_, err := l.Load(t.Context(), filepath.Join(root, "application"))
+				assert.NoError(t, err)
+				assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+				owner := manifest.NamedResource{
+					Group:     manifest.FluxOperatorDomain,
+					Kind:      manifest.KindResourceSet,
+					Name:      "factory",
+					Namespace: "apps",
+				}
+				record, indexed := l.Index.Lookup(owner)
+				assert.Equal(t, indexed, true)
+				assert.Equal(t, record.Authored.Namespace, namespace)
+				closure := admissionClosure{loader: l, objects: st, proposal: &Admission{}}
+				pending := closure.materializers(
+					&materializerDemand{
+						target:      source.Named(),
+						source:      root,
+						application: filepath.Join(root, "flux"),
+						required:    true,
+					},
+					manifest.NamedResource{},
+					closure.materializerCandidates(false),
+				)
+				assert.Equal(t, pending, true)
+				assert.Equal(t, closure.role(owner).needed, true)
+				owner.Namespace = ""
+				assert.Equal(t, closure.role(owner).needed, false)
+			}
+		})
+	}
+}
+
+type applicationInventoryCase struct {
+	name, fixture          string
+	wantProducer, wantPeer bool
+}
+
+func testApplicationInventoryCase(t *testing.T, tc *applicationInventoryCase) {
+	t.Helper()
+
+	root := t.TempDir()
+	st := store.New()
+	input := &store.SourceArtifact{
+		LocalPath: root,
+		FS: fstest.MapFS{
+			"entry/literal.yaml": {
+				Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal}\n"),
+			},
+		},
+	}
+	st.SetArtifact(manifest.BootstrapSourceID, input)
+	source := &manifest.GitRepository{Name: "self", Namespace: "apps"}
+	st.AddObject(source)
+	st.SetArtifact(source.Named(), input)
+	producer := &manifest.HelmRelease{Name: "producer", Namespace: "apps"}
+	other := &manifest.HelmRelease{Name: "other", Namespace: "apps"}
+	st.AddObjects([]manifest.BaseManifest{producer, other})
+	application := &manifest.RawObject{
+		APIVersion: "fluxcd.controlplane.io/v1",
+		Kind:       "FluxInstance",
+		Namespace:  "apps",
+		Name:       "flux",
+		Spec: map[string]any{
+			"sync": map[string]any{
+				"name": source.Name,
+				"kind": source.Named().Kind,
+				"url":  "https://fixture.invalid/repo",
+				"ref":  "main",
+				"path": "./entry",
+			},
+		},
+	}
+	if tc.name == "foreign" {
+		foreign := &manifest.GitRepository{Name: "foreign", Namespace: "apps"}
+		st.AddObject(foreign)
+		st.SetArtifact(foreign.Named(), &store.SourceArtifact{LocalPath: t.TempDir(), FS: input.FS})
+		application.Spec["sync"].(map[string]any)["name"] = foreign.Name
+	}
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	occurrence := compactOccurrence(producer, manifest.TemplateProjection{})
+	occurrence.Declaration.Source = root
+	l.locations = map[manifest.NamedResource]Occurrence{producer.Named(): occurrence}
+	peer := compactOccurrence(other, manifest.TemplateProjection{})
+	peer.Declaration.Source = root
+	l.locations[other.Named()] = peer
+	if tc.fixture == "bound_entry" {
+		st.AddObject(manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", application.Named()))
+	}
+	if tc.fixture == "static" {
+		fact := compactOccurrence(application, manifest.TemplateProjection{})
+		fact.Declaration.Source = root
+		l.locations[application.Named()] = fact
+		l.Index.Records[application.Named()] = manifest.DiscoveryRecord{
+			Authored: application.Named(),
+			Path:     filepath.Join(root, "entry/application.yaml"),
+			File:     "entry/application.yaml",
+		}
+		l.roots = map[manifest.NamedResource]bool{application.Named(): true}
+		current := application.Clone()
+		if tc.name == "retired_static" {
+			current.Spec = manifest.DeepCopyMap(application.Spec)
+			current.Spec["sync"].(map[string]any)["path"] = "./elsewhere"
+		}
+		st.AddObject(current)
+	}
+	if tc.fixture == "known_owner" {
+		entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "entry", manifest.NamedResource{}).
+			Named()
+		l.Index.Records[entry] = manifest.DiscoveryRecord{
+			Productions: []manifest.Production{{Owner: producer.Named()}},
+		}
+	}
+	if tc.fixture == "emission" {
+		children := []store.Child{{Obj: application}}
+		if tc.name == "complete_negative" {
+			children = nil
+		}
+		st.RecordEmitted(
+			producer.Named(),
+			&store.Emission{Children: children, Complete: tc.name != "partial_positive"},
+			nil,
+		)
+		st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
+		if tc.name == "stale" {
+			fresh := producer.Clone()
+			fresh.Values = map[string]any{"changed": true}
+			st.AddObject(fresh)
+			st.RecordEmitted(producer.Named(), &store.Emission{}, nil)
+			st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusFailed})
+		}
+	}
+	closure := admissionClosure{loader: l, objects: st, proposal: &Admission{}}
+	if tc.fixture == "history" {
+		document := map[string]any{
+			"apiVersion": application.APIVersion,
+			"kind":       application.Kind,
+			"metadata":   map[string]any{"name": application.Name, "namespace": application.Namespace},
+			"spec":       application.Spec,
+		}
+		data, err := json.Marshal(document)
+		assert.NoError(t, err)
+		closure.history = map[manifest.NamedResource]struct {
+			Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+			Complete bool
+		}{producer.Named(): {Complete: tc.name != "history_partial", Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+			if tc.name != "history_negative" {
+				yield(application.Named(), manifest.DiscoveryRecord{Application: string(data)})
+			}
+		}}}
+		closure.readHistory()
+	}
+	if st.GetArtifact(source.Named(), store.ArtifactContent) == nil {
+		t.Fatal("application fixture requires physical source bytes")
+	}
+	closure.materializers(
+		&materializerDemand{
+			target:      source.Named(),
+			source:      root,
+			application: filepath.Join(root, "entry"),
+			required:    true,
+		},
+		manifest.NamedResource{},
+		closure.materializerCandidates(false),
+	)
+	assert.Equal(t, closure.role(producer.Named()).needed, tc.wantProducer)
+	assert.Equal(t, closure.role(producer.Named()).selected, false)
+	assert.Equal(t, closure.role(producer.Named()).dirty, false)
+	assert.Equal(t, closure.role(other.Named()).needed, tc.wantPeer)
 }

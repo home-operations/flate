@@ -85,27 +85,37 @@ func (c *admissionClosure) reverseInputRole(
 }
 
 func (c *admissionClosure) sourceRole(id manifest.NamedResource, role admissionRole) admissionRole {
-	if _, _, applies := c.incoming.Obj.SourcePath(); applies && !role.needed {
-		if producer, ok := c.incoming.Obj.(interface {
-			EmissionPolicy() manifest.EmissionPolicy
-		}); ok && !c.loader.Options.Selection.Changed &&
-			slices.ContainsFunc(c.loader.Options.Selection.Roots, func(root manifest.NamedResource) bool {
-				return root.Name == "" && producer.EmissionPolicy().MatchesNamespace(root)
-			}) &&
-			slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
-				return p.Owner != (manifest.NamedResource{}) && c.role(p.Owner).needed
-			}) {
-			role.needed = true
+	if _, _, applies := c.incoming.Obj.SourcePath(); !applies || role.needed {
+		return role
+	}
+	if producer, ok := c.incoming.Obj.(interface {
+		EmissionPolicy() manifest.EmissionPolicy
+	}); ok && !c.loader.Options.Selection.Changed &&
+		slices.ContainsFunc(c.loader.Options.Selection.Roots, func(root manifest.NamedResource) bool {
+			return root.Name == "" && producer.EmissionPolicy().MatchesNamespace(root)
+		}) &&
+		slices.ContainsFunc(c.productions(id), func(p manifest.Production) bool {
+			return p.Owner != (manifest.NamedResource{}) && c.role(p.Owner).needed
+		}) {
+		role.needed = true
+	}
+	//nolint:gocritic // The iterator supplies immutable value snapshots.
+	for target, record := range c.loader.Index.Files() {
+		needed, _, _, _ := c.loader.Options.Filter.Membership(target)
+		if !needed || record.BuilderOwner != (manifest.NamedResource{}) ||
+			!c.coversDeclaration(c.incoming.Obj, target) {
+			continue
 		}
-		//nolint:gocritic // The iterator supplies immutable value snapshots.
-		for target, record := range c.loader.Index.Files() {
-			needed, _, _, _ := c.loader.Options.Filter.Membership(target)
-			if needed && record.BuilderOwner == (manifest.NamedResource{}) &&
-				c.coversDeclaration(c.incoming.Obj, target) {
-				role.needed = true
-				break
-			}
+		if record.Parent != (manifest.NamedResource{}) && record.Parent != id &&
+			c.objects.GetDeclaration(target) != nil {
+			continue
 		}
+		if record.Parent == (manifest.NamedResource{}) &&
+			c.loader.AdmitsRoot(c.loader.CatalogObject(target), record.Path) {
+			continue
+		}
+		role.needed = true
+		break
 	}
 
 	return role

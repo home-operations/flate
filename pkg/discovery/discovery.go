@@ -23,23 +23,15 @@ import (
 )
 
 // Result summarizes what discovery hydrated into the store.
-type Result struct {
-	pending *Session
-
-	// Binding identifies the entry's actual producer and admitted input.
-	Binding Binding
-	// Admission applies the same immutable bootstrap policy to runtime source identities.
-	Admission *Admission
-	// RepoRoot is the bootstrap input's ownership coordinate. Admitted
+type Result struct { // Binding identifies the entry's actual producer and admitted input.
+	Binding   Binding    // Admission applies the same immutable bootstrap policy to runtime source identities.
+	Admission *Admission // RepoRoot is the bootstrap input's ownership coordinate. Admitted
 	// inputs may use a synthetic label with no corresponding directory.
-	RepoRoot string
-	// Index contains the immutable static discovery facts consumed by rendering.
-	Index *manifest.DiscoveryIndex
-	// WipeSecrets reflects the loader's WipeSecrets setting. The
+	RepoRoot string                   // Index contains the immutable static discovery facts consumed by rendering.
+	Index    *manifest.DiscoveryIndex // WipeSecrets reflects the loader's WipeSecrets setting. The
 	// orchestrator forwards it to lazy-promotion so SOPS Secrets
 	// stay wiped on demand the same way they were at file-load.
-	WipeSecrets bool
-	// DependencySubstitutions is frozen after complete discovery and before rendering.
+	WipeSecrets             bool // DependencySubstitutions is frozen after complete discovery and before rendering.
 	DependencySubstitutions values.DependencySubstitutions
 }
 
@@ -198,13 +190,16 @@ func (d *Session) finishDiscovery(
 	if err := d.acceptPrepared(ctx); err != nil {
 		return nil, err
 	}
+	admission := d.admission()
+	if admission.qualification != nil && cfg.Selection.Changed && d.binding == (Binding{}) {
+		d.entryReceipt(ctx, admission)
+	}
 	if !cfg.Selection.Changed && len(cfg.Selection.Roots) == 0 && (d.binding != (Binding{}) || cfg.Trees == nil) {
 		l.Retire()
 	}
 	return &Result{
-		pending:                 d,
 		Binding:                 d.binding,
-		Admission:               d.admission(),
+		Admission:               admission,
 		DependencySubstitutions: d.substitutions,
 		RepoRoot:                repoRoot,
 		Index:                   l.Index,
@@ -222,70 +217,6 @@ func (d *Session) standaloneSecretIDs(l *loader.Loader, wipeSecrets bool) []mani
 		}
 	}
 	return standaloneSecrets
-}
-
-// PrepareEntry completes discovery preparation after validated receipt evidence is admitted.
-// It MUST run before reconciliation publishes the discovery index to concurrent readers.
-func (r *Result) PrepareEntry(ctx context.Context, changes *change.Set) error {
-	d := r.pending
-	r.pending = nil
-
-	if d == nil || r.Binding != (Binding{}) {
-		return nil
-	}
-	if d.cfg.Trees != nil && d.needsEntry(changes) {
-		root, _, err := r.Admission.entry(ctx, d.cfg.Store, d.cfg.Store.ListObjects("", ""))
-		if err != nil {
-			return err
-		}
-		if root == nil {
-			if err := d.qualifyEntry(ctx, r.Admission); err != nil {
-				return err
-			}
-		}
-	}
-	root, binding, err := r.Admission.BindEntry(ctx, d.cfg.Store)
-	if err != nil || root == nil {
-		return err
-	}
-	d.loader.Index, d.binding = r.cloneIndex(), binding
-	d.cfg.Store.AddObject(root)
-	source, _, _ := kustomize.SourceInput(d.cfg.Store, root)
-	if source != nil && d.cfg.Trees != nil {
-		if err := d.prepareProducer(ctx, root, source); err != nil {
-			d.binding.Failure = err
-		}
-	}
-	if err := d.loader.FinalizeIndex(ctx, r.RepoRoot, true); err != nil {
-		return err
-	}
-	if err := d.acceptPrepared(ctx); err != nil {
-		return err
-	}
-	r.Index, r.Binding = d.loader.Index, d.binding
-	return nil
-}
-
-func (r *Result) cloneIndex() *manifest.DiscoveryIndex {
-	index := *r.Index
-	index.Records = maps.Clone(index.Records)
-	for id, record := range index.Records { //nolint:gocritic // Map iteration preserves a value snapshot without an extra lookup.
-		record.Inputs, record.Refs = slices.Clone(record.Inputs), slices.Clone(record.Refs)
-		record.Productions, record.ReferenceData = slices.Clone(record.Productions), slices.Clone(record.ReferenceData)
-		record.ContentRoots = maps.Clone(record.ContentRoots)
-		for source, paths := range record.ContentRoots {
-			record.ContentRoots[source] = slices.Clone(paths)
-		}
-		index.Records[id] = record
-	}
-	index.Claims, index.Readers = maps.Clone(index.Claims), maps.Clone(index.Readers)
-	for path, ids := range index.Claims {
-		index.Claims[path] = slices.Clone(ids)
-	}
-	for path, readers := range index.Readers {
-		index.Readers[path] = slices.Clone(readers)
-	}
-	return &index
 }
 
 // Session retains invocation-local declaration construction until Freeze.

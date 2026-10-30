@@ -18,12 +18,12 @@ func (pr *productionRecorder) record(b *selfProduceBuilder, l *Loader, childArg 
 	if !include {
 		return
 	}
-	production.publish(pr, b)
+	production.publish(pr, b, l)
 }
 
 func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact *Occurrence, version string) {
 	o := *fact
-	if !o.facts.tracked && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
+	if !o.facts.retained && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
 		return
 	}
 	if o.facts.uncertain {
@@ -62,7 +62,9 @@ func (pr *productionRecorder) recordFact(b *selfProduceBuilder, l *Loader, fact 
 	if r.Path == pr.visit.file && r.Authored == o.Authored {
 		b.locations[id] = o
 	}
-	b.recordProducer(new(producerDeclaration{fact: &o, identity: id, authored: o.Authored, visit: pr.visit}), nil)
+	declaration := producerDeclaration{fact: &o, identity: id, authored: o.Authored, visit: pr.visit}
+	b.recordProducer(&declaration, nil)
+	b.recordApplication(l, &declaration)
 	if id.KindInfo().Structural {
 		b.emittedFiles[pr.coordinate] = appendUniqueProducer(b.emittedFiles[pr.coordinate], pr.visit.owner)
 	}
@@ -90,7 +92,8 @@ func (pr *productionRecorder) projectObject(
 		pr.recordFact(b, l, child.fact, version)
 		return objectProduction{}, false
 	}
-	if !info.Tracked && b.reader.cache[pr.visit.file].loaded && len(manifest.ProducerTargets(obj)) == 0 {
+	_, _, hasPath := obj.SourcePath()
+	if !info.Tracked && !hasPath && b.reader.cache[pr.visit.file].loaded && len(manifest.ProducerTargets(obj)) == 0 {
 		return objectProduction{}, false
 	}
 	resolved := manifest.Resolve(obj.Named(), pr.visit.namespace, pr.visit.fallback)
@@ -106,7 +109,7 @@ func (pr *productionRecorder) projectObject(
 	return objectProduction{object: obj, kind: info, resolved: resolved, identity: id}, true
 }
 
-func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilder) {
+func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilder, l *Loader) {
 	r := b.idx.Records[op.identity]
 	projected := op.object
 	needsCandidates := manifest.ProducerNeedsCandidates(op.object)
@@ -142,6 +145,10 @@ func (op *objectProduction) publish(pr *productionRecorder, b *selfProduceBuilde
 		r.Productions = append(r.Productions, p)
 	}
 	b.idx.Records[op.identity] = r
+	b.recordApplication(
+		l,
+		&producerDeclaration{obj: projected, identity: op.identity, authored: op.object.Named(), visit: pr.visit},
+	)
 	op.recordDeclaration(pr, b, projected, needsCandidates)
 	switch {
 	case op.kind.Data:

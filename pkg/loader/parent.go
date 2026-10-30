@@ -271,3 +271,25 @@ func (r *documentReader) localPath(file string) string {
 	dr := *r
 	return dr.artifacts[new(dr).mountedRoot(file)].OriginPath(file)
 }
+
+// AppliesToEntry reports whether a resolved application reads the admitted entry.
+func AppliesToEntry(
+	s sourceStore,
+	application *manifest.EntryApplication,
+	input *store.SourceArtifact,
+	entry string,
+) bool {
+	if input == nil {
+		return false
+	}
+	source, _ := s.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
+	if source == nil {
+		return false
+	}
+	root, pinned, external := SourceView(s, application.Source, input.LocalPath)
+	if pinned || external {
+		return false
+	}
+	target := filepath.Join(root, manifest.NormalizeClaimBase(application.Path))
+	return safepath.Contains(root, target) && source.OriginPath(target) == input.OriginPath(entry)
+}

@@ -103,6 +103,7 @@ func (c *admissionClosure) start(
 }
 
 func (c *admissionClosure) admitChangedRoots(ctx context.Context) error {
+	roots := c.roots[:0]
 	for _, root := range c.roots {
 		occurrences, err := c.loader.Occurrences(ctx, filepath.Join(c.loader.SourceRoot, filepath.FromSlash(root)), "")
 		if err != nil {
@@ -114,18 +115,13 @@ func (c *admissionClosure) admitChangedRoots(ctx context.Context) error {
 		if !matches && !entry {
 			continue
 		}
-		changed := entry || !c.loader.Options.Selection.Changed || c.loader.Options.Changes == nil
-		{
-			visitValues := c.loader.scopeWalk(new(graphVisit{root: c.loader.SourceRoot, dir: root}))
-			for visitIndex := range visitValues {
-				visit := visitValues[visitIndex]
-				changed = changed || c.fileChanged(manifest.BootstrapSourceID, visit.coordinate)
-			}
-		}
-		if changed {
+		id := manifest.NewEntryKustomization(manifest.BootstrapSourceID, root, manifest.NamedResource{}).Named()
+		if !c.loader.Options.Selection.Changed || c.loader.Options.Changes == nil || c.affected(id, c.object(id)) {
 			c.proposal.Blocked = append(c.proposal.Blocked, root)
+			roots = append(roots, root)
 		}
 	}
+	c.roots = roots
 	return nil
 }
 

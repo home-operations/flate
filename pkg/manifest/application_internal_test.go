@@ -28,7 +28,7 @@ func TestEntryApplication_Kustomization(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			application, valid := tc.object.EntryApplication()
+			application, valid := ApplicationFor(tc.object)
 			assert.Equal(t, valid, tc.valid)
 			if tc.valid {
 				assert.Equal(t, application.Source, tc.source)
@@ -70,7 +70,7 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 				Spec:       map[string]any{"sync": tc.sync},
 			}
 			before := DeepCopyMap(object.Spec)
-			application, valid := object.EntryApplication()
+			application, valid := ApplicationFor(object)
 			assert.Equal(t, valid, true)
 			assert.Equal(t, application.Source, tc.expected.Named())
 			assert.Equal(t, application.Path, "./clusters")
@@ -113,12 +113,12 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 				Namespace:  "control",
 				Spec:       map[string]any{"sync": sync},
 			}
-			_, valid := object.EntryApplication()
+			_, valid := ApplicationFor(object)
 			assert.Equal(t, valid, false)
 			sync = maps.Clone(sync)
 			sync[missing] = []string{"malformed"}
 			object.Spec = map[string]any{"sync": sync}
-			_, valid = object.EntryApplication()
+			_, valid = ApplicationFor(object)
 			assert.Equal(t, valid, false)
 		})
 	}
@@ -142,7 +142,7 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 					},
 				},
 			}
-			_, valid := object.EntryApplication()
+			_, valid := ApplicationFor(object)
 			assert.Equal(t, valid, false)
 		})
 	}

@@ -127,6 +127,10 @@ func (c *admissionClosure) completeRecord(
 	for owner, records := range c.accepted {
 		if historical, ok := records[(*id)]; ok {
 			record.Refs = append(slices.Clone(record.Refs), historical.Refs...)
+			// An entry's exact current coverage MUST supersede historical subtree coverage.
+			if record.ContentRoots != nil && id.ReportHidden() {
+				continue
+			}
 			record.ContentRoots = maps.Clone(record.ContentRoots)
 			if record.ContentRoots == nil {
 				record.ContentRoots = map[manifest.NamedResource][]string{}

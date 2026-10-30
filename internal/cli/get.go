@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"maps"
 	"slices"
 
@@ -47,7 +48,7 @@ func ksView() listView[*manifest.Kustomization] {
 				doc["targetNamespace"] = o.TargetNamespace
 			}
 			return map[string]string{
-				"namespace": o.Namespace, "name": o.Name, "path": o.Path,
+				"namespace": o.Namespace, "name": o.Name, "path": cmp.Or(o.Path, "./"),
 			}, doc
 		},
 	}

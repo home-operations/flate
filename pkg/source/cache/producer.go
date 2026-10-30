@@ -143,7 +143,7 @@ func (s *payload) complete(ctx context.Context, c *Cache, result ProducerResult)
 			}
 		}
 		if !s.verified || s.previous == nil || s.written != 0 {
-			return nil, fmt.Errorf("%w: unchanged production requires a previous payload and no new bytes", manifest.ErrInput)
+			return nil, manifest.NewError(manifest.ErrInput, nil, "unchanged production requires a previous payload and no new bytes")
 		}
 		e.fs, e.stored = s.previous.fs, s.previous.stored
 		s.unchanged = true

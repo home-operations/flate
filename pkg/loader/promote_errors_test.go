@@ -3,7 +3,6 @@ package loader
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/home-operations/flate/pkg/manifest"
@@ -25,7 +24,7 @@ func TestPromote_AdmissionErrors(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			cause := fmt.Errorf("%w: exact admission failed", manifest.ErrInput)
+			cause := manifest.NewError(manifest.ErrInput, nil, "exact admission failed")
 			calls := 0
 			admit := func(obj manifest.BaseManifest) (bool, error) {
 				if obj.Named() != target.Named() {
@@ -42,7 +41,7 @@ func TestPromote_AdmissionErrors(t *testing.T) {
 				return true, nil
 			}
 			got, err := Promote(ctx, st, target.Named(), PromoteOptions{Documents: docs, Admit: admit})
-			want := cause
+			var want error = cause
 			if site == "cancel" {
 				want = context.Canceled
 			}

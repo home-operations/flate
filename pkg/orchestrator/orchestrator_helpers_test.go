@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil/controllertest"
@@ -34,7 +33,7 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 		tree.Path = tree.RepoRoot
 	}
 	if tree.Path == "" {
-		return nil, fmt.Errorf("%w: tree path is required", manifest.ErrInput)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "tree path is required")
 	}
 	if tree.Input == nil {
 		var err error

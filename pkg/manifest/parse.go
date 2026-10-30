@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -22,7 +23,7 @@ func decodeCR(doc map[string]any, cr any, kind, domain string) error {
 	}
 	// Typed JSON errors MUST precede permissive required-metadata checks.
 	if err := decodeInto(doc, cr); err != nil {
-		return inputf("%s decode: %w", kind, err)
+		return NewError(ErrInput, fmt.Errorf("%s decode: %w", kind, err), "")
 	}
 	if _, _, missing := requireMetadata(doc); missing != "" {
 		return inputf("%s missing metadata.name", kind)
@@ -108,7 +109,7 @@ func checkAPIVersion(doc map[string]any, want string) error {
 	}
 	gv, err := schema.ParseGroupVersion(v)
 	if err != nil || gv.Version == "" {
-		return inputf("invalid %w", field.Invalid(field.NewPath("apiVersion"), v, "must have a valid version"))
+		return NewError(ErrInput, fmt.Errorf("invalid %w", field.Invalid(field.NewPath("apiVersion"), v, "must have a valid version")), "")
 	}
 	if gv.Group != want {
 		return inputf("expected apiVersion %q, got %q", want, v)

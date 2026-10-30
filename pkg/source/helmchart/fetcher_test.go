@@ -3,10 +3,10 @@ package helmchart
 import (
 	"context"
 	"errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"strings"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -118,10 +118,10 @@ func TestFetch_TransientOCIDiagnostic(t *testing.T) {
 	}
 	live := *missing
 	live.Subject = manifest.DiagnosticFor(missing.Owner, s.GetObject(missing.Owner))
-	if live.Subject.Resource != ordinary.Named() || live.Error() == err.Error() {
+	if live.Subject.Resource != ordinary.Named() || live.Subject == missing.Subject {
 		t.Fatalf("live lookup unexpectedly recovered temporary attribution: %v", &live)
 	}
-	if !strings.Contains(err.Error(), "HelmChart "+hc.Named().NamespacedName()) || strings.Contains(err.Error(), "OCIRepository") || !strings.Contains(live.Error(), "OCIRepository") {
+	if err.Error() != "secret flux-system/tls not found" || live.Error() != err.Error() {
 		t.Fatalf("captured=%v; report-time lookup=%v", err, &live)
 	}
 	t.Logf("captured=%v; report-time lookup=%v", err, &live)

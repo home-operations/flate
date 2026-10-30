@@ -81,8 +81,7 @@ func (c *Client) describeChart(ctx context.Context, hr *manifest.HelmRelease, so
 	}
 	art := sources.LocalSourceArtifact(hr.ChartSource(), read)
 	if art == nil || art.FS == nil {
-		return chartDescription{}, fmt.Errorf("%w: %s %s artifact content unavailable for HelmRelease %s",
-			manifest.ErrObjectNotFound, hr.Chart.Source.Kind, hr.Chart.RepoFullName(), hr.Named().NamespacedName())
+		return chartDescription{}, manifest.NewError(manifest.ErrObjectNotFound, nil, fmt.Sprintf("%s %s artifact content unavailable", hr.Chart.Source.Kind, hr.Chart.RepoFullName()))
 	}
 	input, pin, err := source.OperationView(ctx, art.FS)
 	if err != nil {
@@ -206,7 +205,7 @@ func (c *Client) decodeChart(ctx context.Context, d *chartDescription) error {
 	d.chart, err = d.captured.load()
 	if err != nil {
 		if _, ok := errors.AsType[chart.ValidationError](err); ok {
-			err = fmt.Errorf("%w: %w", manifest.ErrInput, err)
+			err = manifest.NewError(manifest.ErrInput, err, "")
 		}
 		label := d.location
 		if d.artifact.LocalPath != "" {

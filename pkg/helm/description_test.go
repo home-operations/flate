@@ -463,7 +463,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 				} else {
 					hr.ChartValuesFiles = []string{"absent.yaml"}
 				}
-				want = "helm chart valuesFiles apps/podinfo"
+				want = "chart valuesFiles"
 			}
 			st.SetArtifact(hr.ChartSource(), art)
 			root := t.TempDir()

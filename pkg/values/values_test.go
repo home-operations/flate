@@ -528,10 +528,24 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			if !errors.Is(err, manifest.ErrInvalidSubstituteReference) {
 				t.Fatalf("expected invalid substitute reference, got %v", err)
 			}
-			if !strings.Contains(err.Error(), "[my-var z-var]") {
+			if err.Error() != "invalid substitute variables my-var, z-var" {
 				t.Errorf("error should name invalid vars in sorted order; got %v", err)
 			}
 		})
+	}
+}
+
+func TestExpandPostBuildSubstituteReference_InvalidSingleName(t *testing.T) {
+	t.Parallel()
+	ks := &manifest.Kustomization{Name: "k", Namespace: "ns", PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"flate-campaign": "v"}}}
+	before := ks.Clone()
+	err := ExpandPostBuildSubstituteReference(ks, &SliceProvider{})
+	assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
+	if err == nil || err.Error() != "invalid substitute variable flate-campaign" || !errors.Is(err, manifest.ErrInvalidSubstituteReference) || !errors.Is(err, manifest.ErrFlux) {
+		t.Fatalf("invalid variable: %v", err)
+	}
+	if !strings.Contains(manifest.ErrorDetails(err), varsubRegex.String()) {
+		t.Fatal("lost validator detail")
 	}
 }
 
@@ -943,7 +957,7 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("malformed values must retain input/domain identity: %v", err)
 				}
-				for _, detail := range []string{"HelmRelease default/demo", "extra", "requested.yaml"} {
+				for _, detail := range []string{"extra", "requested.yaml"} {
 					if !strings.Contains(err.Error(), detail) {
 						t.Errorf("error lacks %q: %v", detail, err)
 					}
@@ -958,7 +972,7 @@ func TestExpandValueReferences_MalformedYAMLClassified(t *testing.T) {
 				causes := wrapped.Unwrap()
 				var decoded map[string]any
 				parseErr := yaml.Unmarshal([]byte(tc.document), &decoded)
-				if len(causes) != 2 || parseErr == nil || causes[1].Error() != parseErr.Error() {
+				if len(causes) != 2 || parseErr == nil || errors.Unwrap(causes[1]).Error() != parseErr.Error() {
 					t.Fatalf("parser cause changed: %v", err)
 				}
 				if tc.typeError {
@@ -987,7 +1001,7 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 			if !ok || cause.Num != "bad" {
 				t.Fatalf("original index parser cause lost: %v", err)
 			}
-			for _, detail := range []string{"HelmRelease default/demo", `targetPath "` + path + `"`} {
+			for _, detail := range []string{`targetPath "` + path + `"`} {
 				if !strings.Contains(err.Error(), detail) {
 					t.Errorf("error lacks %q: %v", detail, err)
 				}

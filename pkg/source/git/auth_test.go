@@ -130,7 +130,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 				assert.Equal(t, errors.Is(err, manifest.ErrMissingSecret), false)
-				if err == nil || !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "secret ns/creds") || !strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
+				if err == nil || !strings.Contains(err.Error(), tc.wantKey) || !strings.Contains(err.Error(), "secret ns/creds") || strings.Contains(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
 					t.Fatalf("missing input key/source context: %v", err)
 				}
 				for _, payload := range []string{"%%%fixture", "credential-fixture", "invalid-private-fixture", "invalid-known-hosts-fixture"} {

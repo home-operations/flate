@@ -12,7 +12,7 @@ import (
 )
 
 // MissingSecretError retains unavailable source material and an optional Secret identity.
-// Acquisition owners supply the ambient continuation; Unwrap returns manifest.ErrMissingSecret.
+// Acquisition owners supply the ambient continuation.
 type MissingSecretError struct {
 	// Owner is the source requiring unavailable material.
 	Owner manifest.NamedResource
@@ -26,16 +26,12 @@ type MissingSecretError struct {
 	RetryAmbient func(context.Context) (*store.SourceArtifact, error)
 }
 
-// Error identifies the source and its unavailable Secret material.
+// Error identifies unavailable material.
 func (e *MissingSecretError) Error() string {
-	subject := e.Subject
-	if subject.ID == (manifest.NamedResource{}) {
-		subject = manifest.DiagnosticFor(e.Owner, nil)
-	}
 	if e.Secret == (manifest.NamedResource{}) {
-		return fmt.Sprintf("%s: %s: %s", manifest.ErrMissingSecret, subject, e.Detail)
+		return e.Detail
 	}
-	return fmt.Sprintf("%s: %s: secret %s/%s %s", manifest.ErrMissingSecret, subject.Label(), e.Secret.Namespace, e.Secret.Name, e.Detail)
+	return fmt.Sprintf("secret %s/%s %s", e.Secret.Namespace, e.Secret.Name, e.Detail)
 }
 
 // Unwrap keeps errors.Is(err, manifest.ErrMissingSecret) working.
@@ -71,7 +67,7 @@ func (e *MissingSecretError) RetryMachine(ctx context.Context, reads *store.Read
 // AcquireMachine selects credentials before acquisition and classifies machine failures.
 func AcquireMachine(ctx context.Context, policy cache.Policy, prepare func(context.Context) error, acquire func(context.Context, cache.Policy) (*store.SourceArtifact, error)) (*store.SourceArtifact, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("%w: %w", manifest.ErrFlux, err)
+		return nil, manifest.NewError(manifest.ErrFlux, err, "")
 	}
 	policy.Machine = true
 	preparation := ctx
@@ -93,7 +89,7 @@ func AcquireMachine(ctx context.Context, policy cache.Policy, prepare func(conte
 	if err != nil && !errors.Is(err, manifest.ErrMissingSecret) {
 		if _, cached := errors.AsType[*cache.CacheError](err); !cached {
 			if !errors.Is(err, manifest.ErrFlux) {
-				err = fmt.Errorf("%w: %w", manifest.ErrFlux, err)
+				err = manifest.NewError(manifest.ErrFlux, err, "")
 			}
 			err = cache.MachineCredentialErr(err)
 		}
@@ -114,8 +110,7 @@ func MissingSecretErr(owner manifest.DiagnosticIdentity, secretRef, reason strin
 // source and Secret identities for the existing whole-source skip policy.
 func resolveSecretRef(secrets SecretGetter, owner manifest.DiagnosticIdentity, field string, ref *manifest.LocalObjectReference) (*manifest.Secret, error) {
 	if secrets == nil {
-		return nil, fmt.Errorf("%s references %s but no source.SecretGetter is wired",
-			owner.Label(), field)
+		return nil, fmt.Errorf("references %s but no source.SecretGetter is wired", field)
 	}
 	sec := secrets(owner.ID.Namespace, ref.Name)
 	if sec == nil {
@@ -129,11 +124,11 @@ func resolveSecretRef(secrets SecretGetter, owner manifest.DiagnosticIdentity, f
 func BasicAuthFromSecret(sec *manifest.Secret, owner manifest.DiagnosticIdentity, secretRef string) (username, password string, err error) {
 	username, _, err = sec.Value("username")
 	if err != nil {
-		return "", "", fmt.Errorf("%s: secret %s/%s: %w", owner.Label(), owner.ID.Namespace, secretRef, err)
+		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
 	password, _, err = sec.Value("password")
 	if err != nil {
-		return "", "", fmt.Errorf("%s: secret %s/%s: %w", owner.Label(), owner.ID.Namespace, secretRef, err)
+		return "", "", fmt.Errorf("secret %s/%s: %w", owner.ID.Namespace, secretRef, err)
 	}
 	if username == "" || password == "" || manifest.HasValuePlaceholder(username) || manifest.HasValuePlaceholder(password) {
 		return "", "", MissingSecretErr(owner, secretRef, "missing username/password")

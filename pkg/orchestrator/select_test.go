@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"maps"
 	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -249,8 +250,8 @@ func TestSelect_FatalScopeAndRunErrorIdentities(t *testing.T) {
 				{name: "outside joined", joined: true},
 				{name: "unattributed", extra: errors.New("unattributed panic")},
 				{name: "cancellation", extra: context.Canceled},
-				{name: "independent input", wrapped: true, extra: fmt.Errorf("%w: independent input", manifest.ErrInput)},
-				{name: "independent domain", extra: fmt.Errorf("%w: independent domain", manifest.ErrFlux)},
+				{name: "independent input", wrapped: true, extra: manifest.NewError(manifest.ErrInput, nil, "independent input")},
+				{name: "independent domain", extra: manifest.NewError(manifest.ErrFlux, nil, "independent domain")},
 				{name: "visible and unattributed", visible: true, extra: errors.New("unattributed panic")},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -431,8 +432,8 @@ func TestSelect_SharedRootsAndAdvisoryCycles(t *testing.T) {
 func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 	t.Parallel()
 	closeErr := errors.New("shared cache close")
-	inputErr := fmt.Errorf("%w: independent input", manifest.ErrInput)
-	domainErr := fmt.Errorf("%w: independent domain", manifest.ErrFlux)
+	inputErr := manifest.NewError(manifest.ErrInput, nil, "independent input")
+	domainErr := manifest.NewError(manifest.ErrFlux, nil, "independent domain")
 	failed := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{testutil.KustomizationID("flux-system", "failed"): {Status: store.StatusFailed, Message: "resource failed"}}})
 	failed.Err = errors.Join(&FailuresError{Message: "raw failures"}, context.Canceled)
 	t.Run("head_only", func(t *testing.T) {
@@ -444,7 +445,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 		}
 		for _, got := range []error{err, remainder} {
 			for _, cause := range []error{inputErr, manifest.ErrInput, context.Canceled, closeErr} {
-				if !errors.Is(got, cause) || strings.Count(got.Error(), cause.Error()) != 1 {
+				if !errors.Is(got, cause) || !errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 {
 					t.Fatalf("head-only projection lost or duplicated %v: %v", cause, got)
 				}
 			}
@@ -574,7 +575,7 @@ func TestSelect_ErrorAggregationRetainsSharedTeardown(t *testing.T) {
 				previous := -1
 				for _, cause := range []error{causes[0], causes[1], closeErr} {
 					position := strings.Index(got.Error(), cause.Error())
-					if !errors.Is(got, cause) || strings.Count(got.Error(), cause.Error()) != 1 || position <= previous {
+					if !errors.Is(got, cause) || !errors.Is(cause, manifest.ErrInput) && strings.Count(got.Error(), cause.Error()) != 1 || position <= previous {
 						t.Fatalf("base/head/backing ordering or identity lost: %v", got)
 					}
 					previous = position
@@ -1753,8 +1754,8 @@ func TestSelect_SyntheticFailureContext(t *testing.T) {
 			authored := &manifest.Kustomization{Name: "entry", Namespace: "apps"}
 			run.store.AddObject(entry)
 			run.store.AddObject(authored)
-			run.store.UpdateFailure(entry.Named(), fmt.Errorf("%w: invalid package", manifest.ErrInput))
-			run.store.UpdateFailure(authored.Named(), fmt.Errorf("%w: authored failure", manifest.ErrInput))
+			run.store.UpdateFailure(entry.Named(), manifest.NewError(manifest.ErrInput, nil, "invalid package"))
+			run.store.UpdateFailure(authored.Named(), manifest.NewError(manifest.ErrInput, nil, "authored failure"))
 			run.Result.Failed = run.store.FailedResources()
 			run.Err = run.aggregateFailures(run.Result.Failed)
 			selected, err, _ := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)

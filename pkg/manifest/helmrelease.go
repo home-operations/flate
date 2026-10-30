@@ -3,6 +3,7 @@ package manifest
 import (
 	"cmp"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"path"
 	"reflect"
@@ -205,7 +206,7 @@ func (h *HelmRelease) RenderDocument() (map[string]any, error) {
 		Spec: h.HelmReleaseSpec,
 	})
 	if err != nil {
-		return nil, inputf("project HelmRelease spec: %w", err)
+		return nil, NewError(ErrInput, fmt.Errorf("project HelmRelease spec: %w", err), "")
 	}
 	return doc, nil
 }
@@ -288,12 +289,12 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 		return nil, err
 	}
 	if err := validateChartTemplateDocument(doc, &cr.Spec); err != nil {
-		return nil, inputf("HelmRelease %s/%s: %w", cr.Namespace, cr.Name, err)
+		return nil, NewError(ErrInput, fmt.Errorf("HelmRelease %s/%s: %w", cr.Namespace, cr.Name, err), "")
 	}
 	var values map[string]any
 	if cr.Spec.Values != nil && len(cr.Spec.Values.Raw) > 0 {
 		if err := json.Unmarshal(cr.Spec.Values.Raw, &values); err != nil {
-			return nil, inputf("HelmRelease spec.values: %w", err)
+			return nil, NewError(ErrInput, fmt.Errorf("HelmRelease spec.values: %w", err), "")
 		}
 	}
 	for _, dep := range cr.Spec.DependsOn {

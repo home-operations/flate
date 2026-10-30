@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"iter"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -305,6 +306,9 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	o.entryBinding = res.Binding
 	o.admission = res.Admission
 	o.dependencySubstitutions = res.DependencySubstitutions
+	if o.entryBinding.Failure != nil && slog.Default().Enabled(ctx, slog.LevelDebug) {
+		slog.DebugContext(ctx, "orchestrator: entry failed", "id", o.diagnostic(o.entryBinding.Producer).String(), "err", manifest.ErrorDetails(o.entryBinding.Failure))
+	}
 
 	return nil
 }
@@ -312,7 +316,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 func (o *Orchestrator) completeBootstrap() {
 	o.failDependsOnCycles()
 	if o.loader != nil && o.entryBinding.Failure != nil {
-		o.store.UpdateStatus(o.entryBinding.Producer, store.StatusInfo{Status: store.StatusFailed, Message: manifest.TrimSentinelPrefix(o.entryBinding.Failure.Error())})
+		o.store.UpdateStatus(o.entryBinding.Producer, store.StatusInfo{Status: store.StatusFailed, Message: o.entryBinding.Failure.Error()})
 	}
 	ociFetcher := &oci.Fetcher{Cache: o.cache, Network: o.cfg.Network, RegistryConfig: o.cfg.RegistryConfig}
 	for kind, f := range map[string]source.Fetcher{

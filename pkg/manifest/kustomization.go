@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
+	"fmt"
 	"maps"
 	"reflect"
 	"sync"
@@ -248,7 +249,7 @@ func (k *Kustomization) RenderDocument() (map[string]any, error) {
 	err := jsonv2.MarshalEncode(state.encoder, &state.object, json.DefaultOptionsV1())
 	raw := state.buffer.Bytes()
 	if err != nil {
-		return nil, inputf("project Kustomization spec: %w", err)
+		return nil, NewError(ErrInput, fmt.Errorf("project Kustomization spec: %w", err), "")
 	}
 	if k.projection != nil {
 		if cached := k.projection.Load(); cached != nil && bytes.Equal(raw, cached.raw) {
@@ -257,7 +258,7 @@ func (k *Kustomization) RenderDocument() (map[string]any, error) {
 	}
 	var doc map[string]any
 	if err := kjson.Unmarshal(raw, &doc); err != nil {
-		return nil, inputf("project Kustomization spec: %w", err)
+		return nil, NewError(ErrInput, fmt.Errorf("project Kustomization spec: %w", err), "")
 	}
 	if k.projection != nil {
 		k.projection.Store(&kustomizationProjection{raw: bytes.Clone(raw), document: doc})

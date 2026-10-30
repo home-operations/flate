@@ -1,7 +1,6 @@
 package orchestrator
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -76,7 +75,7 @@ spec:
 				testutil.WriteFile(t, roots[tc.peer], "peer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: peer-output}\n")
 				peer := &admissionPeerFS{FS: os.DirFS(roots[tc.peer]), entered: make(chan struct{}), release: make(chan struct{})}
 				if tc.failure {
-					peer.failure = fmt.Errorf("%w: peer proof failed", manifest.ErrInput)
+					peer.failure = manifest.NewError(manifest.ErrInput, nil, "peer proof failed")
 				}
 				var released sync.Once
 				release := func() { released.Do(func() { close(peer.release) }) }

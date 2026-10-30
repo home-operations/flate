@@ -414,6 +414,8 @@ func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
 		t.Fatal("expected missing-objects error")
 	}
 	assert.Equal(t, strings.Contains(err.Error(), hash.String()), true)
+	assert.Equal(t, strings.Contains(err.Error(), "input error"), false)
+	assert.Equal(t, strings.Contains(err.Error(), "flux error"), false)
 }
 
 func TestAutoResolve_StatusWarningSurvivesFailure(t *testing.T) {

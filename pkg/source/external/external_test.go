@@ -32,7 +32,7 @@ func TestFetcher_NoArtifact(t *testing.T) {
 				t.Fatal("prediction supplied source content")
 			}
 			_, err := f.Fetch(t.Context(), ea, testReadSet(ea), sourcecache.Policy{})
-			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+			if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || err.Error() != "no generated content" {
 				t.Fatalf("missing-content error = %v", err)
 			}
 		})

@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 
@@ -29,7 +28,7 @@ type selectionSide struct {
 // third contains only non-resource errors for diagnostics outside failure rows.
 func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, labels map[string]string) ([]*selection.Selection, error, error) {
 	if len(runs) < 1 || len(runs) > 2 {
-		err := errors.Join(fmt.Errorf("%w: selection requires one or two runs", manifest.ErrInput), runErr)
+		err := errors.Join(manifest.NewError(manifest.ErrInput, nil, "selection requires one or two runs"), runErr)
 		return nil, err, nonResourceErrors(err)
 	}
 	kinds, err := validateRoots(roots)
@@ -48,7 +47,7 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 			}
 		}
 		if runErr == nil {
-			runErr = fmt.Errorf("%w: selection requires completed runs", manifest.ErrInput)
+			runErr = manifest.NewError(manifest.ErrInput, nil, "selection requires completed runs")
 		}
 	}
 	sides := make([]selectionSide, len(runs))
@@ -109,12 +108,12 @@ func Select(runs []Rendered, runErr error, roots []manifest.NamedResource, label
 
 func validateRoots(roots []manifest.NamedResource) (map[manifest.NamedResource]bool, error) {
 	if len(roots) == 0 {
-		return nil, fmt.Errorf("%w: selection requires requested kinds", manifest.ErrInput)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "selection requires requested kinds")
 	}
 	kinds := make(map[manifest.NamedResource]bool, len(roots))
 	for _, root := range roots {
 		if root.Kind == "" || kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] || root.Namespace != roots[0].Namespace || root.Name != roots[0].Name {
-			return nil, fmt.Errorf("%w: selection kinds must be distinct with a common namespace and name", manifest.ErrInput)
+			return nil, manifest.NewError(manifest.ErrInput, nil, "selection kinds must be distinct with a common namespace and name")
 		}
 		kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] = true
 	}

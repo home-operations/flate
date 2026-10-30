@@ -46,7 +46,7 @@ func (f *operation) prepare(b *manifest.Bucket) (bucketAcquisition, error) {
 		return bucketAcquisition{}, err
 	}
 	if _, err := resolved.ProxyURL(&url.URL{Scheme: schemeFor(secure), Host: endpoint}); err != nil {
-		return bucketAcquisition{}, fmt.Errorf("%w: resolve bucket proxy: invalid proxy configuration", manifest.ErrInput)
+		return bucketAcquisition{}, manifest.NewError(manifest.ErrInput, nil, "resolve bucket proxy: invalid proxy configuration")
 	}
 	var material any
 	if creds != nil {
@@ -119,7 +119,7 @@ func (r *bucketAcquisition) machineCredentials(ctx context.Context, providers []
 			continue
 		}
 		if value.AccessKeyID == "" || value.SecretAccessKey == "" {
-			return fmt.Errorf("%w: no usable machine AWS credentials", manifest.ErrInput)
+			return manifest.NewError(manifest.ErrInput, nil, "no usable machine AWS credentials")
 		}
 		r.options.Creds = credentials.NewStatic(value.AccessKeyID, value.SecretAccessKey, value.SessionToken, value.SignerType)
 		r.material = r.resolved.Identity(value)
@@ -134,7 +134,7 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 		return credentials.NewStaticV4("", "", ""), nil
 	}
 	if f.secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", manifest.DiagnosticFor(b.Named(), b).Label())
+		return nil, errors.New("secretRef requires a SecretGetter")
 	}
 	sec := f.secrets(b.Namespace, b.SecretRef.Name)
 	if sec == nil {
@@ -142,11 +142,11 @@ func (f *operation) resolveCredentials(b *manifest.Bucket) (*credentials.Credent
 	}
 	access, _, err := sec.Value("accesskey")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(b.Named(), b).Label(), b.Namespace, b.SecretRef.Name, err)
+		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
 	secret, _, err := sec.Value("secretkey")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(b.Named(), b).Label(), b.Namespace, b.SecretRef.Name, err)
+		return nil, fmt.Errorf("secret %s/%s: %w", b.Namespace, b.SecretRef.Name, err)
 	}
 	if access == "" || secret == "" || manifest.HasValuePlaceholder(access) || manifest.HasValuePlaceholder(secret) {
 		return nil, source.MissingSecretErr(manifest.DiagnosticFor(b.Named(), b), b.SecretRef.Name, "missing accesskey/secretkey")

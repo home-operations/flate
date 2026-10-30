@@ -348,26 +348,26 @@ func (l *Loader) projectIdentity(id manifest.NamedResource, v graphVisit, versio
 	doc := map[string]any{"apiVersion": version, "kind": id.Kind, "metadata": map[string]any{"name": id.Name}}
 	r, err := resource.NewFactory(nil).FromMap(doc)
 	if err != nil {
-		return id, fmt.Errorf("%w: project identity: %w", manifest.ErrFlux, err)
+		return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project identity: %w", err), "")
 	}
 	if v.namespace != "" {
 		ns := namespace.Filter{Namespace: v.namespace, FsSlice: types.FsSlice{{Version: "v1", Kind: "Namespace", Path: types.MetadataNamePath}}}
 		if err := r.ApplyFilter(ns); err != nil {
-			return id, fmt.Errorf("%w: project namespace: %w", manifest.ErrFlux, err)
+			return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project namespace: %w", err), "")
 		}
 	}
 	resources := resmap.New()
 	if err := resources.Append(r); err != nil {
-		return id, fmt.Errorf("%w: project identity: %w", manifest.ErrFlux, err)
+		return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project identity: %w", err), "")
 	}
 	fields := types.FsSlice{{Path: "metadata/name"}}
 	p := builtins.PrefixTransformerPlugin{Prefix: v.namePrefix, FieldSpecs: fields}
 	if err := p.Transform(resources); err != nil {
-		return id, fmt.Errorf("%w: project prefix: %w", manifest.ErrFlux, err)
+		return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project prefix: %w", err), "")
 	}
 	s := builtins.SuffixTransformerPlugin{Suffix: v.nameSuffix, FieldSpecs: fields}
 	if err := s.Transform(resources); err != nil {
-		return id, fmt.Errorf("%w: project suffix: %w", manifest.ErrFlux, err)
+		return id, manifest.NewError(manifest.ErrFlux, fmt.Errorf("project suffix: %w", err), "")
 	}
 	id.Name = r.GetName()
 	if l.scopes.projections[projection] == nil {
@@ -459,7 +459,7 @@ func (l *Loader) exactObject(ctx context.Context, occurrence Occurrence, input *
 	file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
 	parsed, err := reader.fileObjects(file, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 	if err != nil {
-		return store.Child{}, fmt.Errorf("%w: hydrate %s: %w", manifest.ErrInput, occurrence.Identity, err)
+		return store.Child{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("hydrate %s: %w", occurrence.Identity, err), "")
 	}
 	if err := ctx.Err(); err != nil {
 		return store.Child{}, err
@@ -467,7 +467,7 @@ func (l *Loader) exactObject(ctx context.Context, occurrence Occurrence, input *
 	var children []store.Child
 	for _, child := range parsed {
 		if child.outcome.Err != nil {
-			return store.Child{}, fmt.Errorf("%w: hydrate %s: %w", manifest.ErrInput, occurrence.Identity, manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}))
+			return store.Child{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("hydrate %s: %w", occurrence.Identity, manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome})), "")
 		}
 		if child.Obj != nil && manifest.KindOf(child.Obj).Tracked {
 			children = append(children, child.Child)

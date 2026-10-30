@@ -73,7 +73,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		if len(hr.ChartValuesFiles) > 0 {
 			base, err := c.mergeChartValuesFiles(ctx, loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 			if err != nil {
-				return nil, nil, fmt.Errorf("helm chart valuesFiles %s/%s: %w", hr.Namespace, hr.Name, err)
+				return nil, nil, fmt.Errorf("chart valuesFiles: %w", err)
 			}
 			finalValues = values.DeepMergeInto(base, hrValues)
 		}
@@ -105,11 +105,11 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 		}
 		rel, err := inst.RunWithContext(ctx, ch, finalValues)
 		if err != nil {
-			return nil, nil, fmt.Errorf("helm template %s/%s: %w", hr.Namespace, hr.Name, schemaError(err))
+			return nil, nil, fmt.Errorf("helm template: %w", schemaError(err))
 		}
 		relV1, ok := rel.(*release.Release)
 		if !ok {
-			return nil, nil, fmt.Errorf("helm template %s/%s: unexpected release type %T", hr.Namespace, hr.Name, rel)
+			return nil, nil, fmt.Errorf("helm template: unexpected release type %T", rel)
 		}
 
 		// Disabled dependencies must be pruned before validating their CRDs.
@@ -154,7 +154,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			if record == nil || record.key != key || record.identity != identity {
 				data, err := fs.ReadFile(generation, "content")
 				if err != nil {
-					return false, fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
+					return false, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
 				}
 				frame, err := decodeFrame(data)
 				if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
@@ -292,13 +292,13 @@ func normalizeLists(docs []manifest.DocOccurrence) []manifest.DocOccurrence {
 		}
 		data, err := yamlv4.Marshal(doc.Document)
 		if err != nil {
-			doc.Err = fmt.Errorf("%w: encode helm list: %w", manifest.ErrInput, err)
+			doc.Err = manifest.NewError(manifest.ErrInput, fmt.Errorf("encode helm list: %w", err), "")
 			out = append(out, doc)
 			continue
 		}
 		infos, err := resource.NewLocalBuilder().ContinueOnError().Unstructured().Flatten().Stream(bytes.NewReader(data), "").Do().Infos()
 		if err != nil {
-			doc.Err = fmt.Errorf("%w: normalize helm list: %w", manifest.ErrInput, err)
+			doc.Err = manifest.NewError(manifest.ErrInput, fmt.Errorf("normalize helm list: %w", err), "")
 			out = append(out, doc)
 			continue
 		}
@@ -420,7 +420,7 @@ type chartValuesFile struct {
 
 func (l chartDescription) readValuesFile(ctx context.Context, name, clean string) (chartValuesFile, error) {
 	if err := ctx.Err(); err != nil {
-		return chartValuesFile{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, err)
+		return chartValuesFile{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", name, err), "")
 	}
 	var data []byte
 	var err error
@@ -453,7 +453,7 @@ func (l chartDescription) readValuesFile(ctx context.Context, name, clean string
 		}
 	}
 	if err != nil {
-		return chartValuesFile{Missing: missing}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, err)
+		return chartValuesFile{Missing: missing}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", name, err), "")
 	}
 	return chartValuesFile{Data: data}, nil
 }
@@ -475,7 +475,7 @@ func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription
 	for i, name := range names {
 		clean := path.Clean(name)
 		if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
-			return chartValuesEntry{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, name, fs.ErrInvalid)
+			return chartValuesEntry{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", name, fs.ErrInvalid), "")
 		}
 		if clean != name {
 			if !normalized {
@@ -486,7 +486,7 @@ func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return chartValuesEntry{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, names[0], err)
+		return chartValuesEntry{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", names[0], err), "")
 	}
 	var key string
 	if loaded.valuesFS == nil || loaded.valuesPin != "" {
@@ -520,7 +520,7 @@ func (c *Client) observeValuesFiles(ctx context.Context, loaded chartDescription
 		entry.inputs[i] = file
 	}
 	if err := ctx.Err(); err != nil {
-		return chartValuesEntry{}, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, names[len(names)-1], err)
+		return chartValuesEntry{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", names[len(names)-1], err), "")
 	}
 	fingerprint := manifest.Fingerprint(entry.inputs)
 	entry.fingerprint = &fingerprint
@@ -557,7 +557,7 @@ func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartDescript
 		return map[string]any{}, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("%w: read values file %q: %w", manifest.ErrInput, names[0], err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read values file %q: %w", names[0], err), "")
 	}
 	if entry.merged != nil {
 		return manifest.DeepCopyMap(entry.merged), nil
@@ -583,7 +583,7 @@ func (c *Client) mergeChartValuesFiles(ctx context.Context, loaded chartDescript
 		m := manifest.DeepCopyMap(file.Defaults)
 		if file.Defaults == nil {
 			if err := yaml.Unmarshal(file.Data, &m); err != nil {
-				return nil, fmt.Errorf("%w: parse values file %q: %w", manifest.ErrInput, name, err)
+				return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("parse values file %q: %w", name, err), "")
 			}
 		}
 		merged = values.DeepMergeInto(merged, m)

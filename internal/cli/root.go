@@ -135,6 +135,9 @@ func run(version string, args []string, stdout, stderr io.Writer) int {
 	root.SetErr(stderr)
 	err := root.ExecuteContext(ctx)
 	if err != nil {
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			slog.DebugContext(ctx, "cli: invocation failed", "err", manifest.ErrorDetails(err))
+		}
 		if _, ok := errors.AsType[reportedError](err); !ok {
 			_, _ = io.WriteString(stderr, "flate error: "+err.Error()+"\n")
 		}

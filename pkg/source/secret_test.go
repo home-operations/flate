@@ -64,8 +64,8 @@ func TestSecretLookup_References(t *testing.T) {
 func TestMissingSecretErr(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, secret, want string }{
-		{name: "Secret material", secret: "ghcr-creds", want: "flux error: missing secret: OCIRepository ns/r: secret ns/ghcr-creds not found"},
-		{name: "source material", want: "flux error: missing secret: OCIRepository.input.example/ns/r: not found"},
+		{name: "Secret material", secret: "ghcr-creds", want: "secret ns/ghcr-creds not found"},
+		{name: "source material", want: "not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -161,7 +161,7 @@ func TestBasicAuthFromSecret_UnavailableMaterial(t *testing.T) {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrMissingSecret) {
 					t.Fatalf("expected hard input failure, got %v", err)
 				}
-				for _, context := range []string{"GitRepository ns/repo", "secret ns/creds", "[" + tc.field + "]"} {
+				for _, context := range []string{"secret ns/creds", "[" + tc.field + "]"} {
 					if !strings.Contains(err.Error(), context) {
 						t.Errorf("input error missing context %q: %v", context, err)
 					}

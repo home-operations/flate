@@ -59,16 +59,16 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 		return nil, nil, nil
 	}
 	if len(rs.Steps) > 0 && (len(rs.Resources) > 0 || rs.ResourcesTemplate != "") {
-		return nil, nil, fmt.Errorf("%w: spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate", manifest.ErrInput)
+		return nil, nil, manifest.NewError(manifest.ErrInput, nil, "spec.steps is mutually exclusive with spec.resources and spec.resourcesTemplate")
 	}
 	for _, step := range rs.Steps {
 		if len(step.Resources) == 0 && step.ResourcesTemplate == "" {
-			return nil, nil, fmt.Errorf("%w: step %q: at least one of resources or resourcesTemplate must be set", manifest.ErrInput, step.Name)
+			return nil, nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("step %q: at least one of resources or resourcesTemplate must be set", step.Name))
 		}
 	}
 	providers, err := collectProviderInputs(rs, resolve)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+		return nil, nil, err
 	}
 	var warnings []manifest.Warning
 	for _, provider := range providers {
@@ -90,7 +90,7 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 	}
 	inputs, err := buildInputSets(rs, providers)
 	if err != nil {
-		return nil, warnings, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+		return nil, warnings, err
 	}
 	if len(rs.InputsFrom) > 0 && len(inputs) == 0 {
 		return nil, warnings, nil
@@ -108,13 +108,13 @@ func Render(rs *manifest.ResourceSet, resolve ProviderResolver, admit func(any) 
 			if len(rs.Steps) > 0 {
 				err = fmt.Errorf("step %q: %w", step.Name, err)
 			}
-			return nil, warnings, fmt.Errorf("ResourceSet %s: %w", rs.Named().NamespacedName(), err)
+			return nil, warnings, err
 		}
 		if len(rs.Steps) > 0 {
 			for _, doc := range rendered {
 				key := DedupKey(doc.Document)
 				if prev, found := stepOfObject[key]; found && prev != step.Name {
-					return nil, warnings, fmt.Errorf("%w: duplicate resource %s in step %q, already defined in step %q", manifest.ErrInput, key, step.Name, prev)
+					return nil, warnings, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("duplicate resource %s in step %q, already defined in step %q", key, step.Name, prev))
 				}
 				stepOfObject[key] = step.Name
 			}
@@ -189,7 +189,7 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 		}
 		var doc map[string]any
 		if err := yaml.Unmarshal(rendered, &doc); err != nil {
-			return nil, fmt.Errorf("%w: unmarshal rendered doc: %w", manifest.ErrInput, err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("unmarshal rendered doc: %w", err), "")
 		}
 		if doc == nil {
 			continue
@@ -215,14 +215,14 @@ func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[str
 			if bytes.HasPrefix(line, []byte("---")) {
 				tail := bytes.TrimSpace(line[3:])
 				if len(tail) > 0 && tail[0] != '#' {
-					return nil, fmt.Errorf("%w: invalid Yaml document separator: %s", manifest.ErrInput, tail)
+					return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("invalid Yaml document separator: %s", tail))
 				}
 			}
 		}
 		for chunk := range bytes.SplitSeq(rendered, []byte("\n---")) {
 			var doc map[string]any
 			if err := yaml.Unmarshal(bytes.TrimPrefix(chunk, []byte("---")), &doc); err != nil {
-				return nil, fmt.Errorf("%w: decode rendered YAML: %w", manifest.ErrInput, err)
+				return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("decode rendered YAML: %w", err), "")
 			}
 			obj := &unstructured.Unstructured{Object: doc}
 			if obj.IsList() {
@@ -230,7 +230,7 @@ func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[str
 					out = append(out, item.(*unstructured.Unstructured).Object)
 					return nil
 				}); err != nil {
-					return nil, fmt.Errorf("%w: read rendered list: %w", manifest.ErrInput, err)
+					return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read rendered list: %w", err), "")
 				}
 			} else if obj.GetName() != "" && obj.GetKind() != "" && obj.GetAPIVersion() != "" &&
 				(!strings.EqualFold(obj.GetKind(), "kustomization") || !strings.HasPrefix(obj.GetAPIVersion(), "kustomize.config.k8s.io/")) {

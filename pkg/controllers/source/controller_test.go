@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -291,7 +292,7 @@ func TestSource_DeclarationProgress(t *testing.T) {
 				run := controllertest.NewExecution(c.Controller, id)
 				run.Dispatch(ctx, level, run, func(run *base.Execution, ctx context.Context, _ *manifest.Kustomization, level manifest.DrainLevel) error {
 					if name == "failed producer" {
-						return fmt.Errorf("%w: failed producer", manifest.ErrInput)
+						return manifest.NewError(manifest.ErrInput, nil, "failed producer")
 					}
 					if err := run.Require(ctx, []manifest.DependencyRef{{NamedResource: repo.Named()}}, level); err != nil {
 						return err
@@ -634,11 +635,11 @@ func TestController_UnavailableSecretAtFixpoint(t *testing.T) {
 			repo := &manifest.OCIRepository{Name: "r", Namespace: "ns", URL: "oci://example/img", Interval: &metav1.Duration{Duration: time.Hour}}
 			fetchErr := src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), secret.Name, detail)
 			if tt.plain {
-				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrMissingSecret, secret.Name, detail)
+				fetchErr = manifest.NewError(manifest.ErrMissingSecret, nil, fmt.Sprintf("OCIRepository ns/r: secret ns/%s %s", secret.Name, detail))
 			}
 			if tt.malformed {
 				detail = "invalid credential encoding"
-				fetchErr = fmt.Errorf("%w: OCIRepository ns/r: secret ns/%s %s", manifest.ErrInput, secret.Name, detail)
+				fetchErr = manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("OCIRepository ns/r: secret ns/%s %s", secret.Name, detail))
 			}
 			ambientCalls := 0
 			if tt.producer && !tt.malformed {
@@ -808,7 +809,7 @@ func TestController_AmbientPolicy(t *testing.T) {
 				calls := 0
 				failure := tt.failure
 				if failure != nil {
-					failure = fmt.Errorf("%w: ambient acquisition: %w", manifest.ErrFlux, failure)
+					failure = manifest.NewError(manifest.ErrFlux, fmt.Errorf("ambient acquisition: %w", failure), "")
 				}
 				missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
 					calls++
@@ -841,8 +842,8 @@ func TestController_AmbientPolicy(t *testing.T) {
 				if calls != wantCalls || info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != wantSkip {
 					t.Fatalf("status=%+v calls=%d; want status=%v skip=%t calls=%d", info, calls, wantStatus, wantSkip, wantCalls)
 				}
-				if failure != nil && !wantSkip && !errors.Is(failure, manifest.ErrMissingSecret) && !strings.Contains(info.Message, failure.Error()) {
-					t.Fatalf("settlement lost acquisition error: %+v", info)
+				if failure != nil && !wantSkip && info.Message != "secret ns/auth not found" {
+					t.Fatalf("settlement message = %q", info.Message)
 				}
 				if failure != nil && !wantSkip && !strings.Contains(info.Message, "secret ns/auth not found") {
 					t.Fatalf("settlement lost unavailable-material context: %+v", info)
@@ -947,7 +948,7 @@ func TestController_ArtifactMaterializers(t *testing.T) {
 	for _, state := range []store.Status{store.StatusPending, store.StatusFailed, store.StatusReady} {
 		t.Run(string(state), func(t *testing.T) {
 			t.Parallel()
-			fetcher := &fakeFetcher{err: fmt.Errorf("%w: content unavailable", manifest.ErrInput)}
+			fetcher := &fakeFetcher{err: manifest.NewError(manifest.ErrInput, nil, "content unavailable")}
 			c, st := newController(t, map[string]src.Fetcher{manifest.KindExternalArtifact: fetcher})
 			generator := &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps"}
 			st.AddObject(generator)
@@ -1006,7 +1007,7 @@ type materializerFetcher struct{ calls atomic.Int64 }
 
 func (f *materializerFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
-	return nil, fmt.Errorf("%w: content unavailable", manifest.ErrInput)
+	return nil, manifest.NewError(manifest.ErrInput, nil, "content unavailable")
 }
 
 func TestController_ArtifactMaterializersProduction(t *testing.T) {
@@ -1185,10 +1186,49 @@ func TestController_SyntheticCredentialSkip(t *testing.T) {
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: controller.Tasks, Store: st, ID: repo.Named(), ReconcileNode: controller.ReconcileNode})
 	warnings := st.Warnings()
 	secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "sources", Name: "auth"}
-	if info.Outcome() != store.OutcomeSkipped || !strings.Contains(info.String(), chart.Named().Kind+" "+chart.Named().NamespacedName()) || len(warnings) != 1 {
+	if info.Outcome() != store.OutcomeSkipped || info.String() != "secret sources/auth not found" || len(warnings) != 1 {
 		t.Fatalf("skip lost display or outcome: %+v %+v", info, warnings)
 	}
 	if warnings[0].Resource != repo.Named() || warnings[0].Subject.Resource != chart.Named() || !slices.Equal(warnings[0].Related, []manifest.NamedResource{secret}) || st.GetArtifact(repo.Named(), store.ArtifactContent) != nil {
 		t.Fatalf("skip lost raw provenance: %+v", warnings)
+	}
+}
+
+func TestPendingSource_AmbientFailureRetainsCause(t *testing.T) {
+	t.Parallel()
+	for _, rejected := range []bool{false, true} {
+		t.Run(fmt.Sprint(rejected), func(t *testing.T) {
+			t.Parallel()
+			repo := &manifest.GitRepository{Name: "kubernetes-secrets", Namespace: "flux-system"}
+			missing, _ := errors.AsType[*src.MissingSecretError](src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.Name, "not found"))
+			var cause error = missing
+			if rejected {
+				cause = manifest.NewError(manifest.ErrFlux, &fetcherr.ResponseError{StatusCode: 401}, "")
+			}
+			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+				if !rejected {
+					return nil, src.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
+				}
+				return nil, cause
+			}
+			controller, st := newConfiguredController(t, nil, FetchOptions{AllowMissingSecrets: true})
+			st.AddObject(repo)
+			c := &execution{Controller: controller}
+			c.run.Init(controller.Controller, repo.Named())
+			defer c.run.Close()
+			pending := &pendingSource{execution: c, object: repo, missing: missing}
+			var err error
+			c.Tasks.Go(t.Context(), "settle", func(ctx context.Context) { err = pending.Settle(ctx, manifest.DrainCascade) })
+			c.Tasks.BlockTillDone()
+			if err == nil || err.Error() != "secret flux-system/kubernetes-secrets not found" || !errors.Is(err, cause) || errors.Is(err, manifest.ErrSourceSkipped) == rejected {
+				t.Fatalf("ambient classification: %v", err)
+			}
+			if !strings.Contains(manifest.ErrorDetails(err), cause.Error()) {
+				t.Fatal("lost ambient diagnostic")
+			}
+			if response, ok := errors.AsType[*fetcherr.ResponseError](err); rejected && (!ok || response.StatusCode != http.StatusUnauthorized) {
+				t.Fatal("lost typed rejection")
+			}
+		})
 	}
 }

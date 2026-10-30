@@ -323,7 +323,7 @@ func TestUpdateFailure_NestedSyntheticSnapshots(t *testing.T) {
 		events = append(events, id)
 		retained = append(retained, payload.(StatusInfo))
 	}, false)()
-	s.UpdateFailure(root.Named(), fmt.Errorf("%w: invalid package", manifest.ErrInput))
+	s.UpdateFailure(root.Named(), manifest.NewError(manifest.ErrInput, nil, "invalid package"))
 	rootInfo, _ := s.GetStatus(root.Named())
 	inner := &manifest.DependencyFailedError{Parent: repo.Named(), Subject: manifest.DiagnosticFor(repo.Named(), repo), Failed: []manifest.NamedResource{root.Named()}, Reasons: map[manifest.NamedResource]manifest.DiagnosticReason{root.Named(): rootInfo.DependencyReason(manifest.DiagnosticFor(root.Named(), root))}}
 	s.UpdateFailure(repo.Named(), inner)

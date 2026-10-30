@@ -371,14 +371,14 @@ func (t *tarFS) treeIdentity(ctx context.Context) (string, error) {
 			}
 			r.Content = manifest.Fingerprint(data)
 			if r.Content == "" {
-				return "", fmt.Errorf("hash file %q: %w", name, manifest.ErrInput)
+				return "", manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("cannot hash file %q", name))
 			}
 		}
 		records = append(records, r)
 	}
 	fingerprint := manifest.Fingerprint(records)
 	if fingerprint == "" {
-		return "", fmt.Errorf("hash tree: %w", manifest.ErrInput)
+		return "", manifest.NewError(manifest.ErrInput, nil, "cannot hash tree")
 	}
 	return fingerprint, nil
 }

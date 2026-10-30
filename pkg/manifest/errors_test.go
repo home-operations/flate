@@ -1,56 +1,128 @@
 package manifest
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func TestTrimSentinelPrefix_AllSentinels(t *testing.T) {
+func TestError_ClassificationAndDetails(t *testing.T) {
 	t.Parallel()
-	for _, sentinel := range sentinels {
-		t.Run(sentinel.Error(), func(t *testing.T) {
+	if got := ErrorDetails(nil); got != "" {
+		t.Fatalf("nil details = %q", got)
+	}
+	cause := errors.New("cause")
+	for _, tc := range []struct {
+		name    string
+		err     *Error
+		causes  []error
+		details string
+	}{
+		{"cause only", NewError(nil, cause, "summary"), []error{cause}, "summary\n  cause"},
+		{"category only", NewError(ErrInput, nil, "summary"), []error{ErrInput}, "summary"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			msg := fmt.Errorf("%w: cause: detail", sentinel).Error()
-			if got := TrimSentinelPrefix(msg); got != "cause: detail" {
-				t.Errorf("TrimSentinelPrefix(%q) = %q", msg, got)
+			if got := tc.err.Unwrap(); !slices.Equal(got, tc.causes) {
+				t.Fatalf("causes = %v, want %v", got, tc.causes)
+			}
+			if got := ErrorDetails(tc.err); got != tc.details {
+				t.Fatalf("details = %q, want %q", got, tc.details)
+			}
+		})
+	}
+	summary := NewError(ErrInput, cause, "summary")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"wrapped summary", fmt.Errorf("operation: %w", summary)},
+		{"joined summary", errors.Join(errors.New("other"), summary)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ErrorDetails(tc.err); !strings.Contains(got, cause.Error()) {
+				t.Fatalf("lost retained cause: %q", got)
+			}
+		})
+	}
+	for _, category := range []error{ErrInput, ErrObjectNotFound, ErrInvalidValuesReference, ErrInvalidSubstituteReference, ErrMissingSecret, ErrSourceSkipped} {
+		t.Run(category.Error(), func(t *testing.T) {
+			t.Parallel()
+			underlying := &os.PathError{Op: "read", Path: "library-cause", Err: fs.ErrPermission}
+			cause := fmt.Errorf("fetch operation: %w", errors.Join(underlying, context.Canceled))
+			for _, message := range []string{"", "actionable cause"} {
+				err := NewError(category, cause, message)
+				want := message
+				if want == "" {
+					want = cause.Error()
+				}
+				if err.Error() != want {
+					t.Fatalf("Error() = %q, want %q", err, want)
+				}
+				for _, target := range []error{ErrFlux, category, fs.ErrPermission, context.Canceled} {
+					if !errors.Is(err, target) {
+						t.Errorf("lost classification %v", target)
+					}
+				}
+				if got, ok := errors.AsType[*os.PathError](err); !ok || got != underlying {
+					t.Fatal("lost typed cause")
+				}
+				for _, detail := range []string{want, "fetch operation", "library-cause", context.Canceled.Error()} {
+					if !strings.Contains(ErrorDetails(err), detail) {
+						t.Errorf("lost diagnostic detail %q", detail)
+					}
+				}
 			}
 		})
 	}
 }
 
-// TestTrimSentinelPrefix locks the user-facing error format: strip
-// the two-layer `flux error: <subcategory>:` chain produced by
-// sentinel-wrapped errors so the actual cause leads. Sentinel chains
-// used for errors.Is branching keep working; only the rendered
-// string is reshaped.
-func TestTrimSentinelPrefix(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		in, want string
-	}{
-		{
-			in:   "flux error: input error: kustomization path does not exist: /a/b",
-			want: "kustomization path does not exist: /a/b",
-		},
-		{
-			in:   "flux error: object not found: source flux-system/foo artifact not found",
-			want: "source flux-system/foo artifact not found",
-		},
-		{
-			in:   "chart not found at /tmp/x: stat /tmp/x/Chart.yaml: no such file",
-			want: "chart not found at /tmp/x: stat /tmp/x/Chart.yaml: no such file",
-		},
-		{
-			in:   "flux error: unknown subcategory: keep me intact",
-			want: "unknown subcategory: keep me intact",
-		},
-	}
-	for _, tc := range cases {
-		if got := TrimSentinelPrefix(tc.in); got != tc.want {
-			t.Errorf("TrimSentinelPrefix(%q) = %q, want %q", tc.in, got, tc.want)
+func TestError_CategoryTraversalAllocations(t *testing.T) {
+	allocations := testing.AllocsPerRun(100, func() {
+		if !errors.Is(ErrInput, ErrFlux) {
+			t.Fatal("lost root classification")
 		}
+		if _, ok := errors.AsType[*DependencyFailedError](ErrInput); ok {
+			t.Fatal("category matched a dependency failure")
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("category traversal allocates %v objects, want 0", allocations)
+	}
+}
+
+func TestError_CauseTraversalAllocations(t *testing.T) {
+	cause := errors.New("failure")
+	err := NewError(ErrInput, cause, "")
+	allocations := testing.AllocsPerRun(100, func() {
+		if !errors.Is(err, ErrFlux) || !errors.Is(err, cause) {
+			t.Fatal("lost classification or cause")
+		}
+		if _, ok := errors.AsType[*DependencyFailedError](err); ok {
+			t.Fatal("cause matched a dependency failure")
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("cause traversal allocates %v objects, want 0", allocations)
+	}
+}
+
+func TestInputf_Allocations(t *testing.T) {
+	var err error
+	allocations := testing.AllocsPerRun(100, func() {
+		err = inputf("missing %s", "kind")
+	})
+	if allocations != 2 {
+		t.Fatalf("input error allocates %v objects, want 2", allocations)
+	}
+	if !errors.Is(err, ErrInput) || err.Error() != "missing kind" {
+		t.Fatalf("input error = %v", err)
 	}
 }
 
@@ -102,7 +174,7 @@ func TestDependencyFailedError_EmptyFailedList(t *testing.T) {
 	err := &DependencyFailedError{
 		Parent: NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "ns", Name: "k"},
 	}
-	if msg := err.Error(); !strings.Contains(msg, "dependencies failed") {
+	if msg := err.Error(); msg != "dependencies failed" {
 		t.Errorf("empty-failed error should still mention dependencies failed: %q", msg)
 	}
 }

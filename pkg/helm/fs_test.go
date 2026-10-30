@@ -76,7 +76,7 @@ func TestLoadFSChart_MatchesHelmDirLoader(t *testing.T) {
 				if !errors.Is(gotErr, manifest.ErrInput) {
 					t.Fatalf("irregular error lacks input classification: %v", gotErr)
 				}
-				if want := strings.ReplaceAll(wantErr.Error(), filepath.Join(root, "socket"), "socket"); manifest.TrimSentinelPrefix(gotErr.Error()) != want {
+				if want := strings.ReplaceAll(wantErr.Error(), filepath.Join(root, "socket"), "socket"); gotErr.Error() != want {
 					t.Fatalf("irregular error: got %q, want %q", gotErr, want)
 				}
 				return
@@ -118,7 +118,7 @@ func TestLoadChart_ArtifactKeyIsolation(t *testing.T) {
 		}
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		if name == "invalid-metadata" || name == "invalid-archive" {
-			if !errors.Is(err, manifest.ErrInput) || strings.Count(err.Error(), "input error") != 1 {
+			if !errors.Is(err, manifest.ErrInput) || strings.Contains(err.Error(), "input error") {
 				t.Fatalf("invalid metadata must be classified once: %v", err)
 			}
 			continue

@@ -357,7 +357,7 @@ func (s selection) filterChanges(ctx context.Context, baseline *gittree.FS, rout
 func (s selection) acquireBase(ctx context.Context) error {
 	url, ok := originURL(s.current.Location().Config)
 	if !ok {
-		return fmt.Errorf("%w: base %s is missing objects and no origin is configured", manifest.ErrInput, s.base.Hash)
+		return manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("base %s is missing objects and no origin is configured", s.base.Hash))
 	}
 	r, err := fetchBase(ctx, url, s.base.Hash.String(), s.owner)
 	if err != nil {

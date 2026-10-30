@@ -323,7 +323,7 @@ func TestScheduler_RegisteredFailureRecovery(t *testing.T) {
 								if e.Reads.GetObject(id).(*manifest.Kustomization).Path == "recovered" {
 									return nil
 								}
-								return fmt.Errorf("%w: initial failure", manifest.ErrInput)
+								return manifest.NewError(manifest.ErrInput, nil, "initial failure")
 							}
 							if id == driver.Named() {
 								e.Tasks.YieldSlot(func() { <-read })
@@ -345,7 +345,7 @@ func TestScheduler_RegisteredFailureRecovery(t *testing.T) {
 							var err error
 							if data {
 								if e.Reads.GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: "late"}) == nil {
-									err = fmt.Errorf("%w: data unavailable", manifest.ErrInput)
+									err = manifest.NewError(manifest.ErrInput, nil, "data unavailable")
 								}
 							} else {
 								err = e.Require(ctx, []manifest.DependencyRef{{NamedResource: dependency.Named()}}, level)

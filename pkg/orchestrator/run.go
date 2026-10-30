@@ -160,11 +160,7 @@ func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 	// Completed inventory survives a failed successor; diagnostics remain attached to its input.
 	failed := o.store.FailedResources()
 	res.Manifests = o.collectManifests()
-	// Same projection logResourceFailures + aggregateFailures use —
-	// see sanitizeFailed for the contract. Centralizing in one
-	// helper keeps the three readers in sync if the strip rule
-	// changes.
-	maps.Copy(res.Failed, sanitizeFailed(failed))
+	maps.Copy(res.Failed, failed)
 	maps.Copy(res.Orphans, o.orphans)
 	// Tag the derived (dependency-blocked) failures so a consumer can collapse
 	// the cascade under its root cause. A failure with no blockers is primary.

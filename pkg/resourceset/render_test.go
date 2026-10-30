@@ -1110,6 +1110,9 @@ func TestRender_Steps(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tt.wantErr)
 				}
+				if strings.Contains(err.Error(), "ResourceSet default/steps") || strings.Contains(err.Error(), "flux error") || strings.Contains(err.Error(), "input error") {
+					t.Fatalf("step diagnostic repeated owner or classification: %v", err)
+				}
 				return
 			}
 			if err != nil {

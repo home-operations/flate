@@ -1,16 +1,19 @@
 package base_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	"log/slog"
 	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"weak"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/testutil"
@@ -134,7 +137,7 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 			st.SetPreflight(id, cycle)
 			attempts.Store(0)
 			info := controllertest.DispatchToFixpoint(t.Context(), t, d)
-			if info.Status != store.StatusFailed || manifest.TrimSentinelPrefix(info.Message) != cycle || !latest.Valid() || latest.Outcome() != schedule.Terminal || attempts.Load() != 1 || renders.Load() != 1 {
+			if info.Status != store.StatusFailed || info.Message != cycle || !latest.Valid() || latest.Outcome() != schedule.Terminal || attempts.Load() != 1 || renders.Load() != 1 {
 				t.Errorf("cycle status=%+v valid=%t outcome=%v attempts=%d renders=%d, want terminal failure in one attempt without rendering", info, latest.Valid(), latest.Outcome(), attempts.Load(), renders.Load())
 			}
 			if source {
@@ -165,23 +168,31 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 }
 
 func TestExecution_Failure(t *testing.T) {
-	t.Parallel()
-	s := store.New()
-	hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
-	s.AddObject(hr)
-	id := hr.Named()
-
-	controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
-		func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-			return errors.New("render failed")
-		},
-	)
-	got, _ := s.GetStatus(id)
-	if got.Status != store.StatusFailed {
-		t.Errorf("status = %v, want Failed", got.Status)
-	}
-	if got.Message != "render failed" {
-		t.Errorf("message = %q, want %q", got.Message, "render failed")
+	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
+		t.Run(level.String(), func(t *testing.T) {
+			var logs bytes.Buffer
+			prior := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: level})))
+			t.Cleanup(func() { slog.SetDefault(prior) })
+			s := store.New()
+			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
+			s.AddObject(hr)
+			id := hr.Named()
+			controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
+				func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
+					return manifest.NewError(manifest.ErrInput, fmt.Errorf("fetch operation: %w", fmt.Errorf("library operation: %w", errors.New("upstream diagnostic"))), "render failed")
+				},
+			)
+			got, _ := s.GetStatus(id)
+			if got.Status != store.StatusFailed || got.Message != "render failed" {
+				t.Fatalf("failure status = %+v", got)
+			}
+			for _, detail := range []string{id.String(), "fetch operation", "library operation", "upstream diagnostic"} {
+				if strings.Contains(logs.String(), detail) != (level == slog.LevelDebug) {
+					t.Errorf("debug detail %q at %v: %s", detail, level, logs.String())
+				}
+			}
+		})
 	}
 }
 
@@ -321,7 +332,7 @@ func TestExecution_PreservesInformativeReadyMessage(t *testing.T) {
 			s.AddObject(hr)
 			controllertest.NewExecution(base.New(s, nil), hr.Named()).Dispatch(t.Context(), manifest.DrainNone, t,
 				func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-					return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, message)
+					return manifest.NewError(manifest.ErrSourceSkipped, nil, message)
 				})
 			got, _ := s.GetStatus(hr.Named())
 			if got.Outcome() != store.OutcomeSkipped || got.Message != strings.TrimSpace(message) {
@@ -409,7 +420,7 @@ func TestExecution_Dispatch(t *testing.T) {
 		run       bool
 	}{
 		{"filtered", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "active"}, true, false, "unchanged", store.OutcomeUnchanged, false},
-		{"preflight before filter", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "invalid"}, true, true, fmt.Errorf("%w: cycle", manifest.ErrInput).Error(), store.OutcomeFailed, false},
+		{"preflight before filter", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "invalid"}, true, true, "cycle", store.OutcomeFailed, false},
 		{"suspended before filter", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Suspend: true}, true, false, "suspended", store.OutcomeSuspended, false},
 		{"suspended before preflight", &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "suspended", Suspend: true}, false, true, "suspended", store.OutcomeSuspended, false},
 		{"suspended chart before filter", chart, true, false, "suspended", store.OutcomeSuspended, false},
@@ -481,7 +492,7 @@ func TestExecution_Dispatch(t *testing.T) {
 					output.Complete = true
 					s.run.Emit(t.Context(), got.Named(), &output, nil)
 					if s.failure {
-						return fmt.Errorf("%w: synthetic failure", manifest.ErrInput)
+						return manifest.NewError(manifest.ErrInput, nil, "synthetic failure")
 					}
 					return nil
 				}

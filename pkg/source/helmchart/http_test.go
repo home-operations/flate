@@ -206,18 +206,21 @@ func TestFetchHTTPChart_DigestMismatch(t *testing.T) {
 }
 
 func TestFetchHTTPChart_ChartNotFound(t *testing.T) {
-	t.Parallel()
-	chartBytes := buildChartTarGz(t, "app-template", "1.0.0")
-	srv, _ := startHelmRepo(t, chartBytes, "")
-	repo := httpRepo(srv.URL)
-	f, fInputs := newHTTPFetcher(t, repo)
-
-	_, err := f.Fetch(context.Background(), helmChart("repo", "app-template", "9.9.9"), fInputs.readSet(helmChart("repo", "app-template", "9.9.9")), sourcecache.Policy{})
-	if !errors.Is(err, manifest.ErrObjectNotFound) {
-		t.Fatalf("err = %v, want ErrObjectNotFound for a missing version", err)
+	helmPipe(t, func(request *http.Request) (*http.Response, error) {
+		return helmReply(request, http.StatusOK, []byte("apiVersion: v1\nentries: {}\n")), nil
+	})
+	repository := httpRepo("https://charts.example.com")
+	f, inputs := newHTTPFetcher(t, repository)
+	chart := helmChart("repo", "nginx", "1.2.3")
+	_, err := f.Fetch(t.Context(), chart, inputs.readSet(chart), sourcecache.Policy{})
+	if !errors.Is(err, manifest.ErrObjectNotFound) || !errors.Is(err, manifest.ErrFlux) {
+		t.Fatalf("missing chart classification: %v", err)
 	}
-	if !strings.HasPrefix(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()) {
-		t.Fatalf("failure identity: %v", err)
+	if err.Error() != "chart nginx 1.2.3 not found in https://charts.example.com" {
+		t.Fatalf("chart cause: %v", err)
+	}
+	if !strings.Contains(manifest.ErrorDetails(err), "no chart name found") {
+		t.Fatalf("lost lookup detail: %s", manifest.ErrorDetails(err))
 	}
 }
 
@@ -287,7 +290,7 @@ func TestFetchHTTPChart_SecretReferences(t *testing.T) {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("expected hard input error, got %v", err)
 				}
-				if !strings.Contains(err.Error(), "HelmRepository flux-system/repo") || !strings.Contains(err.Error(), "secret flux-system/creds") {
+				if strings.Contains(err.Error(), "HelmRepository flux-system/repo") || !strings.Contains(err.Error(), "secret flux-system/creds") {
 					t.Errorf("input error lost source or Secret identity: %v", err)
 				}
 				if strings.Contains(err.Error(), "credential-payload") {

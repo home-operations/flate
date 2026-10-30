@@ -149,7 +149,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("expected hard input error, got %v", err)
 				}
-				for _, context := range []string{"Bucket ns/b", "secret ns/creds", "[" + tc.field + "]"} {
+				for _, context := range []string{"secret ns/creds", "[" + tc.field + "]"} {
 					if !strings.Contains(err.Error(), context) {
 						t.Errorf("input error missing context %q: %v", context, err)
 					}
@@ -168,7 +168,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				assert.Equal(t, missing.Owner, owner)
 				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: tc.secret})
 				if tc.ref != "auth" && tc.data == nil {
-					assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": Bucket ns/b: secret ns/missing not found")
+					assert.Equal(t, err.Error(), "secret ns/missing not found")
 				}
 			}
 		})

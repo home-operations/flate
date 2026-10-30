@@ -2,10 +2,11 @@ package source
 
 import (
 	"errors"
-	"github.com/home-operations/flate/internal/testutil"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/home-operations/flate/internal/testutil"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -184,8 +185,8 @@ func TestResolveTransport_UnavailableMaterial(t *testing.T) {
 			if !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrInput) == tc.missing {
 				t.Fatalf("wrong error classification: %v", err)
 			}
-			if (tc.cert || tc.encodedData != nil || tc.name == "wiped username bad password scalar" || tc.name == "invalid address wiped password") && !strings.Contains(err.Error(), "OCIRepository") {
-				t.Fatalf("missing owner context: %v", err)
+			if (tc.cert || tc.encodedData != nil || tc.name == "wiped username bad password scalar" || tc.name == "invalid address wiped password") && strings.Contains(err.Error(), "OCIRepository") {
+				t.Fatalf("repeated owner: %v", err)
 			}
 			if !strings.Contains(err.Error(), "ns/creds") {
 				t.Fatalf("missing referenced Secret: %v", err)

@@ -1285,7 +1285,7 @@ func TestNew_EntryPolicy(t *testing.T) {
 
 func TestNew_WarningsSurviveFailure(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"traversal", "shape", "refresh"} {
+	for _, failure := range []string{"traversal", "shape", "refresh", "identity"} {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
 			repo := testutil.GitInit(t, t.TempDir())
@@ -1316,6 +1316,9 @@ func TestNew_WarningsSurviveFailure(t *testing.T) {
 			if failure == "refresh" {
 				opts = ViewOptions{Mode: Direct, Content: "captured", Current: fstest.MapFS{}}
 			}
+			if failure == "identity" {
+				opts.Content = make(chan int)
+			}
 			input, identity, err := New(t.Context(), repo.Storer.(*filesystem.Storage).Filesystem(), commit, opts)
 			if failure == "refresh" {
 				assert.NoError(t, err)
@@ -1329,6 +1332,9 @@ func TestNew_WarningsSurviveFailure(t *testing.T) {
 			}
 			if err == nil || identity != "" || input == nil || input.view != nil || len(input.Warnings) != 1 || input.Warnings[0].Category != manifest.WarnSkippedSubmodule || input.Warnings[0].Detail[0] != "module" {
 				t.Fatalf("failed admission = %+v, %q, %v", input, identity, err)
+			}
+			if failure == "identity" && (!errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || err.Error() != "git view content cannot be fingerprinted") {
+				t.Fatalf("identity diagnostic lost its cause or classification: %v", err)
 			}
 			if failure == "traversal" && !errors.Is(err, plumbing.ErrObjectNotFound) {
 				t.Fatalf("original error lost: %v", err)

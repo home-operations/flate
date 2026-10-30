@@ -6,58 +6,94 @@ import (
 	"strings"
 )
 
-// TrimSentinelPrefix removes ErrFlux and a registered sentinel category
-// from user-facing messages. Sentinels register their categories at declaration.
-func TrimSentinelPrefix(msg string) string {
-	prefix := ErrFlux.Error() + ": "
-	rest, ok := strings.CutPrefix(msg, prefix)
-	if !ok {
-		return msg
-	}
-	category, body, ok := strings.Cut(rest, ": ")
-	if !ok {
-		return rest
-	}
-	for _, sentinel := range sentinels {
-		if category == strings.TrimPrefix(sentinel.Error(), prefix) {
-			return body
-		}
-	}
-	return rest
+// Error separates domain classification from the actionable cause.
+type Error struct {
+	causes  [2]error
+	message string
 }
 
-var sentinels []error
+// NewError creates a classified error with an optional concise message.
+func NewError(category, cause error, message string) *Error {
+	return &Error{causes: [2]error{category, cause}, message: message}
+}
 
-func sentinel(category string) error {
-	err := fmt.Errorf("%w: "+category, ErrFlux)
-	sentinels = append(sentinels, err)
-	return err
+// Category returns the classification sentinel.
+func (e *Error) Category() error { return e.causes[0] }
+
+// Cause returns the retained underlying error.
+func (e *Error) Cause() error { return e.causes[1] }
+
+// Error returns the explicit summary or the retained cause.
+func (e *Error) Error() string {
+	if e.message != "" {
+		return e.message
+	}
+	return e.causes[1].Error()
+}
+
+// Unwrap exposes classification and retained causes to structural traversal.
+func (e *Error) Unwrap() []error {
+	start, end := 0, len(e.causes)
+	if e.causes[0] == nil {
+		start++
+	}
+	if e.causes[1] == nil {
+		end--
+	}
+	return e.causes[start:end]
+}
+
+// ErrorDetails formats retained causes, including details hidden by concise summaries.
+func ErrorDetails(err error) string {
+	var out strings.Builder
+	var visit func(error, int)
+	visit = func(err error, depth int) {
+		if err == nil {
+			return
+		}
+		if out.Len() > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(strings.Repeat("  ", depth))
+		out.WriteString(err.Error())
+		switch e := err.(type) { //nolint:errorlint // Each concrete node contributes its own retained cause.
+		case *Error:
+			visit(e.causes[1], depth+1)
+		case interface{ Unwrap() []error }:
+			for _, cause := range e.Unwrap() {
+				visit(cause, depth+1)
+			}
+		case interface{ Unwrap() error }:
+			visit(e.Unwrap(), depth+1)
+		}
+	}
+	visit(err, 0)
+	return out.String()
 }
 
 // Sentinel errors. Callers branch on these with errors.Is. Every error
 // produced by this module wraps ErrFlux, so a generic
 // errors.Is(err, manifest.ErrFlux) classifies any flux-related failure.
 var (
-	ErrFlux                       = errors.New("flux error")
-	ErrInput                      = sentinel("input error")
-	ErrObjectNotFound             = sentinel("object not found")
-	ErrInvalidValuesReference     = sentinel("invalid values reference")
-	ErrInvalidSubstituteReference = sentinel("invalid substitute reference")
+	ErrFlux                             = errors.New("flux error")
+	ErrInput                      error = NewError(ErrFlux, nil, "input error")
+	ErrObjectNotFound             error = NewError(ErrFlux, nil, "object not found")
+	ErrInvalidValuesReference     error = NewError(ErrFlux, nil, "invalid values reference")
+	ErrInvalidSubstituteReference error = NewError(ErrFlux, nil, "invalid substitute reference")
 	// ErrMissingSecret marks absent or wiped source auth, cert or proxy material.
 	// The source is skipped only under producer or --allow-missing-kinds Secret policy;
 	// configured TLS/proxy requirements are never discarded for a fetch.
 	// Malformed real material remains a failure. Signature refs are ignored.
-	ErrMissingSecret = sentinel("missing secret")
+	ErrMissingSecret error = NewError(ErrFlux, nil, "missing secret")
 	// ErrSourceSkipped signals that a downstream consumer (KS sourceRef,
 	// HR chartRef) cannot proceed because its source was skipped —
 	// typically by --allow-missing-kinds Secret. Consumers translate this
 	// into their own skip rather than a hard failure.
-	ErrSourceSkipped = sentinel("source skipped")
+	ErrSourceSkipped error = NewError(ErrFlux, nil, "source skipped")
 )
 
-// inputf formats an input error.
 func inputf(format string, args ...any) error {
-	return fmt.Errorf("%w: "+format, append([]any{ErrInput}, args...)...)
+	return NewError(ErrInput, nil, fmt.Sprintf(format, args...))
 }
 
 // DependencyFailedError signals that a parent resource cannot proceed
@@ -75,11 +111,7 @@ type DependencyFailedError struct {
 
 func (e *DependencyFailedError) Error() string {
 	if len(e.Failed) == 0 {
-		subject := e.Subject
-		if subject.ID == (NamedResource{}) {
-			subject = DiagnosticFor(e.Parent, nil)
-		}
-		return fmt.Sprintf("%s: dependencies failed", subject)
+		return "dependencies failed"
 	}
 	parts := make([]string, 0, len(e.Failed))
 	for _, f := range e.Failed {

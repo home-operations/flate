@@ -17,17 +17,17 @@ func TestResolveProxy(t *testing.T) {
 		unwired               bool
 	}{
 		{name: "unwired Git", kind: manifest.KindGitRepository, unwired: true,
-			wantError: "GitRepository ns/r references proxySecretRef but no source.SecretGetter is wired"},
+			wantError: "references proxySecretRef but no source.SecretGetter is wired"},
 		{name: "unwired Helm", kind: manifest.KindHelmRepository, unwired: true,
-			wantError: "HelmRepository ns/r references proxySecretRef but no source.SecretGetter is wired"},
+			wantError: "references proxySecretRef but no source.SecretGetter is wired"},
 		{name: "absent", kind: manifest.KindOCIRepository,
-			wantError: "flux error: missing secret: OCIRepository ns/r: secret ns/px not found"},
+			wantError: "secret ns/px not found"},
 		{name: "missing address", kind: manifest.KindBucket,
 			secret:    &manifest.Secret{StringData: map[string]any{"username": "alice"}},
-			wantError: "flux error: input error: proxy secret ns/px missing required 'address' key"},
+			wantError: "proxy secret ns/px missing required 'address' key"},
 		{name: "malformed address wiped password", kind: manifest.KindGitRepository,
 			secret:    &manifest.Secret{StringData: map[string]any{"address": "http://proxy-credential-marker@proxy.invalid/%", "password": "..PLACEHOLDER_password.."}},
-			wantError: "flux error: input error: GitRepository ns/r: proxySecretRef ns/px: invalid proxy address"},
+			wantError: "proxySecretRef ns/px: invalid proxy address"},
 		{name: "full secret", kind: manifest.KindGitRepository,
 			secret: &manifest.Secret{StringData: map[string]any{"address": "http://proxy.example.com:8080", "username": "alice", "password": "hunter2"}}},
 	} {

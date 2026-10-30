@@ -98,12 +98,12 @@ func TestEncoder_TestShowsSkippedByDefault(t *testing.T) {
 func TestEncoder_TestFailedNeverHidden(t *testing.T) {
 	t.Parallel()
 	failed := testutil.KustomizationID("ns", "broken")
-	rep := TestReport{Cases: []Case{{ID: failed, Outcome: OutcomeFailed, Reason: "boom"}}, Failed: 1}
+	rep := TestReport{Cases: []Case{{ID: failed, Outcome: OutcomeFailed, Reason: "secret ns/auth not found"}}, Failed: 1}
 	var b bytes.Buffer
 	if err := writeTestReport(Encoder{Writer: &b}, rep, 0); err != nil {
 		t.Fatalf("Test: %v", err)
 	}
-	if out := b.String(); !strings.Contains(out, "✗") || !strings.Contains(out, "broken") {
+	if out := b.String(); !strings.Contains(out, "✗") || strings.Count(out, "ns/broken") != 1 || strings.Count(out, "secret ns/auth not found") != 1 {
 		t.Errorf("failed row must appear by default: %s", out)
 	}
 }

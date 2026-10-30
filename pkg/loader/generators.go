@@ -28,7 +28,7 @@ type generatorRecord struct {
 	args        types.GeneratorArgs
 }
 
-var errRemoteInputs = fmt.Errorf("%w: remote generator input requires HTTPInputs", manifest.ErrInput)
+var errRemoteInputs = manifest.NewError(manifest.ErrInput, nil, "remote generator input requires HTTPInputs")
 
 func (r generatorRecord) materialize(ctx context.Context, opts options) (manifest.BaseManifest, error) {
 	var ldr ifc.Loader
@@ -36,7 +36,7 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 		input, name := r.reader.input(r.root)
 		input, err := fs.Sub(input, name)
 		if err != nil {
-			return nil, fmt.Errorf("%w: generator fs %s: %w", manifest.ErrInput, r.root, err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("generator fs %s: %w", r.root, err), "")
 		}
 		confined := tree.NewBuilder(input)
 		root, dir := r.root, filepath.Dir(r.file)
@@ -63,7 +63,7 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 	}
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
 	if err != nil {
-		return nil, fmt.Errorf("%w: generator %s in %s: %w", manifest.ErrInput, r.args.Name, r.file, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("generator %s in %s: %w", r.args.Name, r.file, err), "")
 	}
 	data := make(map[string]any, len(pairs))
 	for _, pair := range pairs {

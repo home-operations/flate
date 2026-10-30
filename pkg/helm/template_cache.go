@@ -326,7 +326,7 @@ func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource,
 	}
 	frame, ok := receipt.Value().(renderFrame)
 	if !ok || frame.header.Key == "" || frame.header.Analysis == nil && frame.chart == nil {
-		return fmt.Errorf("%w: invalid helm receipt", manifest.ErrFlux)
+		return manifest.NewError(manifest.ErrFlux, nil, "invalid helm receipt")
 	}
 	descriptor, identity, enabled, err := c.cache.RenderMetadata(ctx, frame.header.Key, frame.lookup)
 	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
@@ -344,7 +344,7 @@ func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource,
 	if frame.encoded == nil && frame.raw == "" {
 		frame.encoded, err = encodeFrame(frame.header, frame.output)
 		if err != nil {
-			return fmt.Errorf("%w: encode render frame: %w", manifest.ErrFlux, err)
+			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
 		}
 	}
 	if frame.raw == "" {
@@ -352,7 +352,7 @@ func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource,
 	}
 	accepted, err := prepareAccepted(owner, frame, records)
 	if err != nil {
-		return fmt.Errorf("%w: encode accepted helm render: %w", manifest.ErrFlux, err)
+		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
 	}
 	if frame.accepted != nil && frame.identity != "" && identity == frame.identity && frame.acceptedKey != "" && descriptor.Annotations[acceptedRenderAnnotation] == frame.acceptedKey && frame.accepted.equal(&accepted) {
 		return nil
@@ -363,15 +363,15 @@ func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource,
 	}
 	data, err := json.Marshal(accepted)
 	if err != nil {
-		return fmt.Errorf("%w: encode accepted helm render: %w", manifest.ErrFlux, err)
+		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
 	}
 	if len(data) > frameHeaderLimit {
-		return fmt.Errorf("%w: accepted helm render exceeds frame limit", manifest.ErrFlux)
+		return manifest.NewError(manifest.ErrFlux, nil, "accepted helm render exceeds frame limit")
 	}
 	if frame.encoded == nil {
 		frame.encoded, err = encodeFrame(frame.header, frame.output)
 		if err != nil {
-			return fmt.Errorf("%w: encode render frame: %w", manifest.ErrFlux, err)
+			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
 		}
 	}
 	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
@@ -414,7 +414,7 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 		identity := cache.AcquisitionIdentity(reader)
 		data, err := fs.ReadFile(reader, "content")
 		if err != nil {
-			return nil, fmt.Errorf("%w: read helm render cache: %w", manifest.ErrFlux, err)
+			return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
 		}
 		frame, err := decodeFrame(data)
 		if err != nil || frame.header.Key != key || frame.header.Analysis == nil {

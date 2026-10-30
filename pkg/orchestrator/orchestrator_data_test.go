@@ -322,7 +322,7 @@ func TestDAGSweep_ProducerFailureAttribution(t *testing.T) {
 	producer, consumer := &manifest.Kustomization{Name: "producer", Namespace: "apps", Path: "./apps"}, &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{producer, consumer})
 	st.UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	failure := fmt.Errorf("%w: invalid yaml", manifest.ErrInput)
+	failure := manifest.NewError(manifest.ErrInput, nil, "invalid yaml")
 	index := indexForTest(map[manifest.NamedResource]string{producer.Named(): "root.yaml"})
 
 	index.Readers = map[string][]manifest.FileReader{"apps/invalid.yaml": {{Reader: producer.Named(), Source: manifest.BootstrapSourceID}}}
@@ -354,7 +354,7 @@ func TestDAGSweep_OrphanDecodeAttributionStable(t *testing.T) {
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 	st.AddObjects([]manifest.BaseManifest{parent, orphan, consumer})
 	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-	failure := fmt.Errorf("%w: invalid yaml", manifest.ErrInput)
+	failure := manifest.NewError(manifest.ErrInput, nil, "invalid yaml")
 	st.UpdateFailure(orphan.Named(), failure)
 	index := indexForTest(map[manifest.NamedResource]string{parent.Named(): "root.yaml", orphan.Named(): "apps/orphan/ks.yaml"})
 

@@ -3,7 +3,6 @@ package base
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/depwait"
@@ -73,7 +72,7 @@ func (e *Execution) Checkpoint() error {
 		return errSuspended
 	}
 	if message := e.Reads.Preflight(); message != "" {
-		return fmt.Errorf("%w: %s", manifest.ErrInput, message)
+		return manifest.NewError(manifest.ErrInput, nil, message)
 	}
 	return nil
 }

@@ -269,7 +269,7 @@ func TestRenderCodec_OutcomeOrdinals(t *testing.T) {
 	restored, err := DecodeRender(data)
 	assert.NoError(t, err)
 	assert.Diff(t, restored, docs)
-	failure := fmt.Errorf("%w: invalid document", ErrInput)
+	failure := NewError(ErrInput, nil, "invalid document")
 	docs = append(docs, DocOccurrence{Ordinal: 9, Err: failure})
 	data, err = EncodeRender(docs)
 	if data != nil || !errors.Is(err, failure) {

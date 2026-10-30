@@ -23,11 +23,11 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 	owner := manifest.DiagnosticFor(repo.Named(), repo)
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
-		return registryAcquisition{}, fmt.Errorf("%s: %w", owner.Label(), err)
+		return registryAcquisition{}, err
 	}
 	client, err := remote.NewRepository(reference)
 	if err != nil {
-		return registryAcquisition{}, fmt.Errorf("%s: oras: %w", owner.Label(), err)
+		return registryAcquisition{}, fmt.Errorf("oras: %w", err)
 	}
 	resolved, err := source.ResolveTransport(f.secrets, owner, []source.TransportInput{
 		{Reference: repo.CertSecretRef, Use: source.TransportCert},
@@ -37,7 +37,7 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 		return registryAcquisition{}, err
 	}
 	if _, err := resolved.ProxyURL(&url.URL{Scheme: "https", Host: client.Reference.Host()}); err != nil {
-		return registryAcquisition{}, fmt.Errorf("%w: resolve registry proxy: invalid proxy configuration", manifest.ErrInput)
+		return registryAcquisition{}, manifest.NewError(manifest.ErrInput, nil, "resolve registry proxy: invalid proxy configuration")
 	}
 	request := registryAcquisition{client: client, resolved: resolved}
 
@@ -93,7 +93,7 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OC
 		return &auth.Credential{}, nil
 	}
 	if f.secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", manifest.DiagnosticFor(repo.Named(), repo).Label())
+		return nil, errors.New("secretRef requires source.SecretGetter")
 	}
 	sec := f.secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
@@ -101,14 +101,14 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OC
 	}
 	configJSON, _, err := sec.Value(dockerConfigJSONKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("read .dockerconfigjson: %w", err), "")
 	}
 	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
 		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)")
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s parse .dockerconfigjson: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("parse .dockerconfigjson: %w", err), "")
 	}
 	// ORAS normalizes Docker Hub's credential key while its callback expects the
 	// canonical Docker server address. Reconcile these in the same memory store.
@@ -117,7 +117,7 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OC
 	}
 	cred, err := credentials.Credential(credStore)(ctx, hostname)
 	if err != nil {
-		return nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve registry credentials: %w", err), "")
 	}
 	return &cred, nil
 }

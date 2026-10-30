@@ -24,6 +24,7 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 		{Resource: hr, Category: manifest.WarnStaleValues, Message: "values not defined by the chart schema", Detail: []string{"image.tagg", "oldKey"}},
 		{Category: manifest.WarnEmptyScan, Message: "no Flux objects found"},
 		{Message: "SDK warning"},
+		{Resource: hr, Category: manifest.WarnDiffSuppressed, Message: "1 object not rendered on the current side; diff suppressed (secret default/auth not found)"},
 	}
 	m := Model{}
 	var b bytes.Buffer
@@ -31,10 +32,13 @@ func TestEncoderReport_WarningsSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := b.String()
-	for _, want := range []string{"warnings (3)", "HelmRelease default/app: values not defined", "image.tagg, oldKey", "[StaleValues]", "[EmptyScan]", "no Flux objects found", "    SDK warning\n"} {
+	for _, want := range []string{"warnings (4)", "HelmRelease default/app: values not defined", "image.tagg, oldKey", "[StaleValues]", "[EmptyScan]", "no Flux objects found", "    SDK warning\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("warnings section missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Count(out, "HelmRelease default/app: 1 object") != 1 || strings.Count(out, "secret default/auth not found") != 1 {
+		t.Fatalf("warning repeated identity or cause: %s", out)
 	}
 	if strings.Contains(out, "[]") {
 		t.Fatalf("empty category emitted brackets: %s", out)

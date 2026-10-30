@@ -83,7 +83,7 @@ func TestRender_NonDuplicateError_Unannotated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a build failure")
 	}
-	if !errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), manifest.ErrFlux.Error()+": kustomize build apps: ") {
+	if !errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: ") {
 		t.Errorf("build failure lost renderer attribution: %v", err)
 	}
 	if strings.Contains(err.Error(), "duplicate resource(s) produced") {

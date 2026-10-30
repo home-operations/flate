@@ -92,7 +92,7 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errSourceUnavailable) {
 			return fmt.Errorf("open %s: %w", path, err)
 		}
-		yield(parsedObject{outcome: manifest.DocOccurrence{Err: fmt.Errorf("%w: open %s: %w", manifest.ErrInput, path, err)}})
+		yield(parsedObject{outcome: manifest.DocOccurrence{Err: manifest.NewError(manifest.ErrInput, fmt.Errorf("open %s: %w", path, err), "")}})
 		return nil
 	}
 	defer func() { _ = f.Close() }()
@@ -194,19 +194,19 @@ func expandDocuments(o manifest.DocOccurrence) ([]manifest.DocOccurrence, bool, 
 	}
 	data, err := json.Marshal(o.Document)
 	if err != nil {
-		return nil, true, fmt.Errorf("%w: encode collection: %w", manifest.ErrInput, err)
+		return nil, true, manifest.NewError(manifest.ErrInput, fmt.Errorf("encode collection: %w", err), "")
 	}
 	// A second empty document MUST prevent kio from silently unwrapping malformed List items.
 	data = append(data, '\n', '-', '-', '-', '\n')
 	nodes, err := resource.NewFactory(nil).RNodesFromBytes(data)
 	if err != nil {
-		return nil, true, fmt.Errorf("%w: expand collection: %w", manifest.ErrInput, err)
+		return nil, true, manifest.NewError(manifest.ErrInput, fmt.Errorf("expand collection: %w", err), "")
 	}
 	out := make([]manifest.DocOccurrence, 0, len(nodes))
 	for _, node := range nodes {
 		doc, err := node.Map()
 		if err != nil {
-			return nil, true, fmt.Errorf("%w: decode collection leaf: %w", manifest.ErrInput, err)
+			return nil, true, manifest.NewError(manifest.ErrInput, fmt.Errorf("decode collection leaf: %w", err), "")
 		}
 		out = append(out, manifest.DocOccurrence{Document: doc, Ordinal: o.Ordinal})
 	}

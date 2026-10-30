@@ -88,7 +88,7 @@ func (f *operation) fetch(ctx context.Context, request bucketAcquisition, policy
 		return cache.ProducerResult{Descriptor: desc}, err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", manifest.DiagnosticFor(b.Named(), b).Label(), err)
+		return nil, err
 	}
 	artifact := &store.SourceArtifact{
 		Kind: manifest.KindBucket,

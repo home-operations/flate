@@ -513,7 +513,10 @@ func TestArtifactGenerator_AuthoritativeDocument(t *testing.T) {
 			if !errors.Is(got, manifest.ErrInput) || !errors.Is(got, manifest.ErrFlux) || st.GetArtifact(obj.Named(), store.ArtifactContent) != nil {
 				t.Fatalf("document rejection = %v", got)
 			}
-			if tc.name == "missing" && !strings.Contains(got.Error(), "missing authoritative document") {
+			if strings.Contains(got.Error(), obj.Named().String()) || strings.Contains(got.Error(), "flux error") || strings.Contains(got.Error(), "input error") {
+				t.Fatalf("document diagnostic repeated classification or owner: %v", got)
+			}
+			if tc.name == "missing" && got.Error() != "missing authoritative document" {
 				t.Fatalf("missing document diagnostic = %v", got)
 			}
 		})

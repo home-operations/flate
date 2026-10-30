@@ -252,7 +252,7 @@ func TestReconcile_SharedChartSourceCompletes(t *testing.T) {
 								t.Fatal("equal H rerun changed accepted content or completeness")
 							}
 						} else {
-							st.UpdateFailure(hr.Named(), fmt.Errorf("%w: H failed after partial work", manifest.ErrInput))
+							st.UpdateFailure(hr.Named(), manifest.NewError(manifest.ErrInput, nil, "H failed after partial work"))
 						}
 						_, _, retained := st.GetEmission(hr.Named())
 						wantDocs := 0

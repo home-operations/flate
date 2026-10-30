@@ -1389,3 +1389,79 @@ spec:
 		})
 	}
 }
+
+func TestRun_ConciseFailureDiagnostics(t *testing.T) {
+	current, orig := writeFixture(t), writeFixture(t)
+	testutil.WriteFile(t, current, "flux/cluster.yaml", testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild: {substitute: {flate-campaign: value}}\n"))
+	for _, command := range []string{"test", "build", "diff"} {
+		t.Run(command, func(t *testing.T) {
+			var first string
+			for _, level := range []string{"error", "debug"} {
+				args := []string{command, "all", "--path", current, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", level}
+				if command == "diff" {
+					args = append(args, "--path-orig", orig)
+				}
+				stdout, stderr, code := runCLI(t, args...)
+				if code != 1 {
+					t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+				}
+				report := stderr
+				if command == "test" {
+					report = stdout
+				}
+				rows := strings.Split(report, "\n")
+				found := false
+				for _, row := range rows {
+					if !strings.Contains(row, "✗") || !strings.Contains(row, "flux-system/apps") {
+						continue
+					}
+					found = true
+					if strings.Count(row, "flux-system/apps") != 1 || strings.Count(row, "invalid substitute variable flate-campaign") != 1 || strings.Contains(row, "flux error") || strings.Contains(row, "invalid substitute reference") {
+						t.Fatalf("failure row: %s", row)
+					}
+					if first != "" && row != first {
+						t.Fatalf("debug changed the report: %q != %q", row, first)
+					}
+					first = row
+				}
+				if !found {
+					t.Fatalf("missing failure row: %s", report)
+				}
+				if strings.Contains(stderr, "must match") != (level == "debug") {
+					t.Fatalf("debug details at %s: %s", level, stderr)
+				}
+			}
+		})
+	}
+}
+
+func TestRun_ConciseEntryFailureDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [missing.yaml]\n")
+	var first string
+	for _, level := range []string{"error", "debug"} {
+		_, stderr, code := runCLI(t, "build", "all", "--path", root, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", level)
+		if code != 1 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr)
+		}
+		found := false
+		for row := range strings.SplitSeq(stderr, "\n") {
+			if !strings.Contains(row, "✗") || !strings.Contains(row, "missing.yaml") {
+				continue
+			}
+			found = true
+			if first != "" && first != row {
+				t.Fatalf("debug changed entry failure: %q != %q", row, first)
+			}
+			first = row
+		}
+		if !found || !strings.Contains(stderr, "missing.yaml") {
+			t.Fatalf("missing entry failure: %s", stderr)
+		}
+		for _, message := range []string{"orchestrator: entry failed", "cli: invocation failed"} {
+			if strings.Contains(stderr, message) != (level == "debug") {
+				t.Fatalf("diagnostic %q at %s: %s", message, level, stderr)
+			}
+		}
+	}
+}

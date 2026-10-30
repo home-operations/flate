@@ -2,7 +2,6 @@ package source
 
 import (
 	"crypto/tls"
-	"fmt"
 	"maps"
 	"net"
 	"net/http"
@@ -172,7 +171,7 @@ func (n *Network) HTTPTransport(cfg HTTPTransportConfig) (http.RoundTripper, err
 		DisableCompression bool
 	}{pem, cfg.Insecure, proxyIdentity, environment, cfg.Credentials, cfg.DisableCompression})
 	if key == "" {
-		return nil, fmt.Errorf("%w: HTTP transport material cannot be fingerprinted", manifest.ErrInput)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "HTTP transport material cannot be fingerprinted")
 	}
 	current := n.transports.Load()
 	if current != nil {

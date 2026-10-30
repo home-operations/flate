@@ -55,7 +55,7 @@ func TestRender_DeferredOCIArtifactRoot(t *testing.T) {
 	}{
 		{name: "missing"},
 		{name: "produced", producer: true},
-		{name: "fetch_failed", producer: true, fetchErr: fmt.Errorf("%w: fixture fetch failed", manifest.ErrFlux)},
+		{name: "fetch_failed", producer: true, fetchErr: manifest.NewError(manifest.ErrFlux, nil, "fixture fetch failed")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, artifact := t.TempDir(), t.TempDir()

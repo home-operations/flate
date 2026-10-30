@@ -13,7 +13,7 @@ type ClusterID string
 // Validate rejects coordinates outside the admitted repository.
 func (c ClusterID) Validate() error {
 	if !fs.ValidPath(string(c)) || strings.ContainsAny(string(c), "\\:\x00") {
-		return fmt.Errorf("%w: invalid cluster path %q", ErrInput, c)
+		return NewError(ErrInput, nil, fmt.Sprintf("invalid cluster path %q", c))
 	}
 	return nil
 }
@@ -40,7 +40,7 @@ func (t TreeID) Validate() error {
 		return err
 	}
 	if t.Side > TreeHead {
-		return fmt.Errorf("%w: invalid tree side %d", ErrInput, t.Side)
+		return NewError(ErrInput, nil, fmt.Sprintf("invalid tree side %d", t.Side))
 	}
 	return nil
 }

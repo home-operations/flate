@@ -44,7 +44,7 @@ func (o *Orchestrator) syncPreflightFailures() {
 		failures = make(map[manifest.NamedResource]string, len(paths))
 	}
 	if o.entryBinding.Failure != nil {
-		failures[o.entryBinding.Producer] = manifest.TrimSentinelPrefix(o.entryBinding.Failure.Error())
+		failures[o.entryBinding.Producer] = o.entryBinding.Failure.Error()
 	}
 	for id, cycle := range paths {
 		failures[id] = cycle.diagnostic(o)

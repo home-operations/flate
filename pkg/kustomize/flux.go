@@ -75,7 +75,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		receipt = nil
 		raw, err := fs.ReadFile(generation, "content")
 		if err != nil {
-			return false, fmt.Errorf("%w: read kustomize render cache: %w", manifest.ErrFlux, err)
+			return false, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read kustomize render cache: %w", err), "")
 		}
 		frame, err := decodeFrame(raw)
 		if err != nil || frame.header.Key != key {
@@ -110,10 +110,10 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 			subDir := root + string(filepath.Separator) + strings.TrimLeft(req.SubPath, "/")
 			canonicalDir, file, err := memFS.CleanedAbs(subDir)
 			if err != nil {
-				return sourcecache.ProducerResult{}, fmt.Errorf("%w: kustomization path is not a directory: %s: %w", manifest.ErrInput, req.SubPath, err)
+				return sourcecache.ProducerResult{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("kustomization path is not a directory: %s: %w", req.SubPath, err), "")
 			}
 			if file != "" {
-				return sourcecache.ProducerResult{}, fmt.Errorf("%w: kustomization path is not a directory: %s", manifest.ErrInput, req.SubPath)
+				return sourcecache.ProducerResult{}, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("kustomization path is not a directory: %s", req.SubPath))
 			}
 			subDir = canonicalDir.String()
 			var ks map[string]any
@@ -151,7 +151,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 				return kustomizestate.Build(memFS, subDir)
 			}()
 			if err != nil {
-				built := fmt.Errorf("%w: kustomize build %s: %w", manifest.ErrFlux, subPath, err)
+				built := manifest.NewError(manifest.ErrFlux, fmt.Errorf("kustomize build %s: %w", subPath, err), "")
 				// On a duplicate-resource-id failure, name every accumulated path that
 				// emits the colliding resource so a localized duplicate is locatable.
 				if strings.Contains(err.Error(), "already registered id") {
@@ -169,7 +169,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 			if req.Spec != nil && req.Spec.EmissionPolicy().StringLabels {
 				for _, r := range rm.Resources() {
 					if err := r.SetLabels(r.GetLabels()); err != nil {
-						return sourcecache.ProducerResult{}, fmt.Errorf("%w: normalize labels: %w", manifest.ErrInput, err)
+						return sourcecache.ProducerResult{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("normalize labels: %w", err), "")
 					}
 				}
 			}
@@ -221,13 +221,13 @@ type renderRequest struct {
 
 func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (renderRequest, error) {
 	if c == nil {
-		return renderRequest{}, fmt.Errorf("%w: incomplete render request", manifest.ErrInput)
+		return renderRequest{}, manifest.NewError(manifest.ErrInput, nil, "incomplete render request")
 	}
 	if err := ctx.Err(); err != nil {
 		return renderRequest{}, err
 	}
 	if req.Source == nil || req.Source.FS == nil {
-		return renderRequest{}, fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
+		return renderRequest{}, manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
 	}
 	lower, root := req.Source.FS, cmp.Or(req.Label, req.Source.LocalPath, string(filepath.Separator)+"flate-source")
 	var ignore any
@@ -241,7 +241,7 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 	var err error
 	root, err = filepath.Abs(root)
 	if err != nil {
-		return renderRequest{}, fmt.Errorf("%w: source label: %w", manifest.ErrInput, err)
+		return renderRequest{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("source label: %w", err), "")
 	}
 	key := renderKey(req, root, ignore)
 	source := manifest.BootstrapSourceID

@@ -126,7 +126,6 @@ func (o *Orchestrator) finalize() error {
 	}
 	o.warnMissingCRDs()
 	o.logSummary(failed, ksCount, hrCount)
-	o.logResourceFailures(failed)
 	var errs []error
 	if n := o.tasks.Failures(); n > 0 {
 		errs = append(errs, fmt.Errorf("%d task(s) panicked without per-resource attribution; check logs", n))
@@ -222,18 +221,6 @@ func (o *Orchestrator) logSummary(failed map[manifest.NamedResource]store.Status
 	}
 }
 
-func (o *Orchestrator) logResourceFailures(failed map[manifest.NamedResource]store.StatusInfo) {
-	failed = sanitizeFailed(failed)
-	for _, id := range slices.SortedFunc(maps.Keys(failed), manifest.NamedResource.Compare) {
-		info := failed[id]
-		if f := o.fileOf(id); f != "" {
-			slog.Debug("orchestrator: resource failed", "id", o.diagnostic(id).String(), "reason", info.String(), "file", f)
-		} else {
-			slog.Debug("orchestrator: resource failed", "id", o.diagnostic(id).String(), "reason", info.String())
-		}
-	}
-}
-
 // FailuresError aggregates per-resource reconcile failure messages.
 type FailuresError struct{ Message string }
 
@@ -244,7 +231,7 @@ func (*FailuresError) Unwrap() error { return manifest.ErrFlux }
 
 func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store.StatusInfo) error {
 	msgs := make([]string, 0, len(failed))
-	for id, info := range sanitizeFailed(failed) {
+	for id, info := range failed {
 		if f := o.fileOf(id); f != "" {
 			msgs = append(msgs, fmt.Sprintf("%s (%s): %s", o.diagnostic(id), f, info.String()))
 		} else {
@@ -259,25 +246,6 @@ func (o *Orchestrator) aggregateFailures(failed map[manifest.NamedResource]store
 func (o *Orchestrator) fileOf(id manifest.NamedResource) string {
 	r, _ := o.index.Lookup(id)
 	return r.File
-}
-
-// sanitizeFailed returns a copy of the failure map with each entry's
-// Message stripped of the `flux error: …: ` sentinel chain. Three
-// callers (logResourceFailures, aggregateFailures, Result.Failed)
-// previously inlined the same manifest.TrimSentinelPrefix call; if a
-// fourth reader appears the strip rule must be applied once at
-// snapshot time rather than re-derived at every consumer.
-//
-// The Store keeps the raw, sentinel-prefixed messages so errors.Is
-// chains on user-facing strings still work — only the projection
-// the orchestrator hands out is sanitized.
-func sanitizeFailed(failed map[manifest.NamedResource]store.StatusInfo) map[manifest.NamedResource]store.StatusInfo {
-	out := make(map[manifest.NamedResource]store.StatusInfo, len(failed))
-	for id, info := range failed {
-		info.Message = manifest.TrimSentinelPrefix(info.String())
-		out[id] = info
-	}
-	return out
 }
 
 func (o *Orchestrator) diagnostic(id manifest.NamedResource) manifest.DiagnosticIdentity {

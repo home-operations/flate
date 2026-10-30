@@ -51,7 +51,7 @@ func TestDataInputs_AdmissionErrorPrecedesMissingPolicy(t *testing.T) {
 			if tc.allowMissing {
 				missingKinds = []string{manifest.KindSecret}
 			}
-			c.Configure(Options{Existence: admissionFailure{fmt.Errorf("%w: %w", manifest.ErrInput, cause)}, AllowMissingKinds: missingKinds})
+			c.Configure(Options{Existence: admissionFailure{manifest.NewError(manifest.ErrInput, cause, "")}, AllowMissingKinds: missingKinds})
 			var execution Execution
 			execution.Init(c, tc.object.Named())
 			defer execution.Close()
@@ -71,7 +71,7 @@ func TestAwaitData_AdmissionErrorPreventsResume(t *testing.T) {
 	for _, materializer := range []bool{false, true} {
 		t.Run(fmt.Sprintf("materializer=%t", materializer), func(t *testing.T) {
 			t.Parallel()
-			cause := fmt.Errorf("%w: exact input could not be read", manifest.ErrInput)
+			cause := manifest.NewError(manifest.ErrInput, nil, "exact input could not be read")
 			st := store.New()
 			owner := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
 			st.AddObject(owner)

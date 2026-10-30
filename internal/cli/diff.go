@@ -15,10 +15,10 @@ import (
 )
 
 func newDiffCmd() *cobra.Command {
-	cmd := diffCmd("diff", nil, "Diff rendered output against a previous revision (defaults to all)", "")
+	cmd := diffCmd("diff", nil, "Diff rendered output (defaults to all)", "")
 	cmd.AddCommand(
 		diffCmd("all", nil,
-			"Diff all Flux producer output against another path", ""),
+			"Diff all Flux producer output against a baseline", ""),
 		diffCmd("ks [name]", []string{kustomizationAlias, kustomizationAliases},
 			"Diff Kustomizations against another path", manifest.KindKustomization),
 		diffCmd("hr [name]", []string{helmReleaseAlias, helmReleaseAliases},
@@ -35,9 +35,9 @@ type diffFlags struct {
 
 func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
 	cmd.Flags().
-		StringArrayVar(&d.stripAttrs, "strip-attr", diff.DefaultStripAttrs, "Ignore a metadata key in diffs (repeatable; replaces defaults)")
+		StringArrayVar(&d.stripAttrs, "strip-attr", diff.DefaultStripAttrs, "Ignore a metadata key in diffs (repeatable flag)")
 	cmd.Flags().
-		StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields, "Ignore a dotted field in diffs (repeatable; replaces defaults)")
+		StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields, "Ignore a dotted field in diffs (repeatable flag)")
 }
 
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
@@ -51,7 +51,6 @@ func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
 		Use:     use,
 		Aliases: aliases,
 		Short:   short,
-		Long:    short + ". With -o json, emit a 2-space-indented JSON object {\"changes\": [...], \"suppressed\": [...]} with normalized manifests and unavailable producer disclosures.",
 		Args:    positional,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return d.run(cmd, c, c.roots(firstArg(args), kind)[0])
@@ -68,7 +67,7 @@ func newDiffImagesCmd() *cobra.Command {
 	var includeRemoved bool
 	cmd := &cobra.Command{
 		Use:   "images",
-		Short: "Diff container images between current and baseline",
+		Short: "Diff container images against a baseline",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runDiffImages(cmd, c, includeRemoved)
 		},

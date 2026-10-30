@@ -15,7 +15,7 @@ import (
 )
 
 func newGetCmd() *cobra.Command {
-	cmd := getAllCmd("get", "List Kustomizations, HelmReleases, or container images (defaults to all)")
+	cmd := getAllCmd("get", "List Flux resources (defaults to all)")
 	cmd.AddCommand(newGetKSCmd(), newGetHRCmd(), newGetImagesCmd(),
 		getAllCmd("all", "List every Kustomization and HelmRelease"))
 	return cmd

@@ -17,7 +17,7 @@ func newTestCmd() *cobra.Command {
 	}
 	cmd := testCmd(&cobra.Command{
 		Use:   "test",
-		Short: "Report Kustomization + HelmRelease reconcile status (defaults to all)",
+		Short: "Report reconcile status (defaults to all)",
 		Args:  cobra.NoArgs,
 	}, kinds...)
 	cmd.AddCommand(
@@ -35,7 +35,7 @@ func newTestCmd() *cobra.Command {
 		}, manifest.KindHelmRelease),
 		testCmd(&cobra.Command{
 			Use:   "all",
-			Short: "Validate every Kustomization, HelmRelease, and Flux source CR",
+			Short: "Validate Flux resources",
 			Args:  cobra.NoArgs,
 		}, kinds...),
 	)

@@ -62,6 +62,35 @@ flate diff --base main -o github
 ```
 
 This compares rendered output with `main` and formats the diff for a GitHub comment.
+`--base` and `--path-orig` are mutually exclusive.
+A merge base is a shared ancestor commit.
+Without either flag, `diff` tries merge bases in this order: the branch upstream, `origin/HEAD`, `origin/main`, then `origin/master`.
+If shallow history prevents detection, use an explicit baseline or fetch more history.
+Flate fetches explicit revisions absent from the checkout from `origin`.
+
+Repeat `--strip-attr <key>` to ignore annotation or label keys.
+The defaults are `helm.sh/chart`, `checksum/`, `app.kubernetes.io/version`, and `chart`.
+The trailing slash in `checksum/` matches all keys with that prefix.
+Repeat `--strip-field <path>` to ignore dotted fields. Its default list is empty.
+Each flag replaces its own default list on first use.
+
+`diff ks`, `diff hr`, and `diff all` accept `-o json`.
+For one cluster present on both sides, they emit a 2-space-indented object with `changes` and `suppressed` arrays.
+Empty arrays remain `[]`.
+Each change contains `parent`, `apiVersion`, `kind`, `namespace`, `name`, `status`, `old`, `new`, `oldChart`, and `newChart`.
+Status is `added`, `changed`, or `removed`.
+The normalized `old` manifest is `null` for additions, and `new` is `null` for removals.
+Chart labels are captured before stripping and remain empty strings when absent.
+
+Parents contain `kind`, `namespace`, `name`, and `path`, which is empty for HelmReleases.
+Changes sort by parent and resource identity.
+Suppressions contain `parent`, `side`, `count`, and `reason`.
+The `side` is `orig`, `current`, or `both`, and `count` counts withheld objects.
+For multiple clusters, or an added or removed cluster, output is an array of these objects.
+Each object also contains `cluster` and, when applicable, `added: true` or `removed: true`.
+Render failures still write diagnostics to stderr and exit with status 1.
+Other producers can still contribute changes on stdout.
+`diff images` uses its own image format.
 
 ### Render one app
 
@@ -130,6 +159,32 @@ If no variables are readable under the default strategy, `${VAR}` remains litera
 Give those variables defaults (`${VAR:=value}`) or supply a dummy Secret with the keys.
 A missing required `substituteFrom` ConfigMap still fails.
 
+For unreadable SOPS keys, save a dummy input with the matching identity as `dummy-values.yaml`:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cluster-secrets
+  namespace: flux-system
+stringData:
+  DOMAIN: example.invalid
+```
+
+Use the values that your templates or chart schema need.
+Then supply the file or read it through standard input:
+
+```sh
+flate build --path ./kubernetes --supply - < dummy-values.yaml
+```
+
+This supplies `DOMAIN` for references. It does not fill encrypted keys in the emitted Secret.
+`--strict-substitutions` rejects undefined variables without defaults and is disabled by default.
+Explicit flags replace the corresponding environment input, including `--strict-substitutions=false`.
+Supply does not enable substitution without `postBuild`.
+Defined empty values, `${VAR:=default}`, `${VAR:-default}`, and escaped `$${VAR}` keep their Flux behavior.
+Resources with the `kustomize.toolkit.fluxcd.io/substitute: disabled` annotation or label bypass expansion.
+
 ### Private sources
 
 flate looks for credentials in this order:
@@ -146,11 +201,19 @@ Cluster Secrets never run helpers.
 
 AWS shared profiles can run credential processes.
 Profile errors fail the run, including a missing executable or SSO token.
-Local Helm TLS and proxy settings do not replace manifest transport settings.
+Local Helm TLS, proxy, and forwarding configuration does not replace manifest transport or `passCredentials`.
+HTTP charts can use a matching Helm `repositories.yaml` username and password.
+Without `AWS_PROFILE`, shared files without a `default` profile fail before instance-role lookup.
+To restore role lookup, set `AWS_PROFILE` or remove those files.
+Helpers use the user's own configuration and network.
 
 Authentication is silent on success.
 Malformed explicit credentials fail instead of advancing to machine credentials.
 If credentials remain unavailable, `--allow-missing-kinds Secret` skips the whole source with `SourceCredentialsUnavailable`.
+Other acquisition failures, missing host verification, cancellation, and deadlines remain fatal.
+When local selection yields no credential, OCI and HTTPS Git use the library's anonymous flow.
+AWS Buckets resolve the machine chain, then use MinIO's anonymous signer.
+Typed authentication rejection follows the same skip policy without a second anonymous acquisition.
 
 ### Cache between runs
 
@@ -167,6 +230,16 @@ To preview removal of unused entries from that cache, run:
 ```sh
 flate cache gc --cache-dir ~/.cache/flate --dry-run
 ```
+
+`cache gc` requires an explicit `--cache-dir` or `FLATE_CACHE_DIR`.
+It retires named tags by payload last-use, prunes unreachable Git generations, and delegates blob reclamation to ORAS graph GC.
+Shared payloads survive while a retained tag can reach them.
+`--max-age` selects the unused duration before pruning, and zero disables age-based pruning.
+
+`--git-depth` limits Git source fetch history to one commit by default.
+Set it to zero for full history.
+References pinned to an explicit commit without a branch first fetch that commit at depth one, even with `--git-depth=0`, and fall back to full history if that request fails.
+Commit pins that also specify a branch fetch full history.
 
 ## What flate renders
 
@@ -201,6 +274,17 @@ flate does not substitute the working tree for their content.
 
 When `--allow-missing-kinds` accepts unavailable Helm values, flate warns `OmittedValues`.
 When it accepts missing CRD dependencies, flate warns `MissingCRD`.
+`--allow-missing-kinds` accepts comma-separated or repeated selections and defaults to an empty list.
+
+Helm template flags apply to every reconcile command because flate reconciles the full graph before filtering output.
+`--enable-dns` enables DNS lookups in Helm templates. Source fetches still need network access when template DNS lookups are disabled.
+`--disable-chart-digest-tracking` omits digest suffixes from OCI chart versions.
+Install hooks, CRD handling, and validation follow `spec.install`.
+Upgrade-only templates and template-path previews are unavailable because flate has no live release history.
+
+`--restrict-egress` blocks private-address source fetches and local Git transports.
+Configured HTTP proxies and SSH egress remain under operator control.
+The restriction does not provide a general network sandbox.
 
 If a producer cannot render, diffs withhold its objects and warn `DiffSuppressed`.
 JSON diffs include these omissions in the `suppressed` array.
@@ -208,6 +292,11 @@ JSON diffs include these omissions in the `suppressed` array.
 Secrets and CustomResourceDefinitions are excluded from output by default.
 `--skip-kinds` replaces that exclusion list, and an empty list includes all kinds.
 Build also accepts `--only-kinds` to select output kinds.
+Both flags accept comma-separated or repeated selections.
+`--skip-kinds Job` replaces the defaults, so rendered Secrets and CRDs become eligible for output, subject to HelmRelease CRD policy.
+To exclude Job while keeping the defaults, use `--skip-kinds Secret,CustomResourceDefinition,Job`.
+`--only-kinds CustomResourceDefinition` removes CRDs from the default exclusions.
+An explicit `--skip-kinds` list wins over inclusion. Dependencies remain available regardless of output filtering.
 
 ## Flags
 
@@ -217,19 +306,19 @@ Build also accepts `--only-kinds` to select output kinds.
 | `-P, --path-orig`                 | Compare with a baseline directory (exclusive with --base)                  |
 | `--base`                          | Compare with a Git revision (exclusive with --path-orig)                   |
 | `-n, --namespace`                 | Select resources in this namespace                                         |
-| `--supply`                        | Read referenced Kubernetes objects from YAML (repeatable, `-` reads stdin) |
-| `--allow-missing-kinds`           | Tolerate missing Secret, ConfigMap and CustomResourceDefinition inputs     |
-| `--strict-substitutions`          | Match kustomize-controller StrictPostBuildSubstitutions                    |
-| `--skip-kinds`                    | Exclude these output kinds (empty includes all)                            |
-| `--registry-config`               | Read OCI credentials from one native store, including helpers              |
+| `--supply`                        | Supply reference-only objects from YAML (repeatable flag) |
+| `--allow-missing-kinds`           | Tolerate missing input kinds (comma-separated values)     |
+| `--strict-substitutions`          | Reject undefined substitutions without defaults                    |
+| `--skip-kinds`                    | Exclude output kinds (comma-separated values)                            |
+| `--registry-config`               | Read OCI credentials from a native Docker or Helm store              |
 | `--cache-dir`                     | Store fetched sources and renders in this directory                        |
 | `--concurrency`                   | Limit parallel reconciles (0 means unbounded)                              |
 | `--git-depth`                     | Set Git fetch depth (0 means full history)                                 |
 | `--restrict-egress`               | Block private-address fetches and local Git transports                     |
 | `--kube-version`                  | Set the cluster Kubernetes version for Helm                                |
-| `-a, --api-versions`              | Set cluster APIs available to Helm (comma-separated)                       |
-| `--enable-dns`                    | Match helm-controller AllowDNSLookups                                      |
-| `--disable-chart-digest-tracking` | Match helm-controller DisableChartDigestTracking                           |
+| `-a, --api-versions`              | Set Helm cluster APIs (comma-separated values)                       |
+| `--enable-dns`                    | Enable DNS lookups in Helm templates                                      |
+| `--disable-chart-digest-tracking` | Omit digest suffixes from OCI chart versions                           |
 | `--log-level`                     | Set log level: debug,info,warn,error                                       |
 | `--no-progress`                   | Hide live progress on stderr                                               |
 

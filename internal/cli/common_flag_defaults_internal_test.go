@@ -46,8 +46,8 @@ func TestBindCommon_OnReconcilingSubcommands(t *testing.T) {
 		{path: "build all", use: "all", short: "Render all Flux producer output"},
 		{path: "build ks", use: "ks [name]", short: "Render Kustomizations", aliases: []string{"kustomization", "kustomizations"}, maxArgs: 1},
 		{path: "build hr", use: "hr [name]", short: "Render HelmReleases", aliases: []string{"helmrelease", "helmreleases"}, maxArgs: 1},
-		{path: "test", use: "test", short: "Report Kustomization + HelmRelease reconcile status (defaults to all)"},
-		{path: "test all", use: "all", short: "Validate every Kustomization, HelmRelease, and Flux source CR"},
+		{path: "test", use: "test", short: "Report reconcile status (defaults to all)"},
+		{path: "test all", use: "all", short: "Validate Flux resources"},
 		{path: "test ks", use: "ks [name]", short: "Validate Kustomizations", aliases: []string{"kustomization", "kustomizations"}, maxArgs: 1},
 		{path: "test hr", use: "hr [name]", short: "Validate HelmReleases", aliases: []string{"helmrelease", "helmreleases"}, maxArgs: 1},
 	} {

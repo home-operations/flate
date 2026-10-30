@@ -40,8 +40,7 @@ var renderPersistenceDisabledReason = sourcecache.RenderPersistenceDisabledReaso
 func New(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "flate",
-		Short:         "Validate a local Flux GitOps repo without a live cluster.",
-		Long:          "flate renders and diffs Flux manifests using the upstream helm, kustomize, and source SDKs; no `helm`, `kustomize`, or `flux` binaries needed.\n\nDiff auto-detects a Git baseline when neither --base nor --path-orig is set; build, get and test render the full tree by default. Git commit references can require full history regardless of --git-depth. Egress restriction covers source fetches; configured proxies and SSH egress remain operator-controlled. Helm renders fresh installs without live release history.",
+		Short:         "Render and compare Flux manifests offline",
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,

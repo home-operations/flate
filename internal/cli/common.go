@@ -78,19 +78,19 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		&f.supply,
 		"supply",
 		nil,
-		"Read reference-only Kubernetes objects from YAML; - reads stdin (repeatable)",
+		"Read reference-only YAML objects (repeatable flag)",
 	)
 	fs.BoolVar(
 		&f.strictSubstitutions,
 		"strict-substitutions",
 		false,
-		"Match kustomize-controller StrictPostBuildSubstitutions",
+		"Reject undefined substitutions without defaults",
 	)
 	fs.StringSliceVar(
 		&f.allowMissingKinds,
 		"allow-missing-kinds",
 		nil,
-		"Tolerate missing cluster inputs: Secret,ConfigMap,CustomResourceDefinition. Missing source auth without a producer first tries native registry helpers, SSH agent, Helm login or AWS environment/shared-profile/IAM credentials",
+		"Tolerate missing input kinds (comma-separated values)",
 	)
 	fs.BoolVar(&f.restrictEgress, "restrict-egress", false, "Block private-address fetches and local Git transports")
 	fs.StringSliceVar(
@@ -100,13 +100,13 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 			manifest.KindSecret,
 			manifest.KindCustomResourceDefinition,
 		},
-		"Exclude these output kinds (empty includes all)",
+		"Exclude output kinds (comma-separated values)",
 	)
 	fs.StringVar(
 		&f.registryConfig,
 		"registry-config",
 		"",
-		"Read OCI credentials through this native Docker/Helm store, including credential helpers",
+		"Read OCI credentials from a native Docker or Helm store",
 	)
 	bindCacheDir(fs, &f.cacheDir, "Store fetched sources and renders in this directory")
 	fs.IntVar(
@@ -126,13 +126,13 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags) {
 		helm.BundledKubeVersion(),
 		"Set the cluster Kubernetes version for Helm",
 	)
-	fs.StringVarP(&f.helm.APIVersions, "api-versions", "a", "", "Set cluster APIs available to Helm (comma-separated)")
-	fs.BoolVar(&f.helm.EnableDNS, "enable-dns", false, "Match helm-controller AllowDNSLookups")
+	fs.StringVarP(&f.helm.APIVersions, "api-versions", "a", "", "Set Helm cluster APIs (comma-separated values)")
+	fs.BoolVar(&f.helm.EnableDNS, "enable-dns", false, "Enable DNS lookups in Helm templates")
 	fs.BoolVar(
 		&f.helm.DisableChartDigestTracking,
 		"disable-chart-digest-tracking",
 		false,
-		"Match helm-controller DisableChartDigestTracking",
+		"Omit digest suffixes from OCI chart versions",
 	)
 }
 
@@ -143,12 +143,9 @@ type listFlags struct {
 	labels map[string]string
 }
 
-// bindSelector wires the `-l/--selector` flag. Scoped to commands that
-// actually filter by labels — today, only `get`. Binding it on
-// commands that ignore it (build/diff/test) would silently accept
-// `-l foo=bar` and do nothing.
+// Bind selectors only on commands that filter labels.
 func bindSelector(fs *pflag.FlagSet, f *listFlags) {
-	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "Select labels by key=value (comma-separated)")
+	fs.StringToStringVarP(&f.labels, "selector", "l", nil, "Select labels by key=value (comma-separated values)")
 }
 
 // bindBase selects a baseline revision for changed-only mode.

@@ -4,24 +4,19 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+
+	"helm.sh/helm/v4/pkg/chart/common"
 )
 
-// BundledKubeVersion is the Kubernetes minor version associated with
-// the k8s.io/api module flate was built against. It mirrors what the
-// upstream helm SDK would inject if running inside a cluster of that
-// version, and is flate's default for the `--kube-version` flag.
-//
-// The mapping is well-defined: k8s.io/api v0.X.Y corresponds to
-// Kubernetes v1.X.Y. We derive X.Y at startup from build-info; if
-// build-info is unavailable, we fall back to a sensible default.
-var BundledKubeVersion = sync.OnceValue(detectBundledKubeVersion)
+// BundledKubeVersion returns the Kubernetes version from the k8s.io/api build
+// dependency, or Helm's default when detection fails.
+var BundledKubeVersion = sync.OnceValue(func() string {
+	return detectBundledKubeVersion(debug.ReadBuildInfo())
+})
 
-const fallbackKubeVersion = "1.37.1"
-
-func detectBundledKubeVersion() string {
-	info, ok := debug.ReadBuildInfo()
+func detectBundledKubeVersion(info *debug.BuildInfo, ok bool) string {
 	if !ok {
-		return fallbackKubeVersion
+		return common.DefaultCapabilities.KubeVersion.Version
 	}
 	for _, dep := range info.Deps {
 		if dep.Path != "k8s.io/api" {
@@ -29,13 +24,12 @@ func detectBundledKubeVersion() string {
 		}
 		v, ok := strings.CutPrefix(dep.Version, "v0.")
 		if !ok {
-			return fallbackKubeVersion
+			return common.DefaultCapabilities.KubeVersion.Version
 		}
-		// Optional pseudo-version suffix on master builds: trim.
 		if version, _, _ := strings.Cut(v, "-"); version != "" {
 			v = version
 		}
 		return "1." + v
 	}
-	return fallbackKubeVersion
+	return common.DefaultCapabilities.KubeVersion.Version
 }

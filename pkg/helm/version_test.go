@@ -1,25 +1,74 @@
 package helm
 
 import (
-	"os"
-	"slices"
-	"strings"
+	"runtime/debug"
 	"testing"
+
+	"helm.sh/helm/v4/pkg/chart/common"
 )
 
-func TestBundledKubeVersion_MatchesDependency(t *testing.T) {
+func TestDetectBundledKubeVersion_BuildInfo(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("../../go.mod")
-	if err != nil {
-		t.Fatal(err)
+
+	tests := []struct {
+		name string
+		info *debug.BuildInfo
+		ok   bool
+		want string
+	}{
+		{
+			name: "reader failure",
+			want: common.DefaultCapabilities.KubeVersion.Version,
+		},
+		{
+			name: "unrelated dependency",
+			info: &debug.BuildInfo{Deps: []*debug.Module{
+				{Path: "example.com/unrelated", Version: "v0.38.0"},
+			}},
+			ok:   true,
+			want: common.DefaultCapabilities.KubeVersion.Version,
+		},
+		{
+			name: "supported dependency",
+			info: &debug.BuildInfo{Deps: []*debug.Module{
+				{Path: "example.com/unrelated", Version: "v0.38.0"},
+				{Path: "k8s.io/api", Version: "v0.37.2"},
+			}},
+			ok:   true,
+			want: "1.37.2",
+		},
+		{
+			name: "pseudo-version suffix",
+			info: &debug.BuildInfo{Deps: []*debug.Module{
+				{Path: "k8s.io/api", Version: "v0.37.2-20261001000000-abcdef123456"},
+			}},
+			ok:   true,
+			want: "1.37.2",
+		},
+		{
+			name: "unsupported prefix",
+			info: &debug.BuildInfo{Deps: []*debug.Module{
+				{Path: "k8s.io/api", Version: "v1.37.2"},
+			}},
+			ok:   true,
+			want: common.DefaultCapabilities.KubeVersion.Version,
+		},
+		{
+			name: "first matching dependency",
+			info: &debug.BuildInfo{Deps: []*debug.Module{
+				{Path: "k8s.io/api", Version: "v0.37.2"},
+				{Path: "k8s.io/api", Version: "v0.38.0"},
+			}},
+			ok:   true,
+			want: "1.37.2",
+		},
 	}
-	fields := strings.Fields(string(data))
-	i := slices.Index(fields, "k8s.io/api")
-	if i < 0 || i+1 >= len(fields) {
-		t.Fatal("k8s.io/api dependency missing")
-	}
-	want := "1." + strings.TrimPrefix(fields[i+1], "v0.")
-	if fallbackKubeVersion != want {
-		t.Fatalf("fallback=%q, want %q", fallbackKubeVersion, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := detectBundledKubeVersion(tt.info, tt.ok); got != tt.want {
+				t.Errorf("detectBundledKubeVersion() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

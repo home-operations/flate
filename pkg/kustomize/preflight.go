@@ -73,7 +73,7 @@ func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS *tree
 	w := inputWalk{cache: cache, fs: memFS, visited: make(map[controlLocation]controlObservation)}
 	_, err := w.directory(ctx, subPath, walkScope{})
 	if err != nil {
-		err = fmt.Errorf("%w: preflight: %w", manifest.ErrFlux, err)
+		err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("preflight: %w", err), "")
 	}
 	return err
 }
@@ -419,7 +419,7 @@ func (w *inputWalk) plugins(ctx context.Context, loc walkScope, body []byte, res
 			if !loc.remote {
 				return body, inputResult{}, nil
 			}
-			return nil, inputResult{}, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
+			return nil, inputResult{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("plugin %s: %w", loc.file, err), "")
 		}
 	}
 	w.visited[key] = controlObservation{parent: loc.observation}
@@ -433,7 +433,7 @@ func (w *inputWalk) plugins(ctx context.Context, loc walkScope, body []byte, res
 			if !loc.remote {
 				return body, inputResult{}, nil
 			}
-			return nil, inputResult{}, fmt.Errorf("%w: plugin %s: %w", manifest.ErrInput, loc.file, err)
+			return nil, inputResult{}, manifest.NewError(manifest.ErrInput, fmt.Errorf("plugin %s: %w", loc.file, err), "")
 		}
 		refs, _ := kustomizeinput.Plugin(doc)
 		c, err := w.references(ctx, loc, refs)

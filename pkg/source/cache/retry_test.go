@@ -87,7 +87,7 @@ func TestRetryable(t *testing.T) {
 		{"plain eof", io.EOF, false},
 		{"context canceled", context.Canceled, false},
 		{"context deadline", context.DeadlineExceeded, false},
-		{"input error", fmt.Errorf("%w: bad ref", manifest.ErrInput), false},
+		{"input error", manifest.NewError(manifest.ErrInput, nil, "bad ref"), false},
 		{"missing secret", manifest.ErrMissingSecret, false},
 		{"source skipped", manifest.ErrSourceSkipped, false},
 		// A registry 404 (wrong path/tag) surfaces as a plain status

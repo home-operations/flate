@@ -26,7 +26,7 @@ func hrDocs(n int) []Doc {
 func TestSuppression_String(t *testing.T) {
 	t.Parallel()
 	s := Suppression{Parent: hrParent, Side: SideCurrent, Count: 11, Reason: "chart source\n  not ready"}
-	want := "HelmRelease.helm.toolkit.fluxcd.io monitoring/grafana-operator: 11 objects not rendered on the current side; diff suppressed (chart source not ready)"
+	want := "11 objects not rendered on the current side; diff suppressed (chart source not ready)"
 	if got := s.String(); got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
@@ -38,9 +38,9 @@ func TestSuppression_String(t *testing.T) {
 		parent Parent
 		want   string
 	}{
-		{"core", Parent{Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "ConfigMap ns/shared: 1 object withheld; diff suppressed (reason)"},
-		{"foreign group", Parent{Group: "example.test", Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "ConfigMap.example.test ns/shared: 1 object withheld; diff suppressed (reason)"},
-		{"cluster", Parent{Group: "example.test", Kind: "Widget", Name: "shared", Path: "ignored/path"}, "Widget.example.test shared: 1 object withheld; diff suppressed (reason)"},
+		{"core", Parent{Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "1 object withheld; diff suppressed (reason)"},
+		{"foreign group", Parent{Group: "example.test", Kind: "ConfigMap", Namespace: "ns", Name: "shared"}, "1 object withheld; diff suppressed (reason)"},
+		{"cluster", Parent{Group: "example.test", Kind: "Widget", Name: "shared", Path: "ignored/path"}, "1 object withheld; diff suppressed (reason)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -59,11 +59,11 @@ func TestSuppression_StringBothAndEmpty(t *testing.T) {
 		want string
 	}{
 		{Suppression{Parent: hrParent, Side: SideBoth, Count: 1, Reason: "failed on both sides: orig: old;\n current: new"},
-			"HelmRelease.helm.toolkit.fluxcd.io monitoring/grafana-operator: 1 object withheld; diff suppressed (failed on both sides: orig: old; current: new)"},
+			"1 object withheld; diff suppressed (failed on both sides: orig: old; current: new)"},
 		{Suppression{Parent: hrParent, Side: SideBoth, Reason: "suspended on orig; suspended on current"},
-			"HelmRelease.helm.toolkit.fluxcd.io monitoring/grafana-operator: 0 objects withheld; diff suppressed (suspended on orig; suspended on current)"},
+			"0 objects withheld; diff suppressed (suspended on orig; suspended on current)"},
 		{Suppression{Parent: hrParent, Side: SideCurrent, Reason: "suspended on current"},
-			"HelmRelease.helm.toolkit.fluxcd.io monitoring/grafana-operator: 0 objects not rendered on the current side; diff suppressed (suspended on current)"},
+			"0 objects not rendered on the current side; diff suppressed (suspended on current)"},
 	}
 	for _, tc := range cases {
 		if got := tc.note.String(); got != tc.want {

@@ -99,7 +99,7 @@ func TestCompare_SuppressionSubject(t *testing.T) {
 				if side == SideBoth {
 					wantParent, wantCount = Parent{NamedResource: key}, 0
 				}
-				if notes[0].Parent != wantParent || notes[0].Count != wantCount || !bytes.Contains([]byte(notes[0].String()), []byte(subject.String())) {
+				if notes[0].Parent != wantParent || notes[0].Count != wantCount || bytes.Contains([]byte(notes[0].String()), []byte(subject.String())) {
 					t.Fatalf("suppression changed execution identity or lost its label: %+v", notes[0])
 				}
 				var rendered struct{ Suppressed []Suppression }

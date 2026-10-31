@@ -281,7 +281,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	}
 	frame, ok := receipt.Value().(renderFrame)
 	if !ok || frame.header.Key == "" {
-		return fmt.Errorf("%w: invalid kustomize receipt", manifest.ErrFlux)
+		return manifest.NewError(manifest.ErrFlux, nil, "invalid kustomize receipt")
 	}
 	if !frame.binding.Dependencies.Equal(acceptance.DependencySubstitutions) {
 		frame.binding.Dependencies = acceptance.DependencySubstitutions
@@ -301,7 +301,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	if frame.encoded == nil && frame.raw == "" {
 		frame.encoded, err = encodeFrame(frame.header, frame.output)
 		if err != nil {
-			return fmt.Errorf("%w: encode render frame: %w", manifest.ErrFlux, err)
+			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
 		}
 	}
 	if frame.raw == "" {
@@ -309,17 +309,17 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	}
 	accepted, err := prepareAccepted(owner, frame, records)
 	if err != nil {
-		return fmt.Errorf("%w: encode accepted kustomize render: %w", manifest.ErrFlux, err)
+		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
 	}
 	if frame.accepted != nil && frame.identity != "" && identity == frame.identity && frame.acceptedKey != "" && descriptor.Annotations[acceptedRenderAnnotation] == frame.acceptedKey && frame.accepted.equal(&accepted) {
 		return nil
 	}
 	data, err := json.Marshal(accepted)
 	if err != nil {
-		return fmt.Errorf("%w: encode accepted kustomize render: %w", manifest.ErrFlux, err)
+		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
 	}
 	if len(data) > frameHeaderLimit {
-		return fmt.Errorf("%w: accepted kustomize render exceeds frame limit", manifest.ErrFlux)
+		return manifest.NewError(manifest.ErrFlux, nil, "accepted kustomize render exceeds frame limit")
 	}
 	content := manifest.Fingerprint(data)
 	if descriptor.Annotations[acceptedRenderAnnotation] == content {
@@ -328,7 +328,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	if frame.encoded == nil {
 		frame.encoded, err = encodeFrame(frame.header, frame.output)
 		if err != nil {
-			return fmt.Errorf("%w: encode render frame: %w", manifest.ErrFlux, err)
+			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
 		}
 	}
 	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}

@@ -113,7 +113,7 @@ func (h *HelmRelease) ResolveChartSource(lookup func(NamedResource) BaseManifest
 		src, _ = lookup(id).(*HelmChartSource)
 	}
 	if src == nil {
-		return fmt.Errorf("%w: HelmChartSource %s not found for HelmRelease %s", ErrObjectNotFound, id.NamespacedName(), h.Named().NamespacedName())
+		return NewError(ErrObjectNotFound, nil, fmt.Sprintf("HelmChartSource %s not found", id.NamespacedName()))
 	}
 	h.chartDeclaration = src
 	h.Chart.Name, h.Chart.Version = src.Chart, src.Version

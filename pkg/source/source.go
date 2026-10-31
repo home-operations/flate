@@ -63,7 +63,7 @@ type typedAdapter[T manifest.BaseManifest] struct {
 func (a typedAdapter[T]) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	typed, ok := obj.(T)
 	if !ok {
-		return nil, fmt.Errorf("%w: %s fetcher: unexpected payload %T", manifest.ErrInput, a.label, obj)
+		return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s fetcher: unexpected payload %T", a.label, obj))
 	}
 	return a.inner.Fetch(ctx, typed, reads, policy)
 }

@@ -217,7 +217,7 @@ func TestRemoteInput_HTTPFailureIdentity(t *testing.T) {
 	}{
 		{name: "bare", err: notFound, want: true},
 		{name: "wrapped", err: fmt.Errorf("probe: %w", notFound), want: true},
-		{name: "terminal-domain-tree", err: &sourcecache.TerminalError{Err: fmt.Errorf("%w: probe: %w", manifest.ErrFlux, errors.Join(notFound, nil)), Attempted: true}, want: true},
+		{name: "terminal-domain-tree", err: &sourcecache.TerminalError{Err: manifest.NewError(manifest.ErrFlux, fmt.Errorf("probe: %w", errors.Join(notFound, nil)), ""), Attempted: true}, want: true},
 		{name: "forbidden", err: &fetcherr.ResponseError{StatusCode: http.StatusForbidden}},
 		{name: "rate-limited", err: &fetcherr.ResponseError{StatusCode: http.StatusTooManyRequests}},
 		{name: "server", err: &fetcherr.ResponseError{StatusCode: http.StatusInternalServerError}},

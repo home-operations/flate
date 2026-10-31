@@ -43,21 +43,11 @@ func (s Suppression) String() string {
 	if s.Count == 1 {
 		noun = "object"
 	}
-	parent := s.Parent.NamedResource
-	if s.Subject.ID != (manifest.NamedResource{}) {
-		parent = s.Subject.Resource
-	}
-	label := parent.KindLabel() + " " + parent.NamespacedName()
-	if s.Subject.Path != "" {
-		label = s.Subject.String()
-	}
 	reason := strings.Join(strings.Fields(s.Reason), " ")
 	if s.Side == SideBoth {
-		return fmt.Sprintf("%s: %d %s withheld; diff suppressed (%s)",
-			label, s.Count, noun, reason)
+		return fmt.Sprintf("%d %s withheld; diff suppressed (%s)", s.Count, noun, reason)
 	}
-	return fmt.Sprintf("%s: %d %s not rendered on the %s side; diff suppressed (%s)",
-		label, s.Count, noun, s.Side, reason)
+	return fmt.Sprintf("%d %s not rendered on the %s side; diff suppressed (%s)", s.Count, noun, s.Side, reason)
 }
 
 type suppressionPlan struct {

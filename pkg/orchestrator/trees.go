@@ -57,7 +57,7 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 			return nil, err
 		}
 		if seen[tree.ID] {
-			return nil, fmt.Errorf("%w: duplicate tree %s/%d", manifest.ErrInput, tree.ID.Cluster, tree.ID.Side)
+			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("duplicate tree %s/%d", tree.ID.Cluster, tree.ID.Side))
 		}
 		seen[tree.ID] = true
 	}
@@ -383,7 +383,7 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 		if tree.Input == nil {
 			scan := cmp.Or(tree.Path, tree.RepoRoot)
 			if scan == "" {
-				return trees, &treeError{id: tree.ID, err: fmt.Errorf("%w: tree path is required", manifest.ErrInput)}
+				return trees, &treeError{id: tree.ID, err: manifest.NewError(manifest.ErrInput, nil, "tree path is required")}
 			}
 			input, path, err := baseline.AdmitDirectory(ctx, scan, tree.RepoRoot)
 			if err != nil {
@@ -397,7 +397,7 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 			}
 		}
 		if tree.Input.FS == nil || tree.Input.LocalPath == "" {
-			return trees, &treeError{id: tree.ID, err: fmt.Errorf("%w: tree input content unavailable", manifest.ErrInput)}
+			return trees, &treeError{id: tree.ID, err: manifest.NewError(manifest.ErrInput, nil, "tree input content unavailable")}
 		}
 		tree.RepoRoot = tree.Input.LocalPath
 		var err error
@@ -446,7 +446,7 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 	byID := make(map[manifest.TreeID]Tree, len(planned))
 	for _, tree := range planned {
 		if _, exists := byID[tree.ID]; exists {
-			return nil, fmt.Errorf("%w: duplicate planned tree %s/%d", manifest.ErrInput, tree.ID.Cluster, tree.ID.Side)
+			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("duplicate planned tree %s/%d", tree.ID.Cluster, tree.ID.Side))
 		}
 		byID[tree.ID] = tree
 	}

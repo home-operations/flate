@@ -12,7 +12,6 @@ package source
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -220,7 +219,7 @@ func (p *pendingSource) Settle(ctx context.Context, _ manifest.DrainLevel) error
 	var err error = p.missing
 	c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryMachine(ctx, &c.run.Reads) })
 	if err != nil && !errors.Is(err, p.missing) {
-		err = fmt.Errorf("%s: %w", manifest.TrimSentinelPrefix(p.missing.Error()), err)
+		err = manifest.NewError(nil, err, p.missing.Error())
 	}
 	return c.completeFetch(p.object, artifact, err)
 }
@@ -242,8 +241,8 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 				related = []manifest.NamedResource{missing.Secret}
 			}
 			c.run.Reads.AddWarning(manifest.Warning{Resource: obj.Named(), Related: related, Subject: manifest.DiagnosticFor(obj.Named(), obj), Category: manifest.WarnSourceCredentialsUnavailable,
-				Message: manifest.TrimSentinelPrefix(err.Error())})
-			return fmt.Errorf("%w: %s", manifest.ErrSourceSkipped, manifest.TrimSentinelPrefix(err.Error()))
+				Message: err.Error()})
+			return manifest.NewError(manifest.ErrSourceSkipped, err, "")
 		}
 		return err
 	}

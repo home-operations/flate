@@ -226,7 +226,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {
 				continue
 			}
-			return omitted, fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
+			return omitted, err
 		}
 		if ref.TargetPath != "" {
 			if !owned {
@@ -248,7 +248,7 @@ func ExpandValueReferences(hr *manifest.HelmRelease, provider Provider, cache *C
 			owned = false
 		}
 		if err != nil {
-			return omitted, fmt.Errorf("building HelmRelease %s: %w", hr.Named().NamespacedName(), err)
+			return omitted, err
 		}
 	}
 	DeepMergeInto(values, hr.Values)
@@ -284,7 +284,7 @@ func resourceData(kind, namespace, name string, p Provider) (manifest.Data, erro
 	switch kind {
 	case manifest.KindSecret, manifest.KindConfigMap:
 	default:
-		return nil, fmt.Errorf("%w: unsupported kind %s", manifest.ErrInvalidValuesReference, kind)
+		return nil, manifest.NewError(manifest.ErrInvalidValuesReference, nil, fmt.Sprintf("unsupported kind %s", kind))
 	}
 	return p.Data(manifest.NamedResource{Kind: kind, Namespace: namespace, Name: name}), nil
 }
@@ -320,7 +320,7 @@ func (c *Cache) updateHelmReleaseValues(ref manifest.ValuesReference, found stri
 			if manifest.HasValuePlaceholder(found) {
 				return true, nil
 			}
-			return false, fmt.Errorf("%w: expected '%s' values key %q to be valid YAML: %w", manifest.ErrInput, ref.Name, ref.GetValuesKey(), err)
+			return false, manifest.NewError(manifest.ErrInput, fmt.Errorf("expected '%s' values key %q to be valid YAML: %w", ref.Name, ref.GetValuesKey(), err), "")
 		}
 		if decoded == nil {
 			return false, nil
@@ -341,7 +341,7 @@ func replaceValueAtPath(values map[string]any, path, value string) error {
 		err = strvals.ParseInto(path+"="+value, values)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: targetPath %q: %w", manifest.ErrInput, path, err)
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("targetPath %q: %w", path, err), "")
 	}
 	return nil
 }
@@ -359,7 +359,7 @@ func replaceLiteralValueAtPath(values map[string]any, path, value string) error 
 		`}`, `\}`,
 	)
 	if err := strvals.ParseIntoString(path+"="+escaper.Replace(value), values); err != nil {
-		return fmt.Errorf("%w: targetPath %q: %w", manifest.ErrInput, path, err)
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("targetPath %q: %w", path, err), "")
 	}
 	return nil
 }
@@ -380,7 +380,7 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 		return nil
 	}
 	if len(ks.PostBuild.SubstituteFrom) > 0 && ks.Namespace == "" {
-		return fmt.Errorf("%w: Kustomization with substituteFrom has no namespace", manifest.ErrInvalidSubstituteReference)
+		return manifest.NewError(manifest.ErrInvalidSubstituteReference, nil, "Kustomization with substituteFrom has no namespace")
 	}
 
 	// Flux gives inline substitutions precedence over references.
@@ -433,8 +433,11 @@ func ExpandPostBuildSubstituteReference(ks *manifest.Kustomization, p Provider) 
 	}
 	if len(invalid) > 0 {
 		slices.Sort(invalid)
-		return fmt.Errorf("%w: substitute var name(s) %v invalid (must match %s)",
-			manifest.ErrInvalidSubstituteReference, invalid, varsubRegex.String())
+		noun := "variable"
+		if len(invalid) > 1 {
+			noun = "variables"
+		}
+		return manifest.NewError(manifest.ErrInvalidSubstituteReference, fmt.Errorf("substitute var name(s) %v invalid (must match %s)", invalid, varsubRegex.String()), "invalid substitute "+noun+" "+strings.Join(invalid, ", "))
 	}
 	ks.PostBuild.Substitute = values
 	return nil

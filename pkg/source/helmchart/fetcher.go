@@ -69,8 +69,7 @@ func (f *operation) fetchSource(ctx context.Context, hc *manifest.HelmChartSourc
 	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: hc.Namespace, Name: hc.SourceRef.Name}
 	r, _ := f.reads.Get[*manifest.HelmRepository](id)
 	if r == nil {
-		return nil, fmt.Errorf("%w: %s backing %s", manifest.ErrObjectNotFound,
-			manifest.DiagnosticFor(id, nil).Label(), manifest.DiagnosticFor(hc.Named(), hc).Label())
+		return nil, manifest.NewError(manifest.ErrObjectNotFound, nil, fmt.Sprintf("%s not found", manifest.DiagnosticFor(id, nil).Label()))
 	}
 	policy.MaxAge = r.SourceInterval()
 	if f.disableChartDigestTracking && hc.ExactVersion() {

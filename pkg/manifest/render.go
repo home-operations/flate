@@ -32,13 +32,13 @@ func EncodeRender(docs []DocOccurrence) ([]byte, error) {
 			return nil, doc.Err
 		}
 		if doc.Ordinal < 0 {
-			return nil, fmt.Errorf("%w: encode render: negative document ordinal", ErrFlux)
+			return nil, NewError(ErrFlux, nil, "encode render: negative document ordinal")
 		}
 		data = binary.AppendUvarint(data, uint64(doc.Ordinal))
 		var err error
 		data, err = appendRender(data, doc.Document)
 		if err != nil {
-			return nil, fmt.Errorf("%w: encode render: %w", ErrFlux, err)
+			return nil, NewError(ErrFlux, fmt.Errorf("encode render: %w", err), "")
 		}
 	}
 	return data, nil
@@ -149,10 +149,10 @@ func DecodeRender(data []byte) ([]DocOccurrence, error) {
 		}
 	}
 	if d.err != nil {
-		return nil, fmt.Errorf("%w: decode render: %w", ErrFlux, d.err)
+		return nil, NewError(ErrFlux, fmt.Errorf("decode render: %w", d.err), "")
 	}
 	if len(d.data) != 0 {
-		return nil, fmt.Errorf("%w: decode render: trailing data", ErrFlux)
+		return nil, NewError(ErrFlux, nil, "decode render: trailing data")
 	}
 	return docs, nil
 }

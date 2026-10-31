@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"iter"
 	"log/slog"
 	"maps"
@@ -119,7 +118,7 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	}
 	added, retry := o.filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
 	if retry {
-		return fmt.Errorf("%w: startup membership changed during preparation", manifest.ErrInput)
+		return manifest.NewError(manifest.ErrInput, nil, "startup membership changed during preparation")
 	}
 	for _, id := range added {
 		o.store.SetIncluded(id, true)

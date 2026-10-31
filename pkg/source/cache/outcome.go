@@ -163,7 +163,12 @@ var outcomeCodecs = map[string]outcomeCodec{
 	"wrap": {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) {
 		return fmt.Errorf("remote acquisition: %w", children[0]), true
 	}},
-	"join": {minChildren: 1, maxChildren: outcomeNodeLimit, build: func(_ outcomeCause, children []error) (error, bool) { return errors.Join(children...), true }},
+	"join": {minChildren: 1, maxChildren: outcomeNodeLimit, build: func(_ outcomeCause, children []error) (error, bool) {
+		if len(children) == 2 && children[0] == manifest.ErrFlux { //nolint:errorlint // The codec preserves concrete classification-node order.
+			return manifest.NewError(children[0], children[1], ""), true
+		}
+		return errors.Join(children...), true
+	}},
 	"dns": {maxChildren: 1, remote: true, build: func(n outcomeCause, children []error) (error, bool) {
 		return &net.DNSError{Err: "remote timeout", IsTimeout: true, IsTemporary: n.Temporary, IsNotFound: n.NotFound, UnwrapErr: children[0]}, true
 	}},
@@ -271,6 +276,14 @@ func outcomeNode(err error) (outcomeCause, []error, bool) {
 	var n outcomeCause
 	var children []error
 	switch e := err.(type) { //nolint:errorlint // the codec encodes concrete node identity, not a wrapped match
+	case *manifest.Error:
+		if e.Cause() == nil {
+			return outcomeCause{Kind: "wrap"}, []error{e.Category()}, true
+		}
+		if e.Category() == nil {
+			return outcomeCause{Kind: "wrap"}, []error{e.Cause()}, true
+		}
+		return outcomeCause{Kind: "join"}, []error{e.Category(), e.Cause()}, true
 	case *TerminalError:
 		n.Kind, children = "terminal", []error{e.Err}
 	case *producerError:

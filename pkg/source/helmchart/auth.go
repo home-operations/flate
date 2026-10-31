@@ -31,7 +31,7 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 	var authErr error
 	if r.SecretRef != nil {
 		if secrets == nil {
-			return nil, fmt.Errorf("%w: %s references secretRef but no SecretGetter is wired", manifest.ErrMissingSecret, manifest.DiagnosticFor(r.Named(), r).Label())
+			return nil, manifest.NewError(manifest.ErrMissingSecret, nil, "references secretRef but no SecretGetter is wired")
 		}
 		sec := secrets(r.Namespace, r.SecretRef.Name)
 		if sec == nil {
@@ -71,7 +71,7 @@ func (r *httpRepository) localCredentials(ctx context.Context) error {
 		return source.MissingSecretErr(manifest.DiagnosticFor(r.Named(), r.HelmRepository), "", "no local Helm repository login")
 	}
 	if err != nil {
-		return fmt.Errorf("%w: load Helm repository login: %w", manifest.ErrInput, err)
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("load Helm repository login: %w", err), "")
 	}
 	for _, entry := range config.Repositories {
 		if entry == nil || entry.Username == "" || entry.Password == "" || manifest.HasValuePlaceholder(entry.Username) || manifest.HasValuePlaceholder(entry.Password) {

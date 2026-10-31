@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"io"
 	"io/fs"
 	"maps"
@@ -18,6 +16,9 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"github.com/fluxcd/pkg/apis/kustomize"
@@ -879,7 +880,7 @@ items:
 				}}))
 				assert.Equal(t, key != "", keyed)
 				assert.Equal(t, len(probe), i+1)
-				if len(out) != 0 || err == nil || !strings.HasPrefix(err.Error(), "helm template default/demo: ") || !strings.Contains(err.Error(), want) {
+				if len(out) != 0 || err == nil || !strings.HasPrefix(err.Error(), "helm template: ") || !strings.Contains(err.Error(), want) {
 					t.Fatalf("keyed=%t: output %v, error %v", keyed, out, err)
 				}
 				if _, storage := errors.AsType[*cache.CacheError](err); storage {

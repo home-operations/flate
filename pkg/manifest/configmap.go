@@ -46,7 +46,7 @@ func (c *ConfigMap) Value(key string) (string, bool, error) {
 	}
 	s, err := scalarString(v)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: data[%s]: %w", ErrInput, key, err)
+		return "", false, NewError(ErrInput, fmt.Errorf("data[%s]: %w", key, err), "")
 	}
 	return s, true, nil
 }
@@ -129,7 +129,7 @@ func (s *Secret) Value(key string) (string, bool, error) {
 	if v, ok := s.StringData[key]; ok {
 		value, err := scalarString(v)
 		if err != nil {
-			return "", false, fmt.Errorf("%w: stringData[%s]: %w", ErrInput, key, err)
+			return "", false, NewError(ErrInput, fmt.Errorf("stringData[%s]: %w", key, err), "")
 		}
 		return value, true, nil
 	}
@@ -139,11 +139,11 @@ func (s *Secret) Value(key string) (string, bool, error) {
 	}
 	value, err := scalarString(v)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: data[%s]: %w", ErrInput, key, err)
+		return "", false, NewError(ErrInput, fmt.Errorf("data[%s]: %w", key, err), "")
 	}
 	decoded, err := base64.StdEncoding.DecodeString(value)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: decode data[%s]: %w", ErrInput, key, err)
+		return "", false, NewError(ErrInput, fmt.Errorf("decode data[%s]: %w", key, err), "")
 	}
 	return string(decoded), true, nil
 }

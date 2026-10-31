@@ -33,7 +33,7 @@ type RemoteBaseRequest struct {
 // An error may retain warnings without usable content.
 func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest, policy sourcecache.Policy) (*store.SourceArtifact, error) {
 	if f.Cache == nil {
-		return nil, fmt.Errorf("%w: remote git base requires cache", manifest.ErrInput)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "remote git base requires cache")
 	}
 	repo := manifest.NewGitRepository(sourcev1.GitRepository{Spec: sourcev1.GitRepositorySpec{URL: request.URL, RecurseSubmodules: request.Submodules}})
 	if _, err := f.validateRepo(repo); err != nil {
@@ -106,7 +106,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		}
 		input, identity, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, gittree.ViewOptions{Content: content, Mode: gittree.RemoteBase, Worktree: worktree})
 		if err != nil {
-			return plumbing.ZeroHash, fmt.Errorf("%w: validate git view: %w", manifest.ErrInput, err)
+			return plumbing.ZeroHash, manifest.NewError(manifest.ErrInput, fmt.Errorf("validate git view: %w", err), "")
 		}
 		return hash, nil
 	})
@@ -119,7 +119,7 @@ func (f *Fetcher) FetchRemoteBase(ctx context.Context, request RemoteBaseRequest
 		})
 	}
 	if err != nil {
-		return gitWarningArtifact(input, manifest.NamedResource{}, request.URL, request.Ref), fmt.Errorf("%w: remote git base: %w", manifest.ErrInput, err)
+		return gitWarningArtifact(input, manifest.NamedResource{}, request.URL, request.Ref), manifest.NewError(manifest.ErrInput, fmt.Errorf("remote git base: %w", err), "")
 	}
 
 	return &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: request.URL, Revision: generation.Commit.String(), Key: id, Content: identity, FS: input, Warnings: gitWarnings(input, manifest.NamedResource{}, request.URL, request.Ref)}, nil

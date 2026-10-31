@@ -2,7 +2,6 @@ package loader
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"path/filepath"
 	"slices"
@@ -223,7 +222,7 @@ func (l *Loader) mountSources() {
 	l.documents.changed = l.documents.changed[:0]
 }
 
-var errSourceUnavailable = fmt.Errorf("%w: source artifact content unavailable", manifest.ErrInput)
+var errSourceUnavailable = manifest.NewError(manifest.ErrInput, nil, "source artifact content unavailable")
 
 type unavailableSource struct{}
 

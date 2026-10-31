@@ -136,7 +136,7 @@ func checkEffectiveObject(t *testing.T, s *Store, id manifest.NamedResource, wan
 		}
 		sh.mu.Unlock()
 	}()
-	s.UpdateFailure(id, fmt.Errorf("%w: projection", manifest.ErrInput))
+	s.UpdateFailure(id, manifest.NewError(manifest.ErrInput, nil, "projection"))
 	_, failed := s.FailedResources()[id]
 	assert.Equal(t, failed, want.Obj != nil)
 	var replayed manifest.BaseManifest
@@ -175,7 +175,7 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 		t.Fatal("complete empty retained unsupported output")
 	}
 	accept(t, s, p, &Emission{Children: []Child{a}, Manifests: testutil.DocumentOccurrences([]map[string]any{a.Doc}), Complete: true})
-	s.UpdateFailure(p, fmt.Errorf("%w: failed successor", manifest.ErrInput))
+	s.UpdateFailure(p, manifest.NewError(manifest.ErrInput, nil, "failed successor"))
 	_, _, attempt := s.GetEmission(p)
 	if len(attempt.Manifests) != 1 || attempt.Complete {
 		t.Fatalf("failure lost accepted output: %+v", attempt)
@@ -558,7 +558,7 @@ func TestRecordEmitted_WithdrawalVisibility(t *testing.T) {
 						t.Fatal("hidden producer supplied bytes to the independently visible declaration")
 					}
 					for _, id := range hidden {
-						s.UpdateFailure(id, fmt.Errorf("%w: hidden successor", manifest.ErrInput))
+						s.UpdateFailure(id, manifest.NewError(manifest.ErrInput, nil, "hidden successor"))
 						s.SetArtifact(id, &SourceArtifact{Key: "late"})
 						assert.Equal(t, s.EmissionOwner(id), manifest.NamedResource{})
 						if s.GetObject(id) != nil || s.GetArtifact(id, ArtifactContent) != nil {
@@ -1609,7 +1609,7 @@ func TestRecordEmitted_AbsentProducerStaysPrivate(t *testing.T) {
 		t.Fatal("fixture has no retained static artifact")
 	}
 	accept(t, s, p, &Emission{Children: []Child{child}, Manifests: testutil.DocumentOccurrences([]map[string]any{child.Doc}), Complete: true})
-	s.UpdateFailure(p, fmt.Errorf("%w: private failure", manifest.ErrInput))
+	s.UpdateFailure(p, manifest.NewError(manifest.ErrInput, nil, "private failure"))
 	s.SetArtifact(p, &SourceArtifact{Key: "private"})
 	assert.Equal(t, s.EmissionOwner(ownerID("missing")), manifest.NamedResource{})
 	for _, id := range []manifest.NamedResource{p, child.Obj.Named()} {

@@ -42,7 +42,7 @@ func TestRenderTrees_MissingPath(t *testing.T) {
 	if len(runs) != 1 || runs[0].Orchestrator != nil || !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("missing path identity: runs=%v err=%v", runs, err)
 	}
-	if !strings.Contains(manifest.TrimSentinelPrefix(err.Error()), "tree path is required") {
+	if !strings.Contains(err.Error(), "tree path is required") {
 		t.Fatalf("missing path diagnostic: %v", err)
 	}
 }

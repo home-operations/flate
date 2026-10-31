@@ -16,18 +16,18 @@ const chartDigestPrefixLength = 12
 func ociChartVersion(version, revision string) (string, error) {
 	ver, err := semver.NewVersion(version)
 	if err != nil {
-		return "", fmt.Errorf("%w: invalid chart version %q: %w", manifest.ErrInput, version, err)
+		return "", manifest.NewError(manifest.ErrInput, fmt.Errorf("invalid chart version %q: %w", version, err), "")
 	}
 	tag, suffix, err := splitOCIRevision(revision)
 	if err != nil {
 		return "", err
 	}
 	if tag != nil && !tag.Equal(ver) {
-		return "", fmt.Errorf("%w: artifact revision %q does not match chart version %q", manifest.ErrInput, revision, version)
+		return "", manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("artifact revision %q does not match chart version %q", revision, version))
 	}
 	tracked, err := ver.SetMetadata(suffix)
 	if err != nil {
-		return "", fmt.Errorf("%w: invalid artifact revision %q: %w", manifest.ErrInput, revision, err)
+		return "", manifest.NewError(manifest.ErrInput, fmt.Errorf("invalid artifact revision %q: %w", revision, err), "")
 	}
 	return tracked.String(), nil
 }
@@ -44,11 +44,11 @@ func splitOCIRevision(revision string) (*semver.Version, string, error) {
 		tagVer = nil
 		digest = revision
 	} else if !tagged || strings.Contains(digest, "@") {
-		return nil, "", fmt.Errorf("%w: invalid artifact revision %q", manifest.ErrInput, revision)
+		return nil, "", manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("invalid artifact revision %q", revision))
 	}
 	_, suffix, ok := strings.Cut(digest, ":")
 	if !ok || strings.Contains(suffix, ":") || len(suffix) < chartDigestPrefixLength {
-		return nil, "", fmt.Errorf("%w: invalid artifact revision %q", manifest.ErrInput, revision)
+		return nil, "", manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("invalid artifact revision %q", revision))
 	}
 	return tagVer, suffix[:chartDigestPrefixLength], nil
 }

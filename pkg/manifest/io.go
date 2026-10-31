@@ -76,7 +76,7 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 		err := dec.Decode(&node)
 		if err != nil {
 			if stream.err != nil {
-				failure := fmt.Errorf("%w: read documents: %w", ErrInput, stream.err)
+				failure := NewError(ErrInput, fmt.Errorf("read documents: %w", stream.err), "")
 				if errors.Is(stream.err, context.Canceled) || errors.Is(stream.err, context.DeadlineExceeded) {
 					return out, failure
 				}
@@ -85,7 +85,7 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 			if errors.Is(err, io.EOF) {
 				return out, nil
 			}
-			out = append(out, DocOccurrence{Ordinal: ordinal, Err: fmt.Errorf("%w: %w", ErrInput, err)})
+			out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
 			return out, nil
 		}
 		preserveTimestampStrings(&node)
@@ -108,7 +108,7 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 		}
 		if err != nil {
 			ReleaseDoc(m)
-			out = append(out, DocOccurrence{Ordinal: ordinal, Err: fmt.Errorf("%w: %w", ErrInput, err)})
+			out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
 			if _, recoverable := errors.AsType[*yaml.LoadErrors](err); !recoverable && !shapeFailure {
 				return out, nil
 			}

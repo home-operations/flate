@@ -1541,7 +1541,7 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 	}
 	selector, err := metav1.LabelSelectorAsSelector(ref.Selector)
 	if err != nil {
-		return nil, fmt.Errorf("%w: input selector: %w", manifest.ErrInput, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("input selector: %w", err), "")
 	}
 	var inputs []manifest.NamedResource
 	target := ref.NamedResource

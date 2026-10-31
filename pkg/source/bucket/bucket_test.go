@@ -259,7 +259,7 @@ func TestFetcher_TransientStatusRecovery(t *testing.T) {
 				response, typed := errors.AsType[*fetcherr.ResponseError](err)
 				if !ok || !typed || response.StatusCode != tc.status || response.Op != http.MethodGet || !errors.Is(response.Err, cause) ||
 					cause.StatusCode != tc.status || cause.Code != tc.code || cause.Message != tc.message ||
-					!errors.Is(err, manifest.ErrMissingSecret) || err.Error() != "Bucket test/retry: machine credential acquisition failed" || calls.Load() != 1 {
+					!errors.Is(err, manifest.ErrMissingSecret) || err.Error() != "machine credential acquisition failed" || calls.Load() != 1 {
 					t.Fatalf("permanent failure: %v, cause=%+v, requests=%d", err, cause, calls.Load())
 				}
 				return

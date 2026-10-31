@@ -41,7 +41,7 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 	artifacts := make(map[manifest.NamedResource]*store.SourceArtifact, len(repositories))
 	for _, repository := range repositories {
 		if repository == nil {
-			return failedLocal(artifacts), fmt.Errorf("%w: local GitRepository is nil", manifest.ErrInput)
+			return failedLocal(artifacts), manifest.NewError(manifest.ErrInput, nil, "local GitRepository is nil")
 		}
 		selected := (*manifest.GitRepositoryRef)(repository.Reference)
 		ref := selected.Normalized()
@@ -49,16 +49,16 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 			continue
 		}
 		if err := selected.Validate(); err != nil {
-			return failedLocal(artifacts), localError(repository, err)
+			return failedLocal(artifacts), localError(err)
 		}
 		if err := ctx.Err(); err != nil {
-			return failedLocal(artifacts), localError(repository, err)
+			return failedLocal(artifacts), localError(err)
 		}
 		if !opened {
 			opened = true
 			if location != nil {
 				if location.LookupErr != nil {
-					return failedLocal(artifacts), localError(repository, location.LookupErr)
+					return failedLocal(artifacts), localError(location.LookupErr)
 				}
 				if location.RepositoryRoot == root {
 					repo = location.Repository
@@ -67,11 +67,11 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 			if repo != nil {
 				headRef, err := repo.Head()
 				if err != nil {
-					return failedLocal(artifacts), localError(repository, err)
+					return failedLocal(artifacts), localError(err)
 				}
 				head = headRef.Hash()
 				if _, err := readCommit(repo, head); err != nil {
-					return failedLocal(artifacts), localError(repository, err)
+					return failedLocal(artifacts), localError(err)
 				}
 			}
 		}
@@ -87,13 +87,13 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 			continue
 		}
 		if r.err != nil {
-			return failedLocal(artifacts), localError(repository, r.err)
+			return failedLocal(artifacts), localError(r.err)
 		}
 		if r.hash == head && (sideRevision == "" || sideRevision == r.hash.String()) {
 			if local == nil {
 				input, err := gittree.AdmitDirectory(ctx, location)
 				if err != nil {
-					return failedLocal(artifacts), localError(repository, err)
+					return failedLocal(artifacts), localError(err)
 				}
 				local = input.FS
 			}
@@ -102,7 +102,7 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 		}
 		if repository.RecurseSubmodules {
 			if _, err := readCommit(repo, r.hash); err != nil {
-				return failedLocal(artifacts), localError(repository, err)
+				return failedLocal(artifacts), localError(err)
 			}
 			continue
 		}
@@ -117,7 +117,7 @@ func ResolveLocal(ctx context.Context, location *gitrepo.Location, repositories 
 		}
 		if err != nil {
 			artifacts[repository.Named()] = &store.SourceArtifact{Warnings: warnings}
-			return failedLocal(artifacts), localError(repository, err)
+			return failedLocal(artifacts), localError(err)
 		}
 		label, _ := gittree.Label(gittree.LabelOptions{Root: root, Mode: gittree.Source, Key: key})
 		artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, URL: repository.URL, LocalPath: label, Revision: r.hash.String(), Key: key, Content: key, FS: input, ContentFingerprint: gittree.ContentFingerprint, Warnings: warnings}
@@ -140,6 +140,6 @@ func failedLocal(artifacts map[manifest.NamedResource]*store.SourceArtifact) map
 	return artifacts
 }
 
-func localError(repo *manifest.GitRepository, err error) error {
-	return fmt.Errorf("%w: resolve local %s: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+func localError(err error) error {
+	return manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve local git: %w", err), "")
 }

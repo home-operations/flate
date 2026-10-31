@@ -68,7 +68,7 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 	for i, dep := range cr.Spec.DependsOn {
 		gv, err := schema.ParseGroupVersion(dep.APIVersion)
 		if err != nil || gv.Version == "" {
-			return nil, inputf("ResourceSet %w", field.Invalid(field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"), dep.APIVersion, "must have a valid version"))
+			return nil, NewError(ErrInput, fmt.Errorf("ResourceSet %w", field.Invalid(field.NewPath("spec", "dependsOn").Index(i).Child("apiVersion"), dep.APIVersion, "must have a valid version")), "")
 		}
 		scopes.ResolveScope(yaml.TypeMeta{APIVersion: dep.APIVersion, Kind: dep.Kind})
 	}
@@ -85,7 +85,7 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 		}
 		gv, err := schema.ParseGroupVersion(ref.APIVersion)
 		if err != nil || gv.Version == "" {
-			return nil, inputf("ResourceSet %w", field.Invalid(field.NewPath("spec", "inputsFrom").Index(i).Child("apiVersion"), ref.APIVersion, "must have a valid version"))
+			return nil, NewError(ErrInput, fmt.Errorf("ResourceSet %w", field.Invalid(field.NewPath("spec", "inputsFrom").Index(i).Child("apiVersion"), ref.APIVersion, "must have a valid version")), "")
 		}
 	}
 	return &ResourceSet{

@@ -70,10 +70,10 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	}
 	raw, ok := selected.(*manifest.RawObject)
 	if !ok {
-		return fmt.Errorf("%w: expected ArtifactGenerator document", manifest.ErrInput)
+		return manifest.NewError(manifest.ErrInput, nil, "expected ArtifactGenerator document")
 	}
 	if doc == nil {
-		return fmt.Errorf("%w: missing authoritative document for %s", manifest.ErrInput, id)
+		return manifest.NewError(manifest.ErrInput, nil, "missing authoritative document")
 	}
 	parsed, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
 	if err != nil {
@@ -81,26 +81,26 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	}
 	authored, ok := parsed.(*manifest.RawObject)
 	if !ok || authored.Named().Group != id.Group || authored.Kind != raw.Kind || authored.Name != raw.Name {
-		return fmt.Errorf("%w: mismatched authoritative document for %s", manifest.ErrInput, id)
+		return manifest.NewError(manifest.ErrInput, nil, "mismatched authoritative document")
 	}
 	actual, err := json.Marshal(raw.Spec)
 	if err != nil {
-		return fmt.Errorf("%w: marshal generator spec: %w", manifest.ErrInput, err)
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("marshal generator spec: %w", err), "")
 	}
 	expected, err := json.Marshal(authored.Spec)
 	if err != nil || !bytes.Equal(actual, expected) {
-		return fmt.Errorf("%w: mismatched generator spec", manifest.ErrInput)
+		return manifest.NewError(manifest.ErrInput, nil, "mismatched generator spec")
 	}
 	uid, disabled, consumes := raw.ReconcileInput(doc)
 	if !consumes {
-		return fmt.Errorf("%w: expected ArtifactGenerator document", manifest.ErrInput)
+		return manifest.NewError(manifest.ErrInput, nil, "expected ArtifactGenerator document")
 	}
 	if disabled {
 		return nil
 	}
 	spec, err := decodeSpec(raw.Spec)
 	if err != nil {
-		return fmt.Errorf("%w: generator spec: %w", manifest.ErrInput, err)
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("generator spec: %w", err), "")
 	}
 	raw, err = c.run.RequireRefresh(ctx, raw, manifest.GateArtifacts, level)
 	if err != nil {
@@ -148,7 +148,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	}
 	requests, err := expand(ctx, spec, views)
 	if err != nil {
-		return fmt.Errorf("%w: expand outputs: %w", manifest.ErrInput, err)
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("expand outputs: %w", err), "")
 	}
 	var desired []store.Child
 	var documents []manifest.DocOccurrence
@@ -170,7 +170,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 		}
 		digest := descriptor.Annotations["flate.tree-digest"]
 		if input == nil || keyID == "" || digest == "" {
-			return fmt.Errorf("%w: incomplete generated source %q", manifest.ErrInput, req.Output.Name)
+			return manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("incomplete generated source %q", req.Output.Name))
 		}
 		payload := &store.SourceArtifact{Kind: manifest.KindExternalArtifact, FS: input, Key: keyID, Content: cache.AcquisitionIdentity(input), Digest: digest, Revision: "latest@" + digest}
 		if alias := strings.TrimPrefix(req.Output.Revision, "@"); alias != "" {

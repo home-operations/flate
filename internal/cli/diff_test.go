@@ -25,7 +25,7 @@ func TestAppendSuppressionWarnings_Presentation(t *testing.T) {
 	suppressed := []diff.Suppression{{Parent: diff.Parent{NamedResource: testutil.HelmReleaseID("apps", "demo")}, Side: diff.SideCurrent, Count: 2, Reason: "missing source"}}
 	want := manifest.Warning{
 		Resource: suppressed[0].Parent.NamedResource, Category: manifest.WarnDiffSuppressed,
-		Message: "HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the current side; diff suppressed (missing source)",
+		Message: "2 objects not rendered on the current side; diff suppressed (missing source)",
 	}
 	assert.Diff(t, appendSuppressionWarnings(nil, suppressed), []manifest.Warning{want})
 	assert.Diff(t, appendSuppressionWarnings([]manifest.Warning{duplicate}, suppressed), []manifest.Warning{want, duplicate})
@@ -140,7 +140,7 @@ spec:
 				if side == "" {
 					side = "current"
 				}
-				prefix := "HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the " + side + " side; diff suppressed ("
+				prefix := "HelmRelease apps/demo: 2 objects not rendered on the " + side + " side; diff suppressed ("
 				if strings.Count(imageStderr, "[DiffSuppressed]") != 1 || strings.Count(imageStderr, prefix) != 1 || strings.Contains(imageStderr, "×2") || !strings.Contains(imageStderr, "missing-ca") {
 					t.Fatalf("image suppression missing: %s", imageStderr)
 				}
@@ -175,7 +175,7 @@ spec:
 				return
 			}
 			if tc.wantSide != "" {
-				prefix := "HelmRelease.helm.toolkit.fluxcd.io apps/demo: 2 objects not rendered on the " + tc.wantSide + " side; diff suppressed ("
+				prefix := "HelmRelease apps/demo: 2 objects not rendered on the " + tc.wantSide + " side; diff suppressed ("
 				if strings.Count(stderr, "[DiffSuppressed]") != 1 || strings.Count(stderr, prefix) != 1 || !strings.Contains(stderr, "missing-ca") {
 					t.Errorf("expected suppression with the missing Secret reason; got:\n%s", stderr)
 				}
@@ -251,15 +251,15 @@ spec:
 			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,
 				"--namespace", tc.namespace, "--allow-missing-kinds=Secret,ConfigMap", "--output", "diff", "--no-progress", "--cache-dir", t.TempDir(), "--concurrency", "2")
 			assert.Equal(t, code, tc.wantCode)
-			parent := "Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps:"
+			parent := "Kustomization flux-system/apps:"
 			if tc.namespace != "" {
-				parent = "HelmRelease.helm.toolkit.fluxcd.io apps/x-demo:"
+				parent = "HelmRelease apps/x-demo:"
 			}
 			if !strings.Contains(stderr, parent) || !strings.Contains(stderr, "on the "+tc.side+" side; diff suppressed (") {
 				t.Errorf("missing ownership suppression: stdout=%s stderr=%s", stdout, stderr)
 			}
 			for _, name := range []string{"x-demo", "y-demo"} {
-				if !strings.Contains(stderr, "HelmRelease.helm.toolkit.fluxcd.io apps/"+name+":") {
+				if !strings.Contains(stderr, "HelmRelease apps/"+name+":") {
 					t.Errorf("missing suppression for %s: stdout=%s stderr=%s", name, stdout, stderr)
 				}
 			}

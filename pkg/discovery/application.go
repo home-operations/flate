@@ -188,7 +188,7 @@ func (a *Admission) entry(ctx context.Context, st *store.Store, objects []manife
 		for _, filename := range manifest.KustomizeBuilderFilenames {
 			_, err := fs.ReadFile(a.input.FS, filepath.ToSlash(filepath.Join(relative, filename)))
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return nil, nil, fmt.Errorf("%w: inspect entry package: %w", manifest.ErrInput, err)
+				return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect entry package: %w", err), "")
 			}
 			if err == nil {
 				found = true

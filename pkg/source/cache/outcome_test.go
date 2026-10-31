@@ -60,6 +60,18 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 	u, _ := errors.AsType[*url.Error](cause)
 	u.URL = "https://fixture-secret:machine-canary@reg.example/private?token=credential-canary"
 	cause = fmt.Errorf("cause diagnostic canary: %w", cause)
+	checkTransport := func(t *testing.T, err error) {
+		t.Helper()
+		if u, ok := errors.AsType[*url.Error](err); !ok || u.Op != "Head" || u.URL != "" {
+			t.Fatalf("URL wrapper: %+v", u)
+		}
+		if n, ok := errors.AsType[*net.OpError](err); !ok || n.Op != "read" || n.Net != "tcp" || n.Source != nil || n.Addr != nil {
+			t.Fatalf("net wrapper: %+v", n)
+		}
+		if s, ok := errors.AsType[*os.SyscallError](err); !ok || s.Syscall != "read" {
+			t.Fatalf("syscall wrapper: %+v", s)
+		}
+	}
 	cases := []struct {
 		name        string
 		cause       error
@@ -69,18 +81,23 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 		machinePath []int
 		diagnostic  string
 	}{
-		{name: "real nested fmt transport", cause: connReset(), sentinel: syscall.ECONNRESET, check: func(t *testing.T, err error) {
+		{name: "real nested fmt transport", cause: connReset(), sentinel: syscall.ECONNRESET, check: checkTransport},
+		{name: "classified cause only", cause: manifest.NewError(nil, connReset(), "fixture-secret"), sentinel: syscall.ECONNRESET, check: checkTransport},
+		{name: "classified category only", cause: errors.Join(manifest.NewError(manifest.ErrFlux, nil, "fixture-secret"), connReset()), sentinel: syscall.ECONNRESET, check: func(t *testing.T, err error) {
 			t.Helper()
-			if u, ok := errors.AsType[*url.Error](err); !ok || u.Op != "Head" || u.URL != "" {
-				t.Fatalf("URL wrapper: %+v", u)
-			}
-			if n, ok := errors.AsType[*net.OpError](err); !ok || n.Op != "read" || n.Net != "tcp" || n.Source != nil || n.Addr != nil {
-				t.Fatalf("net wrapper: %+v", n)
-			}
-			if s, ok := errors.AsType[*os.SyscallError](err); !ok || s.Syscall != "read" {
-				t.Fatalf("syscall wrapper: %+v", s)
+			checkTransport(t, err)
+			terminal, _ := errors.AsType[*TerminalError](err)
+			if !errors.Is(terminal.Err, manifest.ErrFlux) {
+				t.Fatalf("lost producer classification: %v", err)
 			}
 		}},
+		{name: "classified transport", cause: manifest.NewError(manifest.ErrFlux, connReset(), "fixture-secret"), sentinel: syscall.ECONNRESET, check: func(t *testing.T, err error) {
+			t.Helper()
+			if strings.Contains(err.Error(), "flux error") || strings.Contains(err.Error(), "fixture-secret") {
+				t.Fatalf("replay prose: %v", err)
+			}
+		}},
+		{name: "classified joined causes", cause: manifest.NewError(manifest.ErrFlux, errors.Join(connReset(), syscall.ECONNREFUSED), ""), sentinel: syscall.ECONNREFUSED},
 		{name: "refused", cause: syscall.ECONNREFUSED, sentinel: syscall.ECONNREFUSED},
 		{name: "timeout", cause: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ETIMEDOUT}, sentinel: syscall.ETIMEDOUT},
 		{name: "IO deadline", cause: &url.Error{Op: "Get", Err: os.ErrDeadlineExceeded}, sentinel: os.ErrDeadlineExceeded},
@@ -146,7 +163,8 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := cachetest.New(t, t.TempDir(), New)
+			root := t.TempDir()
+			c := cachetest.New(t, root, New)
 			live := outcomeFailure(tc.cause)
 			o := newOutcome(live, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), 1, ocispec.Descriptor{})
 			if o == nil {
@@ -156,6 +174,10 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 			if err != nil || desc.Digest == "" {
 				t.Fatalf("publish: %+v, %v", desc, err)
 			}
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			c = cachetest.New(t, root, New)
 			got, err := c.readOutcome(t.Context(), desc)
 			if err != nil || got == nil {
 				t.Fatalf("read: %+v, %v", got, err)
@@ -970,5 +992,35 @@ func TestMachineCredentialErr_Idempotent(t *testing.T) {
 	got := MachineCredentialErr(terminal)
 	if got != terminal || !errors.Is(got, cause) || strings.Contains(got.Error(), "canary") { //nolint:errorlint // Idempotence MUST preserve the exact outer error.
 		t.Fatalf("classification lost terminal or typed cause: %v", got)
+	}
+}
+
+func TestOutcome_ClassifiedAcquisitionReplay(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	c := cachetest.New(t, root, New)
+	key := BlobKey{Content: "classified-cooldown"}
+	calls := 0
+	produce := func(context.Context, ProducerInput) (ProducerResult, error) {
+		calls++
+		return ProducerResult{}, manifest.NewError(manifest.ErrFlux, &fetcherr.ResponseError{StatusCode: 503, Op: http.MethodGet}, "")
+	}
+	_, _, _, live := c.Blob(t.Context(), key, Policy{}, produce)
+	if live == nil || live.Error() != "HTTP 503" || calls != 1 {
+		t.Fatalf("live: %v calls=%d", live, calls)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c = cachetest.New(t, root, New)
+	_, _, _, replay := c.Blob(t.Context(), key, Policy{}, produce)
+	if replay == nil || replay.Error() != live.Error() || calls != 1 || !errors.Is(replay, manifest.ErrFlux) {
+		t.Fatalf("replay: %v calls=%d", replay, calls)
+	}
+	if terminal, ok := errors.AsType[*TerminalError](replay); !ok || terminal.Attempted {
+		t.Fatal("replay retried production")
+	}
+	if response, ok := errors.AsType[*fetcherr.ResponseError](replay); !ok || response.StatusCode != http.StatusServiceUnavailable || response.Op != http.MethodGet {
+		t.Fatal("lost typed response")
 	}
 }

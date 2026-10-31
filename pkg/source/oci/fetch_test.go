@@ -1346,7 +1346,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				case "layer body", "neutral body", "canceled body":
 					prefix = ""
 				}
-				if err == nil || !strings.HasPrefix(err.Error(), manifest.DiagnosticFor(repo.Named(), repo).Label()+" "+prefix) || stage != "canceled body" && strings.Contains(err.Error(), "cache:") {
+				if err == nil || !strings.HasPrefix(err.Error(), prefix) || stage != "canceled body" && strings.Contains(err.Error(), "cache:") {
 					t.Fatalf("failure identity: %v", err)
 				}
 				if !errors.Is(err, manifest.ErrFlux) {

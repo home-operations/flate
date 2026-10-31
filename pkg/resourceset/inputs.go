@@ -72,7 +72,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 		ref := rs.InputsFrom[edge.Position]
 		matches, err := resolve(ref, edge.NamedResource)
 		if err != nil {
-			return nil, fmt.Errorf("%w: inputsFrom %q: %w", manifest.ErrInput, ref.Name, err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("inputsFrom %q: %w", ref.Name, err), "")
 		}
 		for _, p := range matches {
 			if p == nil {
@@ -95,7 +95,7 @@ func collectProviderInputs(rs *manifest.ResourceSet, resolve ProviderResolver) (
 		p := providers[content[i].ID]
 		inputs, err := p.ExportedInputs()
 		if err != nil {
-			return nil, fmt.Errorf("%w: ResourceSetInputProvider %s: %w", manifest.ErrInput, p.Named().NamespacedName(), err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("ResourceSetInputProvider %s: %w", p.Named().NamespacedName(), err), "")
 		}
 		content[i].Type, content[i].Inputs = p.Type, inputs
 	}

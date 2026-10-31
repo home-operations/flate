@@ -3,7 +3,6 @@ package base
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"sync/atomic"
 
@@ -100,7 +99,7 @@ func (c *Controller) KeepEmitted(ctx context.Context, parent manifest.NamedResou
 			return false, err
 		}
 		if c.loader == nil {
-			return false, fmt.Errorf("%w: restricted controller requires its invocation loader", manifest.ErrInput)
+			return false, manifest.NewError(manifest.ErrInput, nil, "restricted controller requires its invocation loader")
 		}
 		if reads == nil {
 			reads = &store.ReadSet{}

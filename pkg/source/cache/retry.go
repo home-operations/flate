@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -64,7 +63,7 @@ type attemptCeilingKey struct{}
 func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, callbacks acquisitionCallbacks) (*entry, string, error) {
 	key.id = key.producer.identity()
 	if key.id == "" {
-		return nil, "", &CacheError{fmt.Errorf("%w: acquisition content cannot be fingerprinted", manifest.ErrInput)}
+		return nil, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, "acquisition content cannot be fingerprinted")}
 	}
 	policy.Retry.Attempts = max(1, policy.Retry.Attempts)
 	if ceiling, _ := ctx.Value(attemptCeilingKey{}).(bool); ceiling {

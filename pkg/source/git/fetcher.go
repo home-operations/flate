@@ -114,7 +114,7 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository, policy source
 	} else if target, err := url.Parse(repo.URL); err == nil && (target.Scheme == "http" || target.Scheme == "https") {
 		selected, err := resolved.ProxyURL(target)
 		if err != nil {
-			return gitAcquisition{}, fmt.Errorf("%w: %s: resolve proxy: invalid proxy configuration", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label())
+			return gitAcquisition{}, manifest.NewError(manifest.ErrInput, nil, "resolve proxy: invalid proxy configuration")
 		}
 		if selected != nil {
 			opts.ProxyOptions.URL = selected.String()
@@ -247,12 +247,12 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		viewOptions.Worktree = worktree
 		input, identity, err = gittree.New(ctx, storer.(*filesystem.Storage).Filesystem(), hash, viewOptions)
 		if err != nil {
-			return plumbing.ZeroHash, fmt.Errorf("%w: validate git view: %w", manifest.ErrInput, err)
+			return plumbing.ZeroHash, manifest.NewError(manifest.ErrInput, fmt.Errorf("validate git view: %w", err), "")
 		}
 		return hash, nil
 	})
 	if err != nil {
-		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), err
 	}
 
 	viewOptions.Worktree = generation.Worktree
@@ -260,7 +260,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 		input, identity, err = gittree.New(ctx, generation.Backing, generation.Commit, viewOptions)
 	}
 	if err != nil {
-		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), fmt.Errorf("%w: %s: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+		return gitWarningArtifact(input, repo.Named(), repo.URL, refLabel), manifest.NewError(manifest.ErrInput, err, "")
 	}
 
 	warnings := gitWarnings(input, repo.Named(), repo.URL, refLabel)
@@ -407,18 +407,17 @@ func (f *Fetcher) validateRepo(repo *manifest.GitRepository) (*transport.Endpoin
 		return nil, errors.New("git repository is nil")
 	}
 	if repo.URL == "" {
-		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label())
+		return nil, manifest.NewError(manifest.ErrInput, nil, "missing url")
 	}
 	endpoint, err := transport.NewEndpoint(repo.URL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: parse git endpoint: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("parse git endpoint: %w", err), "")
 	}
 	if f.RestrictSchemes {
 		// Restricted scp-style remotes require an explicit user.
 		ssh := endpoint.Protocol == "ssh" && (endpoint.User != "" || strings.HasPrefix(repo.URL, "ssh://"))
 		if endpoint.Protocol != "https" && !ssh {
-			return nil, fmt.Errorf("%w: %s url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)",
-				manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.URL)
+			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("url %q uses a scheme not allowed under --restrict-egress (only https:// and ssh:// remotes are permitted)", repo.URL))
 		}
 	}
 	return endpoint, nil

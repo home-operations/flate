@@ -405,7 +405,8 @@ spec:
 	out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 	assert.Equal(t, code, 1)
-	if !strings.Contains(out, `track oci chart version: flux error: input error: invalid artifact revision ""`) {
+	if !strings.Contains(out, `track oci chart version: invalid artifact revision ""`) ||
+		strings.Count(out, "HelmRelease  apps/demo  ") != 1 || strings.Contains(out, "flux error:") {
 		t.Fatalf("alias revision failure changed:\n%s", out)
 	}
 }

@@ -188,7 +188,7 @@ func TestDetect_MissingInputsWrapInput(t *testing.T) {
 	t.Parallel()
 	for _, input := range []*store.SourceArtifact{nil, {}} {
 		_, err := Detect(t.Context(), input, &store.SourceArtifact{FS: fstest.MapFS{}})
-		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
+		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) || err.Error() != "both admitted inputs required" {
 			t.Fatalf("missing input error=%v", err)
 		}
 	}

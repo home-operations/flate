@@ -1185,6 +1185,9 @@ func TestBindEntry_PackageReadFailure(t *testing.T) {
 	if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("entry package failure lost its classification or cause: %v", err)
 	}
+	if strings.Contains(err.Error(), "input error") || strings.Contains(err.Error(), "flux error") {
+		t.Fatalf("entry package diagnostic contains classification prose: %v", err)
+	}
 	assert.Equal(t, d.binding, Binding{})
 }
 

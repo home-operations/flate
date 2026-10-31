@@ -123,7 +123,7 @@ func TestE2E_Diff_SameDirectoryFailure(t *testing.T) {
 	if stdout != "" {
 		t.Errorf("suppressed diff must have no product: %s", stdout)
 	}
-	for _, want := range []string{"Kustomization.kustomize.toolkit.fluxcd.io flux-system/apps", "diff suppressed", "failed on both sides: orig:", "; current:"} {
+	for _, want := range []string{"[DiffSuppressed] Kustomization flux-system/apps: 0 objects withheld; diff suppressed", "failed on both sides: orig:", "; current:"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}

@@ -217,8 +217,11 @@ func (e *Execution) finish(ctx context.Context, err error) {
 			}
 		}
 		next.Finish()
+		if slog.Default().Enabled(ctx, slog.LevelDebug) {
+			slog.DebugContext(ctx, "base: resource failed", "id", manifest.DiagnosticFor(id, e.Reads.GetObject(id)).String(), "err", manifest.ErrorDetails(err))
+		}
 		if errors.Is(err, manifest.ErrSourceSkipped) {
-			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: strings.TrimSpace(manifest.TrimSentinelPrefix(err.Error()))})
+			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: strings.TrimSpace(err.Error())})
 		} else {
 			e.Store.UpdateFailure(id, err)
 		}
@@ -365,7 +368,7 @@ func (e *Execution) requireDeclaration(ctx context.Context, level manifest.Drain
 	slices.SortFunc(owners, manifest.NamedResource.Compare)
 	owners = slices.Compact(owners)
 	if len(owners) == 0 {
-		return fmt.Errorf("%w: object not in store at reconcile time", manifest.ErrSourceSkipped)
+		return manifest.NewError(manifest.ErrSourceSkipped, nil, "object not in store at reconcile time")
 	}
 	for _, owner := range owners {
 		e.Reads.RequireMaterializer(owner)

@@ -152,7 +152,7 @@ func TestDataValue_FieldErrors(t *testing.T) {
 			if value != "" || found || !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) {
 				t.Fatalf("value=%q found=%t err=%v", value, found, err)
 			}
-			if !strings.HasPrefix(TrimSentinelPrefix(err.Error()), tc.field+": ") {
+			if !strings.HasPrefix(err.Error(), tc.field+": ") {
 				t.Fatalf("error = %v, want field %s", err, tc.field)
 			}
 		})

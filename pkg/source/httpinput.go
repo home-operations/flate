@@ -112,7 +112,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 		}
 	}
 	if workers == closedRemoteWorkers {
-		return nil, fmt.Errorf("%w: remote fetch: %w", manifest.ErrFlux, fs.ErrClosed)
+		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", fs.ErrClosed), "")
 	}
 	key := remoteKey{url: urlStr, retry: retry}
 	// NaN cannot be a comparable dictionary key value.
@@ -131,7 +131,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 			state := workers.state.Load()
 			if state&remoteClosed != 0 {
 				cancel()
-				rf.err = fmt.Errorf("%w: remote fetch: %w", manifest.ErrFlux, fs.ErrClosed)
+				rf.err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", fs.ErrClosed), "")
 				h.remoteFetches.CompareAndDelete(key, rf)
 				rf.cancel.Store(nil)
 				close(rf.done)
@@ -153,7 +153,7 @@ func (h *HTTPInputs) Acquire(ctx context.Context, urlStr string, retry cache.Ret
 				close(rf.done)
 			}()
 			if err := workerCtx.Err(); err != nil {
-				rf.err = fmt.Errorf("%w: remote fetch: %w", manifest.ErrFlux, err)
+				rf.err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("remote fetch: %w", err), "")
 				h.remoteFetches.CompareAndDelete(key, rf)
 				return
 			}

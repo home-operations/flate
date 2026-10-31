@@ -68,14 +68,14 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 		}
 	}
 	if admitted.FS == nil || admitted.LocalPath == "" {
-		return nil, fmt.Errorf("%w: bootstrap source input is unavailable", manifest.ErrInput)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "bootstrap source input is unavailable")
 	}
 	if d.cfg.Path == "" {
 		d.cfg.Path = admitted.LocalPath
 	} else {
 		scanPath, err := filepath.Abs(d.cfg.Path)
 		if err != nil {
-			return nil, fmt.Errorf("%w: resolve scan path: %w", manifest.ErrInput, err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve scan path: %w", err), "")
 		}
 		d.cfg.Path = scanPath
 	}
@@ -420,7 +420,7 @@ func (a *Admission) bootstrapArtifactRoot(ctx context.Context, witnesses []sourc
 			}
 			info, err := fs.Stat(bootstrap.FS, name)
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return "", fmt.Errorf("%w: inspect bootstrap artifact root: %w", manifest.ErrInput, err)
+				return "", manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect bootstrap artifact root: %w", err), "")
 			}
 			if err != nil || !info.IsDir() {
 				valid = false

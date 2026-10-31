@@ -55,10 +55,10 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		}
 		cv, err := idx.Get(chartName, version)
 		if err != nil {
-			return cache.ProducerResult{}, fmt.Errorf("%w: chart %s@%s not found in %s: %w", manifest.ErrObjectNotFound, chartName, version, r.URL, err)
+			return cache.ProducerResult{}, manifest.NewError(manifest.ErrObjectNotFound, err, fmt.Sprintf("chart %s %s not found in %s", chartName, version, r.URL))
 		}
 		if len(cv.URLs) == 0 {
-			return cache.ProducerResult{}, fmt.Errorf("%w: chart %s@%s in %s has no URLs", manifest.ErrObjectNotFound, chartName, version, r.URL)
+			return cache.ProducerResult{}, manifest.NewError(manifest.ErrObjectNotFound, nil, fmt.Sprintf("chart %s@%s in %s has no URLs", chartName, version, r.URL))
 		}
 		chartURL, err := absChartURL(r.URL, cv.URLs[0])
 		if err != nil {
@@ -76,7 +76,7 @@ func (f *Fetcher) fetchHTTPChart(ctx context.Context, r *httpRepository, hc *man
 		return cache.ProducerResult{Descriptor: desc}, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", manifest.DiagnosticFor(r.Named(), r).Label(), err)
+		return nil, err
 	}
 	input := cache.NameBlob(source.HelmChartArchiveFilename, generation)
 	artifact := &store.SourceArtifact{Kind: manifest.KindHelmChart, FS: input, Content: cache.AcquisitionIdentity(input), Key: id,
@@ -136,7 +136,7 @@ func (f *Fetcher) loadIndex(ctx context.Context, indexURL string, produce func(i
 		err = repo.ErrNoAPIVersion
 	}
 	if err != nil {
-		return nil, desc, fmt.Errorf("%w: parse %s: %w", manifest.ErrFlux, indexURL, err)
+		return nil, desc, manifest.NewError(manifest.ErrFlux, fmt.Errorf("parse %s: %w", indexURL, err), "")
 	}
 	for name, entries := range idx.Entries {
 		idx.Entries[name] = slices.DeleteFunc(entries, func(v *repo.ChartVersion) bool {

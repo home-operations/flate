@@ -47,18 +47,18 @@ type resolution struct {
 // An error may return diagnostic-only inputs with no usable content.
 func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cache) (*Result, error) {
 	if owner == nil {
-		return nil, fmt.Errorf("%w: baseline cache owner is required", manifest.ErrInput)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "baseline cache owner is required")
 	}
 	location, err := gitrepo.Locate(ctx, path, "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: locate working tree: %w", err), "")
 	}
 	if location.LookupErr != nil {
-		return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, location.LookupErr)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: locate working tree: %w", location.LookupErr), "")
 	}
 	repo := location.Repository
 	if repo == nil {
-		return nil, fmt.Errorf("%w: --path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", manifest.ErrInput, path)
+		return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("--path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", path))
 	}
 	root := location.ContentRoot
 	input, err := admitLocation(ctx, location)
@@ -112,28 +112,28 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 func ResolvePaths(ctx context.Context, current, original string) (*Result, error) {
 	before, err := gitrepo.Locate(ctx, original, "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: baseline: resolve baseline tree path: %w", manifest.ErrInput, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: resolve baseline tree path: %w", err), "")
 	}
 	if before.LookupErr != nil {
-		return nil, fmt.Errorf("%w: baseline: locate baseline tree: %w", manifest.ErrInput, before.LookupErr)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: locate baseline tree: %w", before.LookupErr), "")
 	}
 	if before.ConfigErr != nil {
-		return nil, fmt.Errorf("%w: baseline: read baseline tree remotes: %w", manifest.ErrInput, before.ConfigErr)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: read baseline tree remotes: %w", before.ConfigErr), "")
 	}
 	after := before
 	if current != original {
 		after, err = gitrepo.Locate(ctx, current, "")
 		if err != nil {
-			return nil, fmt.Errorf("%w: baseline: resolve working tree path: %w", manifest.ErrInput, err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: resolve working tree path: %w", err), "")
 		}
 	}
 	urls := before.URLs
 	if before.Repository == nil {
 		if after.LookupErr != nil {
-			return nil, fmt.Errorf("%w: baseline: locate working tree: %w", manifest.ErrInput, after.LookupErr)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: locate working tree: %w", after.LookupErr), "")
 		}
 		if after.ConfigErr != nil {
-			return nil, fmt.Errorf("%w: baseline: read working tree remotes: %w", manifest.ErrInput, after.ConfigErr)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: read working tree remotes: %w", after.ConfigErr), "")
 		}
 		urls = after.URLs
 	}
@@ -149,7 +149,7 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 		}
 	} else if after.ScanPath != before.ScanPath {
 		if _, err := os.Stat(after.ScanPath); err != nil {
-			return nil, fmt.Errorf("%w: --path %q: %w", manifest.ErrInput, after.ScanPath, err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("--path %q: %w", after.ScanPath, err), "")
 		}
 	}
 	return &Result{Source: input, BaseInput: baseInput, ScanPath: after.ScanPath, BaseScanPath: before.ScanPath, SelfURLs: urls}, nil
@@ -163,13 +163,13 @@ func resolve(ctx context.Context, location *gitrepo.Location, base string, owner
 	head, err := repo.Head()
 	if err != nil {
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {
-			return nil, fmt.Errorf("%w: baseline: HEAD has no commits to merge-base from; pass --base=<rev> to fetch the baseline from origin, or --path-orig=<dir>: %w", manifest.ErrInput, err)
+			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: HEAD has no commits to merge-base from; pass --base=<rev> to fetch the baseline from origin, or --path-orig=<dir>: %w", err), "")
 		}
-		return nil, fmt.Errorf("%w: resolve HEAD: %w", manifest.ErrInput, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("resolve HEAD: %w", err), "")
 	}
 	headCommit, err := repo.CommitObject(head.Hash())
 	if err != nil {
-		return nil, fmt.Errorf("%w: load HEAD commit: %w", manifest.ErrInput, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("load HEAD commit: %w", err), "")
 	}
 
 	// go-git's ResolveRevision does not accept @{u}; read the branch config.
@@ -195,14 +195,14 @@ func resolve(ctx context.Context, location *gitrepo.Location, base string, owner
 	}
 
 	if isShallow(repo) {
-		return nil, fmt.Errorf(
-			"%w: baseline: cannot compute merge-base — repo appears shallow (.git/shallow present); "+
+		return nil, manifest.NewError(manifest.ErrInput, nil,
+			"baseline: cannot compute merge-base — repo appears shallow (.git/shallow present); "+
 				"in actions/checkout, set 'fetch-depth: 0', or locally run 'git fetch --unshallow', "+
-				"or pass --base=<ref> / --path-orig=<dir> explicitly", manifest.ErrInput)
+				"or pass --base=<ref> / --path-orig=<dir> explicitly")
 	}
-	return nil, fmt.Errorf(
-		"%w: baseline: could not auto-detect — HEAD has no upstream, origin/HEAD is unset, "+
-			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>", manifest.ErrInput)
+	return nil, manifest.NewError(manifest.ErrInput, nil,
+		"baseline: could not auto-detect — HEAD has no upstream, origin/HEAD is unset, "+
+			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
 }
 
 func resolveExplicit(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
@@ -217,14 +217,14 @@ func resolveExplicit(ctx context.Context, location *gitrepo.Location, base strin
 	}
 	url, ok := originURL(location.Config)
 	if !ok {
-		return nil, fmt.Errorf("%w: could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from: %w", manifest.ErrInput, base, base, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from: %w", base, base, err), "")
 	}
 	r, err := fetchBase(ctx, url, base, owner)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		return nil, fmt.Errorf("%w: could not resolve --base=%q: not found locally or as origin/%s, and fetching it from origin %s failed: %w", manifest.ErrInput, base, base, url, err)
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and fetching it from origin %s failed: %w", base, base, url, err), "")
 	}
 	r.Source = "explicit --base=" + base + " (fetched from origin)"
 	return r, nil

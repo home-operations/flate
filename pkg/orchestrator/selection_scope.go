@@ -355,7 +355,7 @@ func (s *selectionSide) prepareStatuses(name string) {
 			if info, known := s.run.store.GetStatus(root); !known {
 				names[i] += " (not found)"
 			} else if !seen[root] && info.Status == store.StatusFailed {
-				names[i] += ": " + manifest.TrimSentinelPrefix(info.String())
+				names[i] += ": " + info.String()
 			}
 		}
 		info := s.result.Statuses[victim]

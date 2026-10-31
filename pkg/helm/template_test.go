@@ -635,7 +635,7 @@ func TestTemplate_ActionSchemaPolicy(t *testing.T) {
 				if err == nil {
 					t.Fatal("invalid schema accepted after warmed skipped render")
 				}
-				assert.Equal(t, err.Error(), "helm template default/demo: values don't meet the specifications of the schema(s) in the following chart(s):\nmychart:\n- at '/name': 'invalid' does not match pattern '^valid$'\n")
+				assert.Equal(t, err.Error(), "helm template: values don't meet the specifications of the schema(s) in the following chart(s):\nmychart:\n- at '/name': 'invalid' does not match pattern '^valid$'\n")
 			}
 		})
 	}
@@ -675,7 +675,7 @@ func TestTemplate_SchemaErrorOrder(t *testing.T) {
 	if first == nil || second == nil {
 		t.Fatalf("schema failures: %v; %v", first, second)
 	}
-	const want = `helm template default/demo: values don't meet the specifications of the schema(s) in the following chart(s):
+	const want = `helm template: values don't meet the specifications of the schema(s) in the following chart(s):
 mychart:
 - at '/alpha': got null, want string
 - at '/controllers': validation failed
@@ -714,7 +714,7 @@ func TestTemplate_SchemaPropertyOrder(t *testing.T) {
 	if first == nil || second == nil {
 		t.Fatalf("schema failures: %v; %v", first, second)
 	}
-	const want = `helm template default/demo: values don't meet the specifications of the schema(s) in the following chart(s):
+	const want = `helm template: values don't meet the specifications of the schema(s) in the following chart(s):
 mychart:
 - at '': additional properties 'alpha', 'beta', 'mu', 'omega', 'theta', 'zulu' not allowed
 `

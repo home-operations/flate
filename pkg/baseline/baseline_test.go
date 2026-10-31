@@ -395,14 +395,13 @@ func TestAutoResolve_Shallow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte("deadbeef\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// No upstream, no origin refs → the resolution ladder falls
-	// through; the shallow detection fires last.
 	_, err := AutoResolve(t.Context(), dir, "", cachetest.New(t, "", sourcecache.New))
 	assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 	assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 	if err == nil {
 		t.Fatal("expected shallow error")
 	}
+	assert.Equal(t, strings.Contains(err.Error(), "input error:"), false)
 	if !strings.Contains(err.Error(), "shallow") {
 		t.Errorf("error %q should mention shallow", err)
 	}
@@ -411,8 +410,6 @@ func TestAutoResolve_Shallow(t *testing.T) {
 	}
 }
 
-// TestAutoResolve_NoUpstream: real (non-shallow) repo with no upstream
-// and no origin refs at all. Errors cleanly suggesting --base.
 func TestAutoResolve_NoUpstream(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -423,6 +420,7 @@ func TestAutoResolve_NoUpstream(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected no-upstream error")
 	}
+	assert.Equal(t, strings.Contains(err.Error(), "input error:"), false)
 	if strings.Contains(err.Error(), "shallow") {
 		t.Errorf("error %q should not mention shallow on non-shallow repo", err)
 	}

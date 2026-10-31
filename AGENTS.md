@@ -153,9 +153,10 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 - **Context.** `ctx context.Context` is the first parameter of anything doing I/O and is never
   stored in a struct. `context.Background()` belongs to `internal/cli`; `forbidigo` enforces it and
   its exclusion list is the record of shared work that outlives one caller.
-- **Errors.** `fmt.Errorf("<lowercase op>: %w", err)`; tag with a `manifest.Err*` sentinel as
-  `fmt.Errorf("%w: detail", manifest.ErrInput)`. Every domain error wraps `manifest.ErrFlux`.
-  Classify with `errors.Is`/`errors.AsType`, never by string. Panic only on impossible state.
+- **Errors.** Classify domain errors structurally with `manifest.Error` and a `manifest.Err*`
+  category. Its `Error()` returns the actionable cause. Every domain error wraps `manifest.ErrFlux`.
+  Use `fmt.Errorf("<lowercase op>: %w", err)` only when the operation adds information absent from
+  the resource row. Classify with `errors.Is`/`errors.AsType`, never by string. Panic only on impossible state.
 - **Logging.** Package-level `log/slog` (`slog.Debug/Warn`) with a `"pkg: "` message prefix; the
   message is a constant and values are attrs. No logger threading.
 - **Signatures.** At most four parameters (median is one); beyond that an `Options`/`Config`

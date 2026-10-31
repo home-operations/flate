@@ -473,7 +473,7 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 			Ignore          string
 		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
 		if g.identity == "" {
-			return warningOnly(input), "", fmt.Errorf("%w: git view content cannot be fingerprinted", manifest.ErrInput)
+			return warningOnly(input), "", manifest.NewError(manifest.ErrInput, nil, "git view content cannot be fingerprinted")
 		}
 	}
 	if err := g.shape(ctx, opts, input); err != nil {

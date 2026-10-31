@@ -119,7 +119,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 			if !advanced {
 				added, retry := cfg.Loader.Options.Filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
 				if retry {
-					return nil, fmt.Errorf("%w: discovery membership changed during construction", manifest.ErrInput)
+					return nil, manifest.NewError(manifest.ErrInput, nil, "discovery membership changed during construction")
 				}
 				for _, id := range added {
 					cfg.Store.SetIncluded(id, true)
@@ -804,7 +804,7 @@ func (d *Session) Advance(ctx context.Context, admission *loader.Admission) (boo
 		}
 		input := d.cfg.Input
 		if input == nil {
-			return false, fmt.Errorf("%w: entry source unavailable", manifest.ErrInput)
+			return false, manifest.NewError(manifest.ErrInput, nil, "entry source unavailable")
 		}
 		if err := d.prepareEntry(ctx, ks, input); err != nil {
 			if ctx.Err() != nil {

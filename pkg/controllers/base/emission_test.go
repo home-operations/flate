@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	"io/fs"
 	"runtime"
 	"testing"
 	"testing/fstest"
 	"weak"
+
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 
 	"github.com/home-operations/flate/internal/admissiontest"
 
@@ -1193,7 +1194,7 @@ func TestParseChildren_RetainsRendererFailure(t *testing.T) {
 			owner := &manifest.HelmRelease{Name: "owner", Namespace: "apps"}
 			invalid := map[string]any{"apiVersion": "v1", "kind": "List", "items": "invalid"}
 			sibling := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "healthy", "namespace": "apps"}}
-			failure := fmt.Errorf("%w: normalize helm list", manifest.ErrInput)
+			failure := manifest.NewError(manifest.ErrInput, nil, "normalize helm list")
 			c := Controller{SkipKinds: tc.skipKinds}
 			children, docs, failures := c.ParseChildren(owner, []manifest.DocOccurrence{{Document: invalid, Ordinal: 2, Err: failure}, {Document: sibling, Ordinal: 3}}, manifest.ParseDocOptions{})
 			if len(children) != 1 || len(docs) != tc.wantDocs || len(failures) != 1 || failures[0].Ordinal != 2 || !errors.Is(failures[0].Err, failure) {

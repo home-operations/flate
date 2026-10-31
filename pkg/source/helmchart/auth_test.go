@@ -11,9 +11,10 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"time"
+
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -90,7 +91,7 @@ func TestHelmRepoTransport_MissingSecretIsSoftSkippable(t *testing.T) {
 	}
 	assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmRepository, Namespace: "ns", Name: "charts"})
 	assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "tls"})
-	assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": HelmRepository ns/charts: secret ns/tls not found")
+	assert.Equal(t, err.Error(), "secret ns/tls not found")
 	if prepared != nil {
 		t.Error("repository should be nil on error")
 	}

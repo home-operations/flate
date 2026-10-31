@@ -30,17 +30,17 @@ func NewSupplied(inputs []SuppliedObject) (*Supplied, error) {
 		data, ok := input.Object.(manifest.Data)
 		origin := fmt.Sprintf("supply %q input %d", cmp.Or(input.Path, "SDK input"), i+1)
 		if !ok || reflect.ValueOf(data).Kind() == reflect.Pointer && reflect.ValueOf(data).IsNil() || input.Object.Named().Name == "" || input.Object.Named().Namespace == "" {
-			return nil, fmt.Errorf("%w: %s: expected a core v1 Secret or ConfigMap with name and namespace", manifest.ErrInput, origin)
+			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s: expected a core v1 Secret or ConfigMap with name and namespace", origin))
 		}
 		id := input.Object.Named()
 		for _, key := range slices.Sorted(data.Keys()) {
 			if _, _, err := data.Value(key); err != nil {
-				return nil, fmt.Errorf("%w: %s %s key %q: invalid supplied data", manifest.ErrInput, origin, id, key)
+				return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s %s key %q: invalid supplied data", origin, id, key))
 			}
 		}
 		obj, _, _, err := manifest.ParseDoc(data.Snapshot(), manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: ""})
 		if err != nil {
-			return nil, fmt.Errorf("%w: %s %s: invalid supplied object", manifest.ErrInput, origin, id)
+			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("%s %s: invalid supplied object", origin, id))
 		}
 		s.objects[id] = SuppliedObject{Object: obj, Path: cmp.Or(input.Path, "SDK input")}
 	}

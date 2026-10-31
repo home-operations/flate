@@ -328,7 +328,7 @@ func TestRun_BlockedRootReason(t *testing.T) {
 				s.AddObject(tc.root)
 			}
 			s.UpdateFailure(hr, &manifest.DependencyFailedError{Parent: hr, Failed: []manifest.NamedResource{root}})
-			s.UpdateStatus(root, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "flux error: input error: fetch artifact: 404 Not Found"})
+			s.UpdateStatus(root, store.StatusInfo{Status: store.StatusFailed, Reason: "", Message: "fetch artifact: 404 Not Found"})
 			if tc.chain {
 				repository := &manifest.HelmRepository{Name: "repository", Namespace: "flux-system"}
 				s.AddObject(repository)

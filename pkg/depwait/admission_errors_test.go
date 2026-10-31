@@ -20,7 +20,7 @@ func (p errorPromotion) Promote(context.Context, *store.ReadSet, manifest.NamedR
 
 func TestClassify_AdmissionErrorPrecedesAbsence(t *testing.T) {
 	t.Parallel()
-	cause := fmt.Errorf("%w: unavailable exact occurrence", manifest.ErrInput)
+	cause := manifest.NewError(manifest.ErrInput, nil, "unavailable exact occurrence")
 	w := Waiter{Store: store.New(), Existence: errorPromotion{cause}, AllowMissingCRDs: true}
 	dep := manifest.DependencyRef{Group: "apiextensions.k8s.io", Kind: manifest.KindCustomResourceDefinition, Name: "examples.test"}
 	for range 2 {
@@ -37,7 +37,7 @@ func TestAvailable_AdmissionErrorPrecedesOptionalOmission(t *testing.T) {
 	for _, materializer := range []bool{false, true} {
 		t.Run(fmt.Sprintf("materializer=%t", materializer), func(t *testing.T) {
 			t.Parallel()
-			cause := fmt.Errorf("%w: admission failed", manifest.ErrInput)
+			cause := manifest.NewError(manifest.ErrInput, nil, "admission failed")
 			w := Waiter{Store: store.New(), Existence: errorPromotion{cause}}
 			input := values.Input{Offline: true}
 			if materializer {

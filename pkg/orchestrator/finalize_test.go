@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -187,43 +188,25 @@ func TestClassifyCompleted_ZeroClaims(t *testing.T) {
 	}
 }
 
-func TestLogResourceFailures_Deterministic(t *testing.T) {
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+func TestAggregateFailures_Deterministic(t *testing.T) {
+	t.Parallel()
 	a, b := testutil.KustomizationID("apps", "a"), testutil.KustomizationID("apps", "b")
-	hr := testutil.HelmReleaseID("apps", "z")
-	o := &Orchestrator{store: store.New(), index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-		hr: {File: "release.yaml"},
-		a:  {File: "a.yaml"},
-	}}}
-	type event struct {
-		Message string `json:"msg"`
-		ID      string `json:"id"`
-		Reason  string `json:"reason"`
-		File    string `json:"file"`
-	}
-	want := []event{
-		{Message: "orchestrator: resource failed", ID: hr.String(), Reason: "invalid input", File: "release.yaml"},
-		{Message: "orchestrator: resource failed", ID: a.String(), Reason: "invalid input", File: "a.yaml"},
-		{Message: "orchestrator: resource failed", ID: b.String(), Reason: "invalid input"},
-	}
-	for _, ids := range [][]manifest.NamedResource{{b, a, hr}, {hr, a, b}} {
-		logs.Reset()
+	o := &Orchestrator{store: store.New(), index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{a: {File: "a.yaml"}}}}
+	var previous string
+	for _, ids := range [][]manifest.NamedResource{{b, a}, {a, b}} {
 		failed := make(map[manifest.NamedResource]store.StatusInfo)
 		for _, id := range ids {
-			failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: fmt.Errorf("%w: invalid input", manifest.ErrInput).Error()}
+			failed[id] = store.StatusInfo{Status: store.StatusFailed, Message: "invalid input"}
 		}
-		o.logResourceFailures(failed)
-		var got []event
-		for line := range bytes.Lines(logs.Bytes()) {
-			var e event
-			assert.NoError(t, json.Unmarshal(line, &e))
-			got = append(got, e)
+		got := o.aggregateFailures(failed)
+		if !errors.Is(got, manifest.ErrFlux) || strings.Count(got.Error(), a.String()) != 1 || strings.Count(got.Error(), b.String()) != 1 || strings.Count(got.Error(), "invalid input") != 2 {
+			t.Fatalf("aggregate lost identities or causes: %v", got)
 		}
-		assert.Diff(t, got, want)
-		assert.Equal(t, failed[a].String(), fmt.Errorf("%w: invalid input", manifest.ErrInput).Error())
+		if previous != "" {
+			assert.Equal(t, got.Error(), previous)
+		}
+		previous = got.Error()
+		assert.Equal(t, failed[a].String(), "invalid input")
 	}
 }
 

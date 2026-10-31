@@ -44,7 +44,7 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 		return acquired, remoteIdentity{ArtifactInput: (&store.SourceArtifact{FS: acquired, Content: cache.AcquisitionIdentity(acquired)}).Input(store.ArtifactContent)}, nil
 	case remoteGit:
 		if c.gitBase == nil {
-			return nil, remoteIdentity{}, fmt.Errorf("%w: kustomization references remote git base %q but no git fetcher is wired", manifest.ErrInput, r.URL)
+			return nil, remoteIdentity{}, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("kustomization references remote git base %q but no git fetcher is wired", r.URL))
 		}
 		var artifact *store.SourceArtifact
 		var err error
@@ -67,11 +67,11 @@ func (r remoteInput) acquire(ctx context.Context, c *TreeCache, input *treeFS) (
 			return nil, remoteIdentity{}, err
 		}
 		if artifact == nil || artifact.FS == nil || artifact.Content == "" {
-			return nil, remoteIdentity{}, fmt.Errorf("%w: remote git base has no immutable content", manifest.ErrInput)
+			return nil, remoteIdentity{}, manifest.NewError(manifest.ErrInput, nil, "remote git base has no immutable content")
 		}
 		return artifact.FS, remoteIdentity{ArtifactInput: artifact.Input(store.ArtifactContent)}, nil
 	default:
-		return nil, remoteIdentity{}, fmt.Errorf("%w: unknown remote operation %d", manifest.ErrInput, r.Operation)
+		return nil, remoteIdentity{}, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown remote operation %d", r.Operation))
 	}
 }
 

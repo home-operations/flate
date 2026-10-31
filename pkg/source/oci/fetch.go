@@ -28,7 +28,7 @@ import (
 
 func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
-		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label())
+		return nil, manifest.NewError(manifest.ErrInput, nil, "missing url")
 	}
 	request, err := f.newRepoClient(ctx, repo, policy)
 	if err != nil {
@@ -96,17 +96,17 @@ func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, req
 	case sourcev1.OCILayerCopy:
 		generation, desc, key, err := f.Cache.Blob(ctx, cache.BlobKey{Content: content, Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
-			return nil, fmt.Errorf("%s %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+			return nil, err
 		}
 		input, descriptor, id = cache.NameBlob(source.OCICopiedLayerFilename, generation), desc, key
 	case sourcev1.OCILayerExtract:
 		var err error
 		input, descriptor, id, err = f.Cache.Acquire(ctx, cache.ArchiveKey{Content: content, Ignore: ignore, Policy: "source", Required: []string{"upstream-digest", "revision"}}, policy, produce)
 		if err != nil {
-			return nil, fmt.Errorf("%s %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
+			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("%w: unsupported layer operation %q", manifest.ErrInput, repo.LayerOperation())
+		return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unsupported layer operation %q", repo.LayerOperation()))
 	}
 	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, URL: repo.URL, FS: input, Content: cache.AcquisitionIdentity(input),
 		Key: id, Revision: descriptor.Annotations["flate.revision"],
@@ -161,7 +161,7 @@ func (f *operation) produceLayer(ctx context.Context, client *remote.Repository,
 	layer, ok := pickLayer(m.Layers, f.mediaTypes)
 	if !ok {
 		if len(m.Layers) == 0 {
-			return result, fmt.Errorf("%w: no layers found in artifact", manifest.ErrInput)
+			return result, manifest.NewError(manifest.ErrInput, nil, "no layers found in artifact")
 		}
 		return result, fmt.Errorf("no layer matched mediaTypes %q (manifest has %d layer(s))", f.mediaTypes, len(m.Layers))
 	}

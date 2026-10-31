@@ -58,7 +58,7 @@ func classify(id manifest.NamedResource, info store.StatusInfo) output.Case {
 	case store.OutcomeBlocked:
 		return output.Case{ID: id, Outcome: output.OutcomeBlocked, Reason: info.String()}
 	case store.OutcomeFailed:
-		return output.Case{ID: id, Outcome: output.OutcomeFailed, Reason: manifest.TrimSentinelPrefix(info.String())}
+		return output.Case{ID: id, Outcome: output.OutcomeFailed, Reason: info.String()}
 	case store.OutcomeUnchanged:
 		return output.Case{ID: id, Outcome: output.OutcomeSkipped, Reason: "unchanged"}
 	case store.OutcomeSuspended:
@@ -69,6 +69,6 @@ func classify(id manifest.NamedResource, info store.StatusInfo) output.Case {
 		return output.Case{ID: id, Outcome: output.OutcomePassed}
 	default:
 		return output.Case{ID: id, Outcome: output.OutcomeFailed,
-			Reason: "still " + string(info.Status) + ": " + manifest.TrimSentinelPrefix(info.String())}
+			Reason: "still " + string(info.Status) + ": " + info.String()}
 	}
 }

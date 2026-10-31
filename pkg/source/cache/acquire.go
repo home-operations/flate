@@ -144,7 +144,7 @@ func (c *Cache) Acquire(ctx context.Context, key ArchiveKey, policy Policy, prod
 	switch key.Policy {
 	case "", "source", "fixed", "extract":
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{fmt.Errorf("%w: unknown archive policy %q", manifest.ErrInput, key.Policy)}
+		return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown archive policy %q", key.Policy))}
 	}
 	producer := archiveProducer{key: key}
 	e, id, err := c.acquire(ctx, acquireKey{producer: producer, required: key.Required}, policy, acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
@@ -180,12 +180,12 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce fu
 	switch key.Render {
 	case 0, RenderPending, RenderAccepted:
 	default:
-		return nil, ocispec.Descriptor{}, "", &CacheError{fmt.Errorf("%w: unknown render mode %d", manifest.ErrInput, key.Render)}
+		return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("unknown render mode %d", key.Render))}
 	}
 	if key.Render != 0 {
 		id, ok := key.Content.(string)
 		if !ok || id == "" {
-			return nil, ocispec.Descriptor{}, "", &CacheError{fmt.Errorf("%w: render blob content must be a nonempty identity", manifest.ErrInput)}
+			return nil, ocispec.Descriptor{}, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity")}
 		}
 		if key.Render == RenderAccepted {
 			enabled, err := c.renderEnabled(ctx, id)
@@ -273,7 +273,7 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (oci
 
 func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error) {
 	if content == "" {
-		return false, &CacheError{fmt.Errorf("%w: render blob content must be a nonempty identity", manifest.ErrInput)}
+		return false, &CacheError{manifest.NewError(manifest.ErrInput, nil, "render blob content must be a nonempty identity")}
 	}
 	if !c.CanPersistRenders() {
 		if err := ctx.Err(); err != nil {

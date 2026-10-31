@@ -22,7 +22,7 @@ func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secr
 		return nil, nil
 	}
 	if f.secrets == nil {
-		return nil, fmt.Errorf("%s references secretRef but no SecretGetter is wired", manifest.DiagnosticFor(repo.Named(), repo).Label())
+		return nil, errors.New("secretRef requires a SecretGetter")
 	}
 	if sec == nil {
 		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "not found")
@@ -31,15 +31,15 @@ func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secr
 	if endpoint.Protocol == "ssh" {
 		identity, _, err := sec.Value("identity")
 		if err != nil {
-			return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
+			return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, err)
 		}
 		password, _, err := sec.Value("password")
 		if err != nil {
-			return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
+			return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, err)
 		}
 		kh, _, err := sec.Value("known_hosts")
 		if err != nil {
-			return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
+			return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, err)
 		}
 		var auth *gitssh.PublicKeys
 		if identity != "" && !manifest.HasValuePlaceholder(identity) {
@@ -54,14 +54,14 @@ func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secr
 				auth, err = gitssh.NewPublicKeys(user, []byte(identity), password)
 			}
 			if err != nil {
-				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse SSH identity: invalid private key", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name)
+				return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("secret %s/%s: parse SSH identity: invalid private key", repo.Namespace, repo.SecretRef.Name))
 			}
 		}
 		var cb ssh.HostKeyCallback = insecureIgnoreHostKey
 		if kh != "" && !manifest.HasValuePlaceholder(kh) {
 			cb, err = knownHostsCallback([]byte(kh))
 			if err != nil {
-				return nil, fmt.Errorf("%w: %s: secret %s/%s: parse known_hosts: invalid host data", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name)
+				return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("secret %s/%s: parse known_hosts: invalid host data", repo.Namespace, repo.SecretRef.Name))
 			}
 		}
 		if identity == "" || manifest.HasValuePlaceholder(identity) {
@@ -78,7 +78,7 @@ func (f *operation) resolveAuth(repo *manifest.GitRepository, sec *manifest.Secr
 	}
 	token, _, err := sec.Value("bearerToken")
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %s/%s: %w", manifest.DiagnosticFor(repo.Named(), repo).Label(), repo.Namespace, repo.SecretRef.Name, err)
+		return nil, fmt.Errorf("secret %s/%s: %w", repo.Namespace, repo.SecretRef.Name, err)
 	}
 	if manifest.HasValuePlaceholder(token) {
 		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "bearerToken unavailable")

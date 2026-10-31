@@ -114,7 +114,7 @@ func TestPrepare_LayersAndImmutability(t *testing.T) {
 	bad := original.Clone()
 	bad.PostBuild.Substitute = map[string]string{"z-invalid": "private", "a-invalid": "private"}
 	invalid, err := Prepare(bad, provider)
-	if invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) || !strings.Contains(err.Error(), "[a-invalid z-invalid]") {
+	if invalid != nil || !errors.Is(err, manifest.ErrInvalidSubstituteReference) || err.Error() != "invalid substitute variables a-invalid, z-invalid" {
 		t.Fatalf("invalid keys not classified/sorted: %v", err)
 	}
 }
@@ -127,8 +127,8 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	st := store.New()
 	st.AddObject(&manifest.ConfigMap{Name: "vars", Namespace: "sources", Data: map[string]any{"INVALID": []any{"nested"}}})
 	_, err := Prepare(entry, values.NewStoreProvider(st, true))
-	if err == nil || !strings.Contains(err.Error(), owner.String()) || !strings.Contains(err.Error(), `entry path "clusters/test"`) || strings.Contains(err.Error(), entry.Named().String()) {
-		t.Fatalf("substituteFrom lost context: %v", err)
+	if err == nil || strings.Contains(err.Error(), owner.String()) || strings.Contains(err.Error(), `entry path "clusters/test"`) || strings.Contains(err.Error(), entry.Named().String()) {
+		t.Fatalf("substituteFrom repeated its owner: %v", err)
 	}
 	entry.PostBuild = &kustomizev1.PostBuild{Substitute: map[string]string{"ENABLED": "yes"}}
 	prepared, err := Prepare(entry, nil)
@@ -137,7 +137,7 @@ func TestPrepare_EntrySubstitutionContext(t *testing.T) {
 	}
 	documents := []manifest.DocOccurrence{{Document: map[string]any{"data": map[string]any{"value": "${MISSING}"}}}}
 	err = Shape(prepared, documents, true)
-	if !errors.Is(err, manifest.ErrInvalidSubstituteReference) || !strings.Contains(err.Error(), owner.String()) || strings.Contains(err.Error(), entry.Named().String()) {
+	if !errors.Is(err, manifest.ErrInvalidSubstituteReference) || strings.Contains(err.Error(), owner.String()) || strings.Contains(err.Error(), entry.Named().String()) {
 		t.Fatalf("shape lost copied provenance or sentinel: %v", err)
 	}
 }

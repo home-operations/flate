@@ -12,7 +12,7 @@ import (
 func Prepare(ks *manifest.Kustomization, provider values.Provider) (*manifest.Kustomization, error) {
 	ks = ks.Clone()
 	if err := values.ExpandPostBuildSubstituteReference(ks, provider); err != nil {
-		return nil, fmt.Errorf("%s: %w", manifest.DiagnosticFor(ks.Named(), ks).Label(), err)
+		return nil, err
 	}
 	return ks, nil
 }
@@ -27,8 +27,7 @@ func SourceInput(reads sourceReader, ks *manifest.Kustomization) (*store.SourceA
 	srcID := ks.SourceID()
 	if srcID.Kind == "" || srcID.Name == "" {
 		if ks.Path == "" {
-			return nil, false, fmt.Errorf("%w: %s has no path and no source",
-				manifest.ErrInput, manifest.DiagnosticFor(ks.Named(), ks).Label())
+			return nil, false, manifest.NewError(manifest.ErrInput, nil, "has no path and no source")
 		}
 		srcID = manifest.BootstrapSourceID
 	}
@@ -36,6 +35,5 @@ func SourceInput(reads sourceReader, ks *manifest.Kustomization) (*store.SourceA
 	if sa, ok := art.(*store.SourceArtifact); ok {
 		return sa, srcID == manifest.BootstrapSourceID || sa.InputAlias || sa.Content == "", nil
 	}
-	return nil, false, fmt.Errorf("%w: unsupported source artifact type %T for %s",
-		manifest.ErrFlux, art, manifest.DiagnosticFor(srcID, reads.GetObject(srcID)))
+	return nil, false, manifest.NewError(manifest.ErrFlux, nil, fmt.Sprintf("unsupported source artifact type %T for %s", art, manifest.DiagnosticFor(srcID, reads.GetObject(srcID))))
 }

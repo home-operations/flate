@@ -83,7 +83,7 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 		a, b := evidence.artifacts[0], evidence.artifacts[1]
 		if a == nil || b == nil || a.FS == nil || b.FS == nil {
 			if id == manifest.BootstrapSourceID && changes == nil {
-				return nil, fmt.Errorf("%w: both admitted inputs required", manifest.ErrInput)
+				return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
 			}
 			continue
 		}
@@ -119,7 +119,7 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 							if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 								return nil, err
 							}
-							return nil, fmt.Errorf("%w: fingerprint source %s: %w", manifest.ErrInput, id, err)
+							return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("fingerprint source %s: %w", id, err), "")
 						}
 					}
 					equal = fingerprints[0] != "" && fingerprints[0] == fingerprints[1]
@@ -213,7 +213,7 @@ func (s *Set) Contains(rel string) bool {
 // Detect compares admitted filesystems under each side's Flux ignore policy.
 func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, error) {
 	if before == nil || after == nil || before.FS == nil || after.FS == nil {
-		return nil, fmt.Errorf("%w: both admitted inputs required", manifest.ErrInput)
+		return nil, manifest.NewError(manifest.ErrInput, nil, "both admitted inputs required")
 	}
 	var digests [2]map[string]string
 	for i, input := range [2]*store.SourceArtifact{before, after} {
@@ -341,7 +341,7 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 	}
 	f, err := input.Open(name)
 	if err != nil {
-		return fmt.Errorf("%w: open input %s: %w", manifest.ErrInput, name, err)
+		return manifest.NewError(manifest.ErrInput, fmt.Errorf("open input %s: %w", name, err), "")
 	}
 	defer func() { _ = f.Close() }()
 	var terminal, readErr error
@@ -369,7 +369,7 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 	}
 	err = ctx.Err()
 	if err == nil && readErr != nil {
-		err = fmt.Errorf("%w: read input %s: %w", manifest.ErrInput, name, readErr)
+		err = manifest.NewError(manifest.ErrInput, fmt.Errorf("read input %s: %w", name, readErr), "")
 	}
 	if err != nil {
 		for _, doc := range docs {

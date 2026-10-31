@@ -113,7 +113,7 @@ func TestFetcher_SecretReferences(t *testing.T) {
 				}
 				assert.Equal(t, missing.Owner, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "repo"})
 				assert.Equal(t, missing.Secret, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: "missing"})
-				assert.Equal(t, err.Error(), manifest.ErrMissingSecret.Error()+": OCIRepository ns/repo: secret ns/missing not found")
+				assert.Equal(t, err.Error(), "secret ns/missing not found")
 			}
 		})
 	}
@@ -646,7 +646,9 @@ func TestFetcher_MachineFailureCauses(t *testing.T) {
 					t.Errorf("advice %q: %v", text, err)
 				}
 			}
-
+			if strings.Contains(err.Error(), "OCIRepository ns/advice") {
+				t.Errorf("source identity repeated: %v", err)
+			}
 			if name == "Basic absence" && !errors.Is(err, auth.ErrBasicCredentialNotFound) {
 				t.Errorf("Basic absence sentinel lost: %v", err)
 			}
@@ -1540,7 +1542,7 @@ func TestFetcher_SyntheticCredentialContext(t *testing.T) {
 				if material == "provider" {
 					label = expected.String()
 				}
-				if err == nil || !strings.Contains(err.Error(), label) || strings.Contains(err.Error(), "OCIRepository") {
+				if err == nil || strings.Contains(err.Error(), label) || strings.Contains(err.Error(), "OCIRepository") {
 					t.Fatalf("early diagnostic=%v, owner=%s", err, expected)
 				}
 				if errors.Is(err, manifest.ErrMissingSecret) != missing {

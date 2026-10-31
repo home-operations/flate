@@ -49,25 +49,25 @@ func captureChart(ctx context.Context, input fs.FS, name string, archiveShape bo
 	info, err := fs.Stat(input, name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return capturedChart{}, true, fmt.Errorf("%w: chart not found at %s: %w", manifest.ErrInput, name, err)
+			return capturedChart{}, true, manifest.NewError(manifest.ErrInput, fmt.Errorf("chart not found at %s: %w", name, err), "")
 		}
-		return capturedChart{}, false, fmt.Errorf("%w: stat chart %s: %w", manifest.ErrInput, name, err)
+		return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("stat chart %s: %w", name, err), "")
 	}
 	if info.IsDir() {
 		input, err = fs.Sub(input, name)
 		if err != nil {
-			return capturedChart{}, false, fmt.Errorf("%w: chart directory %s: %w", manifest.ErrInput, name, err)
+			return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("chart directory %s: %w", name, err), "")
 		}
 		files, err := chartFilesInFS(ctx, input, archiveShape)
 		return capturedChart{files: files}, false, err
 	}
 	r, err := input.Open(name)
 	if err != nil {
-		return capturedChart{}, false, fmt.Errorf("%w: open chart %s: %w", manifest.ErrInput, name, err)
+		return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("open chart %s: %w", name, err), "")
 	}
 	data, readErr := io.ReadAll(r)
 	if err := errors.Join(readErr, r.Close()); err != nil {
-		return capturedChart{}, false, fmt.Errorf("%w: read chart %s: %w", manifest.ErrInput, name, err)
+		return capturedChart{}, false, manifest.NewError(manifest.ErrInput, fmt.Errorf("read chart %s: %w", name, err), "")
 	}
 	return capturedChart{archive: data}, false, nil
 }
@@ -124,7 +124,7 @@ func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*arc
 	}
 	err := chartinput.Walk(ctx, input, !archiveShape, visit)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
+		return nil, manifest.NewError(manifest.ErrInput, err, "")
 	}
 	return files, nil
 }

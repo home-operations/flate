@@ -47,7 +47,7 @@ require (
 	golang.org/x/sync v0.24.0
 	helm.sh/helm/v4 v4.3.1
 	k8s.io/apiextensions-apiserver v0.37.1
-	k8s.io/apimachinery v0.37.1
+	k8s.io/apimachinery v0.37.2
 	k8s.io/cli-runtime v0.37.1
 	oras.land/oras-go/v2 v2.7.0
 	sigs.k8s.io/kustomize/api v0.21.2

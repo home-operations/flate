@@ -45,7 +45,7 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 		if cl.Kind == schedule.Blocked || cl.Kind == schedule.Terminal && level < manifest.DrainForce && slices.Contains(pending, producer) {
 			blocked = append(blocked, producer)
 		}
-		if cl.Kind == schedule.DependencyFailed && !dep.Optional && !dep.AllowMissing && !dep.Input.Private && (!dep.Input.Generated || dep.Input.Offline) {
+		if cl.Kind == schedule.DependencyFailed && !dep.Optional && !dep.AllowMissing && !dep.Input.AllowsAbsence() {
 			if status, _ := w.Store.GetStatus(producer); status.Status != store.StatusFailed || w.blocksParent(producer) {
 				if status.Status == store.StatusFailed {
 					cl.Message, cl.Causes = "not ready", nil
@@ -60,8 +60,8 @@ func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manife
 	if dep.Input.Data != nil {
 		return availability{Kind: schedule.Terminal}
 	}
-	allowed := dep.Optional || dep.AllowMissing || dep.Input.Private || dep.Input.Generated && !dep.Input.Offline
-	if dep.Input.Private || dep.Input.Generated && !dep.Input.Offline || len(dep.Input.Materializers) != 0 {
+	allowed := dep.Optional || dep.AllowMissing || dep.Input.AllowsAbsence()
+	if dep.Input.AllowsAbsence() || len(dep.Input.Materializers) != 0 {
 		if allowed {
 			return availability{Kind: schedule.Terminal, Omit: true}
 		}

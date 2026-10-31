@@ -1,4 +1,4 @@
-package resourceset
+package resourcesetinput
 
 import (
 	"testing"
@@ -8,9 +8,9 @@ import (
 
 func TestPermute_UpstreamIDs(t *testing.T) {
 	t.Parallel()
-	got, err := permute([]providerInputs{
-		{name: "provider-1", inputs: []map[string]any{{"key1": "value1"}, {"key1": "value2"}}},
-		{name: "provider-2", inputs: []map[string]any{{"key2": "value1"}, {"key2": "value2"}}},
+	got, err := Permute([]Group{
+		{Name: "provider-1", Inputs: []map[string]any{{"key1": "value1"}, {"key1": "value2"}}},
+		{Name: "provider-2", Inputs: []map[string]any{{"key2": "value1"}, {"key2": "value2"}}},
 	}, false)
 	if err != nil {
 		t.Fatal(err)

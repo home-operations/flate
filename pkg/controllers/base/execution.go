@@ -284,8 +284,15 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](ctx context.Context
 		err := e.requireDeclaration(ctx, level)
 		if err != nil && !errors.Is(err, manifest.ErrSourceSkipped) {
 			e.finish(ctx, err)
-		} else if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
-			e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "object not in store at reconcile time"})
+		} else {
+			if err := e.withdrawInvalid(ctx); err != nil {
+				e.finish(ctx, err)
+				return
+			}
+			if info, exists := e.Store.GetStatus(id); exists && info.Status != store.StatusReady {
+				e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "object not in store at reconcile time"})
+			}
+			e.Reads.Accept()
 		}
 		return
 	}

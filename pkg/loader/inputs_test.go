@@ -96,7 +96,7 @@ func TestTraversal_ImplicitMountedBoundary(t *testing.T) {
 	}
 	walk := traversal{documents: documents, visited: map[graphContext]struct{}{}}
 	var visits []string
-	walk.walk(nil, graphVisit{root: root, dir: "entry"}, func(v graphVisit) bool {
+	walk.walk(t.Context(), graphVisit{root: root, dir: "entry"}, func(v graphVisit) bool {
 		visits = append(visits, v.coordinate)
 		return true
 	})

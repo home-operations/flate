@@ -463,7 +463,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			parent := testutil.KustomizationID("flux-system", "parent")
 			s.UpdateStatus(parent, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			opts := base.Options{AllowMissingKinds: []string{manifest.KindCustomResourceDefinition}}
-			c := resourcesetctrl.New(s, tasks, true)
+			c := resourcesetctrl.New(s, tasks, nil, true)
 			c.Configure(opts)
 			c.StartLifecycle()
 
@@ -505,7 +505,7 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 				opts.Loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: indexForTest(nil), Inventory: s, Root: ""})
 				admissiontest.Commit(t, opts.Loader, nil)
 				opts.Filter = opts.Loader.Options.Filter
-				c = resourcesetctrl.New(s, tasks, true)
+				c = resourcesetctrl.New(s, tasks, nil, true)
 				c.Configure(opts)
 				c.StartLifecycle()
 

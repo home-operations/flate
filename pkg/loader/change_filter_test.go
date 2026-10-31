@@ -1777,7 +1777,7 @@ func TestFilter_LateProducerIndexedDeclarations(t *testing.T) {
 					sibling.Named():  {File: "sibling.yaml", Declaration: sibling},
 				}}
 				filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"credentials/secret.yaml"}), index: index, inventory: st})
-				filter.loader.locations = map[manifest.NamedResource]Occurrence{provider.Named(): compactOccurrence(provider)}
+				filter.loader.locations = map[manifest.NamedResource]Occurrence{provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider))}
 				filter.prepare(store.Child{}, nil, false)
 				for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
 					assert.Equal(t, filter.ShouldReconcile(id), true)

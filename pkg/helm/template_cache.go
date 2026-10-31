@@ -112,8 +112,6 @@ func computeTemplateKey(loaded chartDescription, releaseValues map[string]any, o
 
 const frameDomain = "flatehr2"
 
-const acceptedRenderAnnotation = "flate.accepted-render"
-
 type renderHeader struct {
 	Key, Binding, Output string
 	Size                 int
@@ -141,13 +139,13 @@ func (a templateBinding) same(b templateBinding) bool {
 }
 
 type renderFrame struct {
-	header                renderHeader
-	binding               templateBinding
-	chart                 *chart.Chart
-	lookup, raw           string
-	output, encoded       []byte
-	accepted              *acceptedRender
-	acceptedKey, identity string
+	header          renderHeader
+	binding         templateBinding
+	chart           *chart.Chart
+	lookup, raw     string
+	output, encoded []byte
+	accepted        *acceptedRender
+	acceptedKey     string
 }
 
 func equalRenderFrame(a, b any) bool {
@@ -188,7 +186,7 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	for i, x := range a.Records {
 		y := b.Records[i]
 		p, q := x.Record, y.Record
-		if x.ID != y.ID || p.Application != q.Application || p.Authored != q.Authored || p.Path != q.Path || p.File != q.File || p.Parent != q.Parent || p.Builder != q.Builder || (p.Inputs == nil) != (q.Inputs == nil) || !slices.Equal(p.Inputs, q.Inputs) || p.Pinned != q.Pinned || (p.Refs == nil) != (q.Refs == nil) || !slices.Equal(p.Refs, q.Refs) || (p.Productions == nil) != (q.Productions == nil) || !slices.Equal(p.Productions, q.Productions) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
+		if x.ID != y.ID || p.Application != q.Application || p.Authored != q.Authored || p.Path != q.Path || p.File != q.File || p.Parent != q.Parent || p.Builder != q.Builder || (p.Inputs == nil) != (q.Inputs == nil) || !slices.Equal(p.Inputs, q.Inputs) || p.Pinned != q.Pinned || p.StaticOutput != q.StaticOutput || (p.Refs == nil) != (q.Refs == nil) || !slices.Equal(p.Refs, q.Refs) || (p.Productions == nil) != (q.Productions == nil) || !slices.Equal(p.Productions, q.Productions) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
 			return false
 		}
 		for j, root := range x.Roots {
@@ -319,8 +317,44 @@ func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.N
 	}, true
 }
 
+type renderPublication struct {
+	frame    renderFrame
+	accepted acceptedRender
+}
+
+// WriteTo writes the render frame and accepted inventory.
+func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
+	if p.frame.encoded == nil {
+		encoded, err := encodeFrame(p.frame.header, p.frame.output)
+		if err != nil {
+			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
+		}
+		p.frame.encoded = encoded
+	}
+	if !p.accepted.Complete {
+		return io.Copy(w, bytes.NewReader(p.frame.encoded))
+	}
+	data, err := json.Marshal(p.accepted)
+	if err != nil {
+		return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
+	}
+	if len(data) > frameHeaderLimit {
+		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted helm render exceeds frame limit")
+	}
+	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+}
+
+// RenderAcceptance binds an accepted inventory to its source paths.
+type RenderAcceptance struct {
+	Owner   manifest.NamedResource
+	Receipt *manifest.RenderReceipt
+	Records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+	Sources []manifest.SourceEvidence
+}
+
 // RecordRender persists a receipt only with a complete accepted inventory.
-func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource, receipt *manifest.RenderReceipt, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]) error {
+func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
+	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
 	if receipt == nil || records == nil {
 		return nil
 	}
@@ -328,13 +362,10 @@ func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource,
 	if !ok || frame.header.Key == "" || frame.header.Analysis == nil && frame.chart == nil {
 		return manifest.NewError(manifest.ErrFlux, nil, "invalid helm receipt")
 	}
-	descriptor, identity, enabled, err := c.cache.RenderMetadata(ctx, frame.header.Key, frame.lookup)
-	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
-		return fmt.Errorf("lookup helm render cache: %w", err)
+	if !c.cache.CanPersistRenders() {
+		return ctx.Err()
 	}
-	if !enabled {
-		return nil
-	}
+	var err error
 	if frame.header.Binding == "" {
 		frame.header.Binding = manifest.Fingerprint(frame.binding)
 	}
@@ -350,41 +381,19 @@ func (c *Client) RecordRender(ctx context.Context, owner manifest.NamedResource,
 	if frame.raw == "" {
 		frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
 	}
-	accepted, err := prepareAccepted(owner, frame, records)
-	if err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
-	}
-	if frame.accepted != nil && frame.identity != "" && identity == frame.identity && frame.acceptedKey != "" && descriptor.Annotations[acceptedRenderAnnotation] == frame.acceptedKey && frame.accepted.equal(&accepted) {
-		return nil
-	}
-	content := manifest.Fingerprint(accepted)
-	if descriptor.Annotations[acceptedRenderAnnotation] == content {
-		return nil
-	}
-	data, err := json.Marshal(accepted)
-	if err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
-	}
-	if len(data) > frameHeaderLimit {
-		return manifest.NewError(manifest.ErrFlux, nil, "accepted helm render exceeds frame limit")
-	}
-	if frame.encoded == nil {
-		frame.encoded, err = encodeFrame(frame.header, frame.output)
+	var accepted acceptedRender
+	content := frame.raw
+	if acceptance.Sources != nil {
+		accepted, err = prepareAccepted(owner, frame, records)
 		if err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
+			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
+		}
+		content = frame.acceptedKey
+		if frame.accepted == nil || content == "" || !frame.accepted.equal(&accepted) {
+			content = manifest.Fingerprint(accepted)
 		}
 	}
-	key := cache.BlobKey{Content: frame.header.Key, Render: cache.RenderAccepted}
-	raw := frame.encoded
-	result := cache.ProducerResult{Annotations: map[string]string{acceptedRenderAnnotation: content}}
-	_, _, _, err = c.cache.Blob(ctx, key, cache.Policy{MaxAge: 0, Retry: cache.RetryConfig{Attempts: 1}}, func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-		_, err := io.Copy(w, io.MultiReader(bytes.NewReader(raw), bytes.NewReader(data)))
-		return result, err
-	})
-	if err != nil {
-		return fmt.Errorf("publish helm render cache: %w", err)
-	}
-	return nil
+	return cache.RecordInventory(ctx, c.cache, cache.AcceptedInventory[renderPublication]{Key: frame.header.Key, Lookup: frame.lookup, Acceptance: content, History: cache.RenderHistory{Owner: owner, Sources: acceptance.Sources}, Content: renderPublication{frame: frame, accepted: accepted}})
 }
 
 func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key string) (*renderRecord, error) {
@@ -420,7 +429,7 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 		if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
 			return nil, nil
 		}
-		frame.lookup, frame.identity = lookup, identity
+		frame.lookup = lookup
 		record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
 	}
 	if record.Analysis.RequiresLoader {

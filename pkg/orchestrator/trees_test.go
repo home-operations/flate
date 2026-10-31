@@ -43,6 +43,33 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
+type discoveryWalkFS struct {
+	fs.FS
+	walks atomic.Int32
+}
+
+func (f *discoveryWalkFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	if name == "." {
+		f.walks.Add(1)
+	}
+	return fs.ReadDir(f.FS, name)
+}
+
+func TestRenderTrees_FullDiscoveryOnce(t *testing.T) {
+	root := t.TempDir()
+	input := &discoveryWalkFS{FS: fstest.MapFS{
+		"object.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload}\ndata: {value: kept}\n")},
+	}}
+	results, err := RenderTrees(t.Context(), []Tree{{
+		ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: root,
+		Input: &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input},
+	}}, Config{Concurrency: 2})
+	assert.NoError(t, err)
+	assert.Equal(t, len(results), 1)
+	assert.Equal(t, len(results[0].Result.Manifests), 0)
+	assert.Equal(t, input.walks.Load(), int32(2))
+}
+
 func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 	t.Parallel()
 	authored := testutil.KustomizationID("apps", "owner")
@@ -53,7 +80,7 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			t.Parallel()
 			from, to := pair[0], pair[1]
 			readers := []manifest.FileReader{
-				{Reader: from, Source: manifest.BootstrapSourceID, Exact: true},
+				{Reader: from, Source: manifest.BootstrapSourceID, Declaration: manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}, Exact: true},
 				{Reader: other, Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "other"}},
 			}
 			index := &manifest.DiscoveryIndex{Readers: map[string][]manifest.FileReader{"removed.yaml": readers}}
@@ -65,7 +92,8 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 
 			changes := change.NewSet([]string{"removed.yaml"})
 			assert.NoError(t, changes.CollectInputs(t.Context(), fstest.MapFS{"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")}}, "removed.yaml", true))
-			paired := changes.WithReaders(projected, &manifest.DiscoveryIndex{})
+			paired, err := changes.WithReaders(t.Context(), projected, &manifest.DiscoveryIndex{})
+			assert.NoError(t, err)
 			st := store.New()
 			local := &manifest.Kustomization{Name: to.Name, Namespace: to.Namespace}
 			st.AddObject(local)
@@ -1204,12 +1232,16 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 	t.Run("discovery_failure", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			release := make(chan struct{})
+			headEntered := make(chan struct{})
 			failure := errors.New("baseline discovery failed")
 			baseInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
 				<-release
 				return failure
 			}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}}}
-			headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
+			headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
+				close(headEntered)
+				return errors.New("head discovery failed")
+			}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
 			var base, head Rendered
 			done := make(chan error, 1)
 			go func() {
@@ -1227,6 +1259,11 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 				done <- err
 			}()
 			synctest.Wait()
+			select {
+			case <-headEntered:
+			default:
+				t.Error("head planning did not start while base planning waited")
+			}
 			close(release)
 			err := <-done
 			if !errors.Is(err, failure) || strings.Count(err.Error(), failure.Error()) != 1 {
@@ -1460,15 +1497,28 @@ func (c countedNodeController) ReconcileNode(ctx context.Context, id manifest.Na
 }
 
 type countedChartFetcher struct {
-	chart string
-	calls atomic.Int64
+	chart      string
+	charts     map[manifest.NamedResource]string
+	incomplete bool
+	calls      atomic.Int64
 }
 
-func (f *countedChartFetcher) Fetch(context.Context, manifest.BaseManifest, *store.ReadSet, sourcecache.Policy) (*store.SourceArtifact, error) {
+func (f *countedChartFetcher) Fetch(ctx context.Context, object manifest.BaseManifest, _ *store.ReadSet, _ sourcecache.Policy) (*store.SourceArtifact, error) {
 	f.calls.Add(1)
 	const digest = "sha256:ff3d3e14728f75476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8"
-	return &store.SourceArtifact{Kind: manifest.KindOCIRepository, LocalPath: f.chart, FS: os.DirFS(f.chart),
-		Digest: digest, Revision: "1.0.0@" + digest, Key: digest}, nil
+	chart := f.chart
+	if selected := f.charts[object.Named()]; selected != "" {
+		chart = selected
+	}
+	artifact, _, err := baseline.AdmitDirectory(ctx, chart, chart)
+	if err != nil {
+		return nil, err
+	}
+	artifact.Kind, artifact.Digest, artifact.Revision, artifact.Key = manifest.KindOCIRepository, digest, "1.0.0@"+digest, digest
+	if f.incomplete {
+		artifact.ContentFingerprint = nil
+	}
+	return artifact, nil
 }
 
 func TestRender_DeclarationOnlyExcludesUnrelatedWork(t *testing.T) {

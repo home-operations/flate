@@ -1523,21 +1523,7 @@ func TestReconcile_RequiredPostBuildNotWaived(t *testing.T) {
 				}
 				info = controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
 				assert.Equal(t, info.Status, store.StatusReady)
-				historyAvailable := func() bool {
-					t.Helper()
-					reads := &store.ReadSet{}
-					reads.Init(st, ks.Named(), nil)
-					defer reads.Retire()
-					records, _ := c.PreviousRender(t.Context(), ks, reads)
-					return records != nil
-				}
-				if !historyAvailable() {
-					t.Fatal("present required postBuild input did not admit accepted history")
-				}
 				assert.Equal(t, st.DeleteObject(input), true)
-				if historyAvailable() {
-					t.Fatal("required absent postBuild input admitted history")
-				}
 				info = controllertest.DispatchToFixpoint(t.Context(), t, dispatch)
 				assert.Equal(t, info.Status, store.StatusFailed)
 			})

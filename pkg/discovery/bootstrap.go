@@ -291,13 +291,14 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	applications atomic.Pointer[applicationEvidence]
-	entryBound   atomic.Bool
-	sources      map[manifest.NamedResource]entryResolution
-	input        *store.SourceArtifact
-	path         string
-	remotes      map[string]struct{}
-	aliasViews   map[string]*store.SourceArtifact
+	applications  atomic.Pointer[applicationEvidence]
+	entryBound    atomic.Bool
+	sources       map[manifest.NamedResource]entryResolution
+	input         *store.SourceArtifact
+	path          string
+	remotes       map[string]struct{}
+	aliasViews    map[string]*store.SourceArtifact
+	qualification *entryQualification
 }
 
 func (d *Session) admission() *Admission {
@@ -305,7 +306,13 @@ func (d *Session) admission() *Admission {
 	if input == nil {
 		input = d.cfg.Input
 	}
-	return &Admission{input: input, path: d.cfg.Path, remotes: maps.Clone(d.remotes), aliasViews: maps.Clone(d.aliasViews), sources: maps.Clone(d.resolvedSources)}
+	admission := &Admission{input: input, path: d.cfg.Path, remotes: maps.Clone(d.remotes), aliasViews: maps.Clone(d.aliasViews), sources: maps.Clone(d.resolvedSources)}
+	admission.entryBound.Store(d.binding != (Binding{}))
+	if d.cfg.Trees != nil && !admission.entryBound.Load() {
+		d.entryState.loader, d.entryState.trees = d.loader, d.cfg.Trees
+		admission.qualification = &d.entryState
+	}
+	return admission
 }
 
 // Resolve admits a known source or a missing source reference with its requesting witnesses.

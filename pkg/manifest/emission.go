@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"maps"
 	"slices"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
@@ -42,6 +43,34 @@ func IsOwnershipLabel(key string) bool {
 		}
 	}
 	return false
+}
+
+// WithoutOwnershipLabels removes reconciliation stamps from a borrowed declaration document.
+// The returned document MUST remain immutable and can share unchanged containers.
+func WithoutOwnershipLabels(document map[string]any) map[string]any {
+	metadata, _ := document["metadata"].(map[string]any)
+	labels, _ := metadata["labels"].(map[string]any)
+	stamped := false
+	for key := range labels {
+		if IsOwnershipLabel(key) {
+			stamped = true
+			break
+		}
+	}
+	if !stamped {
+		return document
+	}
+	metadata = maps.Clone(metadata)
+	labels = maps.Clone(labels)
+	maps.DeleteFunc(labels, func(key string, _ any) bool { return IsOwnershipLabel(key) })
+	if len(labels) == 0 {
+		delete(metadata, "labels")
+	} else {
+		metadata["labels"] = labels
+	}
+	out := maps.Clone(document)
+	out["metadata"] = metadata
+	return out
 }
 
 // EmissionPolicy returns Kustomization overlays and target-namespace admission.

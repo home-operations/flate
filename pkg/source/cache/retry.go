@@ -61,7 +61,9 @@ func (e *TerminalError) Unwrap() []error { return []error{manifest.ErrFlux, e.Er
 type attemptCeilingKey struct{}
 
 func (c *Cache) acquire(ctx context.Context, key acquireKey, policy Policy, callbacks acquisitionCallbacks) (*entry, string, error) {
-	key.id = key.producer.identity()
+	if key.id == "" {
+		key.id = key.producer.identity()
+	}
 	if key.id == "" {
 		return nil, "", &CacheError{manifest.NewError(manifest.ErrInput, nil, "acquisition content cannot be fingerprinted")}
 	}

@@ -98,7 +98,7 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 					want[i] = path.Join(location, name)
 				}
 			}
-			want = append(want, "config/explicit.yaml")
+			want = append(want, "config/explicit.yaml", "source.yaml")
 			slices.Sort(want)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -145,7 +145,11 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 			r, _ := l.Index.Lookup(source.Named())
 			assert.Equal(t, len(r.Inputs), 0)
 			assert.Equal(t, len(l.Index.Records[release.Named()].Inputs), 0)
-			assert.Equal(t, observed.opens[path.Join(location, "templates/cm.yaml")], 0)
+			templateReads := 0
+			if slices.Contains(want, path.Join(location, "templates/cm.yaml")) {
+				templateReads = 1
+			}
+			assert.Equal(t, observed.opens[path.Join(location, "templates/cm.yaml")], templateReads)
 			assert.Equal(t, observed.directories[location] <= 1, true)
 			if mode != "archive" && mode != "missing chart" {
 				assert.Equal(t, observed.opens[path.Join(location, ".helmignore")], 1)
@@ -185,7 +189,7 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 		return l
 	}
 	l := build()
-	want := []string{".helmignore", "Chart.yaml", "chart.input", "templates/cm.yaml"}
+	want := []string{".helmignore", "Chart.yaml", "chart.input", "chart.yaml", "templates/cm.yaml"}
 	for _, id := range []manifest.NamedResource{first.Named(), second.Named()} {
 		assert.Diff(t, readFilesForFilter(l.Index, id), want)
 	}

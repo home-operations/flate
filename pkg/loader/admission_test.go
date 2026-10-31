@@ -8,12 +8,49 @@ import (
 	"testing"
 	"testing/fstest"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestAdmission_HistoryProductionAllocations(t *testing.T) {
+	for _, matching := range []bool{false, true} {
+		t.Run(fmt.Sprint(matching), func(t *testing.T) {
+			l := New(store.New())
+			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+			owner := testutil.KustomizationID("apps", "owner")
+			other := testutil.KustomizationID("apps", "other")
+			want := []manifest.Production{{Owner: owner, Authored: id, File: "apps/input.yaml"}}
+			l.Index.Records[id] = manifest.DiscoveryRecord{Productions: want}
+			c := admissionClosure{
+				loader: l, objects: l.Store,
+				accepted: map[manifest.NamedResource]map[manifest.NamedResource]manifest.DiscoveryRecord{other: {}},
+				replace:  map[manifest.NamedResource]bool{other: true},
+			}
+			if matching {
+				c.accepted = map[manifest.NamedResource]map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {id: {Productions: want}}}
+				c.replace = map[manifest.NamedResource]bool{owner: true}
+			}
+			assert.Diff(t, c.productions(id), want)
+			if allocations := testing.AllocsPerRun(100, func() { c.productions(id) }); allocations != 0 {
+				t.Fatalf("accepted history allocates %g times per repeated production lookup", allocations)
+			}
+			if !matching {
+				if allocations := testing.AllocsPerRun(100, func() {
+					c.historyProductions = nil
+					c.productions(id)
+				}); allocations != 0 {
+					t.Fatalf("unrelated history allocates %g times per cold production lookup", allocations)
+				}
+			}
+			assert.Diff(t, l.Index.Records[id].Productions, want)
+		})
+	}
+}
 
 func TestAdmission_NamedDeclarationAndInputs(t *testing.T) {
 	t.Parallel()
@@ -219,7 +256,7 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	proposal, err := l.Prepare(t.Context(), store.Child{}, &reads, nil)
 	assert.NoError(t, err)
 	producer := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: "ResourceSet", Namespace: "apps", Name: "open"}
-	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, reads.Valid(), true)
 	st.SetArtifact(requester, &store.SourceArtifact{LocalPath: root + "/acquired", FS: fstest.MapFS{}})
 	if !reads.Valid() {
@@ -271,7 +308,7 @@ func TestAdmission_MultipleReferences(t *testing.T) {
 				l.Options.Selection = manifest.Selection{Changed: true}
 				l.Options.Filter = change.NewFilter()
 				l.frozen, l.sideKnown, l.side = true, true, manifest.TreeSide(side)
-				l.bindings = map[manifest.NamedResource]*store.SourceArtifact{manifest.BootstrapSourceID: artifact}
+				l.bindings.Store(&map[manifest.NamedResource]admissionSource{manifest.BootstrapSourceID: {initial: artifact}})
 				l.Index.Records[input] = manifest.DiscoveryRecord{File: "input.yaml"}
 				l.Index.Records[consumer] = manifest.DiscoveryRecord{File: "consumer.yaml"}
 				if tc.keys == nil {
@@ -412,7 +449,7 @@ func TestAdmission_OrderingEmittedPathProof(t *testing.T) {
 		foreign, incompatible, independent, visited, completeEmpty bool
 		want                                                       bool
 	}{
-		{name: "compatible", want: true},
+		{name: "compatible_namespace"},
 		{name: "foreign_source", foreign: true},
 		{name: "incompatible_namespace", incompatible: true},
 		{name: "independent_parent", independent: true},
@@ -515,7 +552,7 @@ func TestAdmission_PreparedDeclarationUsesFullDocument(t *testing.T) {
 			l.Options.Selection = manifest.Selection{Changed: true}
 			l.Options.Changes, l.Options.Filter = changes, change.NewFilter()
 			l.frozen, l.sideKnown, l.side = true, true, manifest.TreeBase
-			l.bindings = map[manifest.NamedResource]*store.SourceArtifact{manifest.BootstrapSourceID: inputs[0]}
+			l.bindings.Store(&map[manifest.NamedResource]admissionSource{manifest.BootstrapSourceID: {initial: inputs[0]}})
 			l.candidates = prepared[0]
 			l.Index.Records[id] = manifest.DiscoveryRecord{Builder: "kustomization.yaml", Declaration: prepared[0][id].Obj, Inputs: []string{"declaration.yaml"}, Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID}}}
 			_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{id}, []manifest.NamedResource{id}, nil, 0)
@@ -560,7 +597,7 @@ func TestAdmission_UnmaterializedOwner(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 				"child.yaml":                  {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child, namespace: apps}\nspec: {path: ./workload}\n")},
-				"owner.yaml":                  {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owner, namespace: apps}\nspec: {resourcesTemplate: 'unexecuted template'}\n")},
+				"owner.yaml":                  {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owner, namespace: apps}\nspec:\n  resourcesTemplate: |\n    apiVersion: kustomize.toolkit.fluxcd.io/v1\n    kind: Kustomization\n    metadata: {name: child, namespace: apps}\n    spec: {path: ./workload}\n")},
 				"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
 			}})
 			l := New(st)
@@ -733,9 +770,54 @@ func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	assert.Equal(t, slices.Contains(proposal.Needed, renderer), false)
 }
 
+func TestAdmission_UnclaimedInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"input.yaml":     {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: changed}\n")},
+		"unrelated.yaml": {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec:\n  chartRef: {kind: OCIRepository, name: chart}\n  interval: 1m\n")},
+		"templated.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: templated, namespace: apps}\nspec: {path: './payload/${APP}'}\n")},
+		"producer.yaml":  {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: producer, namespace: apps}\nspec: {resourcesTemplate: unexecuted}\n")},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"unclaimed/notes.txt"})
+	l.Options.Selection = manifest.Selection{Changed: true}
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	templated := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "templated", Namespace: "apps"}
+	producer := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "producer", Namespace: "apps"}
+	record := l.Index.Records[templated]
+	record.Productions = []manifest.Production{{Owner: producer}}
+	l.Index.Records[templated] = record
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
+	renderer := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "unrelated", Namespace: "apps"}
+	assert.Equal(t, slices.Contains(proposal.Selected, input), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+	l.Options.HistoryOwners = []manifest.NamedResource{producer}
+	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+}
+
 func TestAdmission_OrderingEmittedTemplateProof(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"emitted", "foreign", "unowned", "complete_empty"} {
+	for _, mode := range []string{"emitted", "known_target", "foreign", "unowned", "complete_empty"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -753,6 +835,9 @@ func TestAdmission_OrderingEmittedTemplateProof(t *testing.T) {
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			producer := &manifest.ResourceSet{Name: "templates", Namespace: "apps"}
+			if mode == "known_target" {
+				producer.ResourcesTemplate = "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: target, namespace: apps}\nspec: {path: ./target}\n"
+			}
 			st.AddObject(parent)
 			source := manifest.BootstrapSourceID
 			if mode == "foreign" {
@@ -785,7 +870,7 @@ func TestAdmission_OrderingEmittedTemplateProof(t *testing.T) {
 			}
 			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 			assert.NoError(t, err)
-			assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), mode == "emitted")
+			assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), mode == "known_target")
 			assert.Equal(t, slices.Contains(proposal.Selected, producer.Named()), false)
 			assert.Equal(t, slices.Contains(proposal.Dirty, producer.Named()), false)
 		})
@@ -814,7 +899,7 @@ func TestAdmission_InputGate(t *testing.T) {
 	assert.Equal(t, slices.Contains(proposal.Selected, gate), false)
 }
 
-func TestAdmission_ChangedInputDemandsUnknownReaders(t *testing.T) {
+func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
@@ -833,6 +918,12 @@ func TestAdmission_ChangedInputDemandsUnknownReaders(t *testing.T) {
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 	assert.NoError(t, err)
 	producer := (&manifest.ResourceSet{Name: "templates", Namespace: "apps"}).Named()
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+	l.Options.HistoryOwners = []manifest.NamedResource{producer}
+	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
@@ -840,12 +931,16 @@ func TestAdmission_ChangedInputDemandsUnknownReaders(t *testing.T) {
 
 type admissionArtifactReads struct {
 	admissionReader
-	calls int
-	lists int
+	calls    int
+	lists    int
+	bySource map[manifest.NamedResource]int
 }
 
 func (r *admissionArtifactReads) GetArtifact(id manifest.NamedResource, read store.ArtifactRead) store.Artifact {
 	r.calls++
+	if r.bySource != nil {
+		r.bySource[id]++
+	}
 	return r.admissionReader.GetArtifact(id, read)
 }
 
@@ -880,6 +975,126 @@ func TestAdmission_InputChangesQualifiedOnce(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
+	t.Parallel()
+	_, stores, roots, source := optionalSupplierPair(t, "apps")
+	sources := []manifest.NamedResource{source.Named()}
+	for i := 1; i < 3; i++ {
+		supplier := *source
+		supplier.Name = fmt.Sprintf("supplier-%d", i)
+		sources = append(sources, supplier.Named())
+		for _, st := range stores {
+			st.AddObject(&supplier)
+			st.SetArtifact(supplier.Named(), st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
+		}
+	}
+	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	assert.NoError(t, err)
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
+		{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true},
+		{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
+	}}}
+	l := New(stores[1])
+	l.SourceRoot = roots[1]
+	l.Options.Changes = changes
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Filter = change.NewFilter()
+	for _, replaced := range []bool{false, true} {
+		if replaced {
+			for _, id := range sources {
+				input := *stores[1].GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+				input.Key, input.Content = "replacement", "replacement"
+				stores[1].SetArtifact(id, &input)
+			}
+		}
+		var captured store.ReadSet
+		captured.Init(stores[1], consumer.Named(), nil)
+		reads := &admissionArtifactReads{admissionReader: &captured, bySource: map[manifest.NamedResource]int{}}
+		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
+		c.proposal = &c.result
+		proposal, err := c.evaluate(t.Context(), nil)
+		assert.NoError(t, err)
+		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), !replaced)
+		if len(reads.bySource) < len(sources) {
+			t.Fatalf("captured %d source identities for %d suppliers", len(reads.bySource), len(sources))
+		}
+		for id, count := range reads.bySource {
+			assert.Equal(t, count, 1)
+			assert.Equal(t, slices.Contains(slices.Collect(captured.Inputs()), id), true)
+		}
+		assert.Equal(t, captured.Valid(), true)
+		input := *stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+		input.Key, input.Content = "invalidated", "invalidated"
+		stores[1].SetArtifact(source.Named(), &input)
+		assert.Equal(t, captured.Valid(), false)
+		captured.Close()
+	}
+}
+
+func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
+	t.Parallel()
+	_, stores, roots, source := optionalSupplierPair(t, "apps")
+	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	assert.NoError(t, err)
+	l := New(stores[1])
+	l.SourceRoot = roots[1]
+	l.Options.Changes = changes
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Filter = change.NewFilter()
+	l.sideKnown, l.side = true, manifest.TreeHead
+	l.freezeConstruction()
+	input := stores[1].GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact)
+	var captured [2]store.ReadSet
+	for i := range captured {
+		consumer := &manifest.Kustomization{Name: fmt.Sprintf("consumer-%d", i), Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "optional", Optional: true}}}}
+		captured[i].Init(stores[1], consumer.Named(), nil)
+		defer captured[i].Close()
+		reads := &admissionArtifactReads{admissionReader: &captured[i], bySource: map[manifest.NamedResource]int{}}
+		c := admissionClosure{loader: l, objects: reads, incoming: store.Child{Obj: consumer}}
+		c.proposal = &c.result
+		proposal, err := c.evaluate(t.Context(), nil)
+		assert.NoError(t, err)
+		assert.Equal(t, slices.Contains(proposal.Selected, consumer.Named()), true)
+		assert.Equal(t, reads.bySource[source.Named()], 1)
+		assert.Equal(t, slices.Contains(slices.Collect(captured[i].Inputs()), source.Named()), true)
+		assert.Equal(t, captured[i].Valid(), true)
+	}
+	replacement := *input
+	replacement.Key, replacement.Content = "replacement", "replacement"
+	stores[1].SetArtifact(source.Named(), &replacement)
+	for i := range captured {
+		assert.Equal(t, captured[i].Valid(), false)
+	}
+	c := admissionClosure{loader: l, objects: stores[1], comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}}}
+	evidence := c.boundSource(source.Named())
+	assert.Equal(t, evidence.input, &replacement)
+	assert.Equal(t, evidence.paired, false)
+}
+
+func TestAdmission_SourceBindingsTrackComparison(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	source := (&manifest.GitRepository{Name: "local", Namespace: "apps"}).Named()
+	st.SetArtifact(source, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"before.yaml"})
+	c := admissionClosure{loader: l, objects: st}
+	c.proposal = &c.result
+	before, _, _ := c.delta(source)
+	assert.Equal(t, before.Contains("before.yaml"), true)
+	_, err := c.evaluate(t.Context(), nil)
+	assert.NoError(t, err)
+	l.Options.Changes = change.NewSet([]string{"after.yaml"})
+	next := admissionClosure{loader: l, objects: st, comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}}}
+	after, _, _ := next.delta(source)
+	assert.Equal(t, after.Contains("before.yaml"), false)
+	assert.Equal(t, after.Contains("after.yaml"), true)
 }
 
 func TestAdmission_ChangedDeclarationsPrepareLinearly(t *testing.T) {
@@ -1071,5 +1286,128 @@ func TestAdmission_ParentPatchRemoval(t *testing.T) {
 		if !slices.ContainsFunc(proposal.Objects, func(child store.Child) bool { return child.Obj.Named() == id }) {
 			t.Errorf("side %d failed to hydrate changed parent", side)
 		}
+	}
+}
+
+func TestAdmission_HistoryOwnerDeclarationAndInputs(t *testing.T) {
+	t.Parallel()
+	for _, seeded := range []bool{false, true} {
+		t.Run(fmt.Sprint(seeded), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			input := fstest.MapFS{
+				"release.yaml": {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: emitter, namespace: apps}\nspec:\n  interval: 1m\n  values: {marker: keep}\n  valuesFrom: [{kind: ConfigMap, name: supplied}]\n  chart: {spec: {chart: ./charts/demo, sourceRef: {kind: GitRepository, name: charts}}}\n")},
+				"values.yaml":  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata: {values.yaml: '{}'}\n")},
+			}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection = manifest.Selection{Changed: true}
+			l.Options.Changes = change.NewSet([]string{"removed/child.yaml"})
+			l.Options.Filter = change.NewFilter()
+			owner := testutil.HelmReleaseID("apps", "emitter")
+			if seeded {
+				l.Options.HistoryOwners = []manifest.NamedResource{owner}
+			}
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			for range 2 {
+				proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Contains(proposal.Needed, owner), seeded)
+				assert.Equal(t, slices.Contains(proposal.Selected, owner), false)
+				assert.Equal(t, slices.Contains(proposal.Dirty, owner), false)
+				inputID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
+				assert.Equal(t, slices.Contains(proposal.Needed, inputID), seeded)
+				found := false
+				for _, child := range proposal.Objects {
+					if child.Obj.Named() == owner {
+						declaration := child.Obj.(*manifest.HelmRelease)
+						assert.Equal(t, declaration.Values["marker"], any("keep"))
+						assert.Equal(t, len(declaration.ValuesFrom), 1)
+						found = true
+					}
+				}
+				assert.Equal(t, found, seeded)
+			}
+		})
+	}
+}
+
+func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{32, 128} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection = manifest.Selection{Changed: true}
+			l.Options.Changes = change.NewSet([]string{"unrelated.yaml"})
+			l.Options.Filter = change.NewFilter()
+			l.locations = map[manifest.NamedResource]Occurrence{}
+			var parent manifest.NamedResource
+			for i := range count {
+				object := &manifest.Kustomization{Name: fmt.Sprintf("item-%05d", i), Namespace: "apps"}
+				object.Path = "./apps"
+				id := object.Named()
+				file := fmt.Sprintf("declarations/%05d.yaml", i)
+				l.Index.Records[id] = manifest.DiscoveryRecord{File: file, Parent: parent, Declaration: object}
+				occurrence := compactOccurrence(object, manifest.ProjectProducer(object))
+				occurrence.Declaration = OccurrenceID{Source: root, File: file}
+				l.locations[id] = occurrence
+				parent = id
+			}
+			reads := &admissionArtifactReads{admissionReader: st}
+			c := admissionClosure{loader: l, objects: reads}
+			c.proposal = &c.result
+			proposal, err := c.evaluate(t.Context(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, len(proposal.Needed), 0)
+			t.Logf("%d stable ancestors: %d artifact reads", count, reads.calls)
+			if reads.calls > 128*count+128 {
+				t.Errorf("%d stable ancestors caused %d artifact reads; want at most %d", count, reads.calls, 128*count+128)
+			}
+		})
+	}
+}
+
+func TestAdmission_SourceCoordinates(t *testing.T) {
+	t.Parallel()
+	for _, origin := range []string{"/workspace/selected", "/workspace", "/mounted"} {
+		t.Run(origin, func(t *testing.T) {
+			t.Parallel()
+			root := "/workspace/selected"
+			if origin == "/mounted" {
+				root = "/mounted/selected"
+			}
+			file := "input.txt"
+			if origin != root {
+				file = "selected/input.txt"
+			}
+			var sources [2]*store.SourceArtifact
+			for side := range sources {
+				sources[side] = &store.SourceArtifact{
+					LocalPath: "/mounted", LocalRoot: origin, InputAlias: true,
+					FS: fstest.MapFS{file: {Data: fmt.Appendf(nil, "%d", side)}},
+				}
+			}
+			changes, err := change.Detect(t.Context(), sources[0], sources[1])
+			assert.NoError(t, err)
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, sources[1])
+			l := New(st)
+			l.SourceRoot, l.Options.Changes = root, changes
+			c := admissionClosure{loader: l, objects: st, comparisons: &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}}}
+			relative, indexed := c.coordinates(manifest.Production{Source: manifest.BootstrapSourceID, File: file, Path: filepath.Join(sources[1].LocalPath, file)})
+			assert.Equal(t, relative, file)
+			assert.Equal(t, indexed, "input.txt")
+			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, "input.txt"), true)
+			assert.Diff(t, slices.Collect(c.sourceFiles(manifest.BootstrapSourceID)), []string{"input.txt"})
+		})
 	}
 }

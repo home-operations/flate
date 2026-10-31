@@ -199,7 +199,7 @@ func sourceChanges(changes *change.Set, source manifest.NamedResource) *change.S
 
 func inputMap(changes *change.Set) map[manifest.NamedResource]string {
 	var inputs map[manifest.NamedResource]string
-	for id, changed := range changes.Inputs() {
+	for id, changed := range changes.Inputs(manifest.NamedResource{}) {
 		if inputs == nil {
 			inputs = make(map[manifest.NamedResource]string)
 		}

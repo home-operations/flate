@@ -44,6 +44,43 @@ type Input struct {
 	Private       bool
 }
 
+// NewInput resolves data and offline availability from captured source-qualified facts.
+func NewInput(facts store.ReferenceFacts, owner manifest.NamedResource) Input {
+	input := Input{}
+	self, independent := false, false
+	for _, production := range facts.Productions {
+		self = self || production.Owner == owner && owner != (manifest.NamedResource{})
+		if production.Owner != (manifest.NamedResource{}) && production.Owner != owner && !slices.Contains(input.Materializers, production.Owner) {
+			input.Materializers = append(input.Materializers, production.Owner)
+		}
+		if production.Declaration == (manifest.NamedResource{}) {
+			input.Offline = input.Offline || production.Owner != (manifest.NamedResource{}) || production.Path != ""
+			independent = independent || production.Owner == (manifest.NamedResource{}) && production.Path != ""
+		} else {
+			input.Generated = true
+		}
+	}
+	input.Private = self
+	allowData := owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0
+	if allowData {
+		input.Data = facts.Data
+		if input.Data == nil {
+			for _, candidate := range facts.ReferenceData {
+				if candidate.OfflineData != nil {
+					input.Data, input.Offline = candidate.OfflineData, true
+					break
+				}
+			}
+		}
+	}
+	return input
+}
+
+// AllowsAbsence reports whether unavailable data belongs to the consumer or a cluster-side producer.
+func (i Input) AllowsAbsence() bool {
+	return i.Private || i.Generated && !i.Offline
+}
+
 // NewStoreProvider returns one execution's captured values and availability evidence.
 func NewStoreProvider(s dataReader, wipeSecrets bool) *StoreProvider {
 	p := &StoreProvider{s: s, wipeSecrets: wipeSecrets}
@@ -79,33 +116,7 @@ func (p *StoreProvider) Lookup(id manifest.NamedResource) Input {
 		i++
 	}
 	facts := p.s.ReferenceFacts(id, nil)
-	input := Input{}
-	self, independent := false, false
-	for _, production := range facts.Productions {
-		self = self || production.Owner == p.owner && p.owner != (manifest.NamedResource{})
-		if production.Owner != (manifest.NamedResource{}) && production.Owner != p.owner && !slices.Contains(input.Materializers, production.Owner) {
-			input.Materializers = append(input.Materializers, production.Owner)
-		}
-		if production.Declaration == (manifest.NamedResource{}) {
-			input.Offline = input.Offline || production.Owner != (manifest.NamedResource{}) || production.Path != ""
-			independent = independent || production.Owner == (manifest.NamedResource{}) && production.Path != ""
-		} else {
-			input.Generated = true
-		}
-	}
-	input.Private = self
-	allowData := p.owner == (manifest.NamedResource{}) || facts.Accepted || independent || len(input.Materializers) == 0
-	if allowData {
-		input.Data = facts.Data
-		if input.Data == nil {
-			for _, candidate := range facts.ReferenceData {
-				if candidate.OfflineData != nil {
-					input.Data, input.Offline = candidate.OfflineData, true
-					break
-				}
-			}
-		}
-	}
+	input := NewInput(facts, p.owner)
 	pending := false
 	if reads, ok := p.s.(interface {
 		UnsettledProducers(manifest.NamedResource) []manifest.NamedResource

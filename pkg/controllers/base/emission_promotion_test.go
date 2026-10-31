@@ -231,6 +231,39 @@ func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
 	}
 }
 
+func TestKeepEmitted_RequiredDeclarationSurvivesAdmissionRetry(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"owner.yaml":             {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner, namespace: apps}\nspec: {path: ./app}\n")},
+		"app/kustomization.yaml": {Data: []byte("resources: [cm.yaml]\n")},
+		"app/cm.yaml":            {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {value: test}\n")},
+	}})
+	l := loader.New(st)
+	l.SourceRoot = root
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Changes, l.Options.Filter = change.NewSet([]string{"unrelated.yaml"}), change.NewFilter()
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "input"}
+	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{input}, nil, nil, 0)
+	assert.Equal(t, retry, false)
+	st.SetIncluded(input, true)
+	c := New(st, task.NewBounded(2))
+	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+	var reads store.ReadSet
+	reads.Init(st, manifest.NamedResource{}, nil)
+	defer reads.Retire()
+	reads.RequireData(input)
+	_, err = c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{}, &reads)
+	assert.NoError(t, err)
+	owner := testutil.KustomizationID("apps", "owner")
+	assert.Equal(t, l.Options.Filter.ShouldReconcile(owner), true)
+	assert.Equal(t, st.GetDeclaration(owner) != nil, true)
+}
+
 func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

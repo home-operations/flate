@@ -273,3 +273,14 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 		})
 	}
 }
+
+func TestFinalizeIndex_UnobservedBootstrap(t *testing.T) {
+	t.Parallel()
+	l := New(store.New())
+	if err := l.FinalizeIndex(t.Context(), "", true); err != nil {
+		t.Fatal(err)
+	}
+	if l.Index.CompleteSources[manifest.BootstrapSourceID] {
+		t.Fatal("unobserved bootstrap census is complete")
+	}
+}

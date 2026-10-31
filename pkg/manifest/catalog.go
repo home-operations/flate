@@ -2,28 +2,22 @@ package manifest
 
 import (
 	"maps"
-	"slices"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 )
 
-// CatalogObject projects immutable reporting and traversal facts, never execution authority or a complete spec.
+// CatalogObject borrows immutable reporting and traversal facts without granting execution authority.
 func CatalogObject(obj BaseManifest, id NamedResource) BaseManifest {
 	return obj.catalog(id)
 }
 
 func (k *Kustomization) catalog(id NamedResource) BaseManifest {
-	out := &Kustomization{Name: id.Name, Namespace: id.Namespace, Labels: maps.Clone(k.Labels)}
-	out.Path, out.SourceRef, out.TargetNamespace = k.Path, k.SourceRef, k.TargetNamespace
-	out.Prune, out.Wait, out.Suspend = k.Prune, k.Wait, k.Suspend
-	out.Components, out.IgnoreMissingComponents = slices.Clone(k.Components), k.IgnoreMissingComponents
-	if k.PostBuild != nil {
-		postBuild := *k.PostBuild
-		postBuild.SubstituteFrom = nil
-		postBuild.Substitute = maps.Clone(k.PostBuild.Substitute)
-		out.PostBuild = &postBuild
+	if k.Named() == id {
+		return k
 	}
-	return out
+	out := *k
+	out.Name, out.Namespace = id.Name, id.Namespace
+	return &out
 }
 
 func (h *HelmRelease) catalog(id NamedResource) BaseManifest {
@@ -91,7 +85,9 @@ func (*Secret) catalog(id NamedResource) BaseManifest {
 
 func (r *RawObject) catalog(id NamedResource) BaseManifest {
 	out := &RawObject{Kind: r.Kind, APIVersion: r.APIVersion, Name: id.Name, Namespace: id.Namespace}
-	if _, valid := r.EntryApplication(); valid {
+	if r.isArtifactGenerator() {
+		out.Spec = map[string]any{"artifacts": r.Spec["artifacts"], "pathPattern": r.Spec["pathPattern"]}
+	} else if _, valid := r.EntryApplication(); valid {
 		out.Spec = map[string]any{"sync": r.Spec["sync"]}
 	}
 	return out

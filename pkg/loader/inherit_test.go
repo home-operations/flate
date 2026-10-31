@@ -80,6 +80,53 @@ func TestAdmitsRoot_PlainDiscoveryShortcut(t *testing.T) {
 
 func TestAdmit_GraphProjection(t *testing.T) {
 	t.Parallel()
+	t.Run("first evaluated template child", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		testutil.WriteFile(t, root, "flux/set.yaml", `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: factory, namespace: apps}
+spec:
+  inputs: [{path: first, settings: accepted}, {path: second, settings: rejected}]
+  resourcesTemplate: |
+    apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata: {name: child, namespace: apps}
+    spec:
+      path: '<< inputs.path >>'
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+      postBuild: {substituteFrom: [{kind: ConfigMap, name: '<< inputs.settings >>'}]}
+`)
+		for _, path := range []string{"first", "second"} {
+			testutil.WriteFile(t, root, path+"/kustomization.yaml", "resources: []\n")
+		}
+		l := New(store.New())
+		l.SourceRoot = root
+		l.Options.Selection.Changed = true
+		admitForTest(l.Store, root)
+		_, err := l.Load(t.Context(), filepath.Join(root, "flux"))
+		assert.NoError(t, err)
+		child := testutil.KustomizationID("apps", "child")
+		owner := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Namespace: "apps", Name: "factory"}
+		for range 2 {
+			l.Admit(root)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			assert.Equal(t, l.candidates[child].Obj.(*manifest.Kustomization).Path, "first")
+			for reader := range l.Index.ReadersOfFile("second/cm.yaml") {
+				if reader.Reader == owner || reader.Reader == child {
+					t.Fatalf("rejected child left reader edge: %+v", reader)
+				}
+			}
+			facts := l.locations[owner].facts
+			for _, input := range facts.templateInputs {
+				if input.Reference.Name == "rejected" || slices.Contains(input.Reference.Files, "second") {
+					t.Fatalf("rejected input survived projection: %+v", input)
+				}
+			}
+			assert.Equal(t, len(facts.templateObjects), 1)
+			assert.Equal(t, len(facts.targets), 1)
+		}
+	})
 	t.Run("membership_namespace_authority", func(t *testing.T) {
 		t.Parallel()
 		for _, tc := range []struct {
@@ -1296,4 +1343,25 @@ func TestAdmit_ProjectionLifetime(t *testing.T) {
 	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.Equal(t, l.scopes, nil)
 	assert.Equal(t, before[0].object.Named().Name, "before")
+}
+
+func TestRecordNamespaces_IndexedOwner(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"visit", "claim"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			l := New(store.New())
+			l.ensureScopes()
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "system", TargetNamespace: "apps"}
+			occurrence := compactOccurrence(owner, manifest.ProjectProducer(owner))
+			l.locations = map[manifest.NamedResource]Occurrence{owner.Named(): occurrence}
+			l.Index.Records[owner.Named()] = manifest.DiscoveryRecord{Authored: owner.Named(), Path: "/input/flux/owner.yaml"}
+			l.Index.Claims = map[string][]manifest.NamedResource{"app/": {owner.Named()}}
+			record := manifest.DiscoveryRecord{Authored: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart"}, Path: "/input/app/source.yaml", File: "app/source.yaml"}
+			if name == "visit" {
+				l.scopes.visits[record.Path] = []graphVisit{{role: kustomizeinput.Resource}}
+			}
+			assert.Diff(t, l.recordNamespaces(record, ""), []string{"apps"})
+		})
+	}
 }

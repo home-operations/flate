@@ -308,7 +308,7 @@ spec:
 		slices.SortFunc(want, func(a, b manifest.FileReader) int { return a.Reader.Compare(b.Reader) })
 		assert.Diff(t, l.Index.Readers["config/prod.yaml"], want)
 		assert.Diff(t, l.Index.Readers[".selected/config/prod.yaml"], want)
-		want = []manifest.FileReader{{Reader: consumer, Source: source.Named(), Exact: true}, {Reader: consumer, Source: manifest.BootstrapSourceID}, {Reader: chartID, Source: source.Named(), Exact: true}}
+		want = []manifest.FileReader{{Reader: consumer, Source: source.Named(), Exact: true}, {Reader: consumer, Source: manifest.BootstrapSourceID, Declaration: chartID}, {Reader: chartID, Source: source.Named(), Exact: true}}
 		slices.SortFunc(want, func(a, b manifest.FileReader) int {
 			if order := a.Reader.Compare(b.Reader); order != 0 {
 				return order

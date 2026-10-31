@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -26,10 +27,13 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 		return nil
 	}
 	o.loader.Options.Changes = o.cfg.ExternalChanges
+	if err := o.lookupHistory(ctx); err != nil {
+		return err
+	}
 	proposal := o.preparation
 	if proposal == nil {
 		var err error
-		proposal, err = o.loader.Prepare(ctx, store.Child{}, nil, nil)
+		proposal, err = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
 		if err != nil {
 			return err
 		}
@@ -97,7 +101,7 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 		}()
 	}
 	if o.entryDiscovery != nil {
-		if err := o.entryDiscovery.PrepareEntry(ctx); err != nil {
+		if err := o.entryDiscovery.PrepareEntry(ctx, o.cfg.ExternalChanges); err != nil {
 			return err
 		}
 		o.index, o.entryBinding = o.entryDiscovery.Index, o.entryDiscovery.Binding
@@ -110,9 +114,71 @@ func (o *Orchestrator) buildChangeFilter(ctx context.Context) error {
 	return nil
 }
 
+func (o *Orchestrator) lookupHistory(ctx context.Context) error {
+	if o.loader.Options.HistoryOwners != nil {
+		return ctx.Err()
+	}
+	var query []manifest.SourceEvidence
+	changes := o.cfg.ExternalChanges
+	for source := range changes.Sources() {
+		delta, inputs, _ := changes.ForSource(source)
+		paths := delta.Paths()
+		if len(paths) == 0 {
+			continue
+		}
+		found := false
+		for _, input := range inputs {
+			if input != nil && input.FS != nil && input.Reads.Valid() {
+				for _, file := range paths {
+					query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
+				}
+				found = true
+			}
+		}
+		if !found && source == manifest.BootstrapSourceID {
+			if input := o.cfg.Input; input != nil && input.FS != nil && input.Reads.Valid() {
+				for _, file := range paths {
+					query = append(query, manifest.SourceEvidence{Source: input.HistoryIdentity(source), Path: file})
+				}
+			}
+		}
+	}
+	producers, err := o.cache.ProducersForPaths(ctx, query)
+	if err != nil {
+		return err
+	}
+	o.loader.Options.HistoryOwners = append([]manifest.NamedResource{}, producers...)
+	return nil
+}
+
 func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	o.loader.Options.Changes = o.cfg.ExternalChanges
-	proposal, err := o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+	if entry := o.entryBinding.Entry; entry != nil {
+		if o.history == nil {
+			o.history = map[manifest.NamedResource]struct {
+				Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+				Complete bool
+			}{}
+		}
+		history := o.history[entry.Owner]
+		history.Records, history.Complete = entry.Records, true
+		o.history[entry.Owner] = history
+	}
+	var proposal *loader.Admission
+	var err error
+	if producers := o.admission.EntryProducers(); len(producers) != 0 {
+		o.entryAdmissionPending = true
+		var reads store.ReadSet
+		reads.Init(o.store, manifest.NamedResource{}, nil)
+		for _, id := range producers {
+			reads.RequireData(id)
+		}
+		proposal, err = o.loader.Prepare(ctx, store.Child{}, &reads, nil)
+		reads.Retire()
+	} else {
+		o.entryAdmissionPending = false
+		proposal, err = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+	}
 	if err != nil {
 		return err
 	}
@@ -131,6 +197,7 @@ func (o *Orchestrator) installAdmission(ctx context.Context) error {
 	}
 	o.changeNamespaces = proposal.Namespaces
 	o.preparation, o.history = nil, nil
+	o.loader.Options.HistoryOwners = nil
 	if changes := o.cfg.ExternalChanges; changes != nil && changes.Len() == 0 && len(o.filter.KeepNames()) == 0 && o.cfg.BaseInput != nil {
 		o.store.AddWarning(manifest.Warning{Category: manifest.WarnPathConfig, Message: "no changes detected between --path and --path-orig; output will be empty; Flux-excluded files are not counted; verify both paths reference distinct snapshots"})
 	}

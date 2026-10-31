@@ -98,7 +98,7 @@ func OutputEqual(a, b BaseManifest, documents [2]map[string]any) (bool, error) {
 		return a == b, nil
 	}
 	policy, ok := a.(interface{ outputFields() string })
-	if !ok {
+	if !ok && (documents[0] == nil || documents[1] == nil) {
 		return Equal(a, b) && ValueEqual(documents[0], documents[1]), nil
 	}
 	for side, object := range [2]BaseManifest{a, b} {
@@ -112,9 +112,12 @@ func OutputEqual(a, b BaseManifest, documents [2]map[string]any) (bool, error) {
 		}
 		documents[side] = DeepCopyMap(doc)
 		spec, _ := documents[side]["spec"].(map[string]any)
-		for field := range strings.FieldsSeq(policy.outputFields()) {
-			removeOutputField(spec, strings.Split(field, "."))
+		if ok {
+			for field := range strings.FieldsSeq(policy.outputFields()) {
+				removeOutputField(spec, strings.Split(field, "."))
+			}
 		}
+		documents[side] = WithoutOwnershipLabels(documents[side])
 	}
 	return ValueEqual(documents[0], documents[1]), nil
 }

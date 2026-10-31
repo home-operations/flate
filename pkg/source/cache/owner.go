@@ -1,14 +1,18 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
+	"weak"
 
 	"github.com/gofrs/flock"
 	"github.com/home-operations/flate/internal/keylock"
@@ -16,6 +20,14 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/oci"
 )
+
+type storeSnapshot struct {
+	store     *oci.Store
+	index     []byte
+	layout    []byte
+	failed    atomic.Bool
+	histories map[string]*historyRecord
+}
 
 type owner struct {
 	cache *Cache
@@ -27,8 +39,9 @@ type owner struct {
 
 var owners = struct {
 	sync.Mutex
-	stores map[string]*owner
-}{stores: make(map[string]*owner)}
+	stores  map[string]*owner
+	indexes map[string]weak.Pointer[storeSnapshot]
+}{stores: make(map[string]*owner), indexes: make(map[string]weak.Pointer[storeSnapshot])}
 
 // New selects backing once. An empty root allocates no files or directories.
 func New(ctx context.Context, root string) (*Cache, error) {
@@ -39,13 +52,17 @@ func New(ctx context.Context, root string) (*Cache, error) {
 	if err != nil {
 		return nil, &CacheError{err}
 	}
-	if err := os.MkdirAll(root, 0o750); err != nil {
-		return nil, &CacheError{err}
+	resolved, err := filepath.EvalSymlinks(root)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(root, 0o750); err != nil {
+			return nil, &CacheError{err}
+		}
+		resolved, err = filepath.EvalSymlinks(root)
 	}
-	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, &CacheError{err}
 	}
+	root = resolved
 	disk, err := os.OpenRoot(root)
 	if err != nil {
 		return nil, &CacheError{err}
@@ -68,6 +85,7 @@ func New(ctx context.Context, root string) (*Cache, error) {
 	}
 	o := &owner{ready: make(chan struct{}), refs: 1, lock: flock.New(filepath.Join(disk.Name(), ociLock), flock.SetPermissions(0o600))}
 	owners.stores[root] = o
+	snapshot := owners.indexes[root].Value()
 	owners.Unlock()
 	locked, err := o.lock.TryLock()
 	if err == nil && !locked {
@@ -82,9 +100,21 @@ func New(ctx context.Context, root string) (*Cache, error) {
 	}
 	var store *oci.Store
 	if err == nil {
-		store, err = openStore(ctx, disk)
+		if snapshot != nil && snapshot.index != nil && !snapshot.failed.Load() {
+			data, readErr := disk.ReadFile(indexPath())
+			layout, layoutErr := disk.ReadFile(filepath.Join(ociDir, ocispec.ImageLayoutFile))
+			if readErr == nil && layoutErr == nil && bytes.Equal(data, snapshot.index) && bytes.Equal(layout, snapshot.layout) {
+				store = snapshot.store
+			}
+		}
+		if store == nil {
+			store, err = openStore(ctx, disk)
+			snapshot = nil
+		}
 	}
 	c := &Cache{root: disk, store: store, locks: keylock.New[string](), persistBlob: processIdentity != ""}
+	c.snapshotState.store = store
+	c.snapshot.Store(snapshot)
 	if err != nil {
 		err = errors.Join(err, c.closeRoots(), o.lock.Close())
 	}
@@ -145,9 +175,47 @@ func (c *Cache) Close() error {
 		return nil
 	}
 	delete(owners.stores, c.root.Name())
+	if snapshot := c.snapshot.Load(); snapshot != nil && c.snapshotDirty.Load() {
+		if data, err := os.ReadFile(filepath.Join(c.root.Name(), indexPath())); err == nil {
+			snapshot.layout, _ = os.ReadFile(filepath.Join(c.root.Name(), ociDir, ocispec.ImageLayoutFile))
+			snapshot.index = data
+			c.entries.Range(func(_, value any) bool {
+				entry := value.(*entry)
+				if entry.inventoryKey != "" {
+					if snapshot.histories == nil {
+						snapshot.histories = map[string]*historyRecord{}
+					}
+					snapshot.histories[entry.inventoryKey] = entry.history
+				}
+				return true
+			})
+		} else {
+			snapshot.index = nil
+		}
+		root := c.root.Name()
+		if owners.indexes[root].Value() != snapshot {
+			pointer := weak.Make(snapshot)
+			owners.indexes[root] = pointer
+			runtime.AddCleanup(snapshot, func(root string) {
+				owners.Lock()
+				if owners.indexes[root] == pointer {
+					delete(owners.indexes, root)
+				}
+				owners.Unlock()
+			}, root)
+		}
+	}
+
 	c.entries.Clear()
 	if err := errors.Join(o.lock.Close(), c.closeRoots()); err != nil {
 		return &CacheError{err}
 	}
 	return nil
+}
+
+func (c *Cache) prepareSnapshot() {
+	if c.store == nil || c.snapshot.Load() != nil {
+		return
+	}
+	c.snapshot.CompareAndSwap(nil, &c.snapshotState)
 }

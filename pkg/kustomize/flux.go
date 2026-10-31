@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing"
 	"sigs.k8s.io/kustomize/api/resmap"
 
@@ -91,9 +92,8 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		binding := manifest.Fingerprint(prepared.binding)
 		if frame.header.Binding != binding {
 			frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-			frame.accepted, frame.acceptedKey, frame.identity = nil, "", ""
+			frame.accepted, frame.acceptedKey = nil, ""
 		}
-		frame.identity = sourcecache.AcquisitionIdentity(generation)
 		receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 		return true, nil
 	}}
@@ -240,11 +240,13 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 	}
 	key := renderKey(req, root, ignore)
 	source := manifest.BootstrapSourceID
+	var postBuild *kustomizev1.PostBuild
 	if req.Spec != nil {
 		source = req.Spec.SourceID()
+		postBuild = req.Spec.PostBuild
 	}
 	return renderRequest{lower: lower, root: root, key: key,
-		binding: renderBinding{key, source, req.Source.Kind, req.Source.URL, req.Source.LocalPath, req.Source.LocalRoot, req.Source.Key, req.Source.Revision, req.Source.Digest, req.Source.InputAlias, req.WipeSecrets, req.StrictSubstitutions, slices.Clone(req.SkipKinds), req.DependencySubstitutions},
+		binding: renderBinding{key, source, req.Source.Kind, req.Source.URL, req.Source.LocalPath, req.Source.LocalRoot, req.Source.Key, req.Source.Revision, req.Source.Digest, req.Source.InputAlias, req.WipeSecrets, req.StrictSubstitutions, slices.Clone(req.SkipKinds), req.DependencySubstitutions, postBuild},
 	}, nil
 }
 
@@ -259,7 +261,7 @@ func renderKey(req RenderRequest, root string, ignore any) string {
 	if req.Spec != nil {
 		prepared := *req.Spec
 		prepared.KustomizationSpec = req.Spec.KustomizationSpec
-		prepared.DependsOn = nil
+		prepared.DependsOn, prepared.PostBuild = nil, nil
 		spec = prepared.Content(nil)
 	}
 	return manifest.Fingerprint(struct {

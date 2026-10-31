@@ -11,23 +11,30 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"maps"
 	"slices"
 
-	"oras.land/oras-go/v2/errdef"
-
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/values"
 )
 
-const frameDomain = "flateks2"
-
-const acceptedRenderAnnotation = "flate.accepted-render"
+const frameDomain = "flateks4"
 
 type renderHeader struct {
 	Key, Binding, Output string
 	Size                 int
 	Reads                readSetSnapshot
+	Entry                *entryApplication `json:",omitempty"`
+}
+
+type entryApplication struct {
+	Application map[string]any
+	Reads       readSetSnapshot
+	Inventory   acceptedRender
+	Inputs      []EntryInput
+	Complete    bool
 }
 
 const frameHeaderLimit = 16 << 20
@@ -40,19 +47,23 @@ type renderBinding struct {
 	Wipe, Strict                                 bool
 	Skip                                         []string `json:",omitempty"`
 	Dependencies                                 values.DependencySubstitutions
+	PostBuild                                    *kustomizev1.PostBuild `json:",omitempty"`
 }
 
 func (a renderBinding) equal(b renderBinding) bool {
+	if a.PostBuild != b.PostBuild && (a.PostBuild == nil || b.PostBuild == nil || a.PostBuild.SubstituteStrategy != b.PostBuild.SubstituteStrategy || !maps.Equal(a.PostBuild.Substitute, b.PostBuild.Substitute) || !slices.Equal(a.PostBuild.SubstituteFrom, b.PostBuild.SubstituteFrom)) {
+		return false
+	}
 	return a.Render == b.Render && a.Source == b.Source && a.Kind == b.Kind && a.URL == b.URL && a.Path == b.Path && a.Root == b.Root && a.Key == b.Key && a.Revision == b.Revision && a.Digest == b.Digest && a.Alias == b.Alias && a.Wipe == b.Wipe && a.Strict == b.Strict && slices.Equal(a.Skip, b.Skip) && a.Dependencies.Equal(b.Dependencies)
 }
 
 type renderFrame struct {
-	lookup, raw           string
-	header                renderHeader
-	binding               renderBinding
-	output, encoded       []byte
-	accepted              *acceptedRender
-	acceptedKey, identity string
+	lookup, raw     string
+	header          renderHeader
+	binding         renderBinding
+	output, encoded []byte
+	accepted        *acceptedRender
+	acceptedKey     string
 }
 
 func equalRenderFrame(a, b any) bool {
@@ -96,7 +107,7 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	for i, x := range a.Records {
 		y := b.Records[i]
 		p, q := x.Record, y.Record
-		if x.ID != y.ID || p.Application != q.Application || p.Authored != q.Authored || p.Path != q.Path || p.File != q.File || p.Parent != q.Parent || p.Builder != q.Builder || (p.Inputs == nil) != (q.Inputs == nil) || !slices.Equal(p.Inputs, q.Inputs) || p.Pinned != q.Pinned || (p.Refs == nil) != (q.Refs == nil) || !slices.Equal(p.Refs, q.Refs) || (p.Productions == nil) != (q.Productions == nil) || !slices.Equal(p.Productions, q.Productions) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
+		if x.ID != y.ID || p.Application != q.Application || p.Authored != q.Authored || p.Path != q.Path || p.File != q.File || p.Parent != q.Parent || p.Builder != q.Builder || (p.Inputs == nil) != (q.Inputs == nil) || !slices.Equal(p.Inputs, q.Inputs) || p.Pinned != q.Pinned || p.StaticOutput != q.StaticOutput || (p.Refs == nil) != (q.Refs == nil) || !slices.Equal(p.Refs, q.Refs) || (p.Productions == nil) != (q.Productions == nil) || !slices.Equal(p.Productions, q.Productions) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
 			return false
 		}
 		for j, root := range x.Roots {
@@ -140,6 +151,9 @@ func decodeFrame(data []byte) (renderFrame, error) {
 	var header renderHeader
 	if err := json.Unmarshal(data[12:12+size], &header); err != nil {
 		return renderFrame{}, err
+	}
+	if header.Entry != nil && (!header.Entry.Complete || header.Entry.Inputs == nil) {
+		return renderFrame{}, errors.New("incomplete entry qualification evidence")
 	}
 	begin := 12 + size
 	if header.Size < 0 || header.Size > len(data)-begin {
@@ -231,7 +245,7 @@ func (f renderFrame) history(owner manifest.NamedResource) (iter.Seq2[manifest.N
 	}, true
 }
 
-// PreviousRender returns complete accepted history without rendering or acquiring remote inputs.
+// PreviousRender returns accepted entry inventory without rendering or acquiring remote inputs.
 func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner manifest.NamedResource) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	if c == nil || ctx.Err() != nil || !c.owner.CanPersistRenders() {
 		return nil, false
@@ -249,7 +263,7 @@ func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner
 		return nil, false
 	}
 	frame, err := decodeFrame(data)
-	if err != nil || frame.header.Key != prepared.key || frame.header.Binding != manifest.Fingerprint(prepared.binding) || len(frame.header.Reads.Remotes) != 0 {
+	if err != nil || frame.accepted == nil || frame.header.Key != prepared.key || frame.header.Binding != manifest.Fingerprint(prepared.binding) || len(frame.header.Reads.Remotes) != 0 {
 		return nil, false
 	}
 	valid, err := frame.header.Reads.localsValid(ctx, prepared.lower, req.Source.Content != "")
@@ -265,36 +279,95 @@ func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner
 	return frame.history(owner)
 }
 
-// RenderAcceptance binds a complete inventory to its final owner and dependency snapshot.
+type renderPublication struct {
+	frame    renderFrame
+	accepted acceptedRender
+	data     []byte
+}
+
+// WriteTo writes the render frame and accepted inventory.
+func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
+	if p.frame.encoded == nil {
+		encoded, err := encodeFrame(p.frame.header, p.frame.output)
+		if err != nil {
+			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
+		}
+		p.frame.encoded = encoded
+	}
+	if !p.accepted.Complete {
+		return io.Copy(w, bytes.NewReader(p.frame.encoded))
+	}
+	data := p.data
+	if data == nil {
+		encoded, err := json.Marshal(p.accepted)
+		if err != nil {
+			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
+		}
+		data = encoded
+	}
+	if len(data) > frameHeaderLimit {
+		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted kustomize render exceeds frame limit")
+	}
+	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+}
+
+// RenderAcceptance binds accepted output and optional entry inventory to its final owner.
 type RenderAcceptance struct {
-	Owner                   manifest.NamedResource
-	Receipt                 *manifest.RenderReceipt
+	// Source identifies the admitted filesystem used by the receipt.
+	Source  manifest.SourceIdentity
+	Sources []manifest.SourceEvidence
+	Owner   manifest.NamedResource
+	Receipt *manifest.RenderReceipt
+	Entry   *manifest.RenderReceipt
+	// Records is supplied for opaque output or the entry applier receipt.
 	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 	DependencySubstitutions values.DependencySubstitutions
 }
 
-// RecordRender persists a receipt only with a complete accepted inventory.
+// RecordRender persists accepted output and optional entry applier evidence.
 func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
 	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
-	if receipt == nil || records == nil {
+	if receipt == nil {
 		return nil
 	}
 	frame, ok := receipt.Value().(renderFrame)
 	if !ok || frame.header.Key == "" {
 		return manifest.NewError(manifest.ErrFlux, nil, "invalid kustomize receipt")
 	}
+	if acceptance.Entry != nil {
+		if application, ok := acceptance.Entry.Value().(entryApplication); ok {
+			frame.header.Entry = &application
+			frame.encoded, frame.accepted, frame.raw, frame.acceptedKey = nil, nil, "", ""
+		}
+	}
 	if !frame.binding.Dependencies.Equal(acceptance.DependencySubstitutions) {
 		frame.binding.Dependencies = acceptance.DependencySubstitutions
 		frame.header.Binding, frame.lookup, frame.raw = "", "", ""
-		frame.encoded, frame.accepted, frame.acceptedKey, frame.identity = nil, nil, "", ""
+		frame.encoded, frame.accepted, frame.acceptedKey = nil, nil, ""
 	}
-	descriptor, identity, enabled, err := c.owner.RenderMetadata(ctx, frame.header.Key, frame.lookup)
-	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
-		return fmt.Errorf("lookup kustomize render cache: %w", err)
+	if records == nil && frame.accepted != nil {
+		return ctx.Err()
 	}
-	if !enabled {
-		return nil
+	var sources []manifest.SourceEvidence
+	if records != nil {
+		sources = acceptance.Sources
 	}
+	if sources != nil {
+		sources = slices.Clone(sources)
+		source := acceptance.Source
+		for _, file := range frame.header.Reads.Files {
+			sources = append(sources, manifest.SourceEvidence{Source: source, Path: file.Path})
+		}
+		for _, node := range frame.header.Reads.Nodes {
+			if node.Kind == kindFile {
+				sources = append(sources, manifest.SourceEvidence{Source: source, Path: node.Path})
+			}
+		}
+	}
+	if !c.owner.CanPersistRenders() {
+		return ctx.Err()
+	}
+	var err error
 	if frame.header.Binding == "" {
 		frame.header.Binding = manifest.Fingerprint(frame.binding)
 	}
@@ -307,39 +380,22 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	if frame.raw == "" {
 		frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
 	}
-	accepted, err := prepareAccepted(owner, frame, records)
-	if err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
-	}
-	if frame.accepted != nil && frame.identity != "" && identity == frame.identity && frame.acceptedKey != "" && descriptor.Annotations[acceptedRenderAnnotation] == frame.acceptedKey && frame.accepted.equal(&accepted) {
-		return nil
-	}
-	data, err := json.Marshal(accepted)
-	if err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
-	}
-	if len(data) > frameHeaderLimit {
-		return manifest.NewError(manifest.ErrFlux, nil, "accepted kustomize render exceeds frame limit")
-	}
-	content := manifest.Fingerprint(data)
-	if descriptor.Annotations[acceptedRenderAnnotation] == content {
-		return nil
-	}
-	if frame.encoded == nil {
-		frame.encoded, err = encodeFrame(frame.header, frame.output)
+	var accepted acceptedRender
+	var data []byte
+	content := frame.raw
+	if records != nil {
+		accepted, err = prepareAccepted(owner, frame, records)
 		if err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
+			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
+		}
+		content = frame.acceptedKey
+		if frame.accepted == nil || content == "" || !frame.accepted.equal(&accepted) {
+			data, err = json.Marshal(accepted)
+			if err != nil {
+				return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
+			}
+			content = manifest.Fingerprint(data)
 		}
 	}
-	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}
-	raw := frame.encoded
-	result := sourcecache.ProducerResult{Annotations: map[string]string{acceptedRenderAnnotation: content}}
-	_, _, _, err = c.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0, Retry: sourcecache.RetryConfig{Attempts: 1}}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		_, err := io.Copy(w, io.MultiReader(bytes.NewReader(raw), bytes.NewReader(data)))
-		return result, err
-	})
-	if err != nil {
-		return fmt.Errorf("kustomize render cache publish: %w", err)
-	}
-	return nil
+	return sourcecache.RecordInventory(ctx, c.owner, sourcecache.AcceptedInventory[renderPublication]{Key: frame.header.Key, Lookup: frame.lookup, Acceptance: content, History: sourcecache.RenderHistory{Owner: owner, Sources: sources}, Content: renderPublication{frame: frame, accepted: accepted, data: data}})
 }

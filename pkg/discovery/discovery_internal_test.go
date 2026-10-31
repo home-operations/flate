@@ -351,8 +351,9 @@ func testReceiptTrees(t *testing.T, cacheDir string) (*kustomize.TreeCache, func
 
 func packageHistory(t *testing.T, trees *kustomize.TreeCache, req kustomize.RenderRequest, owner manifest.NamedResource) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
-	records, ok := trees.PreviousRender(t.Context(), req, owner)
-	if !ok || records == nil {
+	evidence := trees.PreviousEntry(t.Context(), req)
+	records := evidence.Records
+	if evidence.Owner != owner || records == nil {
 		t.Fatalf("package %q has no complete accepted history", req.SubPath)
 	}
 	history := maps.Collect(records)
@@ -576,7 +577,7 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 	closeCache()
 	trees, closeCache = testReceiptTrees(t, cacheDir)
 	assert.Diff(t, packageHistory(t, trees, req, producer.Named()), want)
-	if _, ok := trees.PreviousRender(t.Context(), req, owner); ok {
+	if trees.PreviousEntry(t.Context(), req).Owner == owner {
 		t.Fatal("transformed child replaced the accepted producer")
 	}
 	closeCache()
@@ -642,7 +643,7 @@ spec:
 			assert.NoError(t, cacheOwner.Close())
 			trees, closeCache = testReceiptTrees(t, cacheDir)
 			req := preparedRequest(t, d.cfg, owner, source)
-			if _, ok := trees.PreviousRender(t.Context(), req, owner.Named()); ok {
+			if trees.PreviousEntry(t.Context(), req).Records != nil {
 				t.Fatal("failed package persisted a partial accepted batch")
 			}
 			testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [selected.yaml]\n")
@@ -695,7 +696,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	}
 	closeCache()
 	trees, closeCache = testReceiptTrees(t, cacheDir)
-	if _, ok := trees.PreviousRender(t.Context(), req, owner.Named()); ok {
+	if trees.PreviousEntry(t.Context(), req).Records != nil {
 		t.Fatal("failed publication left durable accepted history")
 	}
 	closeCache()
@@ -791,7 +792,7 @@ func TestRun_BuiltPackages(t *testing.T) {
 				owner := manifest.NewEntryKustomization(manifest.BootstrapSourceID, selected, manifest.NamedResource{})
 				req := preparedRequest(t, d.cfg, owner, source)
 				if lifetime == "changed" {
-					if _, ok := trees.PreviousRender(t.Context(), req, owner.Named()); ok {
+					if trees.PreviousEntry(t.Context(), req).Records != nil {
 						t.Fatal("changed consumed resource retained stale accepted history")
 					}
 				}

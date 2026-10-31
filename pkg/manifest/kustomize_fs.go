@@ -19,6 +19,23 @@ type KSClaim struct {
 	Prefix string
 }
 
+// SourceRoots yields source-relative paths declared for rendering or entry application.
+func SourceRoots(obj BaseManifest) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		if object, ok := obj.(*RawObject); ok {
+			if _, root, applies := object.SourcePath(); applies {
+				yield(NormalizeClaimBase(root))
+			}
+			return
+		}
+		for root := range RenderRoots(obj) {
+			if !yield(root) {
+				return
+			}
+		}
+	}
+}
+
 // RenderRoots yields source-relative render roots and unresolved component evidence.
 // An empty root denotes the source artifact root.
 func RenderRoots(obj BaseManifest) iter.Seq[string] {

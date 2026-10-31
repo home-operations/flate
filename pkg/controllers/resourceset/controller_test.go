@@ -32,7 +32,7 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 	t.Helper()
 	s := store.New()
 	tasks := task.NewBounded(0)
-	c := New(s, tasks, true)
+	c := New(s, tasks, nil, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
@@ -124,7 +124,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := New(s, tasks, true)
+	c := New(s, tasks, nil, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -204,8 +204,12 @@ func TestReconcile_EmitsFluxChildToStore(t *testing.T) {
 	c, s := newController(t)
 	rs := &manifest.ResourceSet{
 		Name: "fleet", Namespace: "flux-system",
+		Inputs: []fluxopv1.ResourceSetInput{
+			{"path": &apiextensionsv1.JSON{Raw: []byte(`"first"`)}},
+			{"path": &apiextensionsv1.JSON{Raw: []byte(`"second"`)}},
+		},
 		ResourcesTemplate: "---\n" +
-			testutil.KustomizationYAML("child", "", `  path: ./child
+			testutil.KustomizationYAML("child", "", `  path: '<< inputs.path >>'
   sourceRef: {kind: GitRepository, name: flux-system}
 `) + "---\n" +
 			`apiVersion: apps/v1
@@ -240,6 +244,14 @@ spec: {}
 	child, ok := s.Get[*manifest.Kustomization](childID)
 	if !ok || child == nil {
 		t.Fatalf("expected RS-emitted Kustomization %s in store (AddObject), got ok=%v", childID, ok)
+	}
+	if child.Path != "first" {
+		t.Fatalf("emitted path = %q, want first", child.Path)
+	}
+	for _, object := range manifest.ProjectProducer(rs).Objects {
+		if object.Named() == childID && object.(*manifest.Kustomization).Path != child.Path {
+			t.Fatal("projected child differs from controller emission")
+		}
 	}
 	art := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
 	for _, child := range art.Children {
@@ -427,7 +439,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			tasks := task.NewBounded(2)
-			c := New(st, tasks, true)
+			c := New(st, tasks, nil, true)
 			var deliveries atomic.Int64
 			c.Configure(base.Options{})
 			c.StartLifecycle()

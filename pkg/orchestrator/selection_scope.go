@@ -97,9 +97,11 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 		}
 	}
 	// Prerequisites MUST NOT expand downward into unrelated siblings.
-	for i := 0; i < len(work); i++ { //nolint:intrange // Descendants extend this traversal.
-		for _, child := range children[work[i]] {
-			add(child)
+	if roots[0].Name != "" {
+		for i := 0; i < len(work); i++ { //nolint:intrange // Descendants extend this traversal.
+			for _, child := range children[work[i]] {
+				add(child)
+			}
 		}
 	}
 	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {

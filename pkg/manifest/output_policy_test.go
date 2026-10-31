@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -64,4 +65,26 @@ func TestReference_CloneAndContentInput(t *testing.T) {
 	assert.Equal(t, refs[0].Key, "chosen")
 	assert.Equal(t, refs[0].NamespaceDefault, true)
 	assert.Equal(t, refs[0].ContentInput(), true)
+}
+
+func TestOutputEqual_OwnershipLabels(t *testing.T) {
+	t.Parallel()
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint(changed), func(t *testing.T) {
+			t.Parallel()
+			object := &OCIRepository{Name: "chart", Namespace: "apps"}
+			docs := [2]map[string]any{}
+			for side := range docs {
+				docs[side] = map[string]any{"metadata": map[string]any{"name": "chart", "namespace": "apps", "labels": map[string]any{FluxKustomizeDomain + "/name": fmt.Sprint(side), "app": "same"}}, "spec": map[string]any{"url": "oci://fixture.invalid/chart"}}
+			}
+			if changed {
+				docs[1]["spec"].(map[string]any)["futureInput"] = "changed"
+			}
+			originals := [2]map[string]any{DeepCopyMap(docs[0]), DeepCopyMap(docs[1])}
+			equal, err := OutputEqual(object, object, docs)
+			assert.NoError(t, err)
+			assert.Equal(t, equal, !changed)
+			assert.Diff(t, docs, originals)
+		})
+	}
 }

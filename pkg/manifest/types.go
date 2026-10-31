@@ -170,6 +170,8 @@ type Reference struct {
 	ArtifactStages GateStage
 	// Ordering permits changed-only pruning of an ordering prerequisite.
 	Ordering bool
+	// Subtree makes each file declaration cover its descendant paths.
+	Subtree bool
 	// Files borrows immutable source-relative input declarations.
 	Files []string
 	// ChartPath declares a source-relative chart directory or archive; dot selects the root.
@@ -198,6 +200,11 @@ func (r Reference) Clone() Reference {
 // ContentInput reports whether a reference carries affected or required input content.
 func (r Reference) ContentInput() bool {
 	return r.Content || r.Use == "substituteFrom" && r.Name != ""
+}
+
+// AffectedInput reports whether changed content can affect the consumer.
+func (r Reference) AffectedInput() bool {
+	return r.ContentInput() || r.Use == "source" || r.Use == "artifact" || r.Use == "chart" || r.Use == "valuesFrom" || r.Use == "inputsFrom"
 }
 
 // References yields dependencies in source-field order for the selected view without deduplication.
@@ -370,7 +377,7 @@ func ContentInputs(obj BaseManifest, reverse bool) iter.Seq[NamedResource] {
 		for ref := range References(obj, ReferenceRelations) {
 			include := ref.Content || ref.Use == "substituteFrom" && ref.Name != ""
 			if reverse {
-				include = ref.Content || ref.Use == "source" || ref.Use == "artifact" || ref.Use == "chart" || ref.Use == "valuesFrom" || ref.Use == "inputsFrom" || ref.Use == "substituteFrom" && ref.Name != ""
+				include = ref.AffectedInput()
 			}
 			if include && !yield(ref.NamedResource) {
 				return

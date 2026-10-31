@@ -75,6 +75,17 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 			d.o.store.AddObject(root)
 			return slices.Collect(d.o.store.Sweep())
 		}
+		if producer := d.o.admission.EntryProducer(); producer != (manifest.NamedResource{}) {
+			var reads store.ReadSet
+			reads.Init(d.o.store, manifest.NamedResource{}, nil)
+			reads.RequireData(producer)
+			_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &reads)
+			reads.Retire()
+			if err != nil {
+				d.o.entryFailure = err
+			}
+			return slices.Collect(d.o.store.Sweep())
+		}
 	}
 	d.o.classifyCompleted()
 	return slices.Collect(d.o.store.Sweep())

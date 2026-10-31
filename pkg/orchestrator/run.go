@@ -169,6 +169,10 @@ func (o *Orchestrator) collectResult(runErr error) (*Result, error) {
 			res.Blocked[id] = info.BlockedBy()
 		}
 	}
+	if o.loader != nil {
+		o.loader.Retire()
+	}
+
 	return res, runErr
 }
 

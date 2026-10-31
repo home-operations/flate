@@ -219,7 +219,7 @@ func TestAdmission_UnrelatedSourcePublicationPreservesProof(t *testing.T) {
 	proposal, err := l.Prepare(t.Context(), store.Child{}, &reads, nil)
 	assert.NoError(t, err)
 	producer := manifest.NamedResource{Group: "fluxcd.controlplane.io", Kind: "ResourceSet", Namespace: "apps", Name: "open"}
-	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
 	assert.Equal(t, reads.Valid(), true)
 	st.SetArtifact(requester, &store.SourceArtifact{LocalPath: root + "/acquired", FS: fstest.MapFS{}})
 	if !reads.Valid() {
@@ -412,7 +412,7 @@ func TestAdmission_OrderingEmittedPathProof(t *testing.T) {
 		foreign, incompatible, independent, visited, completeEmpty bool
 		want                                                       bool
 	}{
-		{name: "compatible", want: true},
+		{name: "compatible_namespace"},
 		{name: "foreign_source", foreign: true},
 		{name: "incompatible_namespace", incompatible: true},
 		{name: "independent_parent", independent: true},
@@ -560,7 +560,7 @@ func TestAdmission_UnmaterializedOwner(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
 				"child.yaml":                  {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: child, namespace: apps}\nspec: {path: ./workload}\n")},
-				"owner.yaml":                  {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owner, namespace: apps}\nspec: {resourcesTemplate: 'unexecuted template'}\n")},
+				"owner.yaml":                  {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: owner, namespace: apps}\nspec:\n  resourcesTemplate: |\n    apiVersion: kustomize.toolkit.fluxcd.io/v1\n    kind: Kustomization\n    metadata: {name: child, namespace: apps}\n    spec: {path: ./workload}\n")},
 				"workload/kustomization.yaml": {Data: []byte("resources: []\n")},
 			}})
 			l := New(st)
@@ -733,9 +733,54 @@ func TestAdmission_KnownInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
 	assert.Equal(t, slices.Contains(proposal.Needed, renderer), false)
 }
 
+func TestAdmission_UnclaimedInputDoesNotOpenUnrelatedRenderer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"input.yaml":     {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: changed}\n")},
+		"unrelated.yaml": {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: unrelated, namespace: apps}\nspec:\n  chartRef: {kind: OCIRepository, name: chart}\n  interval: 1m\n")},
+		"templated.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: templated, namespace: apps}\nspec: {path: './payload/${APP}'}\n")},
+		"producer.yaml":  {Data: []byte("apiVersion: fluxcd.controlplane.io/v1\nkind: ResourceSet\nmetadata: {name: producer, namespace: apps}\nspec: {resourcesTemplate: unexecuted}\n")},
+	}})
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"unclaimed/notes.txt"})
+	l.Options.Selection = manifest.Selection{Changed: true}
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	templated := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "templated", Namespace: "apps"}
+	producer := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSet, Name: "producer", Namespace: "apps"}
+	record := l.Index.Records[templated]
+	record.Productions = []manifest.Production{{Owner: producer}}
+	l.Index.Records[templated] = record
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	input := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "settings", Namespace: "apps"}
+	renderer := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Name: "unrelated", Namespace: "apps"}
+	assert.Equal(t, slices.Contains(proposal.Selected, input), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, renderer), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, templated), false)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+	l.Options.HistoryOwners = []manifest.NamedResource{producer}
+	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+}
+
 func TestAdmission_OrderingEmittedTemplateProof(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"emitted", "foreign", "unowned", "complete_empty"} {
+	for _, mode := range []string{"emitted", "known_target", "foreign", "unowned", "complete_empty"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
@@ -753,6 +798,9 @@ func TestAdmission_OrderingEmittedTemplateProof(t *testing.T) {
 			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 			producer := &manifest.ResourceSet{Name: "templates", Namespace: "apps"}
+			if mode == "known_target" {
+				producer.ResourcesTemplate = "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: target, namespace: apps}\nspec: {path: ./target}\n"
+			}
 			st.AddObject(parent)
 			source := manifest.BootstrapSourceID
 			if mode == "foreign" {
@@ -785,7 +833,7 @@ func TestAdmission_OrderingEmittedTemplateProof(t *testing.T) {
 			}
 			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 			assert.NoError(t, err)
-			assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), mode == "emitted")
+			assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), mode == "known_target")
 			assert.Equal(t, slices.Contains(proposal.Selected, producer.Named()), false)
 			assert.Equal(t, slices.Contains(proposal.Dirty, producer.Named()), false)
 		})
@@ -814,7 +862,7 @@ func TestAdmission_InputGate(t *testing.T) {
 	assert.Equal(t, slices.Contains(proposal.Selected, gate), false)
 }
 
-func TestAdmission_ChangedInputDemandsUnknownReaders(t *testing.T) {
+func TestAdmission_ChangedInputRequiresReaderHistory(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	st := store.New()
@@ -833,6 +881,12 @@ func TestAdmission_ChangedInputDemandsUnknownReaders(t *testing.T) {
 	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 	assert.NoError(t, err)
 	producer := (&manifest.ResourceSet{Name: "templates", Namespace: "apps"}).Named()
+	assert.Equal(t, slices.Contains(proposal.Needed, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
+	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
+	l.Options.HistoryOwners = []manifest.NamedResource{producer}
+	proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
 	assert.Equal(t, slices.Contains(proposal.Needed, producer), true)
 	assert.Equal(t, slices.Contains(proposal.Selected, producer), false)
 	assert.Equal(t, slices.Contains(proposal.Dirty, producer), false)
@@ -1071,5 +1125,92 @@ func TestAdmission_ParentPatchRemoval(t *testing.T) {
 		if !slices.ContainsFunc(proposal.Objects, func(child store.Child) bool { return child.Obj.Named() == id }) {
 			t.Errorf("side %d failed to hydrate changed parent", side)
 		}
+	}
+}
+
+func TestAdmission_HistoryOwnerDeclarationAndInputs(t *testing.T) {
+	t.Parallel()
+	for _, seeded := range []bool{false, true} {
+		t.Run(fmt.Sprint(seeded), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			input := fstest.MapFS{
+				"release.yaml": {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: emitter, namespace: apps}\nspec:\n  interval: 1m\n  values: {marker: keep}\n  valuesFrom: [{kind: ConfigMap, name: supplied}]\n  chart: {spec: {chart: ./charts/demo, sourceRef: {kind: GitRepository, name: charts}}}\n")},
+				"values.yaml":  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: supplied, namespace: apps}\ndata: {values.yaml: '{}'}\n")},
+			}
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection = manifest.Selection{Changed: true}
+			l.Options.Changes = change.NewSet([]string{"removed/child.yaml"})
+			l.Options.Filter = change.NewFilter()
+			owner := testutil.HelmReleaseID("apps", "emitter")
+			if seeded {
+				l.Options.HistoryOwners = []manifest.NamedResource{owner}
+			}
+			_, err := l.Load(t.Context(), root)
+			assert.NoError(t, err)
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			for range 2 {
+				proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Contains(proposal.Needed, owner), seeded)
+				assert.Equal(t, slices.Contains(proposal.Selected, owner), false)
+				assert.Equal(t, slices.Contains(proposal.Dirty, owner), false)
+				inputID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
+				assert.Equal(t, slices.Contains(proposal.Needed, inputID), seeded)
+				found := false
+				for _, child := range proposal.Objects {
+					if child.Obj.Named() == owner {
+						declaration := child.Obj.(*manifest.HelmRelease)
+						assert.Equal(t, declaration.Values["marker"], any("keep"))
+						assert.Equal(t, len(declaration.ValuesFrom), 1)
+						found = true
+					}
+				}
+				assert.Equal(t, found, seeded)
+			}
+		})
+	}
+}
+
+func TestAdmission_StableAncestorsPrepareLinearly(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{32, 128} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection = manifest.Selection{Changed: true}
+			l.Options.Changes = change.NewSet([]string{"unrelated.yaml"})
+			l.Options.Filter = change.NewFilter()
+			l.locations = map[manifest.NamedResource]Occurrence{}
+			var parent manifest.NamedResource
+			for i := range count {
+				object := &manifest.Kustomization{Name: fmt.Sprintf("item-%05d", i), Namespace: "apps"}
+				object.Path = "./apps"
+				id := object.Named()
+				file := fmt.Sprintf("declarations/%05d.yaml", i)
+				l.Index.Records[id] = manifest.DiscoveryRecord{File: file, Parent: parent, Declaration: object}
+				occurrence := compactOccurrence(object, manifest.ProjectProducer(object))
+				occurrence.Declaration = OccurrenceID{Source: root, File: file}
+				l.locations[id] = occurrence
+				parent = id
+			}
+			reads := &admissionArtifactReads{admissionReader: st}
+			c := admissionClosure{loader: l, objects: reads}
+			c.proposal = &c.result
+			proposal, err := c.evaluate(t.Context(), nil)
+			assert.NoError(t, err)
+			assert.Equal(t, len(proposal.Needed), 0)
+			t.Logf("%d stable ancestors: %d artifact reads", count, reads.calls)
+			if reads.calls > 128*count+128 {
+				t.Errorf("%d stable ancestors caused %d artifact reads; want at most %d", count, reads.calls, 128*count+128)
+			}
+		})
 	}
 }

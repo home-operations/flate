@@ -237,7 +237,7 @@ func TestPreviousRender_OptionalExpectedInput(t *testing.T) {
 	assert.Equal(t, len(omitted), 0)
 	_, receipt, err := testutil.RenderMaps(c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)}))
 	assert.NoError(t, err)
-	assert.NoError(t, c.Helm.RecordRender(t.Context(), hr.Named(), receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
+	assert.NoError(t, c.Helm.RecordRender(t.Context(), helm.RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}}))
 	probe := func() bool {
 		t.Helper()
 		reads := &store.ReadSet{}
@@ -324,7 +324,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 			assert.NoError(t, err)
 			_, receipt, err := c.Helm.Template(t.Context(), seed, seed.Values, helm.RenderOptions{Sources: helm.NewSources(st)})
 			assert.NoError(t, err)
-			assert.NoError(t, c.Helm.RecordRender(t.Context(), hr.Named(), receipt, func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}))
+			assert.NoError(t, c.Helm.RecordRender(t.Context(), helm.RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}}))
 			for _, selected := range []bool{true, false} {
 				c.AllowMissingKinds = nil
 				if selected {

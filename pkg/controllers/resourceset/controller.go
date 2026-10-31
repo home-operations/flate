@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -35,6 +36,7 @@ type Controller struct {
 	Retry cache.RetryConfig
 	// AllowMissingSecrets applies the source credential policy to provider inputs.
 	AllowMissingSecrets bool
+	cache               *cache.Cache
 }
 
 type execution struct {
@@ -51,10 +53,11 @@ func (c *Controller) newExecution(id manifest.NamedResource) *execution {
 }
 
 // New constructs a ResourceSet controller.
-func New(s *store.Store, t *task.Service, wipeSecrets bool) *Controller {
+func New(s *store.Store, t *task.Service, owner *cache.Cache, wipeSecrets bool) *Controller {
 	return &Controller{
 		Controller:  base.New(s, t),
 		WipeSecrets: wipeSecrets,
+		cache:       owner,
 	}
 }
 
@@ -153,11 +156,20 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 	if err != nil {
 		return err
 	}
-	if handled {
+	if !handled {
+		rs.EmissionPolicy().Stamp(docs)
+		attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
+		attempt.Complete = true
+		if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
+			return err
+		}
+	}
+	if c.cache == nil || !c.cache.CanPersistRenders() {
+		return ctx.Err()
+	}
+	sources := attempt.SourcePaths()
+	if sources == nil {
 		return nil
 	}
-	rs.EmissionPolicy().Stamp(docs)
-	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(rs, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
-	attempt.Complete = true
-	return c.run.Emit(ctx, id, &attempt, nil)
+	return cache.RecordInventory(ctx, c.cache, cache.AcceptedInventory[*strings.Reader]{Key: attempt.Fingerprint, Acceptance: attempt.Fingerprint, History: cache.RenderHistory{Owner: id, Sources: sources}, Content: strings.NewReader(attempt.Fingerprint)})
 }

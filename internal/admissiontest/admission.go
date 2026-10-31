@@ -12,9 +12,10 @@ import (
 
 // Config describes a fixture's declaration inventory and changed inputs.
 type Config struct {
-	Changes   *change.Set
-	Index     *manifest.DiscoveryIndex
-	Inventory interface {
+	HistoryOwners []manifest.NamedResource
+	Changes       *change.Set
+	Index         *manifest.DiscoveryIndex
+	Inventory     interface {
 		Objects() []manifest.BaseManifest
 	}
 	Root string
@@ -49,6 +50,7 @@ func New(tb testing.TB, cfg Config) *loader.Loader {
 	}
 	l := loader.New(st)
 	l.SourceRoot, l.Options.Changes = root, changes
+	l.Options.HistoryOwners = cfg.HistoryOwners
 	if index != nil {
 		l.Index = index
 	}

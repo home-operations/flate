@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -185,7 +186,11 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 			wg.Go(func() {
 				o.preparation = nil
 				o.loader.Options.Changes = o.cfg.ExternalChanges
-				proposal, failure := o.loader.Prepare(ctx, store.Child{}, nil, nil)
+				failure := o.lookupHistory(ctx)
+				var proposal *loader.Admission
+				if failure == nil {
+					proposal, failure = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+				}
 				advanced := false
 				if failure == nil {
 					advanced, failure = o.session.Advance(ctx, proposal)
@@ -315,7 +320,11 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		}
 		wg.Go(func() {
 			o.completeBootstrap()
-			if failure := o.buildChangeFilter(ctx); failure != nil {
+			failure := o.buildChangeFilter(ctx)
+			if failure == nil {
+				failure = o.installAdmission(ctx)
+			}
+			if failure != nil {
 				results[i].Result = &Result{Warnings: o.store.Warnings()}
 				results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
 				o.stop()
@@ -324,18 +333,6 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		})
 	}
 	wg.Wait()
-	for i := range results {
-		o := results[i].Orchestrator
-		if o == nil || o.loader == nil {
-			continue
-		}
-		if failure := o.installAdmission(ctx); failure != nil {
-			results[i].Result = &Result{Warnings: o.store.Warnings()}
-			results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
-			o.stop()
-			results[i].Orchestrator = nil
-		}
-	}
 	for i := range results {
 		o := results[i].Orchestrator
 		if o == nil {
@@ -407,9 +404,11 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 		}
 	}
 	changes := make(map[[2]*store.SourceArtifact]*change.Set)
-	var planned []Tree
+	var planning sync.WaitGroup
+	entriesByTree := make([][]Tree, len(trees))
+	failures := make([]error, len(trees))
 	sides := make(map[manifest.TreeSide]bool)
-	for _, tree := range trees {
+	for i, tree := range trees {
 		sides[tree.ID.Side] = true
 		for _, opposite := range trees {
 			if opposite.ID.Cluster == tree.ID.Cluster && opposite.ID.Side != tree.ID.Side {
@@ -431,17 +430,33 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 				tree.ExternalChanges, changes[pair] = set, set
 			}
 		}
-		selection := cfg.Selection
-		selection.Changed = selection.Changed || tree.ExternalChanges != nil
-		entries, err := discovery.Plan(ctx, discovery.Config{Selection: selection, Input: tree.Input, Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, WipeSecrets: cfg.WipeSecrets, RemoteInputs: &inputs, RemoteRetry: cfg.SourceRetry})
-		if err != nil {
-			return trees, &treeError{id: tree.ID, err: err}
+		trees[i] = tree
+	}
+	projections := manifest.NewProducerProjections()
+	for i, tree := range trees {
+		planning.Go(func() {
+			selection := cfg.Selection
+			selection.Changed = selection.Changed || tree.ExternalChanges != nil
+			entries, err := discovery.Plan(ctx, discovery.Config{Projections: projections, Selection: selection, Input: tree.Input, Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, WipeSecrets: cfg.WipeSecrets, RemoteInputs: &inputs, RemoteRetry: cfg.SourceRetry})
+			if err != nil {
+				failures[i] = &treeError{id: tree.ID, err: err}
+				return
+			}
+			for _, entry := range entries {
+				side := tree
+				side.Input, side.Path, side.entry = entry.Input, entry.Path, &entry
+				entriesByTree[i] = append(entriesByTree[i], side)
+			}
+		})
+	}
+	planning.Wait()
+	projections.Clear()
+	var planned []Tree
+	for i, entries := range entriesByTree {
+		if failures[i] != nil {
+			return trees, failures[i]
 		}
-		for _, entry := range entries {
-			side := tree
-			side.Input, side.Path, side.entry = entry.Input, entry.Path, &entry
-			planned = append(planned, side)
-		}
+		planned = append(planned, entries...)
 	}
 	byID := make(map[manifest.TreeID]Tree, len(planned))
 	for _, tree := range planned {

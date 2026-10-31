@@ -253,6 +253,8 @@ func TestChildFootprint_MatchesEmission(t *testing.T) {
 			owner := projectionOwner(s, "owner", source)
 			generator := Child{Obj: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps", Spec: map[string]any{"pathPattern": "@repo/{app}", "artifacts": []any{map[string]any{"name": "app-{app}"}}}}}
 			consumer := Child{Obj: &manifest.Kustomization{Name: "consumer", Namespace: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindExternalArtifact, Name: "app-api"}}}
+			consumer.Obj.(*manifest.Kustomization).PostBuild = &kustomizev1.PostBuild{SubstituteFrom: []kustomizev1.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}
+			settings := (&manifest.ConfigMap{Name: "settings", Namespace: "apps"}).Named()
 			target := consumer.Obj.(*manifest.Kustomization).SourceID()
 			production := manifest.Production{Owner: owner.Named(), Source: source, File: "consumer.yaml", Path: "/content/consumer.yaml"}
 			decl := manifest.Production{Owner: owner.Named(), Declaration: generator.Obj.Named(), Source: source}
@@ -260,6 +262,7 @@ func TestChildFootprint_MatchesEmission(t *testing.T) {
 				production.Source.Name, decl.Source.Name = "other", "other"
 			}
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				settings:             {Productions: []manifest.Production{{Source: source, File: "settings.yaml"}}},
 				consumer.Obj.Named(): {File: production.File, Path: production.Path, Refs: []manifest.NamedResource{target}, Productions: []manifest.Production{production}},
 				target:               {Productions: []manifest.Production{decl}},
 			}}
@@ -285,6 +288,7 @@ func TestChildFootprint_MatchesEmission(t *testing.T) {
 			}
 			prior := s.GetArtifact(owner.Named(), ArtifactContent)
 			prospective := s.ChildFootprint(owner.Named(), children, index)
+			sources := s.ChildSourcePaths(owner.Named(), children, index)
 			if prospective == nil {
 				t.Fatal("complete batch supplied unavailable history")
 			}
@@ -298,12 +302,19 @@ func TestChildFootprint_MatchesEmission(t *testing.T) {
 			s.SetDiscoveryIndex(index)
 			_, _, next := s.GetEmission(owner.Named())
 			defer next.Finish()
-			next.Children, next.Complete = children, true
+			var reads ReadSet
+			reads.Init(s, owner.Named(), nil)
+			defer reads.Retire()
+			reads.GetArtifact(source, ArtifactContent)
+			next.Children, next.Complete, next.Reads = children, true, &reads
 			s.RecordEmitted(owner.Named(), &next, nil)
 			if next.Footprint() == nil {
 				t.Fatal("real emission was not accepted")
 			}
 			assert.Diff(t, maps.Collect(next.Footprint()), before)
+			assert.Diff(t, next.SourcePaths(), sources)
+			input := manifest.SourceEvidence{Source: s.GetArtifact(source, ArtifactContent).(*SourceArtifact).HistoryIdentity(source), Path: "settings.yaml"}
+			assert.Equal(t, slices.Contains(sources, input), mode == "retained" || mode == "superseded")
 		})
 	}
 }

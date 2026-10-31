@@ -2,6 +2,7 @@ package loader
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -139,7 +140,7 @@ func (reader documentReader) replacementInjectedNamespace(repoRoot, overlayDir s
 
 func (reader documentReader) subtreeHasNamespaceTransformer(repoRoot, dir string, visited map[string]struct{}) bool {
 	w := traversal{documents: reader, policy: traversalProof, directories: visited}
-	return !w.walk(nil, graphVisit{root: repoRoot, dir: dir}, nil)
+	return !w.walk(context.TODO(), graphVisit{root: repoRoot, dir: dir}, nil)
 }
 
 // fileHasNamespaceTransformer reads target as a (possibly multi-document)

@@ -101,17 +101,17 @@ metadata: {namespace: apps}
 				}
 				assert.Diff(t, got, names)
 			}
-			first, err := r.parseFile(path, manifest.ParseDocOptions{})
+			first, err := r.parseFile(t.Context(), path, manifest.ParseDocOptions{})
 			assertNames(first, want)
 			assert.NoError(t, err)
 			slices.Reverse(first)
 			first[0] = store.Child{}
-			second, err := r.parseFile(path, manifest.ParseDocOptions{})
+			second, err := r.parseFile(t.Context(), path, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assertNames(second, want)
 			slices.Reverse(second)
 			second[0] = store.Child{}
-			third, err := r.parseFile(path, manifest.ParseDocOptions{})
+			third, err := r.parseFile(t.Context(), path, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assertNames(third, want)
 			if tc.cached {
@@ -179,7 +179,7 @@ func TestParseFile_NoTrackedObjects(t *testing.T) {
 			reader := readerForTest(root)
 			path := filepath.Join(root, "objects.yaml")
 			for range 2 {
-				objects, err := reader.parseFile(path, manifest.ParseDocOptions{})
+				objects, err := reader.parseFile(t.Context(), path, manifest.ParseDocOptions{})
 				assert.NoError(t, err)
 				assert.Equal(t, len(objects), 0)
 				assert.Equal(t, objects == nil, tc.wantNil)
@@ -201,7 +201,7 @@ func TestParseFile_CompletedEmptyAndFailure(t *testing.T) {
 			file := filepath.Join(root, "input.yaml")
 			testutil.WriteFile(t, root, "input.yaml", body)
 			reader := readerForTest(root)
-			objects, err := reader.parseFile(file, manifest.ParseDocOptions{})
+			objects, err := reader.parseFile(t.Context(), file, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assert.Equal(t, len(objects), 0)
 			before := reader.cache[file].objects
@@ -209,7 +209,7 @@ func TestParseFile_CompletedEmptyAndFailure(t *testing.T) {
 				t.Fatal("completed read was not retained")
 			}
 			assert.NoError(t, os.Remove(file))
-			objects, err = reader.parseFile(file, manifest.ParseDocOptions{})
+			objects, err = reader.parseFile(t.Context(), file, manifest.ParseDocOptions{})
 			assert.NoError(t, err)
 			assert.Equal(t, len(objects), 0)
 			after := reader.cache[file].objects

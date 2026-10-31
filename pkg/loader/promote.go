@@ -52,7 +52,7 @@ func Promote(ctx context.Context, st *store.Store, id manifest.NamedResource, op
 		mountSource(mounted, sources.GetArtifact(source, store.ArtifactContent))
 		reader.setSources(mounted)
 		var err error
-		objs, err = reader.parseFile(path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""})
+		objs, err = reader.parseFile(ctx, path, manifest.ParseDocOptions{WipeSecrets: opts.WipeSecrets, DefaultNamespace: ""})
 		if err != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err()

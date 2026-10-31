@@ -160,6 +160,11 @@ func artifactMatch(tokens []artifactToken, name string, bound []string, budget *
 }
 
 func (r *RawObject) references(yield func(Reference) bool) {
+	if application, valid := r.EntryApplication(); valid {
+		if !yield(Reference{NamedResource: application.Source, Use: "source", Content: true}) {
+			return
+		}
+	}
 	if !r.isArtifactGenerator() {
 		return
 	}

@@ -72,13 +72,13 @@ func TestAdmission_MissingInputWaitsForKnownOwner(t *testing.T) {
 			l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				consumer.Named(): {Parent: owner.Named(), Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID}}},
 			}}
-			occurrence := compactOccurrence(opaque)
+			occurrence := compactOccurrence(opaque, manifest.ProjectProducer(opaque))
 			occurrence.Declaration.Source = root
 			l.locations = map[manifest.NamedResource]Occurrence{opaque.Named(): occurrence}
 			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)
-			assert.Equal(t, slices.Contains(proposal.Needed, opaque.Named()), complete)
+			assert.Equal(t, slices.Contains(proposal.Needed, opaque.Named()), false)
 			assert.Equal(t, slices.Contains(proposal.Selected, opaque.Named()), false)
 		})
 	}

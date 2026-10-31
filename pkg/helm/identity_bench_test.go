@@ -64,7 +64,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				opts := Options{DisableChartDigestTracking: disabled}
 				_, receipt1, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 				if err == nil {
-					if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt1, emptyRenderInventory); recordErr != nil {
+					if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
 						b.Fatal(recordErr)
 					}
 				}
@@ -75,7 +75,7 @@ func BenchmarkTemplate_OCIIdentity(b *testing.B) {
 				for b.Loop() {
 					_, receipt2, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources})
 					if err == nil {
-						if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt2, emptyRenderInventory); recordErr != nil {
+						if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
 							b.Fatal(recordErr)
 						}
 					}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/home-operations/flate/internal/claimpath"
 	"github.com/home-operations/flate/internal/kustomizeinput"
@@ -24,6 +25,10 @@ import (
 )
 
 type options struct {
+	// Projections shares source-free producer facts during paired planning.
+	Projections *manifest.ProducerProjections
+	// HistoryOwners supplies immutable positive owner reach from accepted source paths.
+	HistoryOwners []manifest.NamedResource
 	// Selection controls compact retention for restricted requests.
 	Selection manifest.Selection
 	// Changes supplies frozen source-qualified comparison facts.
@@ -64,6 +69,8 @@ type Loader struct {
 	bindings              map[manifest.NamedResource]*store.SourceArtifact
 	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
 	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
+	templateTargets       map[manifest.NamedResource][]manifest.ProducerTarget
+	producerFacts         atomic.Pointer[map[manifest.BaseManifest]producerFact]
 	construction, derived uint64
 	indexDerived          bool
 	frozen                bool
@@ -437,10 +444,10 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 				l.documents.cache[file] = doc
 			}
 			for _, file := range facts.files {
-				if !w.proceed(ctx.Err) {
+				if !w.proceed(ctx) {
 					break
 				}
-				n, err := l.replayFile(file)
+				n, err := l.replayFile(ctx, file)
 				w.count += n
 				if err != nil {
 					w.err = err
@@ -450,8 +457,8 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		} else {
 			files := []fileAdmission{}
 			w.files = &files
-			w.walk(ctx.Err, graphVisit{root: abs, file: abs}, nil)
-			if w.proceed(ctx.Err) {
+			w.walk(ctx, graphVisit{root: abs, file: abs}, nil)
+			if w.proceed(ctx) {
 				facts := loadFacts{files: files, directories: map[string]loadDirectory{}}
 				for file := range w.directories {
 					doc := l.documents.cache[file]
@@ -461,9 +468,9 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 			}
 		}
 	} else {
-		w.walk(ctx.Err, graphVisit{root: abs, file: abs}, nil)
+		w.walk(ctx, graphVisit{root: abs, file: abs}, nil)
 	}
-	if w.proceed(ctx.Err) {
+	if w.proceed(ctx) {
 		l.scopes.scanned[abs] = struct{}{}
 		if l.documents.compact {
 			l.construction++
@@ -491,7 +498,7 @@ func (l *Loader) acceptObject(id manifest.NamedResource) bool {
 	return true
 }
 
-func (l *Loader) loadFile(path string) (int, error) {
+func (l *Loader) loadFile(ctx context.Context, path string) (int, error) {
 	if l.documents.parsed != nil {
 		l.documents.restore(path)
 	}
@@ -503,7 +510,7 @@ func (l *Loader) loadFile(path string) (int, error) {
 	var objs []parsedObject
 	var err error
 	if reader.compact {
-		objs, err = reader.censusFile(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+		objs, err = reader.censusFile(ctx, path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 	} else {
 		objs, err = reader.fileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 	}
@@ -548,12 +555,12 @@ func (l *Loader) loadFile(path string) (int, error) {
 
 // recordDataFile keeps Component data available for lazy promotion without
 // publishing untemplated Component resources into the Store.
-func (l *Loader) recordDataFile(absPath string) error {
+func (l *Loader) recordDataFile(ctx context.Context, absPath string) error {
 	if l.documents.cache[absPath].selected {
 		return nil
 	}
 	if l.documents.compact {
-		facts, err := l.documents.censusFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+		facts, err := l.documents.censusFile(ctx, absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
 		if err != nil {
 			return err
 		}
@@ -567,7 +574,7 @@ func (l *Loader) recordDataFile(absPath string) error {
 		}
 		return nil
 	}
-	objs, err := l.documents.parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
+	objs, err := l.documents.parseFile(ctx, absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
 	if err != nil {
 		return err
 	}
@@ -656,7 +663,7 @@ func isManifestFile(path string) bool {
 	return false
 }
 
-func (l *Loader) replayFile(file fileAdmission) (int, error) {
+func (l *Loader) replayFile(ctx context.Context, file fileAdmission) (int, error) {
 	if file.kind == admissionWarning {
 		l.Store.AddWarning(file.warning)
 		return 0, nil
@@ -678,9 +685,9 @@ func (l *Loader) replayFile(file fileAdmission) (int, error) {
 	var n int
 	var err error
 	if file.kind == admissionData {
-		err = l.recordDataFile(file.file)
+		err = l.recordDataFile(ctx, file.file)
 	} else {
-		n, err = l.loadFile(file.file)
+		n, err = l.loadFile(ctx, file.file)
 	}
 	if err != nil && (file.kind == admissionPackage || file.kind == admissionData) {
 		message := "component data file failed to parse"

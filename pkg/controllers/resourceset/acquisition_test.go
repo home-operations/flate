@@ -70,7 +70,7 @@ func TestReconcile_ProviderAcquisitionSettlement(t *testing.T) {
 			st := store.New()
 			tasks := task.NewBounded(2)
 			t.Cleanup(tasks.BlockTillDone)
-			c := New(st, tasks, false)
+			c := New(st, tasks, nil, false)
 			c.Inputs = &oci.Fetcher{Network: network, Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: registryConfig}
 			c.Configure(base.Options{})
 			c.StartLifecycle()
@@ -191,7 +191,7 @@ func TestReconcile_ProviderAcquisitionRefresh(t *testing.T) {
 			st := store.New()
 			tasks := task.NewBounded(2)
 			t.Cleanup(tasks.BlockTillDone)
-			c := New(st, tasks, false)
+			c := New(st, tasks, nil, false)
 			c.Inputs = &oci.Fetcher{Network: network, Cache: cachetest.New(t, t.TempDir(), cache.New), RegistryConfig: registryConfig}
 			c.Configure(base.Options{})
 			c.StartLifecycle()

@@ -1,6 +1,7 @@
 package change
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -36,10 +37,12 @@ type Set struct {
 	declarations map[comparisonKey]declarationComparison
 }
 
-// InputChange records a one-sided input and its discovery authority.
+// InputChange records a changed input and its static discovery authority.
 type InputChange struct {
-	File    string
-	Unbound bool // Neither side supplies an admitted read of File.
+	File         string
+	Declarations []string
+	Productions  []manifest.Production
+	Unbound      bool // Neither side supplies an admitted read of File.
 }
 
 type sourceDelta struct {
@@ -407,23 +410,17 @@ func (s *Set) WithReaders(before, after *manifest.DiscoveryIndex) *Set {
 		return nil
 	}
 	indexes := [2]*manifest.DiscoveryIndex{before, after}
-	roots := [2]string{}
 	origins := s.origins
 	if bootstrap, ok := s.sources[manifest.BootstrapSourceID]; ok {
 		origins = bootstrap.artifacts
 	}
-	for side, input := range origins {
-		if input != nil {
-			roots[side] = input.LocalPath
-		}
-	}
 	if len(s.sources) == 0 {
-		return s.withReaders(indexes, manifest.BootstrapSourceID, origins, roots)
+		return s.withReaders(indexes, manifest.BootstrapSourceID, origins, s)
 	}
 	out := *s
 	out.sources = maps.Clone(s.sources)
 	for ref, evidence := range s.sources {
-		evidence.changes = evidence.changes.withReaders(indexes, ref, evidence.artifacts, roots)
+		evidence.changes = evidence.changes.withReaders(indexes, ref, evidence.artifacts, s)
 		out.sources[ref] = evidence
 		if ref == manifest.BootstrapSourceID {
 			out.inputs = evidence.changes.inputs
@@ -433,12 +430,35 @@ func (s *Set) WithReaders(before, after *manifest.DiscoveryIndex) *Set {
 	return &out
 }
 
-func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, source manifest.NamedResource, artifacts [2]*store.SourceArtifact, roots [2]string) *Set {
-	if len(s.oneSided[0])+len(s.oneSided[1]) == 0 {
+func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, source manifest.NamedResource, artifacts [2]*store.SourceArtifact, bindings *Set) *Set {
+	if s.Len() == 0 {
 		return s
+	}
+	roots := [2]string{}
+	_, bootstrap, _ := bindings.ForSource(manifest.BootstrapSourceID)
+	for side, input := range bootstrap {
+		if input != nil {
+			roots[side] = input.LocalPath
+		}
+	}
+	qualifiedSource := func(side int, actual manifest.NamedResource) bool {
+		if actual == (manifest.NamedResource{}) {
+			actual = manifest.BootstrapSourceID
+		}
+		if actual == source {
+			return true
+		}
+		_, admitted, _ := bindings.ForSource(actual)
+		left, right := artifacts[side], admitted[side]
+		return left != nil && right != nil && (left.InputAlias || right.InputAlias || left.OriginPath(left.LocalPath) == roots[side]) && left.FS != nil && right.FS != nil && left.Reads.Valid() && right.Reads.Valid() && left.OriginPath(left.LocalPath) == right.OriginPath(right.LocalPath)
 	}
 	out := *s
 	out.inputs = maps.Clone(s.inputs)
+	for id, input := range out.inputs {
+		if len(input.Declarations) != 0 {
+			delete(out.inputs, id)
+		}
+	}
 	coordinate := func(side int, name string) string {
 		if input := artifacts[side]; input != nil && roots[side] != "" {
 			relative, err := filepath.Rel(roots[side], input.OriginPath(filepath.Join(input.LocalPath, filepath.FromSlash(name))))
@@ -458,7 +478,7 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, source manifest.N
 				continue
 			}
 			for reader := range index.ReadersOfFile(coordinate(side, input.File)) {
-				if reader.Source == source {
+				if qualifiedSource(side, reader.Source) {
 					input.Unbound = false
 					out.inputs[id] = input
 					break
@@ -470,15 +490,112 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, source manifest.N
 		if index == nil {
 			continue
 		}
+		files := make(map[string]string, len(s.paths))
+		for name := range s.paths {
+			files[coordinate(side, name)] = name
+		}
+		qualified := func(record manifest.DiscoveryRecord) bool {
+			if len(record.Productions) == 0 {
+				return qualifiedSource(side, manifest.BootstrapSourceID)
+			}
+			return slices.ContainsFunc(record.Productions, func(p manifest.Production) bool { return qualifiedSource(side, p.Source) })
+		}
+		for id, record := range index.Files() {
+			if !qualified(record) {
+				continue
+			}
+			input := out.inputs[id]
+			var declarations []string
+			var productions []manifest.Production
+			name := ""
+			pending := []manifest.NamedResource{id}
+			seen := map[manifest.NamedResource]bool{}
+			for len(pending) != 0 {
+				owner := pending[0]
+				pending = pending[1:]
+				if seen[owner] {
+					continue
+				}
+				seen[owner] = true
+				r, found := index.Lookup(owner)
+				if !found || !qualified(r) {
+					continue
+				}
+				if owner != id && owner.KindInfo().Render && !owner.ReportHidden() {
+					productions = append(productions, manifest.Production{Owner: owner, Declaration: owner, Authored: record.Authored, Source: source, File: record.File})
+				}
+				comparison, known := bindings.declarations[comparisonKey{source: source, owner: owner, input: owner}]
+				if !known {
+					for alias := range bindings.Sources() {
+						if alias == source || !qualifiedSource(0, alias) || !qualifiedSource(1, alias) {
+							continue
+						}
+						if paired, present := bindings.declarations[comparisonKey{source: alias, owner: owner, input: owner}]; present {
+							comparison, known = paired, true
+							break
+						}
+					}
+				}
+				if r.File != "" {
+					file := r.File
+					if artifact := artifacts[side]; artifact != nil && roots[side] != "" {
+						relative, err := filepath.Rel(artifact.OriginPath(artifact.LocalPath), filepath.Join(roots[side], filepath.FromSlash(file)))
+						if err != nil || !filepath.IsLocal(relative) {
+							continue
+						}
+						file = filepath.ToSlash(relative)
+					}
+					declarations = append(declarations, file)
+					if changed, found := files[r.File]; found {
+
+						if !known || comparison.changed {
+							if name == "" || changed < name {
+								name = changed
+							}
+						}
+					}
+				}
+				for _, file := range r.Inputs {
+					if changed, found := files[file]; found && (!known || comparison.changed) && (name == "" || changed < name) {
+						name = changed
+					}
+				}
+				pending = append(pending, r.Parent, r.BuilderOwner)
+				for _, production := range r.Productions {
+					pending = append(pending, production.Owner, production.Declaration)
+				}
+			}
+			if name == "" {
+				continue
+			}
+			if out.inputs == nil {
+				out.inputs = map[manifest.NamedResource]InputChange{}
+			}
+			input.File, input.Unbound = name, false
+			input.Declarations = append(slices.Clone(input.Declarations), declarations...)
+			slices.Sort(input.Declarations)
+			input.Declarations = slices.Compact(input.Declarations)
+			input.Productions = append(slices.Clone(input.Productions), productions...)
+			slices.SortFunc(input.Productions, func(a, b manifest.Production) int {
+				return cmp.Or(a.Owner.Compare(b.Owner), a.Authored.Compare(b.Authored), a.Source.Compare(b.Source), strings.Compare(a.File, b.File))
+			})
+			input.Productions = slices.Compact(input.Productions)
+			out.inputs[id] = input
+		}
 		for name := range s.oneSided[side] {
 			for reader := range index.ReadersOfFile(coordinate(side, name)) {
-				if reader.Source != source {
+				if reader.Materialize || !qualifiedSource(side, reader.Source) {
 					continue
 				}
 				if out.inputs == nil {
 					out.inputs = make(map[manifest.NamedResource]InputChange)
 				}
-				out.inputs[reader.Reader] = InputChange{File: name}
+				input := out.inputs[reader.Reader]
+				if input.File == "" || len(input.Declarations) == 0 && name < input.File {
+					input.File = name
+				}
+				input.Unbound = false
+				out.inputs[reader.Reader] = input
 			}
 		}
 	}
@@ -714,6 +831,50 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 			}
 			objects[side][id] = store.Child{Obj: obj, Doc: manifest.DeepCopyMap(child.Doc)}
 			sources[side][id] = source
+		}
+	}
+	var copied map[*Set]*Set
+	for side, declarations := range objects {
+		for id := range declarations {
+			if _, present := objects[1-side][id]; present {
+				continue
+			}
+			source := sources[side][id]
+			delta, _, _ := s.ForSource(source)
+			if delta == nil {
+				continue
+			}
+			for _, production := range stores[side].Productions(id, nil) {
+				if production.Source != source || production.File == "" || !delta.Contains(production.File) {
+					continue
+				}
+				if copied == nil {
+					copied = map[*Set]*Set{}
+				}
+				local := copied[delta]
+				if local == nil {
+					clone := *delta
+					clone.inputs = maps.Clone(delta.inputs)
+					if clone.inputs == nil {
+						clone.inputs = map[manifest.NamedResource]InputChange{}
+					}
+					local = &clone
+					copied[delta] = local
+				}
+				local.inputs[id] = InputChange{File: production.File}
+			}
+		}
+	}
+	if len(copied) != 0 {
+		out.sources = maps.Clone(s.sources)
+		for source, evidence := range out.sources {
+			if local := copied[evidence.changes]; local != nil {
+				evidence.changes = local
+				out.sources[source] = evidence
+			}
+		}
+		if local := copied[s]; local != nil {
+			out.inputs = local.inputs
 		}
 	}
 	for id, left := range objects[0] {

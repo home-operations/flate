@@ -115,7 +115,7 @@ func TestDescription_SourceObservation(t *testing.T) {
 	cliSources := NewSources(st)
 	out, receipt1, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 	if err == nil {
-		if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt1, emptyRenderInventory); recordErr != nil {
+		if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
 			t.Fatal(recordErr)
 		}
 	}
@@ -146,7 +146,7 @@ func TestDescription_HitHydration(t *testing.T) {
 				cliSources := NewSources(st)
 				out, receipt2, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 				if err == nil {
-					if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt2, emptyRenderInventory); recordErr != nil {
+					if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -169,7 +169,7 @@ func TestDescription_HitHydration(t *testing.T) {
 					var receipt3 *manifest.RenderReceipt
 					_, receipt3, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 					if err == nil {
-						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt3, emptyRenderInventory); recordErr != nil {
+						if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt3, Records: emptyRenderInventory}); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -180,7 +180,7 @@ func TestDescription_HitHydration(t *testing.T) {
 					var receipt4 *manifest.RenderReceipt
 					_, receipt4, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 					if err == nil {
-						if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt4, emptyRenderInventory); recordErr != nil {
+						if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt4, Records: emptyRenderInventory}); recordErr != nil {
 							t.Fatal(recordErr)
 						}
 					}
@@ -303,7 +303,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		cliSources := NewSources(st)
 		out, receipt5, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt5, emptyRenderInventory); recordErr != nil {
+			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt5, Records: emptyRenderInventory}); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -360,7 +360,7 @@ func TestReview_NestedWarnings(t *testing.T) {
 				var err error
 				_, receipt6, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 				if err == nil {
-					if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt6, emptyRenderInventory); recordErr != nil {
+					if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt6, Records: emptyRenderInventory}); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -378,7 +378,7 @@ func TestReview_NestedWarnings(t *testing.T) {
 				var receipt7 *manifest.RenderReceipt
 				_, receipt7, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 				if err == nil {
-					if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt7, emptyRenderInventory); recordErr != nil {
+					if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt7, Records: emptyRenderInventory}); recordErr != nil {
 						t.Fatal(recordErr)
 					}
 				}
@@ -405,7 +405,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 		var err error
 		_, receipt8, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", Sources: cliSources}))
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt8, emptyRenderInventory); recordErr != nil {
+			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt8, Records: emptyRenderInventory}); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -425,7 +425,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			var err error
 			_, receipt9, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{KubeVersion: "invalid", DisableChartDigestTracking: disabled, Sources: cliSources}))
 			if err == nil {
-				if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt9, emptyRenderInventory); recordErr != nil {
+				if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt9, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -505,7 +505,7 @@ func TestReview_ErrorPrecedence(t *testing.T) {
 			var receipt10 *manifest.RenderReceipt
 			_, receipt10, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}))
 			if err == nil {
-				if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt10, emptyRenderInventory); recordErr != nil {
+				if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt10, Records: emptyRenderInventory}); recordErr != nil {
 					t.Fatal(recordErr)
 				}
 			}
@@ -557,7 +557,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		var receipt11 *manifest.RenderReceipt
 		_, receipt11, err = testutil.RenderMaps(cli.Template(t.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), (hr).Named(), receipt11, emptyRenderInventory); recordErr != nil {
+			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt11, Records: emptyRenderInventory}); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}
@@ -585,7 +585,7 @@ func TestDescription_CurrentChartLocation(t *testing.T) {
 		request.Chart.Name = location
 		_, receipt12, err := testutil.RenderMaps(cli.Template(t.Context(), request, nil, RenderOptions{Options: Options{}, Sources: cliSources}))
 		if err == nil {
-			if recordErr := cli.RecordRender(t.Context(), (request).Named(), receipt12, emptyRenderInventory); recordErr != nil {
+			if recordErr := cli.RecordRender(t.Context(), RenderAcceptance{Owner: (request).Named(), Receipt: receipt12, Records: emptyRenderInventory}); recordErr != nil {
 				t.Fatal(recordErr)
 			}
 		}

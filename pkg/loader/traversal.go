@@ -2,6 +2,7 @@ package loader
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -42,16 +43,16 @@ type traversal struct {
 	canceled    bool
 }
 
-func (w *traversal) proceed(check func() error) bool {
-	if w.err == nil && check != nil {
-		w.err = check()
+func (w *traversal) proceed(ctx context.Context) bool {
+	if w.err == nil {
+		w.err = ctx.Err()
 		w.canceled = w.err != nil
 	}
 	return w.err == nil
 }
 
-func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit) bool) bool {
-	if !w.proceed(check) {
+func (w *traversal) walk(ctx context.Context, v graphVisit, yield func(graphVisit) bool) bool {
+	if !w.proceed(ctx) {
 		return false
 	}
 	abs := v.file
@@ -92,7 +93,7 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 	}
 	d, file := w.documents.read(abs)
 	cached := w.documents.cache[abs]
-	if !w.proceed(check) {
+	if !w.proceed(ctx) {
 		return false
 	}
 	switch w.policy {
@@ -128,7 +129,7 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 				if w.files != nil {
 					*w.files = append(*w.files, fileAdmission{file: file, kind: admissionPackage})
 				}
-				n, err := w.loader.loadFile(file)
+				n, err := w.loader.loadFile(ctx, file)
 				w.count += n
 				if err != nil {
 					w.loader.Store.AddWarning(manifest.Warning{
@@ -150,7 +151,7 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 			cached.adHoc = true
 			w.documents.cache[abs] = cached
 		}
-		if !w.proceed(check) {
+		if !w.proceed(ctx) {
 			return false
 		}
 		input, name := w.documents.input(abs)
@@ -160,7 +161,7 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 			return false
 		}
 		for _, entry := range entries {
-			if !w.proceed(check) {
+			if !w.proceed(ctx) {
 				return false
 			}
 			if v.entryResources && entry.IsDir() || !entry.IsDir() && !isManifestFile(entry.Name()) {
@@ -174,12 +175,12 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 				child.dir = path.Join(v.dir, entry.Name())
 			}
 			if w.policy == traversalAdmission && !entry.IsDir() {
-				if !w.admitFile(check, v.root, child.file, false) {
+				if !w.admitFile(ctx, v.root, child.file, false) {
 					return false
 				}
 			} else {
 				count := w.count
-				if !w.walk(check, child, yield) {
+				if !w.walk(ctx, child, yield) {
 					if !w.canceled {
 						w.count = count
 					}
@@ -216,7 +217,7 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 				return w.uncertain(v, "configuration content is unavailable or opaque", yield)
 			}
 			for _, config := range *cached.plugins {
-				if !w.configuration(v, config, yield) {
+				if !w.configuration(ctx, v, config, yield) {
 					return false
 				}
 			}
@@ -242,14 +243,14 @@ func (w *traversal) walk(check func() error, v graphVisit, yield func(graphVisit
 		}
 	}
 	if !w.documents.references(abs, d, w.policy == traversalAdmission, func(ref kustomizeinput.Reference, target string) bool {
-		return w.reference(check, v, traversalReference{Reference: ref, target: target}, yield)
+		return w.reference(ctx, v, traversalReference{Reference: ref, target: target}, yield)
 	}) {
 		return false
 	}
 	if w.policy == traversalAdmission && v.role != kustomizeinput.Component && !w.build {
-		w.count += w.scanBootstrapFluxKS(check, v.root, abs, file)
+		w.count += w.scanBootstrapFluxKS(ctx, v.root, abs, file)
 	}
-	return w.proceed(check)
+	return w.proceed(ctx)
 }
 
 func (r documentReader) references(dir string, body *types.Kustomization, resolve bool, yield func(kustomizeinput.Reference, string) bool) bool {
@@ -292,18 +293,18 @@ func (r *documentReader) replayEdges() {
 	}
 }
 
-func (w *traversal) admitFile(check func() error, root, file string, component bool) bool {
+func (w *traversal) admitFile(ctx context.Context, root, file string, component bool) bool {
 	if !isManifestFile(file) || w.ignoreMatches(root, file, false) {
 		return true
 	}
-	if !w.proceed(check) {
+	if !w.proceed(ctx) {
 		return false
 	}
 	if component {
 		if w.files != nil {
 			*w.files = append(*w.files, fileAdmission{file: file, kind: admissionData})
 		}
-		if err := w.loader.recordDataFile(file); err != nil {
+		if err := w.loader.recordDataFile(ctx, file); err != nil {
 			w.loader.Store.AddWarning(manifest.Warning{
 				Category: manifest.WarnInputParseFailed, Message: "component data file failed to parse", Detail: []string{file, err.Error()},
 			})
@@ -313,7 +314,7 @@ func (w *traversal) admitFile(check func() error, root, file string, component b
 	if w.files != nil {
 		*w.files = append(*w.files, fileAdmission{file: file, kind: admissionResource})
 	}
-	n, err := w.loader.loadFile(file)
+	n, err := w.loader.loadFile(ctx, file)
 	w.count += n
 	if err != nil {
 		w.err = fmt.Errorf("loader: %w", err)
@@ -326,8 +327,8 @@ type traversalReference struct {
 	target string
 }
 
-func (w *traversal) reference(check func() error, v graphVisit, ref traversalReference, yield func(graphVisit) bool) bool {
-	if !w.proceed(check) {
+func (w *traversal) reference(ctx context.Context, v graphVisit, ref traversalReference, yield func(graphVisit) bool) bool {
+	if !w.proceed(ctx) {
 		return false
 	}
 	child := v
@@ -345,13 +346,13 @@ func (w *traversal) reference(check func() error, v graphVisit, ref traversalRef
 		info, err := fs.Stat(input, name)
 		w.documents.rememberStat(resolved, info, err)
 		if err != nil {
-			return w.proceed(check)
+			return w.proceed(ctx)
 		}
 		if !info.IsDir() {
 			if _, ok := kustpath.Resolve(base, ref.Path, kustpath.File); !ok || ref.Role != kustomizeinput.Resource {
 				return true
 			}
-			return w.admitFile(check, v.root, resolved, v.role == kustomizeinput.Component)
+			return w.admitFile(ctx, v.root, resolved, v.role == kustomizeinput.Component)
 		}
 		child.role = kustomizeinput.Resource
 		if v.role == kustomizeinput.Component {
@@ -380,7 +381,7 @@ func (w *traversal) reference(check func() error, v graphVisit, ref traversalRef
 			if ref.Inline {
 				for _, resource := range ref.Resources {
 					refs, known := kustomizeinput.Plugin(resource.YNode())
-					if !w.configuration(child, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())}, yield) {
+					if !w.configuration(ctx, child, pluginInputs{references: refs, known: known, metadataOnly: kustomizeinput.MetadataOnly(resource.YNode())}, yield) {
 						return false
 					}
 				}
@@ -407,7 +408,7 @@ func (w *traversal) reference(check func() error, v graphVisit, ref traversalRef
 	}
 	count := w.count
 	w.depth++
-	more := w.walk(check, child, yield)
+	more := w.walk(ctx, child, yield)
 	w.depth--
 	if !more && !w.canceled {
 		w.count = count
@@ -415,7 +416,7 @@ func (w *traversal) reference(check func() error, v graphVisit, ref traversalRef
 	return more
 }
 
-func (w *traversal) configuration(v graphVisit, config pluginInputs, yield func(graphVisit) bool) bool {
+func (w *traversal) configuration(ctx context.Context, v graphVisit, config pluginInputs, yield func(graphVisit) bool) bool {
 	if !config.known {
 		if !w.uncertain(v, "unknown plugin configuration may read additional files", yield) {
 			return false
@@ -429,7 +430,7 @@ func (w *traversal) configuration(v graphVisit, config pluginInputs, yield func(
 	for _, ref := range config.references {
 		child := v
 		child.dir = v.pluginRoot
-		if !w.reference(nil, child, traversalReference{Reference: ref}, yield) {
+		if !w.reference(ctx, child, traversalReference{Reference: ref}, yield) {
 			return false
 		}
 	}
@@ -464,8 +465,8 @@ func (w *traversal) ignoreMatches(root, path string, isDir bool) bool {
 	return v
 }
 
-func (w *traversal) scanBootstrapFluxKS(check func() error, root, dir, kpath string) int {
-	if !w.proceed(check) {
+func (w *traversal) scanBootstrapFluxKS(ctx context.Context, root, dir, kpath string) int {
+	if !w.proceed(ctx) {
 		return 0
 	}
 	seen := map[string]struct{}{kpath: {}}
@@ -478,7 +479,7 @@ func (w *traversal) scanBootstrapFluxKS(check func() error, root, dir, kpath str
 			seen[abs] = struct{}{}
 		}
 	}
-	if !w.proceed(check) {
+	if !w.proceed(ctx) {
 		return 0
 	}
 	input, name := w.documents.input(dir)
@@ -493,7 +494,7 @@ func (w *traversal) scanBootstrapFluxKS(check func() error, root, dir, kpath str
 	}
 	count := 0
 	for _, e := range entries {
-		if !w.proceed(check) {
+		if !w.proceed(ctx) {
 			return count
 		}
 		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
@@ -508,7 +509,7 @@ func (w *traversal) scanBootstrapFluxKS(check func() error, root, dir, kpath str
 		}
 		reader := w.documents
 		reader.regular = e.Type().IsRegular()
-		objs, err := reader.parseFile(abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets, DefaultNamespace: ""})
+		objs, err := reader.parseFile(ctx, abs, manifest.ParseDocOptions{WipeSecrets: w.loader.Options.WipeSecrets, DefaultNamespace: ""})
 		if err != nil {
 			warning := manifest.Warning{Category: manifest.WarnInputParseFailed, Message: "bootstrap-sibling parse failed", Detail: []string{abs, err.Error()}}
 			if w.files != nil {

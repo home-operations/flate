@@ -24,6 +24,8 @@ import (
 	"oras.land/oras-go/v2/errdef"
 )
 
+const acceptedRenderAnnotation = "flate.accepted-render"
+
 type historyCountingFS struct {
 	fs.FS
 	opens atomic.Int64
@@ -108,6 +110,32 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 		assert.Equal(t, complete, true)
 		got := maps.Collect(previous)
 		assert.Diff(t, got, records)
+		t.Run("source metadata replacement", func(t *testing.T) {
+			t.Parallel()
+			directory := t.TempDir()
+			source := manifest.SourceIdentity{Root: "/history-input"}
+			for _, selected := range []string{"apps/red", "apps/blue", ""} {
+				sources := []manifest.SourceEvidence{}
+				if selected != "" {
+					sources = append(sources, manifest.SourceEvidence{Source: source, Path: selected, Subtree: true})
+				}
+				publisher := newTestTreeCache(t, directory)
+				assert.NoError(t, publisher.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: maps.All(records), Sources: sources}))
+				assert.NoError(t, publisher.owner.Close())
+				reopened := newTestTreeCache(t, directory)
+				for _, candidate := range []string{"apps/red", "apps/blue"} {
+					owners, err := reopened.owner.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: source, Path: candidate + "/cm.yaml"}})
+					assert.NoError(t, err)
+					var want []manifest.NamedResource
+					if candidate == selected {
+						want = []manifest.NamedResource{owner}
+					}
+					assert.Diff(t, owners, want)
+				}
+				assert.NoError(t, reopened.owner.Close())
+			}
+		})
+
 		t.Run("preparation", func(t *testing.T) {
 			t.Parallel()
 			counted := &historyCountingFS{FS: os.DirFS(root)}
@@ -251,7 +279,7 @@ func TestRenderFlux_AcceptedHistory(t *testing.T) {
 			_, pending, err = testutil.RenderMaps(Render(t.Context(), renderer, req, sourcecache.RetryConfig{}))
 			assert.NoError(t, err)
 			resident := pending.Value().(renderFrame)
-			if resident.accepted == nil || resident.acceptedKey == "" || resident.identity == "" {
+			if resident.accepted == nil || resident.acceptedKey == "" {
 				t.Fatal("warm receipt did not carry decoded accepted evidence")
 			}
 			check := unchanged()
@@ -537,7 +565,7 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	_, pending, err = Render(t.Context(), renderer, req, sourcecache.RetryConfig{})
 	assert.NoError(t, err)
 	before := pending.Value().(renderFrame)
-	if before.accepted == nil || before.acceptedKey == "" || before.identity == "" || before.raw == "" {
+	if before.accepted == nil || before.acceptedKey == "" || before.raw == "" {
 		t.Fatal("warm receipt lacks publication memos")
 	}
 	before.encoded, err = encodeFrame(before.header, before.output)
@@ -567,7 +595,6 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 	assert.Equal(t, original.raw, before.raw)
 	assert.Equal(t, original.lookup, before.lookup)
 	assert.Equal(t, original.acceptedKey, before.acceptedKey)
-	assert.Equal(t, original.identity, before.identity)
 	assert.Equal(t, original.accepted == before.accepted, true)
 	assert.Equal(t, bytes.Equal(original.encoded, wire) && bytes.Equal(original.output, output), true)
 	_, rebound, err := Render(t.Context(), renderer, projected, sourcecache.RetryConfig{})

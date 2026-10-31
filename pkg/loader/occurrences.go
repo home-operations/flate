@@ -38,6 +38,11 @@ type Occurrence struct {
 	facts       *occurrenceFacts
 }
 
+type producerFact struct {
+	identity manifest.NamedResource
+	facts    *occurrenceFacts
+}
+
 type occurrenceFacts struct {
 	source                         manifest.NamedResource
 	path                           string
@@ -47,6 +52,8 @@ type occurrenceFacts struct {
 	catalog                        manifest.BaseManifest
 	reverse                        []manifest.NamedResource
 	refs                           []manifest.Reference
+	templateInputs                 []manifest.TemplateInput
+	templateObjects                []manifest.BaseManifest
 	roots                          []string
 	targets, authoredTargets       []manifest.ProducerTarget
 	needsCandidates                bool
@@ -71,12 +78,16 @@ func (o Occurrence) SourcePath() (manifest.NamedResource, string, bool) {
 	return manifest.Resolve(o.facts.source, "", o.Identity.Namespace), o.facts.path, o.facts.hasPath
 }
 
-func compactOccurrence(obj manifest.BaseManifest) Occurrence {
+func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplateProjection) Occurrence {
 	source, path, hasPath := obj.SourcePath()
 	targets := manifest.ProducerTargets(obj)
 	facts := &occurrenceFacts{source: source, path: path, hasPath: hasPath,
 		namespaced: manifest.KindOf(obj).Namespaced(), tracked: manifest.KindOf(obj).Tracked,
 		targets: targets, authoredTargets: targets, needsCandidates: manifest.ProducerNeedsCandidates(obj), roots: slices.Collect(manifest.RenderRoots(obj))}
+
+	facts.templateInputs = projection.Inputs
+	facts.templateObjects = projection.Objects
+	facts.targets = append(facts.targets, projection.Targets...)
 
 	generated, _ := manifest.GeneratedObjects(obj)
 	for _, child := range generated {
@@ -100,8 +111,10 @@ func compactOccurrence(obj manifest.BaseManifest) Occurrence {
 	}
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		facts.refs = append(facts.refs, ref.Clone())
+		if ref.AffectedInput() {
+			facts.reverse = append(facts.reverse, ref.NamedResource)
+		}
 	}
-	facts.reverse = slices.Collect(manifest.ContentInputs(obj, true))
 	id := obj.Named()
 	if manifest.HasEnvsubstReference(id.Name) {
 		id.Name, facts.uncertain = "", true
@@ -536,11 +549,20 @@ func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest 
 		return manifest.CatalogObject(obj, id)
 	}
 	record, _ := l.Index.Lookup(id)
-	if obj := l.IndexedObject(id, record).Obj; obj != nil {
-		return manifest.CatalogObject(obj, id)
+	obj := l.IndexedObject(id, record).Obj
+	if obj == nil {
+		obj = l.Store.GetObject(id)
 	}
-	if obj := l.Store.GetObject(id); obj != nil {
-		return manifest.CatalogObject(obj, id)
+	if obj == nil {
+		return nil
 	}
-	return nil
+	if snapshot := l.producerFacts.Load(); snapshot != nil {
+		if cached, known := (*snapshot)[obj]; known && cached.facts.catalog != nil {
+			obj = cached.facts.catalog
+			if obj.Named() == id {
+				return obj
+			}
+		}
+	}
+	return manifest.CatalogObject(obj, id)
 }

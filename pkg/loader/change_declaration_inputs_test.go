@@ -51,7 +51,7 @@ func TestFilter_SelectorProviderScope(t *testing.T) {
 						set.Named():      {File: "set.yaml", Declaration: set},
 					}}
 					selected := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"provider.yaml"}), index: index, inventory: objects})
-					selected.loader.locations = map[manifest.NamedResource]Occurrence{provider.Named(): compactOccurrence(provider)}
+					selected.loader.locations = map[manifest.NamedResource]Occurrence{provider.Named(): compactOccurrence(provider, manifest.ProjectProducer(provider))}
 					selected.prepare(store.Child{}, nil, false)
 					assert.Equal(t, selected.ShouldReconcile(provider.Named()), true)
 					assert.Equal(t, selected.ShouldReconcile(set.Named()), true)
@@ -96,7 +96,7 @@ func TestSelection_SelectorCandidates(t *testing.T) {
 			st.AddObjects(objects.Objects())
 			l := New(st)
 			l.Index = index
-			occurrence := compactOccurrence(tc.declaration)
+			occurrence := compactOccurrence(tc.declaration, manifest.ProjectProducer(tc.declaration))
 			occurrence.Identity = provider.Named()
 			l.locations = map[manifest.NamedResource]Occurrence{provider.Named(): occurrence}
 			record := l.Index.Records[provider.Named()]

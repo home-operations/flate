@@ -11,19 +11,28 @@ type Selection struct {
 // Matches reports whether an identity is eligible under the requested roots.
 // Namespace restrictions retain cluster-scoped output; complete render-kind requests include standalone output.
 func (s Selection) Matches(id NamedResource) bool {
+	return s.matches(id, true)
+}
+
+// MatchesScope reports whether a kind and namespace belong to the requested output scope.
+func (s Selection) MatchesScope(id NamedResource) bool {
+	return s.matches(id, false)
+}
+
+func (s Selection) matches(id NamedResource, named bool) bool {
 	if len(s.Roots) == 0 {
 		return true
 	}
 	for _, root := range s.Roots {
 		if root.Group == id.Group && root.Kind == id.Kind &&
-			(root.Name == "" || root.Name == id.Name) &&
+			(!named || root.Name == "" || root.Name == id.Name) &&
 			(root.Namespace == "" || id.Namespace == "" || root.Namespace == id.Namespace) {
 			return true
 		}
 	}
-	all := s.Roots[0].Name == ""
+	all := !named || s.Roots[0].Name == ""
 	for _, root := range s.Roots {
-		all = all && root.Name == "" && root.Namespace == s.Roots[0].Namespace
+		all = all && (!named || root.Name == "") && root.Namespace == s.Roots[0].Namespace
 	}
 	if all {
 		for kind := range Kinds() {

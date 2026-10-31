@@ -40,10 +40,11 @@ func TestDiscoveryIndex_ReadersOfFileReplay(t *testing.T) {
 	ancestor := NamedResource{Group: FluxKustomizeDomain, Kind: KindKustomization, Name: "ancestor"}
 	other := BootstrapSourceID
 	other.Name = "other"
-	want := []FileReader{{Reader: exact, Source: BootstrapSourceID}, {Reader: exact, Source: other}, {Reader: ancestor, Source: BootstrapSourceID}}
+	want := []FileReader{{Reader: exact, Source: BootstrapSourceID}, {Reader: exact, Source: other}, {Reader: ancestor, Source: BootstrapSourceID}, {Reader: ancestor, Source: other}}
 	index := &DiscoveryIndex{Readers: map[string][]FileReader{
 		"missing/nested/input.yaml": want[:2],
 		"missing":                   {{Reader: ancestor, Source: BootstrapSourceID}, {Reader: exact, Source: other, Exact: true}},
+		".":                         {{Reader: ancestor, Source: other}, {Reader: exact, Source: other, Exact: true}},
 	}}
 	readers := index.ReadersOfFile("missing/nested/input.yaml")
 	count := 0

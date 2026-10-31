@@ -29,7 +29,7 @@ func (c *admissionClosure) readHistory() {
 			for source, roots := range record.ContentRoots {
 				resolved := make([]string, 0, len(roots))
 				for _, root := range roots {
-					base, ok := c.resolveRoot(source, root)
+					base, ok := resolveRoot(c.objects, source, root)
 					if !ok {
 						c.replace[owner] = false
 						base = root
@@ -132,11 +132,11 @@ func (v *admissionRootView) Readlink(name string) (string, error) {
 	return target, err
 }
 
-func (c *admissionClosure) resolveRoot(source manifest.NamedResource, root string) (string, bool) {
+func resolveRoot(objects sourceStore, source manifest.NamedResource, root string) (string, bool) {
 	if root == "" || path.IsAbs(root) || strings.Contains(root, "://") || strings.HasPrefix(path.Clean(root), "../") || path.Clean(root) == ".." {
 		return "", false
 	}
-	art, _ := c.objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+	art, _ := objects.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
 	if art == nil || art.FS == nil {
 		return "", false
 	}

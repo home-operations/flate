@@ -62,6 +62,7 @@ type DiscoveryRecord struct {
 type FileReader struct {
 	Reader, Source NamedResource
 	Exact          bool // Source-file reads exclude descendants and establish no render ownership.
+	Materialize    bool // The producer supplies another reader, not the changed content itself.
 }
 
 // DiscoveryIndex owns immutable discovery records, canonical claims and file readers.
@@ -127,7 +128,7 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedRes
 		}
 	}
 	for reader := range i.ReadersOfFile(file) {
-		if !reader.Exact {
+		if !reader.Exact && !reader.Materialize {
 			owners = appendUnique(owners, reader.Reader)
 		}
 	}
@@ -143,7 +144,7 @@ func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[FileReader] {
 		if i == nil {
 			return
 		}
-		for current := file; current != "" && current != "." && current != "/"; current = path.Dir(current) {
+		for current := file; current != "" && current != "/"; current = path.Dir(current) {
 			for _, id := range i.Readers[current] {
 				if id.Exact && current != file {
 					continue
@@ -151,6 +152,9 @@ func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[FileReader] {
 				if !yield(id) {
 					return
 				}
+			}
+			if current == "." {
+				break
 			}
 		}
 	}

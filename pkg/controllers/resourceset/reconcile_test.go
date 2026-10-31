@@ -30,7 +30,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			tasks := task.NewBounded(2)
-			c := New(st, tasks, false)
+			c := New(st, tasks, nil, false)
 			started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(resume) })
 			t.Cleanup(func() { release(); tasks.BlockTillDone() })
@@ -192,7 +192,7 @@ func TestReconcile_ProviderInventorySettlement(t *testing.T) {
 					}
 				}
 				before.Finish()
-				c := New(st, tasks, false)
+				c := New(st, tasks, nil, false)
 				c.Configure(base.Options{Filter: filter, Index: index, Loader: filterLoader})
 				c.StartLifecycle()
 

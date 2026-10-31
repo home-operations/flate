@@ -91,7 +91,9 @@ func (*Secret) catalog(id NamedResource) BaseManifest {
 
 func (r *RawObject) catalog(id NamedResource) BaseManifest {
 	out := &RawObject{Kind: r.Kind, APIVersion: r.APIVersion, Name: id.Name, Namespace: id.Namespace}
-	if _, valid := r.EntryApplication(); valid {
+	if r.isArtifactGenerator() {
+		out.Spec = map[string]any{"artifacts": r.Spec["artifacts"], "pathPattern": r.Spec["pathPattern"]}
+	} else if _, valid := r.EntryApplication(); valid {
 		out.Spec = map[string]any{"sync": r.Spec["sync"]}
 	}
 	return out

@@ -27,6 +27,8 @@ import (
 	"oras.land/oras-go/v2/errdef"
 )
 
+const acceptedRenderAnnotation = "flate.accepted-render"
+
 type historyCountingFS struct {
 	fs.FS
 	opens atomic.Int64
@@ -117,8 +119,8 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	if _, _, _, err := owner.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil); !errors.Is(err, errdef.ErrNotFound) {
 		t.Fatalf("standalone template wrote durable output: %v", err)
 	}
-	assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), receipt, nil))
-	assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), nil, emptyRenderInventory))
+	assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: nil}))
+	assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: nil, Records: emptyRenderInventory}))
 	input.Admit = func(string) (bool, error) { t.Fatal("history called Admit"); return false, nil }
 	if previous, complete := client.PreviousRender(t.Context(), hr, nil, input); complete || previous != nil {
 		t.Fatal("unaccepted template supplied history")
@@ -130,12 +132,38 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		}
 		child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Application: `{"kind":"Kustomization","spec":{"path":"./entry"}}`, Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/blue"}}}}
-		assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
+		assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: maps.All(records)}))
 		fresh := NewClient(cachetest.New(t, root, cache.New))
 		previous, complete := fresh.PreviousRender(t.Context(), hr, nil, input)
 		assert.Equal(t, complete, true)
 		got := maps.Collect(previous)
 		assert.Diff(t, got, records)
+		t.Run("source metadata replacement", func(t *testing.T) {
+			t.Parallel()
+			directory := t.TempDir()
+			source := manifest.SourceIdentity{Root: "/history-input"}
+			for _, selected := range []string{"apps/red", "apps/blue", ""} {
+				sources := []manifest.SourceEvidence{}
+				if selected != "" {
+					sources = append(sources, manifest.SourceEvidence{Source: source, Path: selected, Subtree: true})
+				}
+				publisher := NewClient(cachetest.New(t, directory, cache.New))
+				assert.NoError(t, publisher.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: maps.All(records), Sources: sources}))
+				assert.NoError(t, publisher.cache.Close())
+				reopened := NewClient(cachetest.New(t, directory, cache.New))
+				for _, candidate := range []string{"apps/red", "apps/blue"} {
+					owners, err := reopened.cache.ProducersForPaths(t.Context(), []manifest.SourceEvidence{{Source: source, Path: candidate + "/cm.yaml"}})
+					assert.NoError(t, err)
+					var want []manifest.NamedResource
+					if candidate == selected {
+						want = []manifest.NamedResource{hr.Named()}
+					}
+					assert.Diff(t, owners, want)
+				}
+				assert.NoError(t, reopened.cache.Close())
+			}
+		})
+
 		t.Run("preparation", func(t *testing.T) {
 			t.Parallel()
 			artifact := *input.Sources.LocalSourceArtifact(hr.ChartSource(), store.ArtifactContent)
@@ -150,7 +178,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			publisher := NewClient(cachetest.New(t, directory, cache.New))
 			_, pending, err := publisher.Template(t.Context(), hr, nil, observed)
 			assert.NoError(t, err)
-			assert.NoError(t, publisher.RecordRender(t.Context(), hr.Named(), pending, maps.All(records)))
+			assert.NoError(t, publisher.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: pending, Records: maps.All(records)}))
 			reader := NewClient(cachetest.New(t, directory, cache.New))
 			sources.calls.Store(0)
 			counted.opens.Store(0)
@@ -218,7 +246,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		t.Run("typed record key", func(t *testing.T) {
 			t.Parallel()
 			isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
-			assert.NoError(t, isolated.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
+			assert.NoError(t, isolated.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: maps.All(records)}))
 			prepared, err := isolated.prepareTemplate(t.Context(), hr, nil, input)
 			assert.NoError(t, err)
 			remembered, err := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key)
@@ -258,7 +286,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			assert.NoError(t, err)
 			current.CommonMetadata.Annotations["policy"], options.SkipKinds[0] = "after", "Different"
 			current.DependsOn[0].Name, current.ValuesFrom[0].Name, current.HealthCheckExprs[0].Current = "after", "after", "false"
-			assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: pending, Records: maps.All(records)}))
 			expected := RenderOptions{Sources: input.Sources, SkipKinds: []string{"Skipped"}}
 			if _, complete := renderer.PreviousRender(t.Context(), before, nil, expected); !complete {
 				t.Fatal("caller mutation changed the prepared receipt")
@@ -277,7 +305,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			original := RenderOptions{Sources: input.Sources}
 			_, first, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, original))
 			assert.NoError(t, err)
-			assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), first, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: first, Records: maps.All(records)}))
 			changed := original
 			changed.WipeSecrets = true
 			_, pending, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, changed))
@@ -339,16 +367,16 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 					}
 				}
 			}
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			initialKey := storedKey()
 			_, pending, err = testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, RenderOptions{Sources: input.Sources}))
 			assert.NoError(t, err)
 			resident := pending.Value().(renderFrame)
-			if resident.accepted == nil || resident.acceptedKey == "" || resident.identity == "" {
+			if resident.accepted == nil || resident.acceptedKey == "" {
 				t.Fatal("warm receipt did not carry decoded accepted evidence")
 			}
 			check := unchanged()
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			check()
 			reader, _, _, err := renderer.cache.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)
 			assert.NoError(t, err)
@@ -360,17 +388,17 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			})
 			assert.NoError(t, err)
 
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			assert.Equal(t, storedKey(), initialKey)
 			assert.NoError(t, renderer.cache.Close())
 			renderer = open()
 			assert.Equal(t, storedKey(), initialKey)
 			check = unchanged()
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			check()
 			initialIndex, err := os.ReadFile(indexPath)
 			assert.NoError(t, err)
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, emptyRenderInventory))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: emptyRenderInventory}))
 			changedIndex, err := os.ReadFile(indexPath)
 			assert.NoError(t, err)
 			if storedKey() == initialKey {
@@ -388,34 +416,34 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			assert.NoError(t, err)
 			foreign := accepting
 			foreign.Namespace = "foreign"
-			assert.NoError(t, renderer.RecordRender(t.Context(), foreign, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: foreign, Receipt: pending, Records: maps.All(records)}))
 			if _, complete := renderer.PreviousRender(t.Context(), hr, nil, input); complete {
 				t.Fatal("foreign overwrite retained the previous owner's history")
 			}
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, borrowedReceipt, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: borrowedReceipt, Records: maps.All(records)}))
 			assert.Equal(t, storedKey(), initialKey)
 			previous, complete = renderer.PreviousRender(t.Context(), hr, nil, input)
 			assert.Equal(t, complete, true)
 			got := maps.Collect(previous)
 			assert.Diff(t, got, records)
 			check = unchanged()
-			assert.NoError(t, renderer.RecordRender(t.Context(), accepting, pending, maps.All(records)))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}))
 			check()
 			canceled, cancel := context.WithCancel(t.Context())
 			cancel()
 			check = unchanged()
-			if err := renderer.RecordRender(canceled, accepting, pending, maps.All(records)); !errors.Is(err, context.Canceled) {
+			if err := renderer.RecordRender(canceled, RenderAcceptance{Owner: accepting, Receipt: pending, Records: maps.All(records)}); !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled same-frame publication: %v", err)
 			}
 			check()
 			check = unchanged()
-			if err := renderer.RecordRender(t.Context(), accepting, manifest.NewRenderReceipt("invalid", nil), maps.All(records)); !errors.Is(err, manifest.ErrFlux) {
+			if err := renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: manifest.NewRenderReceipt("invalid", nil), Records: maps.All(records)}); !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("failed receipt publication: %v", err)
 			}
 			check()
 			check = unchanged()
 			assert.NoError(t, renderer.cache.Close())
-			if err := renderer.RecordRender(t.Context(), accepting, pending, emptyRenderInventory); !errors.Is(err, manifest.ErrFlux) {
+			if err := renderer.RecordRender(t.Context(), RenderAcceptance{Owner: accepting, Receipt: pending, Records: emptyRenderInventory}); !errors.Is(err, manifest.ErrFlux) {
 				t.Fatalf("closed owner lookup: %v", err)
 			}
 			check()
@@ -449,7 +477,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				isolated := NewClient(cachetest.New(t, t.TempDir(), cache.New))
-				assert.NoError(t, isolated.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
+				assert.NoError(t, isolated.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: maps.All(records)}))
 				changed := input
 				tc.mutate(&changed)
 				if _, complete := isolated.PreviousRender(t.Context(), hr, nil, changed); complete {
@@ -473,7 +501,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		}
 		canceled, cancel := context.WithCancel(t.Context())
 		cancel()
-		if err := client.RecordRender(canceled, hr.Named(), receipt, emptyRenderInventory); !errors.Is(err, context.Canceled) {
+		if err := client.RecordRender(canceled, RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: emptyRenderInventory}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("canceled acceptance: %v", err)
 		}
 		previous, complete = fresh.PreviousRender(t.Context(), hr, nil, input)
@@ -481,7 +509,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 		for id := range previous {
 			assert.Equal(t, id, child)
 		}
-		assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), receipt, emptyRenderInventory))
+		assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: emptyRenderInventory}))
 		previous, complete = fresh.PreviousRender(t.Context(), hr, nil, input)
 		assert.Equal(t, complete && previous != nil, true)
 		for range previous {
@@ -505,7 +533,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 	for range 2 {
 		_, receipt, err := testutil.RenderMaps(client.Template(t.Context(), hr, nil, input))
 		assert.NoError(t, err)
-		assert.NoError(t, client.RecordRender(t.Context(), hr.Named(), receipt, emptyRenderInventory))
+		assert.NoError(t, client.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: emptyRenderInventory}))
 	}
 	prepared, err := client.prepareTemplate(t.Context(), hr, nil, input)
 	assert.NoError(t, err)
@@ -571,7 +599,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			renderer := NewClient(cachetest.New(t, t.TempDir(), cache.New))
 			_, receipt, err := testutil.RenderMaps(renderer.Template(t.Context(), hr, nil, input))
 			assert.NoError(t, err)
-			assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, emptyRenderInventory))
+			assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: emptyRenderInventory}))
 			if _, complete := renderer.PreviousRender(t.Context(), hr, nil, input); !complete {
 				t.Fatal("matching source binding missed")
 			}
@@ -621,7 +649,7 @@ func TestRecordRender_AcceptedLimit(t *testing.T) {
 	frame := renderFrame{header: renderHeader{Key: "oversized-accepted", Analysis: &chartAnalysis{Version: "0.1.0"}}, output: payload}
 	receipt := manifest.NewRenderReceipt(frame, equalRenderFrame)
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {File: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))}}
-	if err := renderer.RecordRender(t.Context(), owner, receipt, maps.All(records)); !errors.Is(err, manifest.ErrFlux) {
+	if err := renderer.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: maps.All(records)}); !errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("oversized accepted inventory was published: %v", err)
 	}
 }

@@ -64,16 +64,17 @@ const (
 
 // documentReader caches positive and negative results by absolute source-view directory.
 type documentReader struct {
-	cache      map[string]document
-	views      map[string]fs.FS
-	artifacts  map[string]*store.SourceArtifact
-	parsed     *ParsedInputs
-	compact    bool
-	coordinate *OccurrenceID
-	regular    bool
-	changed    []string
-	bootstrap  string
-	edgesDirty bool
+	projections *manifest.ProducerProjections
+	cache       map[string]document
+	views       map[string]fs.FS
+	artifacts   map[string]*store.SourceArtifact
+	parsed      *ParsedInputs
+	compact     bool
+	coordinate  *OccurrenceID
+	regular     bool
+	changed     []string
+	bootstrap   string
+	edgesDirty  bool
 }
 
 func (r documentReader) scanExcluded(file string) bool {
@@ -178,6 +179,7 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 }
 
 func (l *Loader) refreshSources() {
+	l.documents.projections = l.Options.Projections
 	l.documents.parsed = nil
 	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets && inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs

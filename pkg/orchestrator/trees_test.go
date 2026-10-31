@@ -1204,12 +1204,16 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 	t.Run("discovery_failure", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			release := make(chan struct{})
+			headEntered := make(chan struct{})
 			failure := errors.New("baseline discovery failed")
 			baseInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
 				<-release
 				return failure
 			}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "base warning"}}}
-			headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
+			headInput := &store.SourceArtifact{LocalPath: t.TempDir(), FS: &joinedTreeFS{acquire: func() error {
+				close(headEntered)
+				return errors.New("head discovery failed")
+			}}, Warnings: []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable, Message: "head warning"}}}
 			var base, head Rendered
 			done := make(chan error, 1)
 			go func() {
@@ -1227,6 +1231,11 @@ func TestRenderTrees_CancellationJoinsBeforeCacheClose(t *testing.T) {
 				done <- err
 			}()
 			synctest.Wait()
+			select {
+			case <-headEntered:
+			default:
+				t.Error("head planning did not start while base planning waited")
+			}
 			close(release)
 			err := <-done
 			if !errors.Is(err, failure) || strings.Count(err.Error(), failure.Error()) != 1 {

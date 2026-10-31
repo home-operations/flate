@@ -291,13 +291,14 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 
 // Admission retains immutable bootstrap policy for early and runtime source decisions.
 type Admission struct {
-	applications atomic.Pointer[applicationEvidence]
-	entryBound   atomic.Bool
-	sources      map[manifest.NamedResource]entryResolution
-	input        *store.SourceArtifact
-	path         string
-	remotes      map[string]struct{}
-	aliasViews   map[string]*store.SourceArtifact
+	applications  atomic.Pointer[applicationEvidence]
+	entryBound    atomic.Bool
+	sources       map[manifest.NamedResource]entryResolution
+	input         *store.SourceArtifact
+	path          string
+	remotes       map[string]struct{}
+	aliasViews    map[string]*store.SourceArtifact
+	qualification *entryQualification
 }
 
 func (d *Session) admission() *Admission {

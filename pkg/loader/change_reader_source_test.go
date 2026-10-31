@@ -114,6 +114,47 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 	}
 }
 
+func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
+	t.Parallel()
+	for _, foreign := range []bool{false, true} {
+		t.Run(fmt.Sprint(foreign), func(t *testing.T) {
+			t.Parallel()
+			var stores [2]*store.Store
+			var roots [2]string
+			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}}, ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart", Namespace: "apps"}, ValuesFrom: []helmv2.ValuesReference{{Kind: manifest.KindConfigMap, Name: "settings"}}}
+			var indexes [2]*manifest.DiscoveryIndex
+			for side := range stores {
+				root := t.TempDir()
+				roots[side] = root
+				st := store.New()
+				stores[side] = st
+				st.AddObject(consumer)
+				files := fstest.MapFS{"consumer.yaml": {Data: []byte("unchanged consumer")}}
+				if side == 1 {
+					files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings}\ndata: {value: changed}\n")}
+				}
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: files})
+				origin := manifest.BootstrapSourceID
+				if foreign {
+					source := &manifest.GitRepository{Name: "foreign", Namespace: "infra", URL: "https://fixture.invalid/foreign"}
+					st.AddObject(source)
+					origin = source.Named()
+					st.SetArtifact(origin, &store.SourceArtifact{LocalPath: t.TempDir(), Content: "foreign", Key: "foreign", FS: fstest.MapFS{}})
+				}
+				indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					consumer.Named(): {File: "consumer.yaml", Productions: []manifest.Production{{Authored: consumer.Named(), Source: origin, File: "consumer.yaml"}}},
+				}}
+			}
+			changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+			assert.NoError(t, err)
+			for side, st := range stores {
+				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})
+				assert.Equal(t, filter.ShouldReconcile(consumer.Named()), !foreign)
+			}
+		})
+	}
+}
+
 func TestFilter_DeferredSourceValuesPairedSides(t *testing.T) {
 	t.Parallel()
 	for _, state := range []string{"deferred", "present", "unchanged_collision"} {

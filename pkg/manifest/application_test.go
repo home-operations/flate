@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"maps"
+	"slices"
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
@@ -68,6 +69,9 @@ func TestEntryApplication_FluxInstance(t *testing.T) {
 			assert.Equal(t, source, application.Source)
 			assert.Equal(t, path, application.Path)
 			assert.Equal(t, present, true)
+			assert.Diff(t, slices.Collect(SourceRoots(object)), []string{"clusters"})
+			assert.Equal(t, len(slices.Collect(RenderRoots(object))), 0)
+			assert.Diff(t, slices.Collect(References(object, ReferenceRelations)), []Reference{{NamedResource: application.Source, Use: "source", Content: true}})
 			assert.Diff(t, object.Spec, before)
 		})
 	}

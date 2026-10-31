@@ -28,7 +28,6 @@ func TestFetcher_SuppliedHTTPMaterial(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, prepared.username, "repository")
 	assert.Equal(t, prepared.password, "filled")
-	assert.Equal(t, prepared.ambient, false)
 	material, err := source.ResolveTransport(source.SecretLookup(&reads), manifest.DiagnosticFor(r.Named(), r), []source.TransportInput{{Reference: r.CertSecretRef, Use: source.TransportCert}})
 	assert.NoError(t, err)
 	want, err := network.HTTPTransport(source.HTTPTransportConfig{Material: material, Credentials: [2]string{"repository", "filled"}, DisableCompression: true})

@@ -1,7 +1,8 @@
 # AGENTS.md: flate
 
 flate renders Flux (Kustomization, HelmRelease, ResourceSet, sources) offline as one static
-binary: no cluster, no kubectl, no shellouts; helm, kustomize, git and OCI are linked libraries.
+binary: no cluster or kubectl; helm, kustomize, git and OCI are linked libraries. Only native
+Docker credential helpers and AWS credential processes may execute external programs.
 Output matches Flux bit-for-bit and is byte-identical run to run. Speed is the point:
 changed-only renders, a bounded parallel DAG, aggressive dedup. `pkg/` is a public SDK that
 konflate embeds.

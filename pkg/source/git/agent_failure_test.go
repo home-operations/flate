@@ -21,6 +21,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 )
@@ -30,7 +31,7 @@ func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			identity, key := testSSHIdentity(t)
 			_, host := testSSHIdentity(t)
-			closed, opened := acquisitionAgent(t, identity)
+			closed, opened, _ := acquisitionAgent(t, identity)
 			homeDir := t.TempDir()
 			t.Setenv("HOME", homeDir)
 			testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")
@@ -82,7 +83,7 @@ func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 				t.Fatalf("prepare = %v", err)
 			}
 			artifact, err := missing.RetryAmbient(t.Context())
-			if artifact != nil || err == nil || !strings.Contains(err.Error(), map[string]string{"view": "validate git view", "publication": "blobs"}[phase]) {
+			if artifact != nil || err == nil || !errors.Is(err, manifest.ErrFlux) || phase == "publication" && !strings.Contains(err.Error(), "blobs") || phase == "view" && !errors.Is(err, manifest.ErrInput) {
 				t.Fatalf("ambient %s failure = %v, %v", phase, artifact, err)
 			}
 			<-closed
@@ -96,7 +97,7 @@ func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
 	identity, key := testSSHIdentity(t)
 	_, host := testSSHIdentity(t)
-	closed, opened := acquisitionAgent(t, identity)
+	closed, opened, _ := acquisitionAgent(t, identity)
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	testutil.WriteFile(t, homeDir, ".ssh/known_hosts", knownhosts.Line([]string{"fixture"}, host.PublicKey())+"\n")

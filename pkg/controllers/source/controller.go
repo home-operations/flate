@@ -218,11 +218,9 @@ func (p *pendingSource) Settle(ctx context.Context, _ manifest.DrainLevel) error
 	c := p.execution
 	var artifact *store.SourceArtifact
 	var err error = p.missing
-	if p.missing.RetryAmbient != nil && !c.producerBacked(p.missing) {
-		c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryAmbient(ctx) })
-		if err != nil {
-			err = fmt.Errorf("%s: %w", manifest.TrimSentinelPrefix(p.missing.Error()), err)
-		}
+	c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryMachine(ctx, &c.run.Reads) })
+	if err != nil && !errors.Is(err, p.missing) {
+		err = fmt.Errorf("%s: %w", manifest.TrimSentinelPrefix(p.missing.Error()), err)
 	}
 	return c.completeFetch(p.object, artifact, err)
 }
@@ -234,12 +232,13 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 		}
 	}
 	if err != nil {
-		if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (c.allowMissingSecrets || c.producerBacked(err)) {
+		missing, hasMissing := errors.AsType[*src.MissingSecretError](err)
+		if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (c.allowMissingSecrets || hasMissing && missing.ProducerBacked(&c.run.Reads)) {
 			if c.run.Reads.Valid() {
 				slog.Info("source: skipped (missing secret)", "id", manifest.DiagnosticFor(obj.Named(), obj).String(), "err", err)
 			}
 			var related []manifest.NamedResource
-			if missing, ok := errors.AsType[*src.MissingSecretError](err); ok && missing.Secret != (manifest.NamedResource{}) {
+			if hasMissing && missing.Secret != (manifest.NamedResource{}) {
 				related = []manifest.NamedResource{missing.Secret}
 			}
 			c.run.Reads.AddWarning(manifest.Warning{Resource: obj.Named(), Related: related, Subject: manifest.DiagnosticFor(obj.Named(), obj), Category: manifest.WarnSourceCredentialsUnavailable,
@@ -257,17 +256,4 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 	}
 	slog.Debug("source: fetch complete", "id", manifest.DiagnosticFor(obj.Named(), obj).String())
 	return nil
-}
-
-func (c *execution) producerBacked(err error) bool {
-	mse, ok := errors.AsType[*src.MissingSecretError](err)
-	if !ok || mse.Secret == (manifest.NamedResource{}) {
-		return false
-	}
-	for _, p := range c.run.Reads.Productions(mse.Secret, nil) {
-		if p.Declaration != (manifest.NamedResource{}) {
-			return true
-		}
-	}
-	return false
 }

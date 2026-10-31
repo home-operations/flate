@@ -17,7 +17,6 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
-	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/errcode"
 
 	"github.com/home-operations/flate/internal/fetcherr"
@@ -27,14 +26,21 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, selected *auth.Credential, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
 	if repo.URL == "" {
 		return nil, fmt.Errorf("%w: %s missing url", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label())
 	}
-	request, err := f.newRepoClient(ctx, repo, selected, policy)
+	request, err := f.newRepoClient(ctx, repo, policy)
 	if err != nil {
 		return nil, err
 	}
+	if repo.SecretRef == nil {
+		return f.machineFetch(ctx, repo, request, policy)
+	}
+	return f.fetchPrepared(ctx, repo, request, policy)
+}
+
+func (f *operation) fetchPrepared(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
 	artifact, err := f.fetch(ctx, repo, request, policy)
 	if repo.Insecure && ctx.Err() == nil && errors.Is(err, http.ErrSchemeMismatch) {
 		if requestErr, ok := errors.AsType[*url.Error](err); ok {
@@ -45,19 +51,14 @@ func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCI
 			}
 		}
 	}
-	if err != nil && !request.hasCredentials {
-		response, _ := errors.AsType[*errcode.ErrorResponse](err)
-		if errors.Is(err, auth.ErrBasicCredentialNotFound) || response != nil && response.StatusCode == http.StatusUnauthorized {
-			err = fmt.Errorf("%w; no login entry for %s in Docker config or Helm's registry file; credential helpers are not run; use --registry-config with a plain auths entry or a supplied Secret", err, request.client.Reference.Host())
-		}
-	}
+
 	return artifact, err
 }
 
 type registryAcquisition struct {
-	client         *remote.Repository
-	material       any
-	hasCredentials bool
+	client   *remote.Repository
+	material any
+	resolved source.TransportMaterial
 }
 
 func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {

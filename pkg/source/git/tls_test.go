@@ -564,7 +564,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 				url = "https://example.com/x.git"
 			}
 			repo := gitRepoWithSecret("g", url, tc.secret)
-			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo)
+			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
 			opts := request.options
 			if tc.wantInput || tc.wantMissing {
 				assert.Diff(t, opts, git.CloneOptions{})
@@ -612,7 +612,7 @@ func TestFetcher_ResolveTransport_EndpointValidation(t *testing.T) {
 			}}
 			f := &Fetcher{}
 			repo := gitRepoWithSecret("g", "http://[::1", tc.secret)
-			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo)
+			request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(repo, sourcecache.Policy{})
 			if tc.wantInput {
 				assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 				if err == nil || !strings.Contains(err.Error(), "parse git endpoint") {
@@ -662,7 +662,7 @@ func TestFetcher_ResolveTransport_SecretMaterial(t *testing.T) {
 			}
 			var reads store.ReadSet
 			reads.Init(s, repo.Named(), nil)
-			request, err := (&operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}).resolveTransport(repo)
+			request, err := (&operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}).resolveTransport(repo, sourcecache.Policy{})
 			s.AddObject(&manifest.Secret{Name: "proxy", Namespace: "ns", StringData: map[string]any{"address": "http://changed.invalid"}})
 			assert.Equal(t, reads.Valid(), !tc.proxyRead)
 			s.AddObject(&manifest.Secret{Name: "creds", Namespace: "ns"})

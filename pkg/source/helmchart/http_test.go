@@ -157,13 +157,13 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 			fInputs := testInputs{}
 			f := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 
-			if _, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.RetryConfig{}); err == nil {
+			if _, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{}); err == nil {
 				t.Fatal("accepted invalid index")
 			}
 			if _, ok := f.indexCache.Load("sha256:" + chartDigest([]byte(tc.data))); ok {
 				t.Fatal("invalid index entered parsed memo")
 			}
-			idx, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.RetryConfig{})
+			idx, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
 			if err != nil {
 				t.Fatalf("retry within repository interval: %v", err)
 			}
@@ -180,7 +180,7 @@ func TestFetchIndex_InvalidResponseDoesNotPublish(t *testing.T) {
 			warmInputs := testInputs{}
 			warm := New(nil, Config{Network: newTestNetwork(t), Cache: c})
 
-			cached, err := warm.fetchIndex(t.Context(), preparedHTTP(t, warm, warmInputs, r), sourcecache.RetryConfig{})
+			cached, err := warm.fetchIndex(t.Context(), preparedHTTP(t, warm, warmInputs, r), sourcecache.Policy{})
 			if err != nil {
 				t.Fatalf("disk-cached index: %v", err)
 			}
@@ -603,22 +603,22 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	defer srv.Close()
 	r := httpRepo(srv.URL)
 	f, fInputs := newHTTPFetcher(t, r)
-	first, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.RetryConfig{})
+	first, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.RetryConfig{})
+	second, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
 	if err != nil || second != first || hits.Load() != 1 {
 		t.Fatalf("fresh memo=%p/%p, hits=%d, error=%v", first, second, hits.Load(), err)
 	}
 	strict := *r
 	strict.Interval.Duration = 0
-	same, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.RetryConfig{})
+	same, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.Policy{})
 	if err != nil || same != first || hits.Load() != 2 {
 		t.Fatalf("same digest=%p/%p, hits=%d, error=%v", first, same, hits.Load(), err)
 	}
 	version.Store(2)
-	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.RetryConfig{})
+	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &strict), sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,7 +627,7 @@ func TestFetchIndex_FreshnessAndDigest(t *testing.T) {
 	}
 	other := *r
 	other.URL += "/other"
-	shared, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &other), sourcecache.RetryConfig{})
+	shared, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, &other), sourcecache.Policy{})
 	if err != nil || shared != updated || hits.Load() != 4 {
 		t.Fatalf("equal response digest across URLs=%p/%p, hits=%d, error=%v", updated, shared, hits.Load(), err)
 	}
@@ -774,11 +774,11 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := f.fetchIndex(ctx, preparedHTTP(t, f, fInputs, r), sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour})
+		_, err := f.fetchIndex(ctx, preparedHTTP(t, f, fInputs, r), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}})
 		done <- err
 	}()
 	<-failed
-	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.RetryConfig{})
+	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -789,7 +789,7 @@ func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 	if _, err := updated.Get("app-template", "2.0.0"); err != nil {
 		t.Fatal(err)
 	}
-	memo, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.RetryConfig{})
+	memo, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
 	if err != nil || memo != updated || hits.Load() != 2 {
 		t.Fatalf("digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
 	}

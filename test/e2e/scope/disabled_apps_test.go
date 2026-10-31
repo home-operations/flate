@@ -183,7 +183,7 @@ func TestE2E_DisabledAppDiffSides(t *testing.T) {
 			disabledAppFixture(t, tc.root, "nested", true)
 			testutil.WriteFile(t, tc.root, entry+"/kustomization.yaml", "resources: [sync.yaml, external.yaml]\n")
 			testutil.WriteFile(t, tc.root, entry+"/sync.yaml", testutil.KustomizationYAML("sync", "flux-system", "  path: ./kube/deploy/app\n  targetNamespace: "+tc.namespace+"\n"))
-			testutil.WriteFile(t, tc.root, entry+"/external.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec:\n  url: https://fixture.invalid/external\n  secretRef: {name: unavailable-auth}\n---\n"+testutil.KustomizationYAML("external-sync", "flux-system", "  path: ./kube/deploy/app\n  sourceRef: {kind: GitRepository, name: external}\n"))
+			testutil.WriteFile(t, tc.root, entry+"/external.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec:\n  provider: github\n  url: https://fixture.invalid/external\n  secretRef: {name: unavailable-auth}\n---\n"+testutil.KustomizationYAML("external-sync", "flux-system", "  path: ./kube/deploy/app\n  sourceRef: {kind: GitRepository, name: external}\n"))
 			testutil.WriteFile(t, tc.root, "kube/deploy/app/kustomization.yaml", "namespace: inner\nresources: [ks.yaml]\n# - commented.yaml\n")
 			testutil.WriteFile(t, tc.root, "payload/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: reachable-cm, namespace: apps}\ndata: {value: "+tc.value+"}\n")
 		}
@@ -396,7 +396,7 @@ func disabledAppFixture(t *testing.T, root, layout string, enabled bool) {
 		ref := "  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}\n"
 		testutil.WriteFile(t, root, entry+"/kustomization.yaml", "resources: [sync.yaml, external.yaml, ../../../deploy/app]\n")
 		testutil.WriteFile(t, root, entry+"/sync.yaml", testutil.KustomizationYAML("sync", "flux-system", "  path: ./"+entry+"\n"))
-		testutil.WriteFile(t, root, entry+"/external.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec:\n  url: https://fixture.invalid/external\n  secretRef: {name: unavailable-auth}\n---\n"+testutil.KustomizationYAML("external-sync", "flux-system", "  path: ./"+entry+"\n  sourceRef: {kind: GitRepository, name: external}\n"))
+		testutil.WriteFile(t, root, entry+"/external.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: external, namespace: flux-system}\nspec:\n  provider: github\n  url: https://fixture.invalid/external\n  secretRef: {name: unavailable-auth}\n---\n"+testutil.KustomizationYAML("external-sync", "flux-system", "  path: ./"+entry+"\n  sourceRef: {kind: GitRepository, name: external}\n"))
 		resources := "resources: []\n"
 		if enabled {
 			resources = "resources: [ks.yaml]\n# - commented.yaml\n"

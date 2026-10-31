@@ -1,11 +1,15 @@
 package source
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"io/fs"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -206,5 +210,134 @@ func TestSecretLookup_SuppliedAuthTLSAndProxy(t *testing.T) {
 	assert.Diff(t, material.ProxyComponents(), [3]string{"http://proxy.invalid", "repository", "filled"})
 	if s.GetObject(supplied.Named()) != repository || repository.StringData["password"] != manifest.ValuePlaceholder("password") {
 		t.Fatal("effective credential material entered canonical state")
+	}
+}
+
+func TestAcquireMachine_Lifecycle(t *testing.T) {
+	t.Parallel()
+	cause := &fs.PathError{Op: "open", Path: "credential-canary", Err: fs.ErrPermission}
+	for _, phase := range []string{"pre-canceled", "unavailable", "prepare failure", "expired preparation", "success", "unbounded", "acquire failure"} {
+		t.Run(phase, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if phase == "pre-canceled" {
+				cancel()
+			}
+			timeout := time.Hour
+			if phase == "expired preparation" {
+				timeout = -1
+			}
+			policy := cache.Policy{Timeout: &timeout, MaxAge: time.Hour, Retry: cache.RetryConfig{Attempts: 3}}
+			if phase == "unbounded" {
+				policy.Timeout = nil
+			}
+			prepared, acquired := 0, 0
+			var preparation context.Context
+			partial := &store.SourceArtifact{Warnings: []manifest.Warning{{Category: manifest.WarnSourceCredentialsUnavailable}}}
+			artifact, err := AcquireMachine(ctx, policy, func(ctx context.Context) error {
+				prepared++
+				preparation = ctx
+				if phase == "unavailable" {
+					return MissingSecretErr(manifest.DiagnosticIdentity{}, "", "unavailable")
+				}
+				if phase == "prepare failure" {
+					return cause
+				}
+				return nil
+			}, func(got context.Context, p cache.Policy) (*store.SourceArtifact, error) {
+				acquired++
+				if got != ctx || got.Err() != nil || preparation.Err() == nil || !p.Machine || p.Timeout != policy.Timeout || p.MaxAge != policy.MaxAge || p.Retry != policy.Retry {
+					t.Fatal("preparation cancellation or acquisition policy changed")
+				}
+				if phase == "acquire failure" {
+					return partial, cause
+				}
+				return partial, nil
+			})
+			switch phase {
+			case "pre-canceled":
+				if prepared != 0 || acquired != 0 || !errors.Is(err, context.Canceled) {
+					t.Fatalf("canceled lifecycle: %d/%d %v", prepared, acquired, err)
+				}
+			case "unavailable":
+				if prepared != 1 || acquired != 0 || !errors.Is(err, manifest.ErrMissingSecret) {
+					t.Fatalf("unavailable: %d/%d %v", prepared, acquired, err)
+				}
+			case "expired preparation":
+				if acquired != 0 || !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("late success admitted acquisition: %v", err)
+				}
+			case "prepare failure", "acquire failure":
+				if !errors.Is(err, cause) || !errors.Is(err, manifest.ErrFlux) || strings.Contains(err.Error(), "canary") {
+					t.Fatalf("classification lost cause or exposed material: %v", err)
+				}
+				if phase == "prepare failure" && acquired != 0 || phase == "acquire failure" && artifact != partial {
+					t.Fatal("changed partial result or acquired after preparation failure")
+				}
+			case "success", "unbounded":
+				if err != nil || artifact != partial || prepared != 1 || acquired != 1 {
+					t.Fatalf("successful lifecycle: %d/%d %v", prepared, acquired, err)
+				}
+			}
+		})
+	}
+}
+
+func TestMissingSecretError_RetryMachine(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []string{"nil reads", "source only", "producer", "unavailable", "canceled", "no callback"} {
+		t.Run(shape, func(t *testing.T) {
+			t.Parallel()
+			owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "source"}
+			err := MissingSecretErr(manifest.DiagnosticFor(owner, nil), "auth", "not found")
+			missing, _ := errors.AsType[*MissingSecretError](err)
+			calls := 0
+			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
+				calls++
+				if shape == "unavailable" {
+					return nil, MissingSecretErr(manifest.DiagnosticFor(owner, nil), "", "unavailable")
+				}
+				return &store.SourceArtifact{}, nil
+			}
+			var reads *store.ReadSet
+			if shape == "source only" {
+				missing.Secret = manifest.NamedResource{}
+			}
+			if shape == "producer" {
+				s := store.New()
+				declaration := &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "auth", Namespace: "ns"}
+				s.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{missing.Secret: {Productions: []manifest.Production{{Declaration: declaration.Named()}}}}})
+				reads = &store.ReadSet{}
+				reads.Init(s, owner, nil)
+				defer reads.Close()
+				if !missing.ProducerBacked(reads) {
+					t.Fatal("missing captured declaration")
+				}
+			}
+			if shape == "no callback" {
+				missing.RetryAmbient = nil
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if shape == "canceled" {
+				cancel()
+			}
+			artifact, got := missing.RetryMachine(ctx, reads)
+			switch shape {
+			case "producer", "no callback", "unavailable":
+				if got != missing || artifact != nil || calls != map[string]int{"unavailable": 1}[shape] { //nolint:errorlint // Unavailable retries MUST retain the original error identity.
+					t.Fatalf("missing identity or eligibility changed: %v calls=%d", got, calls)
+				}
+			case "canceled":
+				if !errors.Is(got, context.Canceled) || calls != 0 {
+					t.Fatalf("canceled retry: %v", got)
+				}
+			default:
+				if got != nil || artifact == nil || calls != 1 {
+					t.Fatalf("eligible retry: %v calls=%d", got, calls)
+				}
+			}
+		})
 	}
 }

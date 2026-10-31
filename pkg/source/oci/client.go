@@ -1,19 +1,12 @@
 package oci
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	"helm.sh/helm/v4/pkg/helmpath"
-	"oras.land/oras-go/v2/registry"
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 	"oras.land/oras-go/v2/registry/remote/credentials"
@@ -26,7 +19,7 @@ import (
 
 const dockerConfigJSONKey = ".dockerconfigjson"
 
-func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, selected *auth.Credential, policy cache.Policy) (registryAcquisition, error) {
+func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (registryAcquisition, error) {
 	owner := manifest.DiagnosticFor(repo.Named(), repo)
 	reference, err := parseOCIRef(repo.URL)
 	if err != nil {
@@ -46,52 +39,72 @@ func (f *operation) newRepoClient(ctx context.Context, repo *manifest.OCIReposit
 	if _, err := resolved.ProxyURL(&url.URL{Scheme: "https", Host: client.Reference.Host()}); err != nil {
 		return registryAcquisition{}, fmt.Errorf("%w: resolve registry proxy: invalid proxy configuration", manifest.ErrInput)
 	}
-	if selected == nil {
-		selected, err = f.resolveRegistryConfig(ctx, repo, client.Reference.Host(), policy)
-		if err != nil {
-			return registryAcquisition{}, err
+	request := registryAcquisition{client: client, resolved: resolved}
+
+	selected, err := f.resolveRegistryConfig(ctx, repo, client.Reference.Host())
+	if err == nil && *selected == auth.EmptyCredential && repo.SecretRef != nil {
+		err = source.MissingSecretErr(owner, repo.SecretRef.Name, "no credentials for the source registry")
+	}
+	if missing, ok := errors.AsType[*source.MissingSecretError](err); ok {
+		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+			return f.machineFetch(ctx, repo, request, policy)
 		}
 	}
-	cred := *selected
-	if cred == auth.EmptyCredential && repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
-		if repo.SecretRef != nil {
-			missing := source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "no credentials for the source registry")
-			_, err := f.registryFallback(ctx, repo, missing, policy)
-			return registryAcquisition{}, err
-		}
-		return registryAcquisition{}, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "provider authentication unavailable offline")
-	}
-	var credentials any
-	if cred != auth.EmptyCredential {
-		credentials = cred
-	}
-	material := resolved.Identity(credentials)
-	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: resolved, Insecure: repo.Insecure, Credentials: credentials})
 	if err != nil {
 		return registryAcquisition{}, err
 	}
-	client.Client = &auth.Client{Client: &http.Client{Transport: tr}, Cache: tr.(auth.Cache), Credential: auth.StaticCredential(client.Reference.Registry, cred)}
-	return registryAcquisition{client: client, material: material, hasCredentials: cred != auth.EmptyCredential}, nil
+
+	err = f.configure(repo, &request, *selected)
+	return request, err
+}
+
+func (f *operation) configure(repo *manifest.OCIRepository, request *registryAcquisition, cred auth.Credential) error {
+	var material any
+	if cred != auth.EmptyCredential {
+		material = cred
+	}
+	request.material = request.resolved.Identity(material)
+	tr, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Material: request.resolved, Insecure: repo.Insecure, Credentials: material})
+	if err != nil {
+		return err
+	}
+	request.client.Client = &auth.Client{Client: &http.Client{Transport: tr}, Cache: tr.(auth.Cache), Credential: auth.StaticCredential(request.client.Reference.Registry, cred)}
+	return nil
+}
+
+func (f *operation) machineFetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+	timeout := repo.OperationTimeout()
+	policy.Timeout = &timeout
+	request.client = &remote.Repository{Reference: request.client.Reference}
+	return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
+		selected, err := f.Network.RegistryCredentials(ctx, f.RegistryConfig, request.client.Reference.Host())
+		if err != nil {
+			return err
+		}
+		return f.configure(repo, &request, *selected)
+	}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
+		return f.fetchPrepared(ctx, repo, request, policy)
+	})
 }
 
 // Machine credentials MUST wait for the source controller to exhaust rendered Secrets.
-func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, hostname string, policy cache.Policy) (*auth.Credential, error) {
+func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OCIRepository, hostname string) (*auth.Credential, error) {
 	if repo.SecretRef == nil {
-		return loadCredentials(ctx, f.RegistryConfig, hostname)
+		return &auth.Credential{}, nil
 	}
 	if f.secrets == nil {
 		return nil, fmt.Errorf("%s references secretRef but no source.SecretGetter is wired", manifest.DiagnosticFor(repo.Named(), repo).Label())
 	}
 	sec := f.secrets(repo.Namespace, repo.SecretRef.Name)
 	if sec == nil {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "not found"), policy)
+		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "not found")
 	}
 	configJSON, _, err := sec.Value(dockerConfigJSONKey)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s read .dockerconfigjson: %w", manifest.ErrInput, manifest.DiagnosticFor(repo.Named(), repo).Label(), err)
 	}
 	if configJSON == "" || manifest.HasValuePlaceholder(configJSON) {
-		return f.registryFallback(ctx, repo, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)"), policy)
+		return nil, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), repo.SecretRef.Name, "missing .dockerconfigjson (must be type kubernetes.io/dockerconfigjson)")
 	}
 	credStore, err := credentials.NewMemoryStoreFromDockerConfig([]byte(configJSON))
 	if err != nil {
@@ -107,84 +120,4 @@ func (f *operation) resolveRegistryConfig(ctx context.Context, repo *manifest.OC
 		return nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
 	}
 	return &cred, nil
-}
-
-// Unrelated registry credentials MUST NOT enable an ambient retry.
-func (f *operation) registryFallback(ctx context.Context, repo *manifest.OCIRepository, missing error, policy cache.Policy) (*auth.Credential, error) {
-	parsed, err := parseOCIRef(repo.URL)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
-	}
-	// parseOCIRef validates URL syntax, not ORAS repository syntax.
-	ref, err := registry.ParseReference(parsed)
-	if err != nil {
-		return nil, fmt.Errorf("%w: parse registry reference: %w", manifest.ErrInput, err)
-	}
-	mse, _ := errors.AsType[*source.MissingSecretError](missing)
-	selected, configErr := loadCredentials(ctx, f.RegistryConfig, ref.Host())
-	if configErr == nil && *selected == auth.EmptyCredential {
-		return nil, missing
-	}
-	mse.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-		if configErr != nil {
-			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, configErr)
-		}
-		slog.Debug("oci: secretRef unresolvable, using registry config",
-			"id", manifest.DiagnosticFor(repo.Named(), repo).Label(), "registry", ref.Registry)
-		selected, err := loadCredentials(ctx, f.RegistryConfig, ref.Host())
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
-		}
-		return f.fetchWithCredentials(ctx, repo, selected, policy)
-	}
-	return nil, mse
-}
-
-func loadCredentials(ctx context.Context, configPath, hostname string) (*auth.Credential, error) {
-	paths := []string{configPath}
-	if configPath == "" {
-		dockerDir := os.Getenv("DOCKER_CONFIG")
-		if dockerDir == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				slog.Debug("oci: docker credentials path unavailable", "err", err)
-			} else {
-				dockerDir = filepath.Join(home, ".docker")
-			}
-		}
-		paths = []string{"", cmp.Or(os.Getenv("HELM_REGISTRY_CONFIG"), helmpath.ConfigPath("registry/config.json"))}
-		if dockerDir != "" {
-			paths[0] = filepath.Join(dockerDir, "config.json")
-		}
-	}
-	for i, path := range paths {
-		if path == "" {
-			continue
-		}
-		s, err := credentials.NewFileStore(path)
-		if err != nil {
-			if configPath == "" {
-				if i == 0 {
-					slog.Debug("oci: docker credentials load failed; trying Helm credentials", "err", err)
-					continue
-				}
-				if _, ok := errors.AsType[*os.PathError](err); ok {
-					continue
-				}
-				// ORAS discards the typed cause of decoder read failures.
-				if _, readErr := os.ReadFile(path); readErr != nil { //nolint:gosec // Machine credential paths come from caller configuration or the local environment.
-					continue
-				}
-			}
-			return nil, fmt.Errorf("%w: load credentials %s: %w", manifest.ErrInput, path, err)
-		}
-		cred, err := credentials.Credential(s)(ctx, hostname)
-		if err != nil {
-			return nil, fmt.Errorf("%w: resolve registry credentials: %w", manifest.ErrInput, err)
-		}
-		if cred != auth.EmptyCredential {
-			return &cred, nil
-		}
-	}
-	return &auth.Credential{}, nil
 }

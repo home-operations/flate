@@ -40,14 +40,14 @@ func TestFetchIndex_WithoutTemporaryStorage(t *testing.T) {
 					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(helmRepoIndex("")))}, nil
 				})}}
 				if restored {
-					if _, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{}); err != nil {
+					if _, err := f.fetchIndex(t.Context(), r, sourcecache.Policy{}); err != nil {
 						t.Fatal(err)
 					}
 					f = New(nil, cfg)
 				}
 				testutil.WriteFile(t, root, "blocked-tmp", "not a directory")
 				t.Setenv("TMPDIR", filepath.Join(root, "blocked-tmp"))
-				idx, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
+				idx, err := f.fetchIndex(t.Context(), r, sourcecache.Policy{})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -89,7 +89,7 @@ func TestFetchIndex_Diagnostics(t *testing.T) {
 						var output bytes.Buffer
 						saved := slog.Default()
 						slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
-						idx, err := New(nil, Config{Cache: owner, Concurrency: 512}).fetchIndex(t.Context(), r, sourcecache.RetryConfig{})
+						idx, err := New(nil, Config{Cache: owner, Concurrency: 512}).fetchIndex(t.Context(), r, sourcecache.Policy{})
 						slog.SetDefault(saved)
 						if tc.invalid {
 							if !errors.Is(err, manifest.ErrFlux) || !strings.Contains(err.Error(), "parse https://charts.test/diagnostics/index.yaml") || strings.Contains(err.Error(), "flate-index-") {
@@ -214,7 +214,7 @@ func TestFetchIndex_DecodeBudget(t *testing.T) {
 				}
 				if tc.restored {
 					for _, r := range repositories {
-						if _, err := f.fetchIndex(t.Context(), r, sourcecache.RetryConfig{}); err != nil {
+						if _, err := f.fetchIndex(t.Context(), r, sourcecache.Policy{}); err != nil {
 							t.Fatal(err)
 						}
 					}

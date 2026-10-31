@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1199,9 +1201,11 @@ func TestRun_FlagInventory(t *testing.T) {
 }
 
 func TestRun_ProviderCredentialPolicy(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	t.Cleanup(server.Close)
 	root := substitutionFixture(t, "", "local")
 	testutil.WriteFile(t, root, "kustomization.yaml", "resources: [flux.yaml, source.yaml, remote.yaml]\n")
-	testutil.WriteFile(t, root, "source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: cloud, namespace: apps}\nspec: {provider: aws, url: 'oci://fixture.invalid/image'}\n")
+	testutil.WriteFile(t, root, "source.yaml", fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: cloud, namespace: apps}\nspec: {provider: aws, insecure: true, url: 'oci://%s/image'}\n", strings.TrimPrefix(server.URL, "https://")))
 	testutil.WriteFile(t, root, "remote.yaml", testutil.KustomizationYAML("remote", "apps", "  path: ./remote\n  sourceRef: {kind: OCIRepository, name: cloud}\n"))
 	registry := filepath.Join(t.TempDir(), "config.json")
 	testutil.WriteFileAt(t, registry, `{"auths":{}}`)

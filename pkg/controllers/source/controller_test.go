@@ -841,7 +841,7 @@ func TestController_AmbientPolicy(t *testing.T) {
 				if calls != wantCalls || info.Status != wantStatus || (info.Outcome() == store.OutcomeSkipped) != wantSkip {
 					t.Fatalf("status=%+v calls=%d; want status=%v skip=%t calls=%d", info, calls, wantStatus, wantSkip, wantCalls)
 				}
-				if failure != nil && !wantSkip && !strings.Contains(info.Message, failure.Error()) {
+				if failure != nil && !wantSkip && !errors.Is(failure, manifest.ErrMissingSecret) && !strings.Contains(info.Message, failure.Error()) {
 					t.Fatalf("settlement lost acquisition error: %+v", info)
 				}
 				if failure != nil && !wantSkip && !strings.Contains(info.Message, "secret ns/auth not found") {

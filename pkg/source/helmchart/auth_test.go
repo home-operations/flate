@@ -198,7 +198,7 @@ func TestHelmRepoTransport_ClientReuse(t *testing.T) {
 			wg.Wait()
 			for i, err := range errs {
 				if settings == "ambient" {
-					if !errors.Is(err, manifest.ErrMissingSecret) || prepared[i] == nil || !prepared[i].ambient {
+					if !errors.Is(err, manifest.ErrMissingSecret) || prepared[i] == nil {
 						t.Fatalf("missing auth lost its prepared transport: %v", err)
 					}
 				} else if err != nil {

@@ -14,8 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	aws "github.com/minio/minio-go/v7/pkg/credentials"
 	"golang.org/x/net/idna"
 	"oras.land/oras-go/v2/registry/remote/auth"
+	"oras.land/oras-go/v2/registry/remote/credentials"
 
 	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -25,10 +27,18 @@ import (
 // Network owns compatible HTTP transports and first connection timeouts for one invocation.
 // Its zero value is usable; independent invocations MUST NOT share it through a cache owner.
 type Network struct {
-	endpoints   atomic.Pointer[networkEndpoints]
-	transports  atomic.Pointer[networkTransports]
-	defaultOnce sync.Once
-	defaultHTTP http.RoundTripper
+	registryOnce  sync.Once
+	registryStore credentials.Store
+	registryErr   error
+	iamOnce       sync.Once
+	iamCancel     context.CancelFunc
+	iamDone       chan struct{}
+	iamValue      aws.Value
+	iamErr        error
+	endpoints     atomic.Pointer[networkEndpoints]
+	transports    atomic.Pointer[networkTransports]
+	defaultOnce   sync.Once
+	defaultHTTP   http.RoundTripper
 }
 
 // RoundTrip sends a request through the lazily selected default transport.
@@ -174,11 +184,15 @@ func networkAuthority(address string) string {
 	return net.JoinHostPort(host, port)
 }
 
-// Close releases idle HTTP connections after all users have joined.
+// Close cancels shared discovery and releases idle HTTP connections after all users have joined.
 // Borrowers MUST leave cleanup to the invocation owner.
 func (n *Network) Close() {
 	if n == nil {
 		return
+	}
+	if n.iamCancel != nil {
+		n.iamCancel()
+		<-n.iamDone
 	}
 	if transports := n.transports.Load(); transports != nil {
 		for _, tr := range *transports {

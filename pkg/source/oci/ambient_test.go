@@ -1,14 +1,18 @@
 package oci
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -179,7 +183,7 @@ func TestFetcher_AmbientFailedAcquisition(t *testing.T) {
 		t.Fatalf("prepare = %v", err)
 	}
 	artifact, err := missing.RetryAmbient(t.Context())
-	if artifact != nil || err == nil || authenticated.Load() == 0 || errors.Is(err, manifest.ErrMissingSecret) || !errors.Is(err, manifest.ErrFlux) {
+	if artifact != nil || err == nil || authenticated.Load() == 0 || !errors.Is(err, manifest.ErrMissingSecret) || !errors.Is(err, manifest.ErrFlux) {
 		t.Fatalf("ambient failure: artifact=%v error=%v authenticated=%d", artifact, err, authenticated.Load())
 	}
 }
@@ -223,9 +227,7 @@ func TestFetcher_HelmAmbientReload(t *testing.T) {
 			if !ok || missing.RetryAmbient == nil || lookups.Load() != 1 {
 				t.Fatalf("Helm eligibility: lookups=%d error=%v", lookups.Load(), err)
 			}
-			selected, err := loadCredentials(t.Context(), "", host)
-			assert.NoError(t, err)
-			first, err := op.fetchWithCredentials(t.Context(), repo, selected, sourcecache.Policy{})
+			first, err := missing.RetryMachine(t.Context(), nil)
 			assert.NoError(t, err)
 			if mode == "removed" {
 				expected.Store("")
@@ -235,9 +237,18 @@ func TestFetcher_HelmAmbientReload(t *testing.T) {
 				write("second")
 			}
 			before := accepted.Load()
-			got, err := missing.RetryAmbient(t.Context())
+			f = &Fetcher{Cache: f.Cache, Network: newTestNetwork(t)}
+			_, err = (&operation{Fetcher: f, secrets: inputs.lookup(repo)}).fetchSource(t.Context(), repo, sourcecache.Policy{})
+			missing, _ = errors.AsType[*source.MissingSecretError](err)
+			got, err := missing.RetryMachine(t.Context(), nil)
+			if mode == "removed" {
+				if err != nil || got == nil || accepted.Load() == before {
+					t.Fatalf("unavailable credential reached source: %v", err)
+				}
+				return
+			}
 			assert.NoError(t, err)
-			if got.Key == first.Key || accepted.Load() == before || lookups.Load() != 1 {
+			if got.Key == first.Key || accepted.Load() == before || lookups.Load() != 2 {
 				t.Fatalf("retry reused stale credentials/identity or reread missing Secret: requests=%d->%d lookups=%d", before, accepted.Load(), lookups.Load())
 			}
 			assert.Equal(t, mustReadFile(t, got.FS, "data.yaml"), "current")
@@ -275,9 +286,7 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 		var reads store.ReadSet
 		reads.Init(s, repo.Named(), nil)
 		op := &operation{Fetcher: f, reads: &reads, secrets: source.SecretLookup(&reads)}
-		credentials, err := op.resolveRegistryConfig(t.Context(), repo, "ghcr.io", sourcecache.Policy{})
-		assert.NoError(t, err)
-		request, err := op.newRepoClient(t.Context(), repo, credentials, sourcecache.Policy{})
+		request, err := op.newRepoClient(t.Context(), repo, sourcecache.Policy{})
 		assert.NoError(t, err)
 		identities = append(identities, request.material)
 		reads.Close()
@@ -288,38 +297,101 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 }
 
 func TestFetcher_AmbientAcquisitionErrors(t *testing.T) {
-	t.Parallel()
-	for _, malformed := range []bool{false, true} {
-		t.Run(fmt.Sprintf("malformed=%t", malformed), func(t *testing.T) {
-			t.Parallel()
-			configPath := filepath.Join(t.TempDir(), "config.json")
-			config := `{"auths":{"ghcr.io":{"username":"fixture","password":"fixture"}}}`
-			if malformed {
-				config = "{"
+	var diagnostic bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&diagnostic, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, deferred := range []bool{false, true} {
+		for _, stage := range []string{"canceled", "malformed", "unreadable", "helper failure", "missing helper", "unavailable", "producer"} {
+			if !deferred && stage == "producer" {
+				continue
 			}
-			testutil.WriteFileAt(t, configPath, config)
-			repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://ghcr.io/example/fixture", SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
-			s := store.New()
-			s.AddObject(repo)
-			var reads store.ReadSet
-			reads.Init(s, repo.Named(), nil)
-			defer reads.Close()
-			f := &Fetcher{Cache: cachetest.New(t, "", sourcecache.New), Network: newTestNetwork(t), RegistryConfig: configPath}
-			_, err := f.Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
-			missing, ok := errors.AsType[*source.MissingSecretError](err)
-			if !ok || missing.RetryAmbient == nil {
-				t.Fatalf("prepare = %v", err)
-			}
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			artifact, err := missing.RetryAmbient(ctx)
-			want := context.Canceled
-			if malformed {
-				want = manifest.ErrInput
-			}
-			if artifact != nil || !errors.Is(err, want) || !errors.Is(err, manifest.ErrFlux) || errors.Is(err, manifest.ErrMissingSecret) {
-				t.Fatalf("ambient acquisition = %v, %v; want %v and ErrFlux", artifact, err, want)
-			}
-		})
+			t.Run(fmt.Sprintf("deferred=%t/%s", deferred, stage), func(t *testing.T) {
+				root, bin := t.TempDir(), t.TempDir()
+				marker := filepath.Join(root, "called")
+				t.Setenv("PATH", bin)
+				t.Setenv("FLATE_HELPER_MARKER", marker)
+				helper := filepath.Join(bin, "docker-credential-fixture")
+				if stage != "missing helper" {
+					testutil.WriteFileAt(t, helper, "#!/bin/sh\nprintf called >> \"$FLATE_HELPER_MARKER\"\nprintf '%s' 'credential-canary'\nexit 1\n")
+					assert.NoError(t, os.Chmod(helper, 0o700))
+				}
+				var remote atomic.Int32
+				srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { remote.Add(1); w.WriteHeader(http.StatusForbidden) }))
+				t.Cleanup(srv.Close)
+				repo := &manifest.OCIRepository{Name: "image", Namespace: "apps", URL: "oci://" + mustURL(t, srv.URL).Host + "/fixture", Insecure: true}
+				if deferred {
+					repo.SecretRef = &manifest.LocalObjectReference{Name: "auth"}
+				}
+				config := filepath.Join(root, "credential-canary.json")
+				body := `{"credsStore":"fixture"}`
+				if stage == "malformed" {
+					body = "{"
+				}
+				if stage == "unavailable" {
+					body = `{}`
+					repo.Provider = "aws"
+				}
+				testutil.WriteFileAt(t, config, body)
+				if stage == "unreadable" {
+					config = filepath.Join(config, "config.json")
+				}
+				st := store.New()
+				st.AddObject(repo)
+				if stage == "producer" {
+					secret := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "auth"}
+					st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{secret: {Productions: []manifest.Production{{Declaration: manifest.NamedResource{Kind: "ExternalSecret", Namespace: "apps", Name: "auth"}}}}}})
+				}
+				var reads store.ReadSet
+				reads.Init(st, repo.Named(), nil)
+				defer reads.Close()
+				cacheRoot := t.TempDir()
+				f := &Fetcher{Cache: cachetest.New(t, cacheRoot, sourcecache.New), Network: newTestNetwork(t), RegistryConfig: config}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				if stage == "canceled" {
+					cancel()
+				}
+				var art *store.SourceArtifact
+				var err error
+				if deferred {
+					_, err = f.Fetch(t.Context(), repo, &reads, sourcecache.Policy{})
+					missing, ok := errors.AsType[*source.MissingSecretError](err)
+					if !ok || missing.RetryAmbient == nil {
+						t.Fatalf("missing continuation: %v", err)
+					}
+					art, err = missing.RetryMachine(ctx, &reads)
+					if (stage == "producer" || stage == "unavailable") && !errors.Is(err, missing) {
+						t.Fatal("unavailable selection changed missing identity")
+					}
+				} else {
+					art, err = f.Fetch(ctx, repo, &reads, sourcecache.Policy{})
+				}
+				if art != nil || err == nil || remote.Load() != map[bool]int32{false: 0, true: 1}[stage == "unavailable"] || strings.Contains(err.Error(), "canary") || strings.Contains(diagnostic.String(), "canary") {
+					t.Fatalf("preparation admitted remote work or exposed provider text: remote=%d %v", remote.Load(), err)
+				}
+				if stage == "canceled" && !errors.Is(err, context.Canceled) {
+					t.Fatalf("lost cancellation: %v", err)
+				}
+				if stage == "missing helper" {
+					if _, ok := errors.AsType[*exec.Error](err); !ok || !errors.Is(err, manifest.ErrFlux) {
+						t.Fatalf("lost typed native error: %v", err)
+					}
+				}
+				if stage == "unreadable" {
+					if _, ok := errors.AsType[*os.PathError](err); !ok {
+						t.Fatalf("lost typed file error: %v", err)
+					}
+				}
+				calls, readErr := os.ReadFile(marker)
+				if stage == "helper failure" {
+					if readErr != nil || string(calls) != "called" {
+						t.Fatalf("provider was not selected exactly once: %q %v", calls, readErr)
+					}
+				} else if !errors.Is(readErr, os.ErrNotExist) {
+					t.Fatalf("unexpected native-provider call: %q %v", calls, readErr)
+				}
+			})
+		}
 	}
 }

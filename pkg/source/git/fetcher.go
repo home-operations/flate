@@ -66,19 +66,15 @@ func (f *operation) fetchSource(ctx context.Context, repo *manifest.GitRepositor
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	request, err := f.resolveTransport(repo)
+	request, err := f.resolveTransport(repo, policy)
 	if err != nil {
-		if missing, ok := errors.AsType[*source.MissingSecretError](err); ok && request.ambientUser != "" {
-			missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-				return f.fetch(ctx, request, policy)
-			}
-		}
+
 		return nil, err
 	}
 	return f.fetch(ctx, request, policy)
 }
 
-func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisition, error) {
+func (f *operation) resolveTransport(repo *manifest.GitRepository, policy sourcecache.Policy) (gitAcquisition, error) {
 	endpoint, err := f.validateRepo(repo)
 	if err != nil {
 		return gitAcquisition{}, err
@@ -132,12 +128,78 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository) (gitAcquisiti
 		}
 		material = [2]any{secretMaterial, opts.ProxyOptions}
 	}
-	if authErr == nil && auth == nil && repo.Provider != "" && repo.Provider != sourcev1.GitProviderGeneric {
+	if authErr == nil && auth == nil && repo.Provider == sourcev1.GitProviderGitHub {
 		authErr = source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "provider authentication unavailable offline")
 	}
 	request := gitAcquisition{spec: repo, options: opts, material: material}
-	if authErr != nil && skipTLS {
-		request.ambientUser = cmp.Or(endpoint.User, "git")
+	if authErr != nil && repo.Provider != sourcev1.GitProviderGitHub && !skipTLS {
+		missing, _ := errors.AsType[*source.MissingSecretError](authErr)
+		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+			return source.AcquireMachine(ctx, policy, func(context.Context) error { return nil }, func(ctx context.Context, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+				return f.fetch(ctx, request, policy)
+			})
+		}
+	}
+	if authErr != nil && skipTLS && repo.Provider != sourcev1.GitProviderGitHub {
+		missing, _ := errors.AsType[*source.MissingSecretError](authErr)
+		timeout := repo.OperationTimeout()
+		policy.Timeout = &timeout
+		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+			user := cmp.Or(endpoint.User, "git")
+			prepared := request
+			var conn net.Conn
+			defer func() {
+				if conn != nil {
+					_ = conn.Close()
+				}
+			}()
+			return source.AcquireMachine(ctx, policy, func(ctx context.Context) error {
+				socket := os.Getenv("SSH_AUTH_SOCK")
+				if socket == "" {
+					return source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
+				}
+				var dialer net.Dialer
+				var err error
+				conn, err = dialer.DialContext(ctx, "unix", socket)
+				if err != nil {
+					if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
+						return source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
+					}
+					return err
+				}
+				stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+				defer stop()
+				signers, err := agent.NewClient(conn).Signers()
+				if err != nil {
+					return err
+				}
+				if len(signers) == 0 {
+					return source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent has no identities")
+				}
+				homeDir, err := os.UserHomeDir()
+				if err != nil {
+					return err
+				}
+				callback, err := gitssh.NewKnownHostsCallback(filepath.Join(homeDir, ".ssh", "known_hosts"))
+				if err != nil {
+					return err
+				}
+				auth := &gitssh.PublicKeysCallback{User: user, Callback: func() ([]ssh.Signer, error) { return signers, nil }}
+				auth.HostKeyCallback = callback
+				prepared.options.Auth = auth
+				keys := make([]string, len(signers))
+				for i, signer := range signers {
+					keys[i] = string(ssh.MarshalAuthorizedKey(signer.PublicKey()))
+				}
+				slices.Sort(keys)
+				prepared.material = [3]any{request.material, user, keys}
+				return nil
+			}, func(ctx context.Context, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+				stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+				defer stop()
+				return f.fetch(ctx, prepared, policy)
+			})
+		}
 	}
 	return request, authErr
 }
@@ -165,54 +227,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 	var identity string
 	generation, id, err := f.Cache.Git(ctx, key, policy, func(ctx context.Context, storer storage.Storer, worktree billy.Filesystem) (plumbing.Hash, error) {
 		input = nil
-		attempt := request
-		if request.ambientUser != "" {
-			if err := ctx.Err(); err != nil {
-				return plumbing.ZeroHash, err
-			}
-			socket := os.Getenv("SSH_AUTH_SOCK")
-			if socket == "" {
-				return plumbing.ZeroHash, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
-			}
-			var dialer net.Dialer
-			conn, err := dialer.DialContext(ctx, "unix", socket)
-			if err != nil {
-				if ctx.Err() != nil {
-					return plumbing.ZeroHash, ctx.Err()
-				}
-				if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
-					return plumbing.ZeroHash, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent unavailable")
-				}
-				return plumbing.ZeroHash, err
-			}
-			stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
-			defer func() {
-				stop()
-				_ = conn.Close()
-			}()
-			signers, err := agent.NewClient(conn).Signers()
-			if err != nil {
-				return plumbing.ZeroHash, errors.Join(ctx.Err(), err)
-			}
-			if err := ctx.Err(); err != nil {
-				return plumbing.ZeroHash, err
-			}
-			if len(signers) == 0 {
-				return plumbing.ZeroHash, source.MissingSecretErr(manifest.DiagnosticFor(repo.Named(), repo), "", "SSH agent has no identities")
-			}
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				return plumbing.ZeroHash, err
-			}
-			callback, err := gitssh.NewKnownHostsCallback(filepath.Join(homeDir, ".ssh", "known_hosts"))
-			if err != nil {
-				return plumbing.ZeroHash, err
-			}
-			auth := &gitssh.PublicKeysCallback{User: request.ambientUser, Callback: func() ([]ssh.Signer, error) { return signers, nil }}
-			auth.HostKeyCallback = callback
-			attempt.options.Auth = auth
-		}
-		cloned, err := f.acquire(ctx, storer, worktree, attempt)
+		cloned, err := f.acquire(ctx, storer, worktree, request)
 		if err != nil {
 			return plumbing.ZeroHash, errors.Join(ctx.Err(), err)
 		}
@@ -224,7 +239,7 @@ func (f *Fetcher) fetch(ctx context.Context, request gitAcquisition, policy sour
 			if err := checkoutRef(cloned, hash, repo.SparseCheckout); err != nil {
 				return plumbing.ZeroHash, err
 			}
-			if err := f.updateSubmodules(ctx, cloned, attempt.options.Auth, git.DefaultSubmoduleRecursionDepth); err != nil {
+			if err := f.updateSubmodules(ctx, cloned, request.options.Auth, git.DefaultSubmoduleRecursionDepth); err != nil {
 				return plumbing.ZeroHash, errors.Join(ctx.Err(), err)
 			}
 		}
@@ -284,11 +299,10 @@ func gitWarnings(input *gittree.FS, id manifest.NamedResource, repository, ref s
 }
 
 type gitAcquisition struct {
-	ambientUser string
-	timeout     time.Duration
-	spec        *manifest.GitRepository
-	options     git.CloneOptions
-	material    any
+	timeout  time.Duration
+	spec     *manifest.GitRepository
+	options  git.CloneOptions
+	material any
 }
 
 func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree billy.Filesystem, request gitAcquisition) (*git.Repository, error) {
@@ -322,7 +336,7 @@ func (f *Fetcher) acquire(ctx context.Context, storer storage.Storer, worktree b
 				return nil, err
 			}
 			if _, loaded := f.fallback.LoadOrStore(options.URL, struct{}{}); !loaded {
-				slog.Debug("git: exact commit fetch refused; fetching full history", "url", options.URL, "error", err)
+				slog.Debug("git: exact commit fetch refused; fetching full history", "url", options.URL)
 			}
 			fetch.Depth, fetch.RefSpecs = 0, []config.RefSpec{"+refs/*:refs/*"}
 			if err := fetchRef(repo); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {

@@ -22,7 +22,7 @@ type httpRepository struct {
 	username, password string
 	client             *http.Client
 	material           any
-	ambient            bool
+	resolved           source.TransportMaterial
 }
 
 func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, error) {
@@ -58,7 +58,7 @@ func (f *operation) prepareHTTP(r *manifest.HelmRepository) (*httpRepository, er
 		return nil, err
 	}
 	prepared.client = &http.Client{Transport: tr}
-	prepared.ambient = authErr != nil
+	prepared.resolved = resolved
 	return prepared, authErr
 }
 

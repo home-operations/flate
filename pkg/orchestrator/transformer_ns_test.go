@@ -122,7 +122,7 @@ spec:
 		t.Fatalf("shared-context failures: %v", res.Failed)
 	}
 	for _, ns := range []string{"myns", "other"} {
-		for _, info := range reconcilableKinds {
+		for _, info := range []manifest.KindInfo{testutil.KustomizationID("", "").KindInfo(), testutil.HelmReleaseID("", "").KindInfo()} {
 			kind := info.Kind
 			id := manifest.NamedResource{Group: info.Group, Kind: kind, Namespace: ns, Name: "myapp"}
 			if o.store.GetObject(id) == nil {

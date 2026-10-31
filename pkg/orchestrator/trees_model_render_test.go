@@ -4,19 +4,19 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
-
-	"go.yaml.in/yaml/v3"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -27,14 +27,18 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"go.yaml.in/yaml/v3"
 
+	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/helm"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 var renderModelSeeds = []string{
@@ -1673,50 +1677,279 @@ func FuzzRenderTrees_IndependentModel(f *testing.F) {
 	})
 }
 
+type entryRenderWork struct {
+	helm, pair, builds, reads, fingerprints, generatorAdmissions, pairAdmissions atomic.Int64
+}
+
+func (*entryRenderWork) Enabled(context.Context, slog.Level) bool { return true }
+
+func (w *entryRenderWork) Handle(_ context.Context, record slog.Record) error {
+	switch record.Message {
+	case "base: render admission":
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "id" {
+				switch attr.Value.String() {
+				case testutil.HelmReleaseID("apps", "generator").String():
+					w.generatorAdmissions.Add(1)
+				case (manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "flux"}).String():
+					w.pairAdmissions.Add(1)
+				}
+			}
+			return true
+		})
+	case "kustomize: read":
+		w.reads.Add(1)
+	case "manifest: fingerprint":
+		w.fingerprints.Add(1)
+	case "helm: render":
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "release" && attr.Value.String() == testutil.HelmReleaseID("apps", "generator").String() {
+				w.helm.Add(1)
+			}
+			return true
+		})
+	case "kustomize: build":
+		w.builds.Add(1)
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "path" && attr.Value.String() == "." {
+				w.pair.Add(1)
+			}
+			return true
+		})
+	}
+	return nil
+}
+
+func (w *entryRenderWork) WithAttrs([]slog.Attr) slog.Handler { return w }
+func (w *entryRenderWork) WithGroup(string) slog.Handler      { return w }
+
 func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
+	work := new(entryRenderWork)
+	logger := slog.Default()
+	slog.SetDefault(slog.New(work))
+	t.Cleanup(func() { slog.SetDefault(logger) })
 	root, original, cache := t.TempDir(), t.TempDir(), t.TempDir()
 	const url = "https://example.test/entry/repo"
+	application := func(retries int) string {
+		t.Helper()
+		policy, err := json.Marshal([]map[string]any{{"op": "add", "path": "/spec/install", "value": map[string]any{"crds": "CreateReplace", "remediation": map[string]any{"retries": retries}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		child, err := json.Marshal([]map[string]any{{"op": "add", "path": "/spec/patches", "value": []map[string]any{{"target": map[string]any{"kind": "HelmRelease"}, "patch": string(policy)}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		root, err := json.Marshal([]map[string]any{{"op": "add", "path": "/spec/patches", "value": []map[string]any{{"target": map[string]any{"kind": "Kustomization"}, "patch": string(child)}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: " + url + ", ref: refs/heads/main, path: ./entry}\n  kustomize:\n    patches:\n    - target: {kind: Kustomization}\n      patch: '" + string(root) + "'\n"
+	}
 	for _, dir := range []string{root, original} {
-		testutil.GitInit(t, dir)
-		testutil.WriteFile(t, dir, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: "+url+"}\n")
+		repo := testutil.GitInit(t, dir)
+		if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))); err != nil {
+			t.Fatal(err)
+		}
+		testutil.WriteFile(t, dir, "bootstrap/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: "+url+"}\n")
 		testutil.WriteFile(t, dir, "entry/generator.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n")
 		testutil.WriteFile(t, dir, "charts/bootstrap/Chart.yaml", "apiVersion: v2\nname: bootstrap\nversion: 1.0.0\n")
-		application := "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: " + url + ", ref: main, path: ./entry}\n"
-		testutil.WriteFile(t, dir, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application)+" }}")
+		testutil.WriteFile(t, dir, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application(2))+" }}")
 		testutil.WriteFile(t, dir, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  interval: 1h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n"))
-		testutil.WriteFile(t, dir, "workload/kustomization.yaml", "resources: []\n")
+		testutil.WriteFile(t, dir, "workload/kustomization.yaml", "resources: [release.yaml]\n")
+		testutil.WriteFile(t, dir, "workload/release.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: app, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/app\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n")
+		testutil.WriteFile(t, dir, "charts/app/Chart.yaml", "apiVersion: v2\nname: app\nversion: 1.0.0\n")
+		testutil.WriteFile(t, dir, "charts/app/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-output, namespace: apps}\n")
+		testutil.GitCommitAll(t, repo, "fixture", &gogit.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}})
 	}
 	before := testDirectoryInput(t, original)
 	tree := Tree{Path: filepath.Join(root, "entry"), RepoRoot: root, SelfURLs: []string{url}}
 	cfg := Config{CacheDir: cache, Concurrency: 2}
-	prime, err := newTestOrchestrator(t, tree, cfg)
-	if err != nil {
-		t.Fatal(err)
+	resetWork := func() {
+		work.generatorAdmissions.Store(0)
+		work.pairAdmissions.Store(0)
+		work.helm.Store(0)
+		work.pair.Store(0)
+		work.builds.Store(0)
+		work.fingerprints.Store(0)
+		work.reads.Store(0)
 	}
-	if _, err := prime.render(t.Context()); err != nil {
-		t.Fatal(err)
+	assertRoot := func(run *Orchestrator) {
+		t.Helper()
+		root := testutil.KustomizationID("apps", "self")
+		owner := manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "flux"}
+		assert.Equal(t, run.entryBinding.Producer, root)
+		assert.Equal(t, run.entryBinding.Source, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "self"})
+		assert.Equal(t, run.store.EmissionOwner(root), owner)
 	}
+	coldWork := func(tree Tree, cfg Config, side string) *Orchestrator {
+		t.Helper()
+		resetWork()
+		var run *Orchestrator
+		t.Run("cold "+side, func(t *testing.T) {
+			var err error
+			run, err = newTestOrchestrator(t, tree, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := run.render(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			assertRoot(run)
+			t.Logf("cold %s: generator templates=%d pair builds=%d all builds=%d kustomize reads=%d fingerprints=%d", side, work.helm.Load(), work.pair.Load(), work.builds.Load(), work.reads.Load(), work.fingerprints.Load())
+			if work.helm.Load() != 1 || work.pair.Load() != 1 {
+				t.Fatal("cold applier did not render exactly once")
+			}
+		})
+		return run
+	}
+	warmWork := func(tree Tree, cfg Config, side string) *Orchestrator {
+		t.Helper()
+		resetWork()
+		run, err := newTestOrchestrator(t, tree, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := run.bootstrap(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		generator := &entryWorkController{reconcileController: run.hrc, target: testutil.HelmReleaseID("apps", "generator")}
+		pair := &entryWorkController{reconcileController: run.fic, target: manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: "FluxInstance", Namespace: "apps", Name: "flux"}}
+		run.controllers.HelmRelease, run.controllers.FluxInstance = generator, pair
+		if err := run.run(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		assertRoot(run)
+		t.Logf("warm %s: generator templates=%d pair builds=%d all builds=%d kustomize reads=%d fingerprints=%d; generator dispatches=%d fresh accepted admissions=%d render attempts=%d equal-input replays=%d; pair dispatches=%d fresh accepted admissions=%d render attempts=%d equal-input replays=%d", side, work.helm.Load(), work.pair.Load(), work.builds.Load(), work.reads.Load(), work.fingerprints.Load(), generator.calls.Load(), generator.admitted.Load(), work.generatorAdmissions.Load(), generator.replays.Load(), pair.calls.Load(), pair.admitted.Load(), work.pairAdmissions.Load(), pair.replays.Load())
+		if work.helm.Load() != 0 || work.pair.Load() != 0 || generator.admitted.Load() > 1 || pair.admitted.Load() > 1 {
+			t.Fatal("warm applier rendered or exceeded its bounded owner-chain admissions")
+		}
+		return run
+	}
+	prime := coldWork(tree, cfg, "head")
+	policyTree := tree
+	policyTree.BaseInput, policyTree.ExternalChanges = before, change.NewSet([]string{"charts/bootstrap/templates/application.yaml"})
+	for _, state := range []string{"absent", "partial", "accepted"} {
+		t.Run(state, func(t *testing.T) {
+			if state == "accepted" && !prime.cache.CanPersistRenders() {
+				t.Skip("accepted-history policy witness requires a clean VCS-stamped build")
+			}
+			policyConfig := cfg
+			if state != "accepted" {
+				policyConfig.CacheDir = t.TempDir()
+			}
+			if state == "partial" {
+				pending, err := newTestOrchestrator(t, tree, policyConfig)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := pending.bootstrap(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				pending.configureControllers()
+				id := testutil.HelmReleaseID("apps", "generator")
+				var reads store.ReadSet
+				reads.Init(pending.store, id, nil)
+				hr := pending.store.GetObject(id).(*manifest.HelmRelease)
+				prepared, _, err := helm.Prepare(hr, helm.NewSources(&reads).Declaration, values.NewStoreProvider(&reads, false), pending.hrc.Helm.ValuesCache())
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, receipt, err := pending.hrc.Helm.Template(t.Context(), prepared, prepared.Values, helm.RenderOptions{Sources: helm.NewSources(&reads)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := pending.hrc.Helm.RecordRender(t.Context(), id, receipt, nil); err != nil {
+					t.Fatal(err)
+				}
+				if records, _ := pending.controllers.PreviousRender(t.Context(), hr, &reads); records != nil {
+					t.Fatal("raw receipt without complete inventory supplied application evidence")
+				}
+				reads.Retire()
+				pending.stop()
+			}
+			testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application(5))+" }}")
+			defer testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application(2))+" }}")
+			var previous string
+			for run := range 2 {
+				policy, err := newTestOrchestrator(t, policyTree, policyConfig)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := policy.bootstrap(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				if run == 0 && policy.entryBinding.Producer != (manifest.NamedResource{}) {
+					t.Fatal("absent, partial or stale history restored the previous root")
+				}
+				result, err := policy.collectResult(policy.run(t.Context()))
+				policy.stop()
+				if err != nil {
+					t.Fatal(err)
+				}
+				full, err := newTestOrchestrator(t, tree, Config{Concurrency: 2})
+				if err != nil {
+					t.Fatal(err)
+				}
+				complete, err := full.render(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				child := testutil.KustomizationID("apps", "child")
+				got, err := json.Marshal(outputByParent(result.Manifests)[child])
+				if err != nil {
+					t.Fatal(err)
+				}
+				want, err := json.Marshal(outputByParent(complete.Manifests)[child])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != string(want) || !strings.Contains(string(got), `"retries":5`) || previous != "" && previous != string(got) {
+					t.Fatalf("policy receipt differs from full/deterministic render: got=%s want=%s", got, want)
+				}
+				previous = string(got)
+			}
+		})
+	}
+	testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application(2))+" }}")
 	if !prime.cache.CanPersistRenders() {
 		t.Skip("warm receipt witness requires a clean VCS-stamped build")
 	}
+
 	testutil.WriteFile(t, root, "entry/child.yaml", testutil.KustomizationYAML("child", "apps", "  interval: 2h\n  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n"))
 	current := tree
 	current.BaseInput, current.ExternalChanges = before, change.NewSet([]string{"entry/child.yaml"})
-	warm, err := newTestOrchestrator(t, current, cfg)
+	baseTree := Tree{Path: filepath.Join(original, "entry"), RepoRoot: original, SelfURLs: []string{url}}
+	baseConfig := Config{CacheDir: t.TempDir(), Concurrency: 2}
+	coldWork(baseTree, baseConfig, "base")
+	baseTree.BaseInput, baseTree.ExternalChanges = testDirectoryInput(t, root), current.ExternalChanges
+	baseWarm := warmWork(baseTree, baseConfig, "base")
+	warm := warmWork(current, cfg, "head")
+	inventory := func(run *Orchestrator) string {
+		t.Helper()
+		var docs []manifest.DocOccurrence
+		for _, id := range []manifest.NamedResource{run.entryBinding.Producer, testutil.KustomizationID("apps", "child"), testutil.HelmReleaseID("apps", "app")} {
+			_, _, emission := run.store.GetEmission(id)
+			docs = append(docs, emission.Manifests...)
+			emission.Finish()
+		}
+		raw, err := json.Marshal(docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	baseFullTree := baseTree
+	baseFullTree.BaseInput, baseFullTree.ExternalChanges = nil, nil
+	baseFull, err := newTestOrchestrator(t, baseFullTree, Config{Concurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := warm.bootstrap(t.Context()); err != nil {
+	if _, err := baseFull.render(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	id := testutil.HelmReleaseID("apps", "generator")
-	calls, admitted := map[manifest.NamedResource]*atomic.Int64{id: {}}, map[manifest.NamedResource]*atomic.Int64{id: {}}
-	warm.controllers.HelmRelease = countedNodeController{warm.hrc, calls, admitted}
-	if err := warm.run(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if admitted[id].Load() != 0 || warm.store.GetArtifact(id, store.ArtifactContent) != nil {
-		t.Fatalf("warm interval edit rendered the applier producer: calls=%d admitted=%d", calls[id].Load(), admitted[id].Load())
+	if inventory(baseWarm) != inventory(baseFull) {
+		t.Fatal("warm base descendants differ from full output")
 	}
 	check := func(run *Orchestrator) {
 		t.Helper()
@@ -1744,7 +1977,9 @@ func TestRenderTrees_EntryApplicationIntervalReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(full)
-	t.Logf("warm applier producer: calls=%d admitted=%d", calls[id].Load(), admitted[id].Load())
+	if inventory(warm) != inventory(full) {
+		t.Fatal("warm head descendants differ from full output")
+	}
 	testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: "+url+", ref: main, path: ./elsewhere}\n")+" }}")
 	invalidated, err := newTestOrchestrator(t, current, cfg)
 	if err != nil {

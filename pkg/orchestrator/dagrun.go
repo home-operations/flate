@@ -43,8 +43,10 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 		d.o.entryFailure = err
 		if root != nil {
 			d.o.entryBinding = binding
-			d.o.ksc.KeepEmitted(manifest.NamedResource{}, store.Child{Obj: root}, nil)
-			d.o.store.AddObject(root)
+			if d.o.store.GetObject(root.Named()) == nil {
+				d.o.ksc.KeepEmitted(manifest.NamedResource{}, store.Child{Obj: root}, nil)
+				d.o.store.AddObject(root)
+			}
 			return slices.Collect(d.o.store.Sweep())
 		}
 	}
@@ -59,6 +61,7 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 			continue
 		}
 		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
+			o.admission.AddApplication(o.store, obj)
 			if o.schedulable(obj) {
 				o.store.SetIncluded(obj.Named(), o.filter.ShouldReconcile(obj.Named()))
 				ids = append(ids, obj.Named())
@@ -76,6 +79,7 @@ func (o *Orchestrator) runDAG(ctx context.Context) error {
 	o.ksc.StartLifecycle()
 	o.hrc.StartLifecycle()
 	o.rsc.StartLifecycle()
+	o.fic.StartLifecycle()
 	o.agc.StartLifecycle()
 
 	unsubscribe := o.watchDAG(sched)
@@ -96,16 +100,13 @@ func (o *Orchestrator) schedulable(obj manifest.BaseManifest) bool {
 }
 
 func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
-	observeEntry := o.entryBinding == (discovery.Binding{})
 	unsubAdd := o.store.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 		obj, _ := payload.(manifest.BaseManifest)
 		if obj == nil {
 			sched.OnArrival(id, false)
 			return
 		}
-		if observeEntry {
-			o.admission.AddApplication(o.store, obj)
-		}
+		o.admission.AddApplication(o.store, obj)
 		sched.OnArrival(id, o.schedulable(obj))
 	}, false)
 

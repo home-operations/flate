@@ -189,6 +189,10 @@ func TestTemplate_MalformedCRDsPolicy(t *testing.T) {
 	if !errors.Is(wantErr, manifest.ErrInput) {
 		t.Fatalf("got %v, want malformed CRD input error", wantErr)
 	}
+	skipped := newHR()
+	skipped.Install = &helmv2.Install{CRDs: helmv2.Skip}
+	_, _, err = testutil.RenderMaps(cli.Template(t.Context(), skipped, nil, RenderOptions{SkipCRDs: true, Sources: localChartResolver(t, "chart-repo", "flux-system", dir)}))
+	assert.NoError(t, err)
 
 	for _, tc := range []struct {
 		name   string

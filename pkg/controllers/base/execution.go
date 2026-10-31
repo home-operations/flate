@@ -445,6 +445,9 @@ func (e *Execution) admitRender() error {
 		return err
 	}
 	id := e.Reads.ID()
+	if slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		slog.Debug("base: render admission", "id", id.String())
+	}
 	if info, ok := e.Store.GetStatus(id); ok && info.Status == store.StatusPending {
 		e.Store.ReportProgress(id, "rendering")
 	} else {

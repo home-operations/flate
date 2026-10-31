@@ -2,8 +2,10 @@ package kustomize
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"path"
 	"path/filepath"
 	"slices"
@@ -225,6 +227,9 @@ func (t *treeFS) IsDir(name string) bool {
 }
 
 func (t *treeFS) ReadFile(name string) ([]byte, error) {
+	if slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		slog.Debug("kustomize: read", "path", name)
+	}
 	rel, err := t.resolve(name)
 	if err != nil {
 		return nil, err

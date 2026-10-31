@@ -1,9 +1,16 @@
 package orchestrator
 
 import (
+	"context"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"io/fs"
 	"path/filepath"
+	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -210,4 +217,147 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOrchestratorExistence_TrackedBootstrapPromotion(t *testing.T) {
+	t.Parallel()
+	for _, authority := range []string{"root declaration", "owner inventory"} {
+		t.Run(authority, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload}\n")
+			o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(dir, "entry"), RepoRoot: dir}, Config{Concurrency: 2})
+			assert.NoError(t, err)
+			defer o.stop()
+			fetcher := &advisorySourceFetcher{root: dir}
+			o.src.Fetchers[manifest.KindGitRepository] = fetcher
+			assert.NoError(t, o.bootstrap(t.Context()))
+			o.configureControllers()
+			o.src.StartLifecycle()
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "self"}
+			root := &manifest.Kustomization{Name: "root", Namespace: "apps", Path: "./entry", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name}}
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "elsewhere"}
+			if authority == "root declaration" {
+				o.store.AddObject(root)
+			} else {
+				o.store.AddObject(owner)
+				o.ksc.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: root}}, Complete: true}, nil)
+			}
+			o.admission.AddApplication(o.store, root)
+			var reads store.ReadSet
+			reads.Init(o.store, root.Named(), nil)
+			defer reads.Close()
+			existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
+			assert.Equal(t, existence.Promote(t.Context(), &reads, source), true)
+			assert.Equal(t, o.store.GetObject(source) != nil, true)
+			assert.Equal(t, o.store.GetArtifact(source, store.ArtifactContent), store.Artifact(nil))
+			if status, ok := o.store.GetStatus(source); ok && status.Status == store.StatusReady {
+				t.Fatal("promotion published Ready without a source execution")
+			}
+			var accepted *base.Execution
+			reconcile := func() {
+				o.tasks.Go(t.Context(), "source", func(ctx context.Context) { accepted = o.src.ReconcileNode(ctx, source, manifest.DrainNone) })
+				o.tasks.BlockTillDone()
+			}
+			reconcile()
+			defer func() { accepted.Close() }()
+			artifact := o.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			assert.Equal(t, artifact.InputAlias, true)
+			assert.Equal(t, artifact.Reads.Valid(), true)
+			assert.Equal(t, artifact.Reads == &reads, false)
+			assert.Equal(t, fetcher.calls.Load(), int64(0))
+			previous := accepted
+			reconcile()
+			previous.Retire()
+			assert.Equal(t, o.store.GetArtifact(source, store.ArtifactContent), store.Artifact(artifact))
+			if authority == "root declaration" {
+				next := root.Clone()
+				next.Path = "elsewhere"
+				o.store.AddObject(next)
+			} else {
+				o.ksc.Emit(owner.Named(), &store.Emission{Complete: true}, nil)
+			}
+			assert.Equal(t, artifact.Reads.Valid(), false)
+			if changed := slices.Collect(o.store.Sweep()); !slices.Contains(changed, source) {
+				t.Fatalf("promoted source was not rescheduled: %v", changed)
+			}
+			previous = accepted
+			reconcile()
+			previous.Retire()
+			assert.Equal(t, accepted.Valid(), true)
+			current := o.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			if current == artifact || current.Reads == artifact.Reads {
+				t.Fatal("invalid promotion authority bypassed fresh resolution")
+			}
+		})
+	}
+}
+
+func TestOrchestratorExistence_PromotionAuthorityReplacement(t *testing.T) {
+	t.Parallel()
+	for _, authority := range []string{"root declaration", "owner inventory"} {
+		t.Run(authority, func(t *testing.T) {
+			t.Parallel()
+			const dir = "/virtual/promotion-capture"
+			input := &promotionCaptureFS{FS: fstest.MapFS{"entry/cm.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload}\n")}}, entered: make(chan struct{}), release: make(chan struct{})}
+			unblock := sync.OnceFunc(func() { close(input.release) })
+			defer unblock()
+			o, err := newTestOrchestrator(t, Tree{Path: dir + "/entry", RepoRoot: dir, Input: &store.SourceArtifact{LocalPath: dir, FS: input}}, Config{Concurrency: 2})
+			assert.NoError(t, err)
+			defer o.stop()
+			assert.NoError(t, o.bootstrap(t.Context()))
+			o.configureControllers()
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "self"}
+			root := &manifest.Kustomization{Name: "root", Namespace: "apps", Path: "./entry", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name}}
+			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "elsewhere"}
+			if authority == "root declaration" {
+				o.store.AddObject(root)
+			} else {
+				o.store.AddObject(owner)
+				o.ksc.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: root}}, Complete: true}, nil)
+			}
+			o.admission.AddApplication(o.store, root)
+			var reads store.ReadSet
+			reads.Init(o.store, root.Named(), nil)
+			defer reads.Close()
+			existence := &orchestratorExistence{DiscoveryIndex: o.index, o: o}
+			input.enabled.Store(true)
+			done := make(chan bool, 1)
+			o.tasks.Go(t.Context(), "promote", func(ctx context.Context) { done <- existence.Promote(ctx, &reads, source) })
+			select {
+			case <-input.entered:
+			case <-done:
+				t.Fatal("promotion did not reach the source view")
+			case <-t.Context().Done():
+				t.Fatal(t.Context().Err())
+			}
+			if authority == "root declaration" {
+				next := root.Clone()
+				next.Path = "elsewhere"
+				o.store.AddObject(next)
+			} else {
+				o.ksc.Emit(owner.Named(), &store.Emission{Complete: true}, nil)
+			}
+			unblock()
+			assert.Equal(t, <-done, false)
+			o.tasks.BlockTillDone()
+			assert.Equal(t, reads.Valid(), false)
+			assert.Equal(t, o.store.GetObject(source), manifest.BaseManifest(nil))
+			assert.Equal(t, o.store.GetArtifact(source, store.ArtifactContent), store.Artifact(nil))
+		})
+	}
+}
+
+type promotionCaptureFS struct {
+	fs.FS
+	enabled          atomic.Bool
+	once             sync.Once
+	entered, release chan struct{}
+}
+
+func (f *promotionCaptureFS) Open(name string) (fs.File, error) {
+	if f.enabled.Load() {
+		f.once.Do(func() { close(f.entered); <-f.release })
+	}
+	return f.FS.Open(name)
 }

@@ -186,6 +186,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 		t.Skip("requires a clean VCS-stamped build for positive persistence")
 	}
 	chartDir := t.TempDir()
+	testutil.WriteFile(t, chartDir, "mychart/crds/widget.yaml", "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata: {name: widgets.example.test}\n")
 	testutil.WriteFile(t, chartDir, "mychart/Chart.yaml", "apiVersion: v2\nname: mychart\nversion: 0.1.0\n")
 	testutil.WriteFile(t, chartDir, "mychart/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\n")
 
@@ -207,7 +208,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 		}{
 			{name: "empty", active: true, complete: true},
 			{name: "default", policy: helmv2.Create, active: true, complete: true},
-			{name: "replace", policy: helmv2.CreateReplace, active: true},
+			{name: "replace", policy: helmv2.CreateReplace, active: true, complete: true},
 			{name: "skip", policy: helmv2.Skip, active: true},
 			{name: "openapi", openAPI: true, active: true},
 			{name: "inactive", policy: helmv2.Skip, openAPI: true, complete: true},

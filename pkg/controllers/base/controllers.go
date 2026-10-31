@@ -20,6 +20,7 @@ type Controllers struct {
 	Kustomization     nodeController
 	HelmRelease       nodeController
 	ResourceSet       nodeController
+	FluxInstance      nodeController
 	Source            nodeController
 	ArtifactGenerator nodeController
 }
@@ -46,7 +47,7 @@ func (*Controller) PreviousRender(context.Context, manifest.BaseManifest, *store
 }
 
 func (c *Controllers) owner(id manifest.NamedResource) nodeController {
-	for _, owner := range [...]nodeController{c.Kustomization, c.HelmRelease, c.ResourceSet, c.Source, c.ArtifactGenerator} {
+	for _, owner := range [...]nodeController{c.Kustomization, c.HelmRelease, c.ResourceSet, c.FluxInstance, c.Source, c.ArtifactGenerator} {
 		if owner != nil && owner.Owns(id) {
 			return owner
 		}

@@ -2,7 +2,9 @@
 package kustomize
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"sigs.k8s.io/kustomize/api/krusty"
@@ -30,6 +32,9 @@ func Build(fs filesys.FileSystem, dir string) (res resmap.ResMap, err error) {
 		}
 	}()
 
+	if slog.Default().Enabled(context.TODO(), slog.LevelDebug) {
+		slog.Debug("kustomize: build", "path", dir)
+	}
 	openapi.Schema()
 	return krusty.MakeKustomizer(&krusty.Options{
 		LoadRestrictions: kustypes.LoadRestrictionsNone,

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 
 	"github.com/go-git/go-git/v5/config"
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -1886,18 +1888,28 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			repo := testutil.GitInit(t, root)
+			assert.NoError(t, repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("main"))))
 			if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://example.test/entry/repo"}}); err != nil {
 				t.Fatal(err)
 			}
-			testutil.WriteFile(t, root, "entry/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: https://example.test/entry/repo}\n")
-			application := "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: https://example.test/entry/repo, ref: main, path: ./entry}\n"
+			testutil.WriteFile(t, root, "bootstrap/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: self, namespace: apps}\nspec: {url: https://example.test/entry/repo}\n")
+			name := "self"
+			application := "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: flux, namespace: apps}\nspec:\n  sync: {name: self, kind: GitRepository, url: https://example.test/entry/repo, ref: refs/heads/main, path: ./entry}\n"
 			if kind == "Kustomization" {
-				application = testutil.KustomizationYAML("sync", "apps", "  path: ./entry\n  sourceRef: {kind: GitRepository, name: self}\n")
+				name = "sync"
+				application = testutil.KustomizationYAML(name, "apps", "  interval: 42m\n  path: ./entry\n  prune: true\n  wait: true\n  timeout: 3m\n  sourceRef: {kind: GitRepository, name: self}\n  dependsOn: [{name: ready}]\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n")
 			}
+			testutil.WriteFile(t, root, "entry/ready.yaml", testutil.KustomizationYAML("ready", "apps", "  path: ./ready\n"))
+			testutil.WriteFile(t, root, "ready/kustomization.yaml", "resources: []\n")
+			testutil.WriteFile(t, root, "entry/settings.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: substituted}\n")
 			testutil.WriteFile(t, root, "entry/generator.yaml", "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: generator, namespace: apps}\nspec:\n  interval: 10m\n  chart:\n    spec:\n      chart: charts/bootstrap\n      sourceRef: {kind: GitRepository, name: self, namespace: apps}\n")
 			testutil.WriteFile(t, root, "charts/bootstrap/Chart.yaml", "apiVersion: v2\nname: bootstrap\nversion: 1.0.0\n")
 			testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application)+" }}")
-			testutil.WriteFile(t, root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal-layer, namespace: apps}\n")
+			value := "literal"
+			if kind == "Kustomization" {
+				value = "${VALUE}"
+			}
+			testutil.WriteFile(t, root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal-layer, namespace: apps}\ndata: {value: '"+value+"'}\n")
 			testutil.WriteFile(t, root, "entry/unapplied/kustomization.yaml", "resources: [cm.yaml]\n")
 			testutil.WriteFile(t, root, "entry/unapplied/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unused, namespace: apps}\n")
 			testutil.WriteFile(t, root, "entry/workload.yaml", testutil.KustomizationYAML("workload", "apps", "  path: ./workload\n  sourceRef: {kind: GitRepository, name: self}\n"))
@@ -1907,7 +1919,7 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 			testutil.WriteFile(t, root, "workload/release.yaml", workload)
 			testutil.WriteFile(t, root, "charts/workload/Chart.yaml", "apiVersion: v2\nname: workload\nversion: 1.0.0\n")
 			testutil.WriteFile(t, root, "charts/workload/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: workload, namespace: apps}\ndata: {value: {{ .Values.value }}}\n")
-			testutil.GitCommitAll(t, repo, "fixture", &gogit.CommitOptions{Author: &object.Signature{Name: "fixture", Email: "fixture@example.test", When: time.Unix(0, 0)}})
+			testutil.GitCommitAll(t, repo, "initial", &gogit.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}})
 			cache := t.TempDir()
 			common := []string{"--path", filepath.Join(root, "entry"), "--concurrency", "2", "--no-progress", "--cache-dir", cache, "--log-level", "debug"}
 			args := append([]string{"build", "all"}, common...)
@@ -1916,23 +1928,56 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 				t.Fatalf("late application lost the literal layer: %s\n%s", out, stderr)
 			}
 			generatorEvent := `msg="helm: render" release=HelmRelease.helm.toolkit.fluxcd.io/apps/generator`
+			entryBuildEvent := regexp.MustCompile(`(?m)msg="kustomize: build" path=/[^\n]+/entry/unapplied$`)
+			if !regexp.MustCompile(`(?m)msg="kustomize: build" path=/[^\n]+/entry$`).MatchString(stderr) {
+				t.Fatalf("cold entry build diagnostic lost its canonical path: %s", stderr)
+			}
 			if strings.Count(stderr, generatorEvent) != 1 {
 				t.Fatalf("cold qualification did not execute Helm once: %s", stderr)
 			}
 			again, _ := harness.RequireCLIOK(t, args...)
 			assert.Equal(t, again, out)
+			docs, err := testutil.DecodeDocs(strings.NewReader(out))
+			assert.NoError(t, err)
+			roots := 0
+			for _, doc := range docs {
+				if manifest.DocIdentity(doc) != testutil.KustomizationID("apps", name) {
+					continue
+				}
+				roots++
+				if kind == "Kustomization" {
+					authored, err := testutil.DecodeDocs(strings.NewReader(application))
+					assert.NoError(t, err)
+					assert.Diff(t, doc["spec"], authored[0]["spec"])
+					if !strings.Contains(out, "value: substituted") {
+						t.Fatal("qualified root lost referenced postBuild")
+					}
+				}
+			}
+			assert.Equal(t, roots, 1)
+			listed, _ := harness.RequireCLIOK(t, "get", "ks", "--path", filepath.Join(root, "entry"), "--concurrency=2", "--no-progress", "-o", "json")
+			var objects []struct{ Name, Namespace, Path string }
+			assert.NoError(t, json.Unmarshal([]byte(listed), &objects))
+			listedRoots := 0
+			for _, obj := range objects {
+				if obj.Name == name && obj.Namespace == "apps" {
+					listedRoots++
+					assert.Equal(t, obj.Path, "./entry")
+				}
+			}
+			assert.Equal(t, listedRoots, 1)
 			if strings.Contains(stderr, "[RenderPersistenceDisabled]") {
 				t.Skip("warm receipt witness requires a clean VCS-stamped build")
 			}
 			testutil.WriteFile(t, root, "workload/release.yaml", strings.ReplaceAll(workload, "before", "after"))
 			diffArgs := append([]string{"diff", "all", "--base", "HEAD", "-o", "diff"}, common...)
 			diff, debug := harness.RequireCLIOK(t, diffArgs...)
-			if !strings.Contains(diff, "before") || !strings.Contains(diff, "after") || strings.Contains(debug, generatorEvent) || strings.Contains(debug, `msg="kustomize: build" path=entry/unapplied`) {
+			if !strings.Contains(diff, "before") || !strings.Contains(diff, "after") || strings.Contains(debug, generatorEvent) || entryBuildEvent.MatchString(debug) {
 				t.Fatalf("warm workload edit executed bootstrap work or lost the change: %s\n%s", diff, debug)
 			}
 			repeated, repeatedDebug := harness.RequireCLIOK(t, diffArgs...)
 			assert.Equal(t, repeated, diff)
-			if strings.Contains(repeatedDebug, generatorEvent) || strings.Contains(repeatedDebug, `msg="kustomize: build" path=entry/unapplied`) {
+			if strings.Contains(repeatedDebug, generatorEvent) || entryBuildEvent.MatchString(repeatedDebug) {
 				t.Fatalf("repeated diff executed bootstrap work: %s", repeatedDebug)
 			}
 			testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", strings.ReplaceAll(application, "./entry", "./elsewhere"))+" }}")
@@ -1940,8 +1985,77 @@ func TestE2E_EntryApplicationRendered(t *testing.T) {
 			if strings.Count(invalidatedDebug, generatorEvent) != 1 || strings.Contains(invalidated, "name: literal-layer") {
 				t.Fatalf("changed generator input retained stale entry qualification: %s\n%s", invalidated, invalidatedDebug)
 			}
+			testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application)+" }}")
+			testutil.WriteFile(t, root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: literal-layer, namespace: apps}\ndata: {value: edited}\n")
+			if kind == "Kustomization" {
+				application = strings.Replace(application, "interval: 42m", "interval: 43m", 1)
+			} else {
+				application += "  kustomize:\n    patches:\n    - target: {kind: Kustomization}\n      patch: '[{\"op\":\"replace\",\"path\":\"/spec/interval\",\"value\":\"43m\"}]'\n"
+			}
+			testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application)+" }}")
+			difference, _ := harness.RequireCLIOK(t, "diff", "all", "--path", filepath.Join(root, "entry"), "--base", "HEAD", "--concurrency=2", "--no-progress", "-o", "json")
+			var changes struct {
+				Changes []struct {
+					Name   string
+					Parent struct{ Kind, Name, Namespace string }
+				}
+			}
+			assert.NoError(t, json.Unmarshal([]byte(difference), &changes))
+			attributed := 0
+			for _, change := range changes.Changes {
+				if change.Name == "literal-layer" {
+					attributed++
+					assert.Equal(t, change.Parent.Kind, "Kustomization")
+					assert.Equal(t, change.Parent.Namespace, "apps")
+					assert.Equal(t, change.Parent.Name, name)
+				}
+			}
+			if attributed != 1 {
+				t.Fatalf("diff lost real root attribution: %s", difference)
+			}
+			invalid := "[{\"op\":\"remove\",\"path\":\"/missing-field\"}]"
+			if kind == "Kustomization" {
+				application += "  patches:\n  - target: {kind: ConfigMap}\n    patch: '" + invalid + "'\n"
+			} else {
+				patch, err := json.Marshal([]map[string]any{{"op": "add", "path": "/spec/patches", "value": []map[string]any{{"target": map[string]any{"kind": "ConfigMap"}, "patch": invalid}}}})
+				assert.NoError(t, err)
+				application += "    - target: {kind: Kustomization}\n      patch: '" + string(patch) + "'\n"
+			}
+			testutil.WriteFile(t, root, "charts/bootstrap/templates/application.yaml", "{{ print "+fmt.Sprintf("%q", application)+" }}")
+			_, diagnostic, code := harness.RunCLIBuffers(args...)
+			assert.Equal(t, code, 1)
+			if !strings.Contains(diagnostic, "apps/"+name) || !strings.Contains(diagnostic, "missing-field") {
+				t.Fatalf("root failure lost real identity: %s", diagnostic)
+			}
 		})
 	}
+	t.Run("package", func(t *testing.T) {
+		root := t.TempDir()
+		repo := testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "entry/kustomization.yaml", "resources: [cm.yaml, instance.yaml]\nnamePrefix: package-\n")
+		testutil.WriteFile(t, root, "entry/instance.yaml", "apiVersion: fluxcd.controlplane.io/v1\nkind: FluxInstance\nmetadata: {name: installation, namespace: apps}\nspec: {distribution: {version: 2.x}}\n")
+		testutil.WriteFile(t, root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: layer, namespace: apps}\ndata: {value: before}\n")
+		testutil.GitCommitAll(t, repo, "initial", &gogit.CommitOptions{Author: &object.Signature{Name: "test", Email: "test@example.test", When: time.Unix(0, 0)}})
+		flags := []string{"--path", filepath.Join(root, "entry"), "--concurrency=2", "--no-progress", "--cache-dir", t.TempDir()}
+		out, _ := harness.RequireCLIOK(t, append([]string{"build", "all"}, flags...)...)
+		if !strings.Contains(out, "name: package-layer") || strings.Contains(out, "kind: Kustomization") {
+			t.Fatalf("unqualified entry lost path-only rendering: %s", out)
+		}
+		listed, _ := harness.RequireCLIOK(t, append([]string{"get", "ks", "-o", "json"}, flags...)...)
+		var objects []any
+		assert.NoError(t, json.Unmarshal([]byte(listed), &objects))
+		assert.Equal(t, len(objects), 0)
+		testutil.WriteFile(t, root, "entry/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: layer, namespace: apps}\ndata: {value: after}\n")
+		difference, _ := harness.RequireCLIOK(t, append([]string{"diff", "all", "-o", "json", "--base", "HEAD"}, flags...)...)
+		var result struct {
+			Changes []struct {
+				Parent struct{ Kind, Name, Path string }
+			}
+		}
+		assert.NoError(t, json.Unmarshal([]byte(difference), &result))
+		assert.Equal(t, len(result.Changes), 1)
+		assert.Diff(t, result.Changes[0].Parent, struct{ Kind, Name, Path string }{Path: "entry"})
+	})
 }
 
 func TestE2E_DiscoveryPackageEntries(t *testing.T) {

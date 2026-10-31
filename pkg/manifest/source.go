@@ -38,12 +38,45 @@ func (g *GitRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindGitRepository].Group, Kind: KindGitRepository, Namespace: g.Namespace, Name: g.Name}
 }
 
-// BootstrapAlias returns a local copy and the borrowed immutable Git descriptor.
-// A non-nil descriptor selects repository-root policy and supplies ref/view inputs.
-func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
+// BootstrapAlias returns a local copy.
+func (g *GitRepository) BootstrapAlias(root string) BaseManifest {
 	spec := g.GitRepositorySpec
 	spec.URL = "file://" + root
-	return NewGitRepository(sourcev1.GitRepository{Name: g.Name, Namespace: g.Namespace, Labels: g.Labels, Annotations: g.Annotations, Spec: spec}), g
+	return NewGitRepository(sourcev1.GitRepository{Name: g.Name, Namespace: g.Namespace, Labels: g.Labels, Annotations: g.Annotations, Spec: spec})
+}
+
+// BootstrapFacts describes a source's local coordinates, revision and filtering.
+type BootstrapFacts struct {
+	URL         string
+	DerivedRoot bool
+	RefKind     string
+	Ref         string
+	Ignore      string
+	Sparse      []string
+	Recurse     bool
+}
+
+// BootstrapFacts returns the borrowed immutable Git view inputs.
+func (g *GitRepository) BootstrapFacts() BootstrapFacts {
+	selected := (*GitRepositoryRef)(g.Reference)
+	kind, _ := selected.Effective()
+	if selected.Validate() != nil {
+		kind = "name"
+	}
+	facts := BootstrapFacts{URL: g.URL, RefKind: kind, Ref: (*GitRepositoryRef)(g.Reference).String(), Sparse: g.SparseCheckout, Recurse: g.RecurseSubmodules}
+	if g.Ignore != nil {
+		facts.Ignore = *g.Ignore
+	}
+	return facts
+}
+
+// BootstrapInput returns the authored inputs that shape a local Git alias.
+func (g *GitRepository) BootstrapInput() any {
+	var ref sourcev1.GitRepositoryRef
+	if g.Reference != nil {
+		ref = *g.Reference
+	}
+	return g.Content(ref)
 }
 
 // Content returns the source inputs that define the selected Git content.
@@ -179,13 +212,41 @@ func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindOCIRepository].Group, Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
 }
 
-// BootstrapAlias returns a local copy; a nil Git descriptor selects a derived frozen root.
-func (o *OCIRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
+// BootstrapAlias returns a local copy.
+func (o *OCIRepository) BootstrapAlias(root string) BaseManifest {
 	spec := o.OCIRepositorySpec
 	spec.URL = "file://" + root
 	out := NewOCIRepository(sourcev1.OCIRepository{Name: o.Name, Namespace: o.Namespace, Labels: o.Labels, Annotations: o.Annotations, Spec: spec})
 	out.diagnosticOwner, out.diagnosticPath, out.hasDiagnostic = o.diagnosticOwner, o.diagnosticPath, o.hasDiagnostic
-	return out, nil
+	return out
+}
+
+// BootstrapFacts returns the borrowed immutable OCI view inputs.
+func (o *OCIRepository) BootstrapFacts() BootstrapFacts {
+	facts := BootstrapFacts{URL: o.URL, DerivedRoot: true}
+	if ref := o.Reference; ref != nil {
+		switch {
+		case ref.Digest != "":
+			facts.RefKind, facts.Ref = "digest", ref.Digest
+		case ref.SemVer != "":
+			facts.RefKind, facts.Ref = "semver", ref.SemVer
+		case ref.Tag != "":
+			facts.RefKind, facts.Ref = "tag", ref.Tag
+		}
+	}
+	if o.Ignore != nil {
+		facts.Ignore = *o.Ignore
+	}
+	return facts
+}
+
+// BootstrapInput returns the authored inputs that shape a local OCI alias.
+func (o *OCIRepository) BootstrapInput() any {
+	var ref sourcev1.OCIRepositoryRef
+	if o.Reference != nil {
+		ref = *o.Reference
+	}
+	return o.Content(ref)
 }
 
 // Content returns the source inputs that define the selected OCI content.

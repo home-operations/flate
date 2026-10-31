@@ -9,6 +9,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/artifactgenerator"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/controllers/fluxinstance"
 	"github.com/home-operations/flate/pkg/controllers/helmrelease"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
@@ -117,6 +118,7 @@ type Orchestrator struct {
 	ksc                     *kustomization.Controller
 	hrc                     *helmrelease.Controller
 	rsc                     *resourcesetctrl.Controller
+	fic                     *fluxinstance.Controller
 	agc                     *artifactgenerator.Controller
 	filter                  *change.Filter
 	cache                   *sourcecache.Cache
@@ -206,8 +208,9 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	o.ksc = kustomization.New(st, ts, trees, cfg.WipeSecrets)
 	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions, cfg.WipeSecrets)
 	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
+	o.fic = fluxinstance.New(st, ts, trees, cfg.WipeSecrets)
 	o.agc = artifactgenerator.New(st, ts, cfg.Cache)
-	o.controllers = base.Controllers{Kustomization: o.ksc, HelmRelease: o.hrc, ResourceSet: o.rsc, Source: o.src, ArtifactGenerator: o.agc}
+	o.controllers = base.Controllers{Kustomization: o.ksc, HelmRelease: o.hrc, ResourceSet: o.rsc, FluxInstance: o.fic, Source: o.src, ArtifactGenerator: o.agc}
 	o.depGraph = newDependencyGraph()
 	return o
 }

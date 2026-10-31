@@ -968,13 +968,19 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			normalized: sourcev1.GitRepositoryRef{Commit: commit, Branch: "main"},
 		},
 		{
-			name:       "name",
+			name:       "named branch precedence",
 			ref:        &GitRepositoryRef{Branch: "bad branch", Tag: "v1.0.0", SemVer: "invalid", Name: "refs/heads/release"},
-			kind:       "name",
-			value:      "refs/heads/release",
+			kind:       "branch",
+			value:      "release",
 			label:      "name:refs/heads/release",
 			spec:       "+refs/heads/release:refs/heads/release",
 			normalized: sourcev1.GitRepositoryRef{Name: "refs/heads/release"},
+		},
+		{
+			name: "named tag precedence",
+			ref:  &GitRepositoryRef{Name: "refs/tags/v1", SemVer: "invalid", Tag: "other", Branch: "main"},
+			kind: "tag", value: "v1", label: "name:refs/tags/v1",
+			spec: "+refs/tags/v1:refs/tags/v1", normalized: sourcev1.GitRepositoryRef{Name: "refs/tags/v1"},
 		},
 		{
 			name:       "semver",
@@ -1022,6 +1028,9 @@ func TestGitRepositoryRef_Precedence(t *testing.T) {
 			want := ""
 			if tc.kind != "" {
 				want = tc.kind + ":" + tc.value
+			}
+			if tc.normalized.Name != "" {
+				want = "name:" + tc.normalized.Name
 			}
 			assert.Equal(t, tc.ref.String(), want)
 			assert.Equal(t, tc.ref.Label(), tc.label)
@@ -2228,38 +2237,49 @@ func TestBootstrapAlias_SourceKinds(t *testing.T) {
 	git := &GitRepository{Name: "entry", Namespace: "other", URL: "https://fixture.invalid/repo", Reference: ref, Ignore: &ignore, SparseCheckout: []string{"apps"}, RecurseSubmodules: true}
 	oci := &OCIRepository{Name: "entry", Namespace: "other", URL: "oci://fixture.invalid/repo", Ignore: &ignore,
 		Verify: &sourcev1.OCIRepositoryVerification{}, Labels: map[string]string{"team": "apps"}, Annotations: map[string]string{"input": "authored"}}
-	bucket := &Bucket{Name: "entry", Namespace: "other", Endpoint: "fixture.invalid", BucketName: "authored"}
+	bucket := &Bucket{Name: "entry", Namespace: "other", Endpoint: "fixture.invalid", BucketName: "authored", Ignore: &ignore}
 	for _, obj := range []interface {
 		BaseManifest
-		BootstrapAlias(string) (BaseManifest, *GitRepository)
+		BootstrapAlias(string) BaseManifest
+		BootstrapFacts() BootstrapFacts
 	}{git, oci, bucket} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			t.Parallel()
 			before := Fingerprint(obj)
-			alias, descriptor := obj.BootstrapAlias("/repo/subtree")
+			alias := obj.BootstrapAlias("/repo/subtree")
+			facts := obj.BootstrapFacts()
 			assert.Equal(t, alias.Named(), obj.Named())
 			if alias == obj || Fingerprint(obj) != before {
 				t.Fatal("alias mutated or retained receiver")
 			}
 			switch a := alias.(type) {
 			case *GitRepository:
-				if descriptor != git || a.URL != "file:///repo/subtree" || a.Reference != ref || a.Ignore != &ignore || !a.RecurseSubmodules || len(a.SparseCheckout) != 1 {
-					t.Fatalf("Git policy/view: %+v, %p", a, descriptor)
+				if facts.DerivedRoot || facts.RefKind != "tag" || facts.Ignore != ignore || a.URL != "file:///repo/subtree" || a.Reference != ref || a.Ignore != &ignore || !a.RecurseSubmodules || len(a.SparseCheckout) != 1 {
+					t.Fatalf("Git policy/view: %+v, %+v", a, facts)
 				}
 			case *OCIRepository:
-				if descriptor != nil || a.URL != "file:///repo/subtree" || a.Ignore != &ignore {
+				if !facts.DerivedRoot || facts.Ignore != ignore || a.URL != "file:///repo/subtree" || a.Ignore != &ignore {
 					t.Fatalf("OCI policy/view: %+v", a)
 				}
 				assert.Equal(t, a.Verify.Provider, "cosign")
 				assert.Equal(t, a.Labels["team"], "apps")
 				assert.Equal(t, a.Annotations["input"], "authored")
 			case *Bucket:
-				if descriptor != nil || a.Endpoint != "file:///repo/subtree" || a.BucketName != a.Name {
+				if !facts.DerivedRoot || facts.Ignore != ignore || a.Endpoint != "file:///repo/subtree" || a.BucketName != a.Name {
 					t.Fatalf("bucket policy/view: %+v", a)
 				}
 			}
 		})
 	}
+}
+
+func TestBucket_BootstrapIgnore(t *testing.T) {
+	t.Parallel()
+	bucket := &Bucket{Name: "source", Namespace: "apps", Endpoint: "fixture.invalid", BucketName: "input", Ignore: new("first")}
+	next := *bucket
+	next.Ignore = new("second")
+	assert.Equal(t, ValueEqual(bucket.BootstrapInput(), next.BootstrapInput()), false)
+	assert.Equal(t, ValueEqual(bucket.Content(bucket.Endpoint, true), next.Content(next.Endpoint, true)), true)
 }
 
 func TestDocIdentity_ReadOnly(t *testing.T) {

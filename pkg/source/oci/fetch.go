@@ -10,8 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"net/http"
-	"net/url"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -26,42 +24,14 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func (f *operation) fetchWithCredentials(ctx context.Context, repo *manifest.OCIRepository, policy cache.Policy) (*store.SourceArtifact, error) {
-	if repo.URL == "" {
-		return nil, manifest.NewError(manifest.ErrInput, nil, "missing url")
-	}
-	request, err := f.newRepoClient(ctx, repo, policy)
-	if err != nil {
-		return nil, err
-	}
-	if repo.SecretRef == nil {
-		return f.machineFetch(ctx, repo, request, policy)
-	}
-	return f.fetchPrepared(ctx, repo, request, policy)
-}
-
-func (f *operation) fetchPrepared(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
-	artifact, err := f.fetch(ctx, repo, request, policy)
-	if repo.Insecure && ctx.Err() == nil && errors.Is(err, http.ErrSchemeMismatch) {
-		if requestErr, ok := errors.AsType[*url.Error](err); ok {
-			target, parseErr := url.Parse(requestErr.URL)
-			if parseErr == nil && target.Host == request.client.Reference.Host() {
-				request.client.PlainHTTP = true
-				artifact, err = f.fetch(ctx, repo, request, policy)
-			}
-		}
-	}
-
-	return artifact, err
-}
-
 type registryAcquisition struct {
-	client   *remote.Repository
-	material any
-	resolved source.TransportMaterial
+	client    *remote.Repository
+	material  any
+	resolved  source.TransportMaterial
+	anonymous bool
 }
 
-func (f *operation) fetch(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
+func (f *operation) fetchLayer(ctx context.Context, repo *manifest.OCIRepository, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
 		ref = manifest.OCIRepositoryRef(*repo.Reference)

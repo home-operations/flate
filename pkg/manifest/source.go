@@ -141,6 +141,27 @@ type OCIRepository struct {
 	sourcev1.OCIRepositorySpec `json:",inline" yaml:",inline"`
 }
 
+// RegistryAccess describes the authored identity and transport for registry acquisition.
+type RegistryAccess struct {
+	Owner          DiagnosticIdentity
+	URL            string
+	Namespace      string
+	SecretRef      *LocalObjectReference
+	CertSecretRef  *LocalObjectReference
+	ProxySecretRef *LocalObjectReference
+	Insecure       bool
+	Timeout        time.Duration
+}
+
+// RegistryAccess returns the repository's registry acquisition requirements.
+func (o *OCIRepository) RegistryAccess() RegistryAccess {
+	return RegistryAccess{
+		Owner: DiagnosticFor(o.Named(), o), URL: o.URL, Namespace: o.Namespace,
+		SecretRef: o.SecretRef, CertSecretRef: o.CertSecretRef, ProxySecretRef: o.ProxySecretRef,
+		Insecure: o.Insecure, Timeout: o.OperationTimeout(),
+	}
+}
+
 // NewOCIRepository normalizes an owned typed OCIRepository declaration.
 func NewOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)

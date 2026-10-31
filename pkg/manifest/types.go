@@ -215,6 +215,8 @@ func References(obj BaseManifest, view ReferenceView) iter.Seq[Reference] {
 			obj.references(yield)
 		case *ResourceSet:
 			obj.references(yield)
+		case *ResourceSetInputProvider:
+			obj.references(yield)
 		case *HelmChartSource:
 			obj.references(yield)
 		case *GitRepository:

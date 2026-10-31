@@ -4,7 +4,13 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"hash/adler32"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 
+	"github.com/Masterminds/semver/v3"
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -101,12 +107,8 @@ func parseResourceSet(doc map[string]any) (*ResourceSet, error) {
 // ResourceSetInputProvider CRD (fluxcd.controlplane.io/v1). It supplies
 // inputs to one or more ResourceSets via spec.inputsFrom.
 //
-// flate evaluates the Static type fully — defaultValues becomes a
-// single exported input set. Dynamic types (GitHubBranch, OCIArtifactTag,
-// ExternalService, …) require live API access to remote services and
-// are intentionally treated as empty providers here; the referencing
-// ResourceSet still renders, but with no contribution from that
-// provider.
+// Static inputs use defaultValues, and OCIArtifactTag inputs use registry tags.
+// Other dynamic types require pre-baked status.exportedInputs.
 type ResourceSetInputProvider struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -153,33 +155,147 @@ func parseResourceSetInputProvider(doc map[string]any) (*ResourceSetInputProvide
 	}, nil
 }
 
-// ExportedInputs returns the input sets this provider contributes to a
-// referencing ResourceSet. Mirrors the upstream RSIP controller's
-// "exported inputs" semantics for the Static case; dynamic types
-// contribute zero sets here because flate can't query their remote
-// APIs offline. Each returned set is a fresh map[string]any safe for
-// the caller to mutate (e.g. to inject the provider block).
-func (p *ResourceSetInputProvider) ExportedInputs() ([]map[string]any, error) {
-	if len(p.Status.ExportedInputs) > 0 {
-		return decodeResourceSetInputs(p.Status.ExportedInputs)
+// ProviderInputKind selects how a provider contributes ResourceSet inputs.
+type ProviderInputKind uint8
+
+const (
+	// ProviderInputLiteral uses decoded status or Static inputs.
+	ProviderInputLiteral ProviderInputKind = iota
+	// ProviderInputRegistry acquires OCI artifact tags.
+	ProviderInputRegistry
+	// ProviderInputUnsupported contributes no offline inputs.
+	ProviderInputUnsupported
+)
+
+// ProviderInputPlan describes one provider's literal, registry or unsupported inputs.
+type ProviderInputPlan struct {
+	Kind     ProviderInputKind
+	Inputs   []map[string]any
+	Registry *RegistryAccess
+}
+
+func (p *ResourceSetInputProvider) inputKind() ProviderInputKind {
+	if len(p.Status.ExportedInputs) > 0 || p.Type == fluxopv1.InputProviderStatic || p.Type == "" {
+		return ProviderInputLiteral
 	}
-	switch p.Type {
-	case fluxopv1.InputProviderStatic, "":
+	if p.Type == fluxopv1.InputProviderOCIArtifactTag {
+		return ProviderInputRegistry
+	}
+	return ProviderInputUnsupported
+}
+
+// InputPlan classifies the provider and returns detached literal input maps.
+func (p *ResourceSetInputProvider) InputPlan() (ProviderInputPlan, error) {
+	plan := ProviderInputPlan{Kind: p.inputKind()}
+	switch plan.Kind {
+	case ProviderInputLiteral:
+		if len(p.Status.ExportedInputs) > 0 {
+			inputs, err := decodeResourceSetInputs(p.Status.ExportedInputs)
+			plan.Inputs = inputs
+			return plan, err
+		}
 		exported, err := decodeResourceSetInputs([]fluxopv1.ResourceSetInput{p.DefaultValues})
 		if err != nil {
-			return nil, fmt.Errorf("defaultValues: %w", err)
+			return plan, fmt.Errorf("defaultValues: %w", err)
 		}
 		defaults := exported[0]
-		// Upstream injects a synthetic "id" derived from the RSIP UID.
-		// flate has no UIDs; a deterministic hash of namespace/name is
-		// stable across runs and still uniquely identifies the input set
-		// when downstream templates reference inputs.id.
 		if _, exists := defaults["id"]; !exists {
 			defaults["id"] = p.derivedID()
 		}
-		return []map[string]any{defaults}, nil
+		plan.Inputs = exported
+	case ProviderInputRegistry:
+		plan.Registry = &RegistryAccess{
+			Owner: DiagnosticFor(p.Named(), p), URL: p.URL, Namespace: p.Namespace,
+			SecretRef: p.SecretRef, CertSecretRef: p.CertSecretRef, Insecure: p.Insecure,
+			Timeout: operationTimeout(nil),
+		}
+	case ProviderInputUnsupported:
 	}
-	return nil, nil
+	return plan, nil
+}
+
+// SelectTags applies flux-operator's filters, stable ordering and limit to registry tags.
+func (p *ResourceSetInputProvider) SelectTags(tags []string) ([]string, error) {
+	var include, exclude *regexp.Regexp
+	var constraint *semver.Constraints
+	if filter := p.Filter; filter != nil {
+		for _, field := range []struct {
+			name, pattern string
+			target        **regexp.Regexp
+		}{
+			{"includeBranch", filter.IncludeBranch, &include},
+			{"includeTag", filter.IncludeTag, &include},
+			{"includeEnvironment", filter.IncludeEnvironment, &include},
+			{"excludeBranch", filter.ExcludeBranch, &exclude},
+			{"excludeTag", filter.ExcludeTag, &exclude},
+			{"excludeEnvironment", filter.ExcludeEnvironment, &exclude},
+		} {
+			if field.pattern == "" {
+				continue
+			}
+			compiled, err := regexp.Compile(field.pattern)
+			if err != nil {
+				return nil, NewError(ErrInput, fmt.Errorf("invalid %s regex: %w", field.name, err), "")
+			}
+			*field.target = compiled
+		}
+		if filter.Semver != "" {
+			var err error
+			constraint, err = semver.NewConstraint(filter.Semver)
+			if err != nil {
+				return nil, NewError(ErrInput, fmt.Errorf("invalid semver expression: %w", err), "")
+			}
+		}
+	}
+	type parsedTag struct {
+		name    string
+		version *semver.Version
+	}
+	selected := make([]parsedTag, 0, len(tags))
+	for _, tag := range tags {
+		if include != nil && !include.MatchString(tag) || exclude != nil && exclude.MatchString(tag) {
+			continue
+		}
+		parsed := parsedTag{name: tag}
+		if constraint != nil {
+			// Flux ParseVersion requires three dot-separated components before SemVer parsing.
+			if strings.Count(tag, ".") < 2 {
+				continue
+			}
+			v, err := semver.NewVersion(tag)
+			if err != nil || !constraint.Check(v) {
+				continue
+			}
+			parsed.version = v
+		}
+		selected = append(selected, parsed)
+	}
+	if constraint != nil {
+		slices.SortStableFunc(selected, func(a, b parsedTag) int { return b.version.Compare(a.version) })
+	} else {
+		slices.SortFunc(selected, func(a, b parsedTag) int { return cmp.Compare(b.name, a.name) })
+	}
+	limit := (&fluxopv1.ResourceSetInputProvider{Spec: p.ResourceSetInputProviderSpec}).GetFilterLimit()
+	out := make([]string, min(limit, len(selected)))
+	for i := range out {
+		out[i] = selected[i].name
+	}
+	return out, nil
+}
+
+// TagInputs returns one resolved tag's generated fields merged with provider defaults.
+func (p *ResourceSetInputProvider) TagInputs(tag, digest string) (fluxopv1.ResourceSetInput, error) {
+	defaults, err := (&fluxopv1.ResourceSetInputProvider{Spec: p.ResourceSetInputProviderSpec}).GetDefaultInputs()
+	if err != nil {
+		return nil, NewError(ErrInput, fmt.Errorf("defaultValues: %w", err), "")
+	}
+	inputs, err := fluxopv1.NewResourceSetInput(defaults, map[string]any{
+		"id": strconv.FormatUint(uint64(adler32.Checksum([]byte(tag))), 10), "tag": tag, "digest": digest,
+	})
+	if err != nil {
+		return nil, NewError(ErrInput, fmt.Errorf("tag %q inputs: %w", tag, err), "")
+	}
+	return inputs, nil
 }
 
 func decodeResourceSetInputs(inputs []fluxopv1.ResourceSetInput) ([]map[string]any, error) {
@@ -202,12 +318,15 @@ func decodeResourceSetInputs(inputs []fluxopv1.ResourceSetInput) ([]map[string]a
 	return out, nil
 }
 
-// derivedID is the placeholder for upstream's UID-derived id field —
-// stable across flate runs because flate has no UIDs.
 func (p *ResourceSetInputProvider) derivedID() string {
-	// First 8 bytes (16 hex chars) of the full digest — enough to
-	// uniquely identify the input set within a render.
+	// flate has no UID, so Static IDs use the namespace and name.
 	return SHA256Hex([]byte(p.Namespace + "/" + p.Name))[:16]
+}
+
+func (p *ResourceSetInputProvider) references(yield func(Reference) bool) {
+	if p.inputKind() == ProviderInputRegistry {
+		credentialReferences(yield, p.Namespace, p.SecretRef, p.CertSecretRef)
+	}
 }
 
 func (r *ResourceSet) references(yield func(Reference) bool) {

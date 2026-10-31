@@ -1435,6 +1435,7 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 		cfg := treeConfig{Cache: cachetest.New(t, "", sourcecache.New), Concurrency: 2, Tree: Tree{}}
 		for _, v := range []int32{1, 2} {
 			version.Store(v)
+			before := requests.Load()
 			renderedTrees6, err := RenderTrees(t.Context(), []Tree{{RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, ExternalChanges: cfg.ExternalChanges, Input: cfg.BaseInput, BaseInput: cfg.Input}, {RepoRoot: root, ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, ExternalChanges: cfg.ExternalChanges, Input: cfg.Input, BaseInput: cfg.BaseInput}}, cfg.Config)
 			base, head := renderedTrees6[0], renderedTrees6[1]
 			assert.NoError(t, err)
@@ -1445,7 +1446,9 @@ func TestRenderTrees_NetworkRunIsolation(t *testing.T) {
 				}
 				assert.Diff(t, obj.Data, map[string]any{"VALUE": fmt.Sprintf("run-%d", v)})
 			}
-			assert.Equal(t, requests.Load(), 2*v)
+			if fetched := requests.Load() - before; fetched < 1 || fetched > 2 {
+				t.Fatalf("new invocation made %d requests, want one shared request or two independent waves", fetched)
+			}
 			if base.cfg.Network != head.cfg.Network || &base.inputs == &head.inputs {
 				t.Fatal("snapshots must share transport and retain independent input owners")
 			}

@@ -11,7 +11,6 @@ package source
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -186,42 +185,15 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 
 	c.SetPendingUnlessReady(id, "fetching")
 
-	// Release the worker slot during network I/O so other nodes can progress.
-	var artifact *store.SourceArtifact
-	var fetchErr error
-	c.Tasks.YieldSlot(func() {
-		artifact, fetchErr = fetcher.Fetch(ctx, obj, &c.run.Reads, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
-	})
-	if missing, ok := errors.AsType[*src.MissingSecretError](fetchErr); ok {
-		pending := &pendingSource{execution: c, object: obj, missing: missing}
-		if level == manifest.DrainNone && missing.Secret != (manifest.NamedResource{}) {
-			c.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusPending, Message: "waiting for source Secret"})
-			return pending
-		}
-		return pending.Settle(ctx, level)
-	}
-	return c.completeFetch(obj, artifact, fetchErr)
-}
-
-type pendingSource struct {
-	execution *execution
-	object    manifest.BaseManifest
-	missing   *src.MissingSecretError
-}
-
-func (p *pendingSource) Error() string { return p.missing.Error() }
-func (p *pendingSource) Unwrap() error {
-	return &depwait.ErrBlocked{Deps: []manifest.NamedResource{p.missing.Secret}}
-}
-func (p *pendingSource) Settle(ctx context.Context, _ manifest.DrainLevel) error {
-	c := p.execution
-	var artifact *store.SourceArtifact
-	var err error = p.missing
-	c.Tasks.YieldSlot(func() { artifact, err = p.missing.RetryMachine(ctx, &c.run.Reads) })
-	if err != nil && !errors.Is(err, p.missing) {
-		err = manifest.NewError(nil, err, p.missing.Error())
-	}
-	return c.completeFetch(p.object, artifact, err)
+	return c.run.Acquire(ctx, obj, base.Acquisition{
+		AllowMissingSecrets: c.allowMissingSecrets,
+		Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
+			return fetcher.Fetch(ctx, obj, &c.run.Reads, cache.Policy{MaxAge: facts.SourceInterval(), Retry: c.retry})
+		},
+		Complete: func(_ context.Context, artifact *store.SourceArtifact, unavailable error, _ manifest.DrainLevel) error {
+			return c.completeFetch(obj, artifact, unavailable)
+		},
+	}, level)
 }
 
 func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.SourceArtifact, err error) error {
@@ -231,20 +203,7 @@ func (c *execution) completeFetch(obj manifest.BaseManifest, artifact *store.Sou
 		}
 	}
 	if err != nil {
-		missing, hasMissing := errors.AsType[*src.MissingSecretError](err)
-		if errors.Is(err, manifest.ErrMissingSecret) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && (c.allowMissingSecrets || hasMissing && missing.ProducerBacked(&c.run.Reads)) {
-			if c.run.Reads.Valid() {
-				slog.Info("source: skipped (missing secret)", "id", manifest.DiagnosticFor(obj.Named(), obj).String(), "err", err)
-			}
-			var related []manifest.NamedResource
-			if hasMissing && missing.Secret != (manifest.NamedResource{}) {
-				related = []manifest.NamedResource{missing.Secret}
-			}
-			c.run.Reads.AddWarning(manifest.Warning{Resource: obj.Named(), Related: related, Subject: manifest.DiagnosticFor(obj.Named(), obj), Category: manifest.WarnSourceCredentialsUnavailable,
-				Message: err.Error()})
-			return manifest.NewError(manifest.ErrSourceSkipped, err, "")
-		}
-		return err
+		return manifest.NewError(manifest.ErrSourceSkipped, err, "")
 	}
 	if artifact != nil {
 		if !c.run.Reads.Valid() {

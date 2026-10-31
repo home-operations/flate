@@ -1,6 +1,7 @@
 package resourceset_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -53,7 +54,7 @@ metadata:
 		return nil, nil
 	}
 
-	docs, _, err := resourceset.Render(rs, resolver, nil)
+	docs, _, err := renderProviders(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -95,7 +96,7 @@ metadata:
 			DefaultValues: fluxopv1.ResourceSetInput{"tenant": jsonTmpl(t, `"alpha"`)},
 		}}, nil
 	}
-	docs, _, err := resourceset.Render(rs, resolver, nil)
+	docs, _, err := renderProviders(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -138,7 +139,7 @@ metadata:
 			Type: fluxopv1.InputProviderGitHubBranch,
 		}}, nil
 	}
-	docs, _, err := resourceset.Render(rs, resolver, nil)
+	docs, _, err := renderProviders(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -174,7 +175,7 @@ metadata: {name: x, namespace: default}`,
 			Type: fluxopv1.InputProviderGitHubBranch,
 		}}, nil
 	}
-	docs, _, err := resourceset.Render(rs, resolver, nil)
+	docs, _, err := renderProviders(rs, resolver, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -201,7 +202,7 @@ func TestRender_PermuteMaxPermutationsRejected(t *testing.T) {
 kind: ConfigMap
 metadata: {name: x, namespace: default}`,
 	}
-	_, _, err := resourceset.Render(rs, nil, nil)
+	_, _, err := renderProviders(rs, nil, nil)
 	if err == nil {
 		t.Fatal("expected Render to reject the >10000-permutation case")
 	}
@@ -234,7 +235,7 @@ func TestRender_InputsExpandTemplates(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -273,7 +274,7 @@ func TestRender_Deduplication(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -296,7 +297,7 @@ func TestRender_NoInputsRendersOnce(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -318,7 +319,7 @@ func TestRender_PreservesNamespaces(t *testing.T) {
 			jsonTmpl(t, `{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "explicit", "namespace": "authored"}}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +351,7 @@ func TestRender_UnstampedCommonMetadata(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -380,7 +381,7 @@ func TestRender_UnstampedOwnerLabels(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -415,7 +416,7 @@ func TestRender_SprigFunctions(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -452,7 +453,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -467,7 +468,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 		jsonTmpl(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"same","annotations":{"fluxcd.controlplane.io/reconcile":"disabled"}}}`),
 		jsonTmpl(t, `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"same"},"data":{"value":"enabled"}}`),
 	}
-	docs, _, err = resourceset.Render(rs, nil, nil)
+	docs, _, err = renderProviders(rs, nil, nil)
 	assert.NoError(t, err)
 	assert.Equal(t, len(docs), 1)
 	assert.Diff(t, docs[0].Document["data"], map[string]any{"value": "enabled"})
@@ -475,7 +476,7 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			t.Parallel()
 			candidate := &manifest.ResourceSet{Name: "exact", ResourcesTemplate: fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata:\n name: exact\n annotations: {fluxcd.controlplane.io/reconcile: %q}", value)}
-			docs, _, err := resourceset.Render(candidate, nil, nil)
+			docs, _, err := renderProviders(candidate, nil, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, len(docs), 1)
 		})
@@ -504,7 +505,7 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 				}`),
 		},
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -536,7 +537,7 @@ func TestRender_MissingKeyErrors(t *testing.T) {
 				}`),
 		},
 	}
-	_, _, err := resourceset.Render(rs, nil, nil)
+	_, _, err := renderProviders(rs, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for undefined input key, got nil")
 	}
@@ -568,7 +569,7 @@ func TestRender_UsesResourceSetInputProviderStatusExportedInputs(t *testing.T) {
 		},
 	}
 
-	docs, _, err := resourceset.Render(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+	docs, _, err := renderProviders(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		return []*manifest.ResourceSetInputProvider{rsip}, nil
 	}, nil)
 	if err != nil {
@@ -598,9 +599,10 @@ func TestResourceSetInputProvider_StatusExportedInputsOverrideDerivedID(t *testi
 		},
 	}
 
-	inputs, err := rsip.ExportedInputs()
+	plan, err := rsip.InputPlan()
+	inputs := plan.Inputs
 	if err != nil {
-		t.Fatalf("ExportedInputs: %v", err)
+		t.Fatalf("InputPlan: %v", err)
 	}
 	if len(inputs) != 1 || inputs[0]["id"] != "exported-id" {
 		t.Fatalf("status exported id should win, got %+v", inputs)
@@ -621,7 +623,7 @@ func TestRender_MalformedTemplateErrors(t *testing.T) {
 				}`), // unterminated template
 		},
 	}
-	_, _, err := resourceset.Render(rs, nil, nil)
+	_, _, err := renderProviders(rs, nil, nil)
 	if err == nil {
 		t.Fatal("expected parse error for malformed template, got nil")
 	}
@@ -648,7 +650,7 @@ spec:
   layerSelector: << inputs.layerSelector | toYaml | nindent 4 >>
 `,
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -692,7 +694,7 @@ data:
 	other.Namespace = "other"
 	st.AddObject(&other)
 	st.AddObject(&manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindResourceSetInputProvider, Name: rsip.Name, Namespace: rsip.Namespace})
-	docs, _, err := resourceset.Render(rs, resourceset.StoreResolver(st), nil)
+	docs, _, err := renderProviders(rs, resourceset.StoreResolver(st), nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -728,7 +730,7 @@ data:
 					ref.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"set": "apps"}}
 				}
 				candidate.InputsFrom = []fluxopv1.InputProviderReference{ref}
-				docs, _, err := resourceset.Render(&candidate, resourceset.StoreResolver(st), nil)
+				docs, _, err := renderProviders(&candidate, resourceset.StoreResolver(st), nil)
 				if err != nil || len(docs) != tc.want {
 					t.Fatalf("docs=%d, error=%v, want %d", len(docs), err, tc.want)
 				}
@@ -750,7 +752,7 @@ data:
 			t.Parallel()
 			candidate := *rs
 			candidate.InputsFrom = tc.refs
-			got, _, err := resourceset.Render(&candidate, resourceset.StoreResolver(st), nil)
+			got, _, err := renderProviders(&candidate, resourceset.StoreResolver(st), nil)
 			assert.NoError(t, err)
 			if len(got) != tc.want {
 				t.Fatalf("docs=%d, want %d", len(got), tc.want)
@@ -786,7 +788,7 @@ func TestStoreResolver_CollectionAssessmentTotal(t *testing.T) {
 			var reads store.ReadSet
 			reads.Init(st, rs.Named(), nil)
 			defer reads.Retire()
-			docs, _, err := resourceset.Render(rs, resourceset.StoreResolver(&reads), nil)
+			docs, _, err := renderProviders(rs, resourceset.StoreResolver(&reads), nil)
 			if (err != nil) != tc.wantError {
 				t.Fatalf("prepare error=%v, want error=%t", err, tc.wantError)
 			}
@@ -911,54 +913,35 @@ func TestStoreResolver_SelectorInputs(t *testing.T) {
 		if len(got) != 2 || got[0].Named() != db.Named() || got[1].Named() != web.Named() {
 			t.Fatalf("updated providers=%v, want db and web", got)
 		}
-		inputs, err := got[0].ExportedInputs()
+		plan, err := got[0].InputPlan()
+		inputs := plan.Inputs
 		assert.NoError(t, err)
 		assert.Equal(t, inputs[0]["value"], "updated")
 	})
 }
 
-// TestRender_InputsFrom_DynamicProviderEmptySkip verifies that a
-// non-Static provider (which flate can't query offline) contributes
-// zero input sets rather than erroring — the ResourceSet still renders
-// with whatever inline inputs it has.
 func TestRender_InputsFrom_DynamicProviderEmptySkip(t *testing.T) {
 	t.Parallel()
-	rsip := &manifest.ResourceSetInputProvider{
-		Name: "branches", Namespace: "flux-system",
-		Type: fluxopv1.InputProviderGitHubBranch,
-		URL:  "https://github.com/foo/bar",
-	}
-	rs := &manifest.ResourceSet{
-		Name: "matrix", Namespace: "flux-system",
-		Inputs: []fluxopv1.ResourceSetInput{
-			{"tenant": jsonTmpl(t, `"inline-only"`)},
-		},
-		InputsFrom: []fluxopv1.InputProviderReference{
-			{Name: "branches"},
-		},
-		ResourcesTemplate: `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: << inputs.tenant >>
-  namespace: flux-system
-`,
-	}
-	resolver := func(_ fluxopv1.InputProviderReference, _ manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
-		return []*manifest.ResourceSetInputProvider{rsip}, nil
-	}
-	docs, warnings, err := resourceset.Render(rs, resolver, nil)
-	if err != nil {
-		t.Fatalf("Render: %v", err)
-	}
-	if len(docs) != 1 {
-		t.Fatalf("expected 1 doc from inline input (dynamic provider contributes nothing), got %d", len(docs))
-	}
-	if len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider || warnings[0].Resource != rs.Named() || warnings[0].Detail[0] != rsip.Named().String() {
-		t.Fatalf("offline provider warning = %+v", warnings)
-	}
-	md := docs[0].Document["metadata"].(map[string]any)
-	if md["name"] != "inline-only" {
-		t.Errorf("expected name=inline-only; got %v", md["name"])
+	for _, kind := range []string{fluxopv1.InputProviderACRArtifactTag, fluxopv1.InputProviderECRArtifactTag, fluxopv1.InputProviderGARArtifactTag, fluxopv1.InputProviderGitHubBranch} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			provider := &manifest.ResourceSetInputProvider{Name: "remote", Namespace: "apps", Type: kind}
+			rs := &manifest.ResourceSet{Name: "matrix", Namespace: "apps",
+				Inputs:            []fluxopv1.ResourceSetInput{{"tenant": jsonTmpl(t, `"inline-only"`)}},
+				InputsFrom:        []fluxopv1.InputProviderReference{{Name: provider.Name}},
+				ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.tenant >>'}\n",
+			}
+			docs, warnings, err := renderProviders(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+				return []*manifest.ResourceSetInputProvider{provider}, nil
+			}, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, len(docs), 1)
+			assert.Equal(t, docs[0].Document["metadata"].(map[string]any)["name"], any("inline-only"))
+			if len(warnings) != 1 || warnings[0].Category != manifest.WarnOfflineInputProvider || warnings[0].Resource != rs.Named() {
+				t.Fatalf("unsupported provider warning = %+v", warnings)
+			}
+			assert.Diff(t, warnings[0].Detail, []string{provider.Named().String(), kind})
+		})
 	}
 }
 
@@ -984,7 +967,7 @@ metadata:
 		},
 		ResourcesTemplate: tmpl,
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -994,7 +977,7 @@ metadata:
 	t.Run("invalid stream separator", func(t *testing.T) {
 		t.Parallel()
 		candidate := &manifest.ResourceSet{Name: "stream", ResourcesTemplate: "\n---oops: kept\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: rejected}"}
-		_, _, err := resourceset.Render(candidate, nil, nil)
+		_, _, err := renderProviders(candidate, nil, nil)
 		if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 			t.Fatalf("error = %v, want classified invalid stream separator", err)
 		}
@@ -1009,7 +992,7 @@ spec:
   postgresql: {value: first}
   postgresql: {value: last}
 `}
-		docs, _, err := resourceset.Render(candidate, nil, nil)
+		docs, _, err := renderProviders(candidate, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1032,7 +1015,7 @@ data:
   value: << if eq inputs.value nil >>"null"<< end >>
   malformed: << if hasKey inputs "malformed" >>present<< else >>omitted<< end >>`,
 	}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1057,7 +1040,7 @@ func TestRender_SlugifyLength(t *testing.T) {
 kind: ConfigMap
 metadata: {name: << inputs.name | slugify >>}`,
 			}
-			docs, _, err := resourceset.Render(rs, nil, nil)
+			docs, _, err := renderProviders(rs, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1105,7 +1088,7 @@ func TestRender_Steps(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			rs := &manifest.ResourceSet{Name: "steps", Namespace: "default", ResourceSetSpec: tt.spec}
-			docs, _, err := resourceset.Render(rs, nil, nil)
+			docs, _, err := renderProviders(rs, nil, nil)
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want %q", err, tt.wantErr)
@@ -1155,7 +1138,7 @@ func TestRender_EmptyInputRule(t *testing.T) {
 				resolve := func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 					return []*manifest.ResourceSetInputProvider{{Name: "empty", Type: fluxopv1.InputProviderGitHubBranch}}, nil
 				}
-				docs, _, err := resourceset.Render(rs, resolve, nil)
+				docs, _, err := renderProviders(rs, resolve, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1194,7 +1177,7 @@ metadata: {}
 ---
 apiVersion: example.test/v1
 metadata: {name: incomplete}`}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1219,7 +1202,7 @@ kind: ConfigMap
 metadata:
  name: excluded
  annotations: {fluxcd.controlplane.io/reconcile: disabled}`}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1252,7 +1235,7 @@ items:
   metadata:
     name: excluded
     annotations: {fluxcd.controlplane.io/reconcile: disabled}`}
-	docs, _, err := resourceset.Render(rs, nil, nil)
+	docs, _, err := renderProviders(rs, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1287,7 +1270,7 @@ items:
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			candidate := &manifest.ResourceSet{Name: "boundary", Namespace: "apps", ResourcesTemplate: tc.template}
-			got, _, err := resourceset.Render(candidate, nil, nil)
+			got, _, err := renderProviders(candidate, nil, nil)
 			if tc.wantErr {
 				if !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) {
 					t.Fatalf("error = %v, want classified malformed list error", err)
@@ -1334,7 +1317,7 @@ func TestRender_Admission(t *testing.T) {
 				return []*manifest.ResourceSetInputProvider{provider}, nil
 			}
 			calls := 0
-			docs, warnings, err := resourceset.Render(rs, resolve, func(any) (bool, error) {
+			docs, warnings, err := renderProviders(rs, resolve, func(any) (bool, error) {
 				calls++
 				if tc.name == "template" {
 					return false, nil
@@ -1351,9 +1334,34 @@ func TestRender_Admission(t *testing.T) {
 			}
 		})
 	}
+	t.Run("canonical content stays immutable", func(t *testing.T) {
+		t.Parallel()
+		rs := &manifest.ResourceSet{Name: "matrix", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Name: "images"}},
+			ResourcesTemplate: "<< $_ := set inputs.nested \"value\" \"mutated\" >>apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.tag >>'}\n",
+		}
+		provider := &manifest.ResourceSetInputProvider{Name: "images", Namespace: "apps", DefaultValues: fluxopv1.ResourceSetInput{
+			"tag": jsonTmpl(t, `"selected"`), "nested": jsonTmpl(t, `{"value":"captured"}`),
+		}}
+		resolve := func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+			return []*manifest.ResourceSetInputProvider{provider}, nil
+		}
+		var captured any
+		var before []byte
+		docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
+			captured = content
+			var err error
+			before, err = json.Marshal(content)
+			return false, err
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, len(docs), 1)
+		after, err := json.Marshal(captured)
+		assert.NoError(t, err)
+		assert.Equal(t, string(after), string(before))
+	})
 	invalid := &manifest.ResourceSet{Name: "invalid", Steps: []fluxopv1.ResourceSetStep{{Name: "empty"}}}
 	called := false
-	_, _, err := resourceset.Render(invalid, nil, func(any) (bool, error) { called = true; return true, nil })
+	_, _, err := renderProviders(invalid, nil, func(any) (bool, error) { called = true; return true, nil })
 	if !errors.Is(err, manifest.ErrInput) || called {
 		t.Fatalf("invalid steps reached admission: called=%v error=%v", called, err)
 	}
@@ -1371,7 +1379,7 @@ func TestRender_UsesOneProviderQuery(t *testing.T) {
 		DefaultValues: fluxopv1.ResourceSetInput{"value": jsonTmpl(t, `"captured"`)},
 	}
 	calls := 0
-	docs, _, err := resourceset.Render(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
+	docs, _, err := renderProviders(rs, func(fluxopv1.InputProviderReference, manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		calls++
 		if calls != 1 {
 			t.Fatal("provider query repeated")
@@ -1382,4 +1390,48 @@ func TestRender_UsesOneProviderQuery(t *testing.T) {
 	if calls != 1 || len(docs) != 1 || docs[0].Document["metadata"].(map[string]any)["name"] != "captured" {
 		t.Fatalf("query calls=%d output=%v", calls, docs)
 	}
+}
+
+func renderProviders(rs *manifest.ResourceSet, resolve resourceset.ProviderResolver, admit func(any) (bool, error)) ([]manifest.DocOccurrence, []manifest.Warning, error) {
+	inputs, err := resourceset.CollectProviders(rs, resolve)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range inputs {
+		input := &inputs[i]
+		plan, err := input.Declaration.InputPlan()
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", manifest.ErrInput, err)
+		}
+		input.Inputs = plan.Inputs
+		if plan.Kind == manifest.ProviderInputUnsupported {
+			input.State = resourceset.ProviderInputUnsupported
+		}
+	}
+	return resourceset.Render(rs, inputs, admit)
+}
+
+func TestRender_EvaluatedInputsRemainImmutable(t *testing.T) {
+	t.Parallel()
+	rs := &manifest.ResourceSet{Name: "matrix", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Name: "images"}},
+		ResourcesTemplate: "<< $_ := set inputs.nested \"value\" \"mutated\" >>apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '<< inputs.tag >>'}\n",
+	}
+	inputs := []resourceset.ProviderInputs{{ID: manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "images"},
+		Inputs: []map[string]any{{"tag": "selected", "nested": map[string]any{"value": "captured"}}},
+	}}
+	for range 2 {
+		docs, warnings, err := resourceset.Render(rs, inputs, nil)
+		assert.NoError(t, err)
+		assert.Equal(t, len(docs), 1)
+		assert.Equal(t, len(warnings), 0)
+		assert.Equal(t, inputs[0].Inputs[0]["nested"].(map[string]any)["value"], any("captured"))
+		if _, exists := inputs[0].Inputs[0]["provider"]; exists {
+			t.Fatal("render mutated captured provider inputs")
+		}
+	}
+	inputs[0].Inputs = nil
+	docs, warnings, err := resourceset.Render(rs, inputs, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, len(docs), 0)
+	assert.Equal(t, len(warnings), 0)
 }

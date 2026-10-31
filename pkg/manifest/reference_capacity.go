@@ -66,7 +66,12 @@ func (e *ExternalArtifact) ReferenceCapacity() (int, int) {
 }
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
-func (*ResourceSetInputProvider) ReferenceCapacity() (int, int) { return 0, 0 }
+func (p *ResourceSetInputProvider) ReferenceCapacity() (int, int) {
+	if p.inputKind() == ProviderInputRegistry {
+		return 2, 0
+	}
+	return 0, 0
+}
 
 // ReferenceCapacity bounds all references and data input uses without resolving identities.
 func (*ConfigMap) ReferenceCapacity() (int, int) { return 0, 0 }

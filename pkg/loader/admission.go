@@ -3,15 +3,11 @@ package loader
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"iter"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -1539,9 +1535,9 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 	if ref.Selector == nil {
 		return nil, nil
 	}
-	selector, err := metav1.LabelSelectorAsSelector(ref.Selector)
+	matcher, err := ref.Matcher(ref.Selector)
 	if err != nil {
-		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("input selector: %w", err), "")
+		return nil, err
 	}
 	var inputs []manifest.NamedResource
 	target := ref.NamedResource
@@ -1549,7 +1545,7 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 		if id.Group != target.Group || id.Kind != target.Kind || id.Namespace != target.Namespace || slices.Contains(inputs, id) {
 			return
 		}
-		matched := selector.Matches(labels.Set(values))
+		matched := matcher.Matches(id, values)
 		if !matched && reverse && c.loader.sideKnown {
 			source := c.source(id)
 			if _, _, paired := c.delta(source); paired {
@@ -1559,7 +1555,7 @@ func (c *admissionClosure) matchingInputs(ref manifest.Reference, reverse bool) 
 				}
 				opposite := c.loader.Options.Changes.OppositeDeclaration(c.loader.side, source, object)
 				if labeled, ok := opposite.(interface{ GetLabels() map[string]string }); ok {
-					matched = selector.Matches(labels.Set(labeled.GetLabels()))
+					matched = matcher.Matches(id, labeled.GetLabels())
 				}
 			}
 		}

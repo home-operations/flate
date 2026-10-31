@@ -48,7 +48,7 @@ func (e outcomeCycle) Error() string { return "cycle" }
 func (e outcomeCycle) Unwrap() error { return e }
 
 func outcomeFailure(err error) error {
-	return &TerminalError{Err: &producerError{err}, Attempted: true}
+	return &TerminalError{Err: newProducerError(err), Attempted: true}
 }
 
 func TestOutcome_TypedRoundTrip(t *testing.T) {

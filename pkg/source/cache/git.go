@@ -95,7 +95,7 @@ func (p gitProducer) produce(ctx context.Context, c *Cache, staged *payload, fet
 		if closeErr != nil {
 			return nil, errors.Join(err, closeErr)
 		}
-		return nil, &producerError{err}
+		return nil, newProducerError(err)
 	}
 	if err := errors.Join(closeErr, ctx.Err()); err != nil {
 		return nil, err

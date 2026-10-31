@@ -6,10 +6,15 @@ package resourceset
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io/fs"
 
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/resourceset"
+	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/source/oci"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -24,11 +29,19 @@ type Controller struct {
 	// WipeSecrets controls whether Secret cleartext is wiped when parsing
 	// emitted children (forwarded to base.Execution.Emit).
 	WipeSecrets bool
+	// Inputs fetches registry-backed provider content through the shared OCI owner.
+	Inputs *oci.Fetcher
+	// Retry controls transient failures during provider acquisition.
+	Retry cache.RetryConfig
+	// AllowMissingSecrets applies the source credential policy to provider inputs.
+	AllowMissingSecrets bool
 }
 
 type execution struct {
 	*Controller
-	run base.Execution
+	run    base.Execution
+	inputs []resourceset.ProviderInputs
+	next   int
 }
 
 func (c *Controller) newExecution(id manifest.NamedResource) *execution {
@@ -58,17 +71,73 @@ func (c *Controller) ReconcileNode(ctx context.Context, id manifest.NamedResourc
 }
 
 func (c *execution) reconcile(ctx context.Context, rs *manifest.ResourceSet, level manifest.DrainLevel) error {
-	id := rs.Named()
 	var err error
 	rs, err = c.run.RequireRefresh(ctx, rs, manifest.GateInputs, level)
 	if err != nil {
 		return err
 	}
 
+	c.inputs, err = resourceset.CollectProviders(rs, resourceset.StoreResolver(&c.run.Reads))
+	if err != nil {
+		return err
+	}
+	return c.collect(ctx, rs, level)
+}
+
+func (c *execution) collect(ctx context.Context, rs *manifest.ResourceSet, level manifest.DrainLevel) error {
+	for c.next < len(c.inputs) {
+		input := &c.inputs[c.next]
+		provider := input.Declaration
+		plan, err := provider.InputPlan()
+		if err != nil {
+			return manifest.NewError(manifest.ErrInput, fmt.Errorf("ResourceSetInputProvider %s: %w", provider.Named().NamespacedName(), err), "")
+		}
+		input.Inputs = plan.Inputs
+		switch plan.Kind {
+		case manifest.ProviderInputUnsupported:
+			input.State = resourceset.ProviderInputUnsupported
+		case manifest.ProviderInputLiteral:
+		case manifest.ProviderInputRegistry:
+			if c.Inputs == nil {
+				return manifest.NewError(manifest.ErrInput, nil, "registry input fetcher is not configured")
+			}
+			return c.run.Acquire(ctx, provider, base.Acquisition{
+				AllowMissingSecrets:  c.AllowMissingSecrets,
+				AllowAnonymousDenied: true,
+				Fetch: func(ctx context.Context) (*store.SourceArtifact, error) {
+					return c.Inputs.FetchInputs(ctx, provider, &c.run.Reads, cache.Policy{Retry: c.Retry})
+				},
+				Complete: func(ctx context.Context, artifact *store.SourceArtifact, unavailable error, level manifest.DrainLevel) error {
+					if !c.run.Reads.Valid() {
+						return nil
+					}
+					if unavailable != nil {
+						input.State = resourceset.ProviderInputUnavailable
+					} else {
+						body, err := fs.ReadFile(artifact.FS, "inputs.json")
+						if err != nil {
+							return manifest.NewError(manifest.ErrFlux, fmt.Errorf("read provider inputs: %w", err), "")
+						}
+						if err := json.Unmarshal(body, &input.Inputs); err != nil {
+							return manifest.NewError(manifest.ErrFlux, fmt.Errorf("decode provider inputs: %w", err), "")
+						}
+					}
+					c.next++
+					return c.collect(ctx, rs, level)
+				},
+			}, level)
+		}
+		c.next++
+	}
+	return c.render(ctx, rs)
+}
+
+func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error {
+	id := rs.Named()
 	var attempt store.Emission
 	defer attempt.Finish()
 	handled := false
-	docs, warnings, err := resourceset.Render(rs, resourceset.StoreResolver(&c.run.Reads), func(content any) (bool, error) {
+	docs, warnings, err := resourceset.Render(rs, c.inputs, func(content any) (bool, error) {
 		fp, hit, err := c.run.FingerprintDedup(ctx, id, content, &attempt)
 		handled = hit
 		if hit || err != nil {

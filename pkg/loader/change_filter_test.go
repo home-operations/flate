@@ -13,6 +13,7 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
@@ -1751,6 +1752,43 @@ func TestFilter_AcceptedChildren(t *testing.T) {
 
 func TestFilter_LateProducerIndexedDeclarations(t *testing.T) {
 	t.Parallel()
+	t.Run("oci_provider_credentials", func(t *testing.T) {
+		t.Parallel()
+		for _, route := range []string{"named", "selector"} {
+			t.Run(route, func(t *testing.T) {
+				t.Parallel()
+				provider := &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "effective", Labels: map[string]string{"role": "images"},
+					Type: fluxopv1.InputProviderOCIArtifactTag, SecretRef: &manifest.LocalObjectReference{Name: "auth"}}
+				secret := &manifest.Secret{Name: "auth", Namespace: "effective"}
+				producer := &manifest.Kustomization{Name: "credentials", Namespace: "effective"}
+				consumer := &manifest.ResourceSet{Name: "set", Namespace: "effective", InputsFrom: []fluxopv1.InputProviderReference{{Name: "tags"}}}
+				if route == "selector" {
+					consumer.InputsFrom = []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: provider.Labels}}}
+				}
+				sibling := &manifest.Kustomization{Name: "sibling", Namespace: "effective"}
+				st := store.New()
+				st.AddObjects([]manifest.BaseManifest{consumer, sibling})
+				index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					consumer.Named(): {File: "consumer.yaml", Declaration: consumer},
+					provider.Named(): {File: "provider.yaml", Declaration: provider},
+					secret.Named(): {File: "credentials/secret.yaml", Declaration: secret,
+						Productions: []manifest.Production{{Owner: producer.Named(), File: "credentials/secret.yaml"}}},
+					producer.Named(): {File: "producer.yaml", Declaration: producer},
+					sibling.Named():  {File: "sibling.yaml", Declaration: sibling},
+				}}
+				filter := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"credentials/secret.yaml"}), index: index, inventory: st})
+				filter.loader.locations = map[manifest.NamedResource]Occurrence{provider.Named(): compactOccurrence(provider)}
+				filter.prepare(store.Child{}, nil, false)
+				for _, id := range []manifest.NamedResource{secret.Named(), provider.Named(), producer.Named(), consumer.Named()} {
+					assert.Equal(t, filter.ShouldReconcile(id), true)
+				}
+				assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
+				assert.Equal(t, st.GetObject(provider.Named()) == nil, true)
+				assert.Equal(t, st.GetObject(secret.Named()) == nil, true)
+				assert.Equal(t, st.GetObject(producer.Named()) == nil, true)
+			})
+		}
+	})
 	for _, tc := range []struct {
 		name        string
 		prepared    bool
@@ -1804,12 +1842,18 @@ func TestFilter_LateProducerIndexedDeclarations(t *testing.T) {
 func TestFilter_ReverseContentInputs(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name string
-		obj  manifest.BaseManifest
-		dep  manifest.NamedResource
+		name     string
+		obj      manifest.BaseManifest
+		dep      manifest.NamedResource
+		inactive bool
 	}{
-		{"auth", &manifest.GitRepository{Name: "repo", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "input"}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}},
-		{"provider", &manifest.ResourceSet{Name: "set", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "input"}},
+		{"auth", &manifest.GitRepository{Name: "repo", Namespace: "apps", SecretRef: &manifest.LocalObjectReference{Name: "input"}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}, false},
+		{"provider", &manifest.ResourceSet{Name: "set", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, manifest.NamedResource{Group: manifest.FluxOperatorDomain, Kind: manifest.KindResourceSetInputProvider, Namespace: "apps", Name: "input"}, false},
+		{"provider_auth", &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "effective", Type: fluxopv1.InputProviderOCIArtifactTag, SecretRef: &manifest.LocalObjectReference{Name: "input"}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "effective", Name: "input"}, false},
+		{"provider_cert", &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "effective", Type: fluxopv1.InputProviderOCIArtifactTag, CertSecretRef: &manifest.LocalObjectReference{Name: "input"}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "effective", Name: "input"}, false},
+		{"pre_baked_provider", &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "apps", Type: fluxopv1.InputProviderOCIArtifactTag, SecretRef: &manifest.LocalObjectReference{Name: "input"}, Status: fluxopv1.ResourceSetInputProviderStatus{ExportedInputs: []fluxopv1.ResourceSetInput{{}}}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}, true},
+		{"static_provider", &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "apps", Type: fluxopv1.InputProviderStatic, SecretRef: &manifest.LocalObjectReference{Name: "input"}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}, true},
+		{"unsupported_provider", &manifest.ResourceSetInputProvider{Name: "tags", Namespace: "apps", Type: fluxopv1.InputProviderACRArtifactTag, SecretRef: &manifest.LocalObjectReference{Name: "input"}}, manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "input"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -1817,7 +1861,7 @@ func TestFilter_ReverseContentInputs(t *testing.T) {
 			index := filterFixture{files: map[manifest.NamedResource]string{tc.obj.Named(): "consumer.yaml", tc.dep: "input.yaml"}, objects: objects}.index()
 			f := newAdmission(t, admissionConfig{changes: change.NewSet([]string{"input.yaml"}), index: index, inventory: objects, root: ""})
 			assert.Equal(t, f.ShouldReconcile(tc.dep), true)
-			assert.Equal(t, f.ShouldReconcile(tc.obj.Named()), true)
+			assert.Equal(t, f.ShouldReconcile(tc.obj.Named()), !tc.inactive)
 		})
 	}
 }

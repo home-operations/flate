@@ -149,7 +149,7 @@ var outcomeCodecs = map[string]outcomeCodec{
 	"terminal": {minChildren: 1, maxChildren: 1, terminal: true, build: func(_ outcomeCause, children []error) (error, bool) {
 		return &TerminalError{Err: children[0], Attempted: false}, true
 	}},
-	"producer": {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) { return &producerError{children[0]}, true }},
+	"producer": {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) { return newProducerError(children[0]), true }},
 	"machine":  {minChildren: 1, maxChildren: 1, build: func(_ outcomeCause, children []error) (error, bool) { return MachineCredentialErr(children[0]), true }},
 	"url": {minChildren: 1, maxChildren: 1, enter: outcomeTransport, build: func(n outcomeCause, children []error) (error, bool) {
 		return &url.Error{Op: n.Op, Err: children[0]}, true

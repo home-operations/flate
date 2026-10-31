@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 
@@ -759,47 +760,49 @@ func TestFetchHTTPChart_TruncatedOutcomeReplay(t *testing.T) {
 }
 func TestFetchIndex_ConcurrentRefreshDuringBackoff(t *testing.T) {
 	t.Parallel()
-	failed := make(chan struct{})
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if hits.Add(1) == 1 {
-			w.Header().Set("Content-Length", "20")
-			_, _ = io.WriteString(w, "partial")
-			close(failed)
-			return
+	synctest.Test(t, func(t *testing.T) {
+		failed := make(chan struct{})
+		var hits atomic.Int32
+		r := httpRepo("https://charts.invalid")
+		f, fInputs := newHTTPFetcher(t, r)
+		prepared := preparedHTTP(t, f, fInputs, r)
+		prepared.client.Transport = chartTransport(func(req *http.Request) (*http.Response, error) {
+			body := io.Reader(strings.NewReader(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0")))
+			if hits.Add(1) == 1 {
+				body = io.MultiReader(strings.NewReader("partial"), iotest.ErrReader(io.ErrUnexpectedEOF))
+				close(failed)
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Header: make(http.Header), Request: req}, nil
+		})
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.fetchIndex(ctx, prepared, sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}})
+			done <- err
+		}()
+		<-failed
+		synctest.Wait()
+		updated, err := f.fetchIndex(t.Context(), prepared, sourcecache.Policy{})
+		if err != nil {
+			t.Fatal(err)
 		}
-		_, _ = io.WriteString(w, strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0"))
-	}))
-	defer srv.Close()
-	r := httpRepo(srv.URL)
-	f, fInputs := newHTTPFetcher(t, r)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := f.fetchIndex(ctx, preparedHTTP(t, f, fInputs, r), sourcecache.Policy{Retry: sourcecache.RetryConfig{Attempts: 3, MinWait: time.Hour, MaxWait: time.Hour}})
-		done <- err
-	}()
-	<-failed
-	updated, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) || !errors.Is(err, io.ErrUnexpectedEOF) {
-		t.Fatalf("interrupted refresh: %v", err)
-	}
-	if _, err := updated.Get("app-template", "2.0.0"); err != nil {
-		t.Fatal(err)
-	}
-	memo, err := f.fetchIndex(t.Context(), preparedHTTP(t, f, fInputs, r), sourcecache.Policy{})
-	if err != nil || memo != updated || hits.Load() != 2 {
-		t.Fatalf("digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
-	}
-	key := "sha256:" + chartDigest([]byte(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0")))
-	if cached, ok := f.indexCache.Load(key); !ok || cached != updated {
-		t.Fatal("concurrent refresh did not publish its response digest")
-	}
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) || !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("interrupted refresh: %v", err)
+		}
+		if _, err := updated.Get("app-template", "2.0.0"); err != nil {
+			t.Fatal(err)
+		}
+		memo, err := f.fetchIndex(t.Context(), prepared, sourcecache.Policy{})
+		if err != nil || memo != updated || hits.Load() != 2 {
+			t.Fatalf("digest-bound memo=%p/%p, hits=%d, error=%v", updated, memo, hits.Load(), err)
+		}
+		key := "sha256:" + chartDigest([]byte(strings.ReplaceAll(helmRepoIndex(""), "1.0.0", "2.0.0")))
+		if cached, ok := f.indexCache.Load(key); !ok || cached != updated {
+			t.Fatal("concurrent refresh did not publish its response digest")
+		}
+	})
 }
 
 func TestFetchHTTPChart_NetworkRoutes(t *testing.T) {

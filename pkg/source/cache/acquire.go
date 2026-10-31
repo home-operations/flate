@@ -130,13 +130,20 @@ type acquireKey struct {
 	policy     Policy
 }
 
-type producerError struct{ error }
+type producerError struct {
+	error
+	causes [2]error
+}
+
+func newProducerError(err error) *producerError {
+	return &producerError{error: err, causes: [2]error{manifest.ErrFlux, err}}
+}
 
 // readerError marks a failure of the archive consumer that the producer only observes as a failed write.
 type readerError struct{ error }
 
 func (e *readerError) Unwrap() error     { return e.error }
-func (e *producerError) Unwrap() []error { return []error{manifest.ErrFlux, e.error} }
+func (e *producerError) Unwrap() []error { return e.causes[:] }
 
 // Acquire publishes a complete archive or revalidates its previous generation after produce succeeds.
 // Its acquisition identity is empty on failure.
@@ -287,8 +294,8 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acqui
 	var observed, rejected *entry
 	if v, ok := c.entries.Load(key.id); ok {
 		observed = v.(*entry)
-	} else if c.store != nil && !key.memoryOnly {
-		v, _ := c.entries.LoadOrStore(key.id, &entry{unloaded: true})
+	} else {
+		v, _ := c.entries.LoadOrStore(key.id, &entry{unloaded: c.store != nil && !key.memoryOnly})
 		observed = v.(*entry)
 	}
 	release, err := c.locks.Acquire(ctx, key.id)
@@ -311,7 +318,10 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acqui
 	}
 	if observed != nil && !key.lookupOnly {
 		if observed.waveErr != nil {
-			return nil, &TerminalError{Err: observed.waveErr, Attempted: false}
+			if observed.outcome != nil {
+				return nil, &TerminalError{Err: observed.waveErr, Attempted: false}
+			}
+			return nil, observed.waveErr
 		}
 		if observed.waveResult != nil {
 			valid, err := c.validCandidate(ctx, callbacks.validate, observed.waveResult)
@@ -324,6 +334,9 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acqui
 	var e *entry
 	if v, ok := c.entries.Load(key.id); ok {
 		e = v.(*entry)
+	} else {
+		e = observed
+		c.entries.Store(key.id, e)
 	}
 	if e != nil && e.unloaded && !key.memoryOnly {
 		if err := c.loadEntry(ctx, key, key.policy.MaxAge, e); err != nil {
@@ -424,15 +437,15 @@ func (c *Cache) attempt(ctx context.Context, key acquireKey, e *entry, callbacks
 				}
 			}
 		}
-		if due {
+		// Retry and deadline failures MUST retain each caller's policy.
+		shareFailure := !retryable(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+		if _, terminal := errors.AsType[*TerminalError](err); due || shareFailure && !terminal {
 			e.waveErr = err
 		}
 		c.entries.Store(key.id, next)
 		return nil, err
 	}
-	if due {
-		e.waveResult = result
-	}
+	e.waveResult = result
 	c.entries.Store(key.id, result)
 	return result, nil
 }
@@ -550,7 +563,7 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 	e, err := callbacks.produce(ctx, c, &staged)
 	if err != nil {
 		if producer, ok := errors.AsType[*producerError](err); ok && errors.Is(producer, err) && (key.policy.Machine || credentialsUnavailable(producer.error)) {
-			err = &producerError{MachineCredentialErr(producer.error)}
+			err = newProducerError(MachineCredentialErr(producer.error))
 		}
 		return nil, err
 	}

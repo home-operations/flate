@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/fetcherr"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -286,22 +287,26 @@ func TestAcquireMachine_Lifecycle(t *testing.T) {
 
 func TestMissingSecretError_RetryMachine(t *testing.T) {
 	t.Parallel()
-	for _, shape := range []string{"nil reads", "source only", "producer", "unavailable", "canceled", "no callback"} {
+	for _, shape := range []string{"nil reads", "source only", "producer", "unavailable", "anonymous denied", "authored anonymous denied", "canceled", "no callback"} {
 		t.Run(shape, func(t *testing.T) {
 			t.Parallel()
 			owner := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "ns", Name: "source"}
 			err := MissingSecretErr(manifest.DiagnosticFor(owner, nil), "auth", "not found")
 			missing, _ := errors.AsType[*MissingSecretError](err)
+			denial := &fetcherr.ResponseError{StatusCode: 401}
 			calls := 0
 			missing.RetryAmbient = func(context.Context) (*store.SourceArtifact, error) {
 				calls++
 				if shape == "unavailable" {
 					return nil, MissingSecretErr(manifest.DiagnosticFor(owner, nil), "", "unavailable")
 				}
+				if shape == "anonymous denied" || shape == "authored anonymous denied" {
+					return nil, &MissingSecretError{Owner: owner, Detail: "registry credentials unavailable", AnonymousDenied: true, Cause: denial}
+				}
 				return &store.SourceArtifact{}, nil
 			}
 			var reads *store.ReadSet
-			if shape == "source only" {
+			if shape == "source only" || shape == "anonymous denied" {
 				missing.Secret = manifest.NamedResource{}
 			}
 			if shape == "producer" {
@@ -325,9 +330,14 @@ func TestMissingSecretError_RetryMachine(t *testing.T) {
 			}
 			artifact, got := missing.RetryMachine(ctx, reads)
 			switch shape {
-			case "producer", "no callback", "unavailable":
-				if got != missing || artifact != nil || calls != map[string]int{"unavailable": 1}[shape] { //nolint:errorlint // Unavailable retries MUST retain the original error identity.
+			case "producer", "no callback", "unavailable", "authored anonymous denied":
+				if got != missing || artifact != nil || calls != map[string]int{"unavailable": 1, "authored anonymous denied": 1}[shape] { //nolint:errorlint // Unavailable retries MUST retain the original error identity.
 					t.Fatalf("missing identity or eligibility changed: %v calls=%d", got, calls)
+				}
+			case "anonymous denied":
+				unavailable, ok := errors.AsType[*MissingSecretError](got)
+				if !ok || !unavailable.AnonymousDenied || !errors.Is(got, denial) || !errors.Is(got, manifest.ErrMissingSecret) || artifact != nil || calls != 1 {
+					t.Fatalf("anonymous denial lost its proof or typed cause: %v calls=%d", got, calls)
 				}
 			case "canceled":
 				if !errors.Is(got, context.Canceled) || calls != 0 {

@@ -190,7 +190,7 @@ func (p archiveProducer) produce(ctx context.Context, c *Cache, staged *payload,
 		if re, ok := errors.AsType[*readerError](err); ok {
 			err = re.error
 		} else if err != nil {
-			err = &producerError{err}
+			err = newProducerError(err)
 			producerFailure = err
 		}
 		_ = pw.CloseWithError(err)
@@ -276,7 +276,7 @@ func (p blobProducer) identity() string {
 func (p blobProducer) produce(ctx context.Context, c *Cache, staged *payload, write func(context.Context, ProducerInput) (ProducerResult, error)) (*entry, error) {
 	result, err := write(ctx, ProducerInput{Writer: staged, cache: c, payload: staged})
 	if err != nil {
-		return nil, &producerError{err}
+		return nil, newProducerError(err)
 	}
 	e, err := staged.complete(ctx, c, result)
 	if err != nil {

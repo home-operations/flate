@@ -48,7 +48,7 @@ func TestE2E_DisabledAppAdmission(t *testing.T) {
 				if enabled {
 					args[0] = "test"
 					status, diagnostic, code := harness.RunCLIBuffers(args...)
-					if code != 0 || !strings.Contains(status, "flux-system/external") || !strings.Contains(status, "flux-system/external-sync") || !strings.Contains(status, "skipped") || !strings.Contains(diagnostic, "source: skipped (missing secret)") || !strings.Contains(diagnostic, "unavailable-auth") {
+					if code != 0 || !strings.Contains(status, "flux-system/external") || !strings.Contains(status, "flux-system/external-sync") || !strings.Contains(status, "skipped") || !strings.Contains(diagnostic, "base: credentials unavailable") || !strings.Contains(diagnostic, "unavailable-auth") {
 						t.Fatalf("whole-source skip missing: exit=%d output=%s stderr=%s", code, status, diagnostic)
 					}
 				}
@@ -190,7 +190,7 @@ func TestE2E_DisabledAppDiffSides(t *testing.T) {
 		checkDiagnostic := func(t *testing.T, stderr string, skipped bool) {
 			t.Helper()
 			credentials := 0
-			if strings.Contains(stderr, "source: skipped (missing secret)") != skipped || skipped && !strings.Contains(stderr, "unavailable-auth") || strings.Contains(stderr, "dial tcp") || strings.Contains(stderr, "[OrphanedResource]") || strings.Contains(stderr, "[IncompleteInputCoverage]") {
+			if strings.Contains(stderr, "base: credentials unavailable") != skipped || skipped && !strings.Contains(stderr, "unavailable-auth") || strings.Contains(stderr, "dial tcp") || strings.Contains(stderr, "[OrphanedResource]") || strings.Contains(stderr, "[IncompleteInputCoverage]") {
 				t.Fatalf("unexpected mixed-namespace diagnostics: %s", stderr)
 			}
 			for line := range strings.SplitSeq(stderr, "\n") {

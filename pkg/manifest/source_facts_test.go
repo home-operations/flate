@@ -6,6 +6,8 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/home-operations/flate/internal/assert"
 )
 
 func TestHelmRepository_IsOCI(t *testing.T) {
@@ -50,6 +52,21 @@ func TestOCIRepository_LayerDefaults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOCIRepository_RegistryAccess(t *testing.T) {
+	t.Parallel()
+	owner := NamedResource{Group: FluxOperatorDomain, Kind: KindResourceSet, Namespace: "author", Name: "set"}
+	repo := &OCIRepository{diagnosticOwner: owner, diagnosticPath: "app/chart", hasDiagnostic: true,
+		Name: "chart", Namespace: "effective", URL: "oci://registry.test/chart", Insecure: true,
+		SecretRef: &LocalObjectReference{Name: "auth"}, CertSecretRef: &LocalObjectReference{Name: "cert"},
+		ProxySecretRef: &LocalObjectReference{Name: "proxy"}, Timeout: &metav1.Duration{Duration: 2 * time.Minute},
+	}
+	assert.Diff(t, repo.RegistryAccess(), RegistryAccess{
+		Owner: DiagnosticIdentity{ID: repo.Named(), Resource: owner, Path: "app/chart"}, URL: repo.URL,
+		Namespace: repo.Namespace, SecretRef: repo.SecretRef, CertSecretRef: repo.CertSecretRef,
+		ProxySecretRef: repo.ProxySecretRef, Insecure: true, Timeout: 2 * time.Minute,
+	})
 }
 
 func TestOCIRepositoryRef_Pinned(t *testing.T) {

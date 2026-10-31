@@ -3,8 +3,8 @@ package base_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"runtime"
 	"strings"
@@ -167,25 +167,42 @@ func TestExecution_PreflightWithdrawsPublishedOutput(t *testing.T) {
 	}
 }
 
+type countedDetailError struct{ calls int }
+
+func (e *countedDetailError) Error() string {
+	e.calls++
+	return "upstream diagnostic"
+}
+
 func TestExecution_Failure(t *testing.T) {
 	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
 		t.Run(level.String(), func(t *testing.T) {
 			var logs bytes.Buffer
-			prior := slog.Default()
+			prior, writer, flags := slog.Default(), log.Writer(), log.Flags()
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: level})))
-			t.Cleanup(func() { slog.SetDefault(prior) })
+			t.Cleanup(func() {
+				slog.SetDefault(prior)
+				log.SetOutput(writer)
+				log.SetFlags(flags)
+			})
 			s := store.New()
 			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "app", Namespace: "ns"}
 			s.AddObject(hr)
 			id := hr.Named()
+			detail := new(countedDetailError)
+			cause := fmt.Errorf("fetch operation: %w", fmt.Errorf("library operation: %w", detail))
+			detail.calls = 0
 			controllertest.NewExecution(base.New(s, nil), id).Dispatch(t.Context(), manifest.DrainNone, t,
 				func(_ *testing.T, _ context.Context, _ *manifest.HelmRelease, _ manifest.DrainLevel) error {
-					return manifest.NewError(manifest.ErrInput, fmt.Errorf("fetch operation: %w", fmt.Errorf("library operation: %w", errors.New("upstream diagnostic"))), "render failed")
+					return manifest.NewError(manifest.ErrInput, cause, "render failed")
 				},
 			)
 			got, _ := s.GetStatus(id)
 			if got.Status != store.StatusFailed || got.Message != "render failed" {
 				t.Fatalf("failure status = %+v", got)
+			}
+			if (detail.calls > 0) != (level == slog.LevelDebug) {
+				t.Errorf("detail evaluations at %v = %d", level, detail.calls)
 			}
 			for _, detail := range []string{id.String(), "fetch operation", "library operation", "upstream diagnostic"} {
 				if strings.Contains(logs.String(), detail) != (level == slog.LevelDebug) {

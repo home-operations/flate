@@ -12,7 +12,37 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 )
+
+type countedDetailError struct{ calls int }
+
+func (e *countedDetailError) Error() string {
+	e.calls++
+	return "upstream diagnostic"
+}
+
+func TestRun_FailureDetailsEvaluation(t *testing.T) {
+	path := writeFixture(t)
+	for _, level := range []string{"error", "debug"} {
+		t.Run(level, func(t *testing.T) {
+			prior, writer, flags := slog.Default(), log.Writer(), log.Flags()
+			t.Cleanup(func() {
+				slog.SetDefault(prior)
+				log.SetOutput(writer)
+				log.SetFlags(flags)
+			})
+			detail := new(countedDetailError)
+			failure := manifest.NewError(manifest.ErrInput, detail, "output failed")
+			var stderr bytes.Buffer
+			code := Run([]string{"build", "all", "--path", path, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir(), "--log-level", level}, failingWriter{err: failure}, &stderr)
+			assert.Equal(t, code, 1)
+			assert.Equal(t, detail.calls > 0, level == "debug")
+			assert.Equal(t, strings.Contains(stderr.String(), "upstream diagnostic"), level == "debug")
+			assert.Equal(t, strings.Contains(stderr.String(), "output failed"), true)
+		})
+	}
+}
 
 const persistenceReason = "the binary was built from a dirty checkout"
 const persistenceMessage = "[RenderPersistenceDisabled] render persistence is disabled: " + persistenceReason + "; source caching remains available"

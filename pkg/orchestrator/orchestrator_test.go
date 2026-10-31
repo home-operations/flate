@@ -1,12 +1,15 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
+	"log/slog"
 	"maps"
 	"net"
 	"net/http"
@@ -35,6 +38,41 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
+
+type countedDetailError struct{ calls int }
+
+func (e *countedDetailError) Error() string {
+	e.calls++
+	return "upstream diagnostic"
+}
+
+func TestDiscover_FailureDetailsEvaluation(t *testing.T) {
+	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
+		t.Run(level.String(), func(t *testing.T) {
+			var logs bytes.Buffer
+			prior, writer, flags := slog.Default(), log.Writer(), log.Flags()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: level})))
+			t.Cleanup(func() {
+				slog.SetDefault(prior)
+				log.SetOutput(writer)
+				log.SetFlags(flags)
+			})
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "kustomization.yaml", "resources: []\n")
+			o, err := newTestOrchestrator(t, Tree{Path: root}, Config{Concurrency: 2, Selection: manifest.Selection{Changed: true}})
+			assert.NoError(t, err)
+			assert.NoError(t, o.prepareBootstrap(t.Context()))
+			detail := new(countedDetailError)
+			failure := manifest.NewError(manifest.ErrInput, detail, "entry failed")
+			o.entryDiscovery.Binding.Failure = failure
+			assert.NoError(t, o.discover(t.Context()))
+			assert.Equal(t, o.entryBinding.Failure, error(failure))
+			assert.Equal(t, detail.calls > 0, level == slog.LevelDebug)
+			assert.Equal(t, strings.Contains(logs.String(), "orchestrator: entry failed"), level == slog.LevelDebug)
+			assert.Equal(t, strings.Contains(logs.String(), "upstream diagnostic"), level == slog.LevelDebug)
+		})
+	}
+}
 
 func TestRenderTrees_MissingPath(t *testing.T) {
 	t.Parallel()

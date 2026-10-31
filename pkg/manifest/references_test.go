@@ -6,13 +6,12 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -293,9 +292,9 @@ func TestReferences_ActiveCredentials(t *testing.T) {
 	o.SecretRef, o.CertSecretRef, o.ProxySecretRef = &LocalObjectReference{Name: "auth"}, &LocalObjectReference{Name: "cert"}, &LocalObjectReference{Name: "proxy"}
 	o.Verify = &sourcev1.OCIRepositoryVerification{Provider: "cosign", SecretRef: &LocalObjectReference{Name: "ignored"}}
 	assertReferenceEdges(t, slices.Collect(References(o, ReferenceRelations)), []Reference{
-		{Kind: KindSecret, Namespace: "effective", Name: "auth", Use: "secretRef", Content: true},
-		{Kind: KindSecret, Namespace: "effective", Name: "cert", Use: "certSecretRef", Position: 1, Content: true},
-		{Kind: KindSecret, Namespace: "effective", Name: "proxy", Use: "proxySecretRef", Position: 2, Content: true},
+		{Kind: KindSecret, Namespace: "effective", Name: "auth", Use: "secretRef", Content: true, Acquisition: true},
+		{Kind: KindSecret, Namespace: "effective", Name: "cert", Use: "certSecretRef", Position: 1, Content: true, Acquisition: true},
+		{Kind: KindSecret, Namespace: "effective", Name: "proxy", Use: "proxySecretRef", Position: 2, Content: true, Acquisition: true},
 	})
 	for _, tc := range []struct {
 		name    string
@@ -421,7 +420,7 @@ func TestReferences_NoAllocations(t *testing.T) {
 	assert.Equal(t, KindOf(&Kustomization{}), kindTable[kindKustomization].KindInfo)
 	if unsafe.Sizeof(uintptr(0)) == 8 {
 		assert.Equal(t, unsafe.Sizeof(DependencyRef{}), uintptr(80))
-		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(152))
+		assert.Equal(t, unsafe.Sizeof(Reference{}), uintptr(184))
 		assert.Equal(t, unsafe.Sizeof(KindInfo{}), uintptr(64))
 	}
 	KindOf(&RawObject{APIVersion: "v1", Kind: KindConfigMap}).Namespaced()
@@ -448,7 +447,7 @@ func TestReferences_Views(t *testing.T) {
 		Name: "consumer", Namespace: "apps", Path: "./consumer",
 		DependsOn: []kustomizev1.DependencyReference{{Name: "dependency"}},
 	}
-	dependency := Reference{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "dependency", Use: "dependsOn", Gate: GateInputs, Ordering: true}
+	dependency := Reference{Group: FluxKustomizeDomain, Kind: KindKustomization, Namespace: "apps", Name: "dependency", Use: "dependsOn", Gate: GateInputs, Ordering: true, NamespaceDefault: true}
 	bootstrap := Reference{NamedResource: BootstrapSourceID, Gate: GateInputs | GateArtifacts, ArtifactStages: GateInputs | GateArtifacts, Artifact: true}
 	for _, tc := range []struct {
 		name string
@@ -548,7 +547,7 @@ func TestReferences_SourceValuesFiles(t *testing.T) {
 
 func assertReferenceEdges(t *testing.T, got, want []Reference) {
 	t.Helper()
-	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "ArtifactOnly", "UnknownArtifactRoot", "ChartSource"), cmpopts.IgnoreFields(Reference{}, "Gate", "ArtifactStages", "Ordering")); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "ArtifactOnly", "UnknownArtifactRoot", "ChartSource"), cmpopts.IgnoreFields(Reference{}, "Gate", "ArtifactStages", "Ordering", "Selector", "Key", "NamespaceDefault")); diff != "" {
 		t.Fatalf("reference edges (-want +got):\n%s", diff)
 	}
 }

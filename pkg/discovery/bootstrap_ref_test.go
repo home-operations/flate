@@ -20,6 +20,8 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -33,7 +35,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/values"
-	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
 )
 
 func TestRun_PinnedArtifactDiscovery(t *testing.T) {
@@ -272,7 +273,7 @@ func TestAliasBootstrapSources_DeclaredRefs(t *testing.T) {
 			if tc.sparse {
 				repository.SparseCheckout = []string{"./apps"}
 			}
-			d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
+			d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 				t.Fatal(err)
 			}
@@ -418,7 +419,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name, Namespace: id.Namespace},
 			}
 			st.AddObject(ks)
-			d := discoverer{cfg: Config{
+			d := Session{cfg: Config{
 				Path: root, RepoRoot: root, Store: st, SelfURLs: []string{"git://fixture.invalid/cluster"},
 			}}
 			if tc.late {
@@ -474,7 +475,7 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				st.SetArtifact(id, &store.SourceArtifact{Kind: id.Kind, URL: tc.url, LocalPath: t.TempDir()})
 			}
 			l := loader.New(st)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			child := testutil.HelmReleaseID("apps", "release")
@@ -506,7 +507,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 				bootstrap.Key, bootstrap.Content = "family", "generation"
 			}
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-			d := discoverer{cfg: Config{Path: root, Store: st, SelfURLs: []string{"https://fixture.invalid/repo"}}}
+			d := Session{cfg: Config{Path: root, Store: st, SelfURLs: []string{"https://fixture.invalid/repo"}}}
 			ids := []manifest.NamedResource{{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "one", Name: "source"}, {Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "two", Name: "alias"}}
 			for _, id := range ids {
 				if id == ids[1] {
@@ -562,7 +563,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 			ks := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./apps/x", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
 			st.AddObject(ks)
-			d := discoverer{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
+			d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
 			if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
 				t.Fatalf("initial resolution = %d, %v", count, err)
 			}
@@ -601,7 +602,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 	repository.URL = "git://fixture.invalid/cluster"
 	repository.Reference = &sourcev1.GitRepositoryRef{Commit: "invalid"}
 	st.AddObject(repository)
-	d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
+	d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +684,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
 		ks := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
 		st.AddObject(ks)
-		d := discoverer{cfg: Config{Path: filepath.Join(root, "artifact"), RepoRoot: root, Store: st}}
+		d := Session{cfg: Config{Path: filepath.Join(root, "artifact"), RepoRoot: root, Store: st}}
 		count, err := d.resolveEntrySources(t.Context(), true)
 		assert.NoError(t, err)
 		assert.Equal(t, count, 1)
@@ -717,7 +718,7 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		}
 		bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input, Key: "pinned", Content: "generation", Revision: "one"}
 		st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-		d := discoverer{cfg: Config{Path: filepath.Join(root, "kubernetes"), Store: st}}
+		d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes"), Store: st}}
 		for i, subtree := range []string{"kubernetes", "kubernetes", "other"} {
 			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: fmt.Sprintf("alias-%d", i)}
 			d.cfg.Path = filepath.Join(root, subtree)
@@ -792,7 +793,7 @@ func TestAliasBootstrapSources_NilCacheIsLazy(t *testing.T) {
 		}
 		st := store.New()
 		st.AddObject(repository)
-		d := discoverer{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
+		d := Session{cfg: Config{Path: root, RepoRoot: root, Store: st, SelfURLs: []string{repository.URL}}}
 		if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 			t.Fatal(err)
 		}

@@ -225,7 +225,7 @@ func TestStampTransformerTargetNamespaces_NamespaceTransformer(t *testing.T) {
 				l.Admit(root)
 				check(ns)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			check(tc.namespaces[len(tc.namespaces)-1])

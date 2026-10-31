@@ -44,7 +44,7 @@ func TestFinalizeIndex_DuplicateDocumentKeys(t *testing.T) {
 	admitForTest(s, root)
 	_, err := loadForTest(t.Context(), t, l, filepath.Join(root, "entry"))
 	assert.NoError(t, err)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, file := range []string{"shared/kustomization.yaml", "shared/cm.yaml", "inputs/patch"} {
@@ -135,7 +135,7 @@ func TestFinalizeIndex_ConfigurationBoundaries(t *testing.T) {
 				s.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: filepath.Join(parent, "foreign"), FS: fstest.MapFS{"plugin.yaml": input["foreign/plugin.yaml"]}})
 			}
 			l := New(s)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			warnings := s.Warnings()
@@ -263,7 +263,7 @@ func TestLoader_InputRolesAndAdmission(t *testing.T) {
 				admitted[id] = l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, record.Path)
 			}
 			assert.Equal(t, l.terminalInput(filepath.Join(root, tc.terminal)), true)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			for id, before := range admitted {
@@ -393,7 +393,7 @@ func TestFinalizeIndex_ConfigurationCoverage(t *testing.T) {
 			}) {
 				t.Fatalf("missing unknown-plugin uncertainty: %+v", first)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			assert.Diff(t, s.Warnings(), first)
@@ -509,7 +509,7 @@ func TestFinalizeIndex_InputCoordinatesAndAdmission(t *testing.T) {
 			l.Admit(root)
 			admitted := l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml"))
 			assert.Equal(t, admitted, false)
-			assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+			assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 			idx := l.Index
 			assert.Equal(t, l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml")), admitted)
 			if l.AdmitsRoot(l.IndexedObject(sibling.Named(), l.Index.Records[sibling.Named()]).Obj, filepath.Join(root, "apps/patch.yaml")) {
@@ -552,7 +552,7 @@ func TestLoader_InputRolesDualResourceOutside(t *testing.T) {
 	admitted := l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file)
 	assert.Equal(t, admitted, true)
 	assert.Equal(t, l.terminalInput(file), false)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.Equal(t, l.AdmitsRoot(l.IndexedObject(id, l.Index.Records[id]).Obj, file), admitted)
 	assert.Equal(t, l.terminalInput(file), false)
 }
@@ -580,7 +580,7 @@ func TestFinalizeIndex_AdmissionAndConcurrentQueries(t *testing.T) {
 	before := map[manifest.NamedResource]bool{peer: l.AdmitsRoot(l.IndexedObject(peer, l.Index.Records[peer]).Obj, peerFile), missing: l.AdmitsRoot(l.IndexedObject(missing, l.Index.Records[missing]).Obj, missingFile)}
 	assert.Equal(t, before[peer], true)
 	assert.Equal(t, before[missing], false)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assert.Diff(t, l.Index.Claims["target/"], []manifest.NamedResource{parent.Named(), peer})
 	assert.Diff(t, l.Index.Readers["missing"], []manifest.FileReader{{Reader: parent.Named(), Source: manifest.BootstrapSourceID}, {Reader: peer, Source: manifest.BootstrapSourceID}})
 	assert.Equal(t, len(retainedErrorsForTest(l)), 1)
@@ -672,13 +672,13 @@ func TestOccurrences_InputSourceViews(t *testing.T) {
 			if mode == "alias" {
 				wantSource, wantFile = root, "subtree/shared/resource.yaml"
 			}
-			assert.Diff(t, occurrences[0].Declaration, OccurrenceID{Source: wantSource, File: wantFile, Document: 0})
-			assert.Equal(t, occurrences[0].Object.Named().Namespace, "")
-			assert.Equal(t, occurrences[0].Object.Named().Name, "mounted")
+			assert.Equal(t, occurrences[0].Declaration, OccurrenceID{Source: wantSource, File: wantFile, Document: 0})
+			assert.Equal(t, occurrences[0].object.Named().Namespace, "")
+			assert.Equal(t, occurrences[0].object.Named().Name, "mounted")
 			repeated, err := l.Occurrences(t.Context(), filepath.Join(local, "entry"), "projected")
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Equal(repeated, occurrences), true)
-			assert.Equal(t, len(l.scopes.projections), 1)
+			assert.Equal(t, len(l.scopes.projections[0])+len(l.scopes.projections[1]), 1)
 			repeated[0].Declaration.File = "caller-owned"
 			assert.Equal(t, occurrences[0].Declaration.File, wantFile)
 		})

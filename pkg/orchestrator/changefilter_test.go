@@ -22,8 +22,7 @@ func TestBuildChangeFilter_FluxExcludedWarning(t *testing.T) {
 	}
 	o, err := newTestOrchestrator(t, Tree{RepoRoot: after, Path: after, BaseInput: testDirectoryInput(t, before), Input: input}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	o.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
-	assert.NoError(t, o.buildChangeFilter(t.Context()))
+	assert.NoError(t, o.bootstrap(t.Context()))
 	assert.Equal(t, o.filter.Enabled(), true)
 	warnings := o.store.Warnings()
 	if len(warnings) != 1 {

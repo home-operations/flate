@@ -4,6 +4,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 )
 
 // Equal compares manifest content without derived projection-cache state.
@@ -88,4 +89,54 @@ func MapEqualExcept[V any](a, b map[string]V, excluded func(string) bool) bool {
 		}
 	}
 	return true
+}
+
+// OutputEqual compares authoritative desired documents after removing known reconciliation-only leaves.
+// Unknown fields remain significant; supplied documents preserve fields outside typed specs.
+func OutputEqual(a, b BaseManifest, documents [2]map[string]any) (bool, error) {
+	if a == nil || b == nil || a.Named() != b.Named() {
+		return a == b, nil
+	}
+	policy, ok := a.(interface{ outputFields() string })
+	if !ok {
+		return Equal(a, b) && ValueEqual(documents[0], documents[1]), nil
+	}
+	for side, object := range [2]BaseManifest{a, b} {
+		doc := documents[side]
+		if doc == nil {
+			var err error
+			doc, err = ObjectDocument(object.Named(), object)
+			if err != nil {
+				return false, err
+			}
+		}
+		documents[side] = DeepCopyMap(doc)
+		spec, _ := documents[side]["spec"].(map[string]any)
+		for field := range strings.FieldsSeq(policy.outputFields()) {
+			removeOutputField(spec, strings.Split(field, "."))
+		}
+	}
+	return ValueEqual(documents[0], documents[1]), nil
+}
+
+func removeOutputField(value any, path []string) bool {
+	switch value := value.(type) {
+	case map[string]any:
+		if len(path) == 1 {
+			delete(value, path[0])
+		} else if child, ok := value[path[0]]; ok && removeOutputField(child, path[1:]) {
+			delete(value, path[0])
+		}
+		return len(value) == 0
+	case []any:
+		if len(path) == 1 && path[0] == "*" {
+			return true
+		}
+		empty := true
+		for _, child := range value {
+			empty = removeOutputField(child, path) && empty
+		}
+		return empty
+	}
+	return false
 }

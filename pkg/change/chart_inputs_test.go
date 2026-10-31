@@ -12,6 +12,7 @@ import (
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/loader"
@@ -130,7 +131,7 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 				r.Refs = []manifest.NamedResource{source.Named()}
 				l.Index.Records[id] = r
 			}
-			err := l.FinalizeIndex(ctx, root)
+			err := l.FinalizeIndex(ctx, root, true)
 			if mode == "canceled" {
 				assert.Equal(t, errors.Is(err, context.Canceled), true)
 				return
@@ -151,12 +152,12 @@ func TestFinalizeIndex_ChartInputs(t *testing.T) {
 			}
 			for _, file := range want {
 				assert.Equal(t, len(ownersForFilter(l.Index, file)), 0)
-				filter := change.NewFilter(change.NewSet([]string{file}), l.Index, st, "")
+				filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: l.Index, Inventory: st, Root: ""})
 				assert.Equal(t, filter.ShouldReconcile(release.Named()), true)
 				assert.Equal(t, filter.ShouldReconcile(source.Named()), true)
 				assert.Equal(t, filter.ShouldReconcile(sibling.Named()), false)
 			}
-			filter := change.NewFilter(change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}), l.Index, st, "")
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{path.Join(location, "excluded/invalid.yaml")}), Index: l.Index, Inventory: st, Root: ""})
 			assert.Equal(t, filter.ShouldReconcile(release.Named()), false)
 		})
 	}
@@ -180,7 +181,7 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 			r.Inputs = []string{id.Name + ".input"}
 			l.Index.Records[id] = r
 		}
-		assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+		assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 		return l
 	}
 	l := build()
@@ -189,7 +190,7 @@ func TestFinalizeIndex_TransitiveChartInputs(t *testing.T) {
 		assert.Diff(t, readFilesForFilter(l.Index, id), want)
 	}
 	snapshot := snapshotIndexForFilter(l.Index)
-	assert.NoError(t, l.FinalizeIndex(t.Context(), root))
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
 	assertFilterIndexForTest(t, *l.Index, snapshot)
 	assertFilterIndexForTest(t, *build().Index, snapshot)
 }

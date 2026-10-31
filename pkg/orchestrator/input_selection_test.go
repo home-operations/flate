@@ -1,8 +1,10 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -27,27 +29,101 @@ func TestRenderTrees_UnchangedNamedSelection(t *testing.T) {
 	roots := [2]string{t.TempDir(), t.TempDir()}
 	for _, root := range roots {
 		writeCluster(t, root, "same", "same")
+		testutil.WriteFile(t, root, "kustomization.yaml", "resources: [ks-a.yaml, ks-b.yaml, hr.yaml]\n")
+		testutil.WriteFile(t, root, "ks-a.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: app-a, namespace: flux-system, labels: {team: platform}}
+spec:
+  interval: 1h
+  path: ./apps/app-a
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  targetNamespace: workloads
+  prune: true
+  wait: true
+  suspend: true
+`)
+		testutil.WriteFile(t, root, "hr.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: release, namespace: flux-system, labels: {team: platform}}
+spec:
+  interval: 1h
+  releaseName: chosen-name
+  targetNamespace: workloads
+  suspend: true
+  chart:
+    spec:
+      chart: demo
+      version: 2.3.4
+      sourceRef: {kind: HelmRepository, name: charts}
+  values: {payload: must-not-be-retained}
+`)
 	}
 	runs, err := RenderTrees(t.Context(), []Tree{
 		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeBase}, Path: roots[0]},
 		{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}, Path: roots[1]},
 	}, Config{Concurrency: 2})
 	assert.NoError(t, err)
-	id := testutil.KustomizationID("flux-system", "app-a")
-	selected, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{id}, nil)
-	assert.NoError(t, selectedErr)
-	assert.NoError(t, remainder)
-	assert.Equal(t, len(selected), 2)
-	for side, result := range selected {
-		_, known := runs[side].index.Lookup(id)
-		assert.Equal(t, known, true)
-		assert.Equal(t, runs[side].store.GetObject(id) == nil, true)
-		assert.Equal(t, result.Counts[manifest.KindKustomization], 1)
-		if len(result.Objects) != 1 {
-			t.Fatalf("side %d: unchanged named declaration missing: %+v", side, result)
-		}
-		assert.Equal(t, result.Objects[0].Named(), id)
-		assert.Equal(t, len(result.Manifests), 0)
+	for _, id := range []manifest.NamedResource{testutil.KustomizationID("flux-system", "app-a"), testutil.HelmReleaseID("flux-system", "release")} {
+		t.Run(id.Kind, func(t *testing.T) {
+			t.Parallel()
+			selected, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{id}, nil)
+			assert.NoError(t, selectedErr)
+			assert.NoError(t, remainder)
+			assert.Equal(t, len(selected), 2)
+			for side, result := range selected {
+				_, known := runs[side].index.Lookup(id)
+				assert.Equal(t, known, true)
+				assert.Equal(t, runs[side].store.GetObject(id) == nil, true)
+				assert.Equal(t, result.Counts[id.Kind], 1)
+				assert.Equal(t, result.Statuses[id].Outcome(), store.OutcomeUnchanged)
+				if len(result.Objects) != 1 {
+					t.Fatalf("side %d: unchanged named declaration missing: %+v", side, result)
+				}
+				assert.Equal(t, result.Objects[0].Named(), id)
+				assert.Equal(t, manifest.KindOf(result.Objects[0]), id.KindInfo())
+				switch obj := result.Objects[0].(type) {
+				case *manifest.Kustomization:
+					assert.Equal(t, obj.Path, "./apps/app-a")
+					assert.Equal(t, obj.SourceID(), manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "flux-system"})
+					assert.Equal(t, obj.Labels["team"], "platform")
+					assert.Equal(t, obj.Prune && obj.Wait && obj.Suspend, true)
+					assert.Equal(t, obj.TargetNamespace, "workloads")
+				case *manifest.HelmRelease:
+					assert.Equal(t, obj.Chart.Name, "demo")
+					assert.Equal(t, obj.Chart.Version, "2.3.4")
+					assert.Equal(t, obj.ChartVersion(), "2.3.4")
+					assert.Equal(t, obj.ChartSource(), manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: "flux-system", Name: "flux-system-release"})
+					assert.Equal(t, obj.ReleaseName(), "chosen-name")
+					assert.Equal(t, obj.TargetNamespace, "workloads")
+					assert.Equal(t, obj.Suspend, true)
+					assert.Equal(t, obj.Labels["team"], "platform")
+					assert.Equal(t, obj.Values == nil, true)
+				default:
+					t.Fatalf("catalog returned another manifest kind: %T", obj)
+				}
+				assert.Equal(t, len(result.Manifests), 0)
+			}
+			filtered, selectedErr, remainder := Select(runs, err, []manifest.NamedResource{id}, map[string]string{"team": "other"})
+			assert.NoError(t, selectedErr)
+			assert.NoError(t, remainder)
+			for _, result := range filtered {
+				assert.Equal(t, result.Counts[id.Kind], 1)
+				assert.Equal(t, len(result.Objects), 0)
+			}
+			full, fullErr := RenderTrees(t.Context(), []Tree{{Path: roots[0], ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeHead}}}, Config{Concurrency: 2, Selection: manifest.Selection{Roots: []manifest.NamedResource{id}}})
+			assert.NoError(t, fullErr)
+			objects, selectedErr, remainder := Select(full, fullErr, []manifest.NamedResource{id}, nil)
+			assert.NoError(t, selectedErr)
+			assert.NoError(t, remainder)
+			assert.Equal(t, len(objects[0].Objects), 1)
+			assert.Equal(t, full[0].store.GetObject(id) != nil, true)
+			switch obj := objects[0].Objects[0].(type) {
+			case *manifest.Kustomization:
+				assert.Equal(t, obj.Interval.Duration, time.Hour)
+			case *manifest.HelmRelease:
+				assert.Equal(t, obj.Values["payload"], any("must-not-be-retained"))
+			}
+		})
 	}
 }
 
@@ -124,6 +200,51 @@ func TestRenderTrees_SelectedSelfSourceReproducer(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Diff(t, delta.Paths(), []string(nil))
 			t.Logf("paired run=%d side=%d kept prerequisites=%v root declarations=%d", run, side, prerequisites, len(declarations))
+		}
+	}
+}
+
+func TestRenderTrees_LocalAliasSelfProducer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := testutil.GitInit(t, root)
+	const url = "git://fixture.invalid/cluster"
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "resources: [source.yaml, root.yaml, apps.yaml]\n")
+	testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster, namespace: flux-system}\nspec: {url: "+url+"}\n")
+	for _, name := range []string{"root", "apps"} {
+		path := "./apps"
+		if name == "root" {
+			path = "./flux"
+		}
+		testutil.WriteFile(t, root, "flux/"+name+".yaml", testutil.KustomizationYAML(name, "flux-system", "  path: "+path+"\n  sourceRef: {kind: GitRepository, name: cluster}\n"))
+	}
+	testutil.WriteFile(t, root, "apps/kustomization.yaml", "resources: [cm.yaml]\n")
+	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: before}\n")
+	testutil.GitCommitAll(t, repo, "before", &git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}})
+	testutil.WriteFile(t, root, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: selected}\ndata: {value: after}\n")
+	cache := cachetest.New(t, "", sourcecache.New)
+	selected, err := baseline.AutoResolve(t.Context(), root, "HEAD", cache)
+	assert.NoError(t, err)
+	trees := make([]Tree, 0, 2)
+	for side, input := range []*store.SourceArtifact{selected.BaseInput, selected.Source} {
+		trees = append(trees, Tree{ID: manifest.TreeID{Cluster: ".", Side: manifest.TreeSide(side)}, Path: filepath.Join(input.LocalPath, "flux"), RepoRoot: input.LocalPath, Input: input, SelfURLs: []string{url}, ExternalChanges: selected.Changes})
+	}
+	rendered, err := RenderTrees(t.Context(), trees, Config{Cache: cache, Concurrency: 2})
+	assert.NoError(t, err)
+	for side, result := range rendered {
+		value := "before"
+		if side == 1 {
+			value = "after"
+		}
+		output, err := json.Marshal(result.Result.Manifests)
+		assert.NoError(t, err)
+		if !strings.Contains(string(output), "\"value\":\""+value+"\"") {
+			t.Fatalf("side %d lost selected output: %s", side, output)
+		}
+		source := (&manifest.GitRepository{Name: "cluster", Namespace: "flux-system"}).Named()
+		input, _ := result.store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+		if input == nil || !input.InputAlias || input.LocalPath == trees[side].Input.LocalPath {
+			t.Fatalf("side %d did not exercise a distinct admitted alias: %+v", side, input)
 		}
 	}
 }

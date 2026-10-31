@@ -17,6 +17,7 @@ type Selection struct {
 	Warnings        []manifest.Warning
 	ClusterWarnings []manifest.Warning
 	// Objects contains selected roots after metadata filtering, grouped by requested kind.
+	// Unchanged catalog-only roots expose reporting facts, never complete specs or execution authority.
 	Objects []manifest.BaseManifest
 	// Counts records matched roots per requested kind before label filtering.
 	Counts map[string]int

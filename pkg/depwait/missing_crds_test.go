@@ -6,12 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/home-operations/flate/pkg/schedule"
-
 	apix "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -22,13 +21,13 @@ type crdPromotion struct {
 }
 
 func (e *crdPromotion) IsFileIndexed(manifest.NamedResource) bool { return true }
-func (e *crdPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) bool {
+func (e *crdPromotion) Promote(_ context.Context, _ *store.ReadSet, id manifest.NamedResource) (bool, error) {
 	e.calls = append(e.calls, id)
 	if !e.materialize {
-		return false
+		return false, nil
 	}
 	e.store.AddObject(&manifest.RawObject{APIVersion: id.Group + "/v1", Kind: id.Kind, Namespace: id.Namespace, Name: id.Name})
-	return true
+	return true, nil
 }
 
 func TestClassify_MissingCRDs(t *testing.T) {

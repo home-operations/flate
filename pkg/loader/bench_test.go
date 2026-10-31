@@ -343,7 +343,7 @@ func BenchmarkProjectIdentity(b *testing.B) {
 				}
 			}
 			l := &Loader{}
-			if _, err := l.projectIdentity(&objects[0], tc.view, tc.object.APIVersion); err != nil {
+			if _, err := l.projectIdentity((&objects[0]).Named(), tc.view, tc.object.APIVersion, manifest.KindOf(&objects[0]).Namespaced()); err != nil {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
@@ -352,7 +352,7 @@ func BenchmarkProjectIdentity(b *testing.B) {
 					l = &Loader{}
 				}
 				for i := range objects {
-					if _, err := l.projectIdentity(&objects[i], tc.view, tc.object.APIVersion); err != nil {
+					if _, err := l.projectIdentity((&objects[i]).Named(), tc.view, tc.object.APIVersion, manifest.KindOf(&objects[i]).Namespaced()); err != nil {
 						b.Fatal(err)
 					}
 				}

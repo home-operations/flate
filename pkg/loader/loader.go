@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"iter"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/home-operations/flate/internal/claimpath"
 	"github.com/home-operations/flate/internal/kustomizeinput"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -21,8 +23,13 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// Options tunes the Loader.
-type Options struct {
+type options struct {
+	// Selection controls compact retention for restricted requests.
+	Selection manifest.Selection
+	// Changes supplies frozen source-qualified comparison facts.
+	Changes *change.Set
+	// Filter owns committed execution membership.
+	Filter *change.Filter
 	// WipeSecrets controls Secret cleartext replacement. Default true.
 	WipeSecrets  bool
 	RemoteInputs *source.HTTPInputs
@@ -37,21 +44,31 @@ type Options struct {
 // require separate loaders.
 type Loader struct {
 	Store   *store.Store
-	Options Options
+	Options options
 	// SourceRoot anchors slash-separated discovery coordinates and bounds
 	// standalone input admission. Source artifacts supply their own FS.
 	SourceRoot string
 
 	// Index records static discovery facts and is initialized by New. Caller
 	// replacements MUST initialize Records before Load. Mutable until FinalizeIndex returns.
-	Index      *manifest.DiscoveryIndex
-	documents  documentReader
-	scopes     *scopeConstruction
-	entry      entryKind
-	entryPath  string
-	candidates map[manifest.NamedResource]store.Child
-	admitted   map[manifest.NamedResource]manifest.BaseManifest
-	roots      map[manifest.NamedResource]bool
+	Index                 *manifest.DiscoveryIndex
+	documents             documentReader
+	facts                 *ParsedInputs
+	scopes                *scopeConstruction
+	entry                 entryKind
+	entryPath             string
+	candidates            map[manifest.NamedResource]store.Child
+	admitted              map[manifest.NamedResource]manifest.BaseManifest
+	roots                 map[manifest.NamedResource]bool
+	locations             map[manifest.NamedResource]Occurrence
+	bindings              map[manifest.NamedResource]*store.SourceArtifact
+	inputReaders          map[manifest.NamedResource][]manifest.NamedResource
+	inputObjects          map[manifest.NamedResource][]manifest.NamedResource
+	construction, derived uint64
+	indexDerived          bool
+	frozen                bool
+	side                  manifest.TreeSide
+	sideKnown             bool
 
 	// IgnoreFile, when non-empty, is the gitignore-grammar file Load
 	// reads in place of <root>/.krmignore, with its patterns anchored
@@ -80,15 +97,15 @@ const (
 // New initializes discovery state and configures the Loader to wipe secrets.
 func New(s *store.Store) *Loader {
 	return &Loader{
-		Store: s, Options: Options{WipeSecrets: true},
+		Store: s, Options: options{WipeSecrets: true},
 		Index:     &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}},
 		documents: documentReader{cache: map[string]document{}, views: map[string]fs.FS{}},
 	}
 }
 
 // Sources yields eligible immutable source-artifact evidence in unspecified order.
-func (l *Loader) Sources() iter.Seq[store.Child] {
-	return func(yield func(store.Child) bool) {
+func (l *Loader) Sources(ctx context.Context) iter.Seq2[store.Child, error] {
+	return func(yield func(store.Child, error) bool) {
 		for id, r := range l.Index.Files() {
 			if !id.KindInfo().SourceArtifact {
 				continue
@@ -97,7 +114,23 @@ func (l *Loader) Sources() iter.Seq[store.Child] {
 				continue
 			}
 			obj := l.IndexedObject(id, r)
-			if obj.Obj != nil && !yield(obj) {
+			if l.documents.compact {
+				var err error
+				if occurrence, ok := l.locations[id]; ok && obj.Obj == nil {
+					obj, err = l.exactObject(ctx, occurrence, nil)
+				}
+				if err != nil {
+					yield(store.Child{}, err)
+					return
+				}
+				if obj.Obj != nil {
+					if l.candidates == nil {
+						l.candidates = map[manifest.NamedResource]store.Child{}
+					}
+					l.candidates[id] = obj
+				}
+			}
+			if obj.Obj != nil && !yield(obj, nil) {
 				return
 			}
 		}
@@ -115,7 +148,8 @@ func (l *Loader) AdmitsRoot(obj manifest.BaseManifest, file string) bool {
 		return false
 	}
 	if r.Path == "" {
-		return r.Authored == (manifest.NamedResource{}) && r.Parent == (manifest.NamedResource{}) &&
+		native := l.documents.compact && r.Parent.ReportHidden() && r.Parent == r.BuilderOwner
+		return r.Authored == (manifest.NamedResource{}) && (r.Parent == (manifest.NamedResource{}) || native) &&
 			l.candidates[id].Obj != nil
 	}
 	if admitted, known := l.roots[id]; known {
@@ -244,22 +278,36 @@ func (l *Loader) eligibleKustomizations(kss []store.Child) []store.Child {
 		return kss
 	}
 	return slices.DeleteFunc(kss, func(child store.Child) bool {
-		ks := child.Obj.(*manifest.Kustomization)
-		r, indexed := l.Index.Lookup(ks.Named())
-		return indexed && l.documents.cache[r.Path].eligible == fileInactive
+		return l.inactiveKustomization(child.Obj.Named())
 	})
+}
+
+func (l *Loader) inactiveKustomization(id manifest.NamedResource) bool {
+	r, indexed := l.Index.Lookup(id)
+	return indexed && l.documents.cache[r.Path].eligible == fileInactive
 }
 
 func (l *Loader) kustomizations() []store.Child {
 	objects := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
 	out := make([]store.Child, 0, len(objects))
+	l.eachKustomization(objects, func(child store.Child) { out = append(out, child) })
+	slices.SortFunc(out, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
+	return out
+}
+
+func (l *Loader) eachKustomization(objects []manifest.BaseManifest, yield func(store.Child)) {
 	for _, obj := range objects {
 		if _, _, applies := obj.SourcePath(); !applies {
 			continue
 		}
-		_, doc, emission := l.Store.GetEmission(obj.Named())
+		id := obj.Named()
+		// Compact census MUST derive synthetic ownership from accepted output.
+		if l.documents.compact && id.ReportHidden() {
+			continue
+		}
+		_, doc, emission := l.Store.GetEmission(id)
 		emission.Finish()
-		out = append(out, store.Child{Obj: obj, Doc: doc})
+		yield(store.Child{Obj: obj, Doc: doc})
 	}
 	for id, r := range l.Index.Files() {
 		if id.Group != manifest.FluxKustomizeDomain || id.Kind != manifest.KindKustomization || l.Store.GetObject(id) != nil {
@@ -267,23 +315,40 @@ func (l *Loader) kustomizations() []store.Child {
 		}
 		child := l.IndexedObject(id, r)
 		if _, ok := child.Obj.(*manifest.Kustomization); ok {
-			out = append(out, child)
+			yield(child)
 		}
 	}
-	slices.SortFunc(out, func(a, b store.Child) int { return a.Obj.Named().Compare(b.Obj.Named()) })
-	return out
 }
 
-// IndexedObject returns the immutable declaration under its indexed contextual identity.
+// IndexedObject returns the retained declaration under its contextual identity.
 func (l *Loader) IndexedObject(id manifest.NamedResource, r manifest.DiscoveryRecord) store.Child {
-	if child := l.candidates[id]; child.Obj != nil {
-		return child
+	child := l.candidates[id]
+	if child.Obj == nil {
+		child = l.authoredObject(r.Path, r.Authored)
 	}
-	child := l.authoredObject(r.Path, r.Authored)
-	if child.Obj != nil && child.Obj.Named().Namespace != id.Namespace {
+	if l.documents.compact {
+		if ks, ok := child.Obj.(*manifest.Kustomization); ok && ks.Named() != id {
+			projected := *ks
+			projected.Name, projected.Namespace = id.Name, id.Namespace
+			child.Obj = &projected
+			if l.candidates == nil {
+				l.candidates = map[manifest.NamedResource]store.Child{}
+			}
+			l.candidates[id] = child
+		}
+	} else if child.Obj != nil && child.Obj.Named().Namespace != id.Namespace {
 		child.Obj = child.Obj.WithNamespace(id.Namespace)
 	}
 	return child
+}
+
+// References yields immutable authored reference evidence without hydrating its declaration.
+func (l *Loader) References(id manifest.NamedResource) iter.Seq[manifest.Reference] {
+	if occurrence, ok := l.occurrence(id); ok {
+		return occurrence.references()
+	}
+	record, _ := l.Index.Lookup(id)
+	return manifest.References(l.IndexedObject(id, record).Obj, manifest.ReferenceRelations)
 }
 
 // Load records Flux objects under root by walking the kustomize
@@ -297,6 +362,7 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if l.Store == nil {
 		return 0, errors.New("loader: Store is nil")
 	}
+	l.documents.compact = l.Options.Selection.Changed || len(l.Options.Selection.Roots) != 0
 	l.mountSources()
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -360,9 +426,48 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 		ignore: ignore, directories: map[string]struct{}{},
 		build: builder != "", ignoreCache: map[ignoreKey]bool{},
 	}
-	w.walk(ctx.Err, graphVisit{root: abs, file: abs}, nil)
+	if l.documents.compact {
+		source := l.sourceFacts(abs)
+		key := loadContext{path: abs, ignore: l.IgnoreFile}
+		if facts, ok := source.loads[key]; ok {
+			for file, directory := range facts.directories {
+				l.documents.restore(file)
+				doc := l.documents.cache[file]
+				doc.adHoc, doc.traversed = doc.adHoc || directory.adHoc, doc.traversed || directory.traversed
+				l.documents.cache[file] = doc
+			}
+			for _, file := range facts.files {
+				if !w.proceed(ctx.Err) {
+					break
+				}
+				n, err := l.replayFile(file)
+				w.count += n
+				if err != nil {
+					w.err = err
+					break
+				}
+			}
+		} else {
+			files := []fileAdmission{}
+			w.files = &files
+			w.walk(ctx.Err, graphVisit{root: abs, file: abs}, nil)
+			if w.proceed(ctx.Err) {
+				facts := loadFacts{files: files, directories: map[string]loadDirectory{}}
+				for file := range w.directories {
+					doc := l.documents.cache[file]
+					facts.directories[file] = loadDirectory{adHoc: doc.adHoc, traversed: doc.traversed}
+				}
+				source.loads[key] = facts
+			}
+		}
+	} else {
+		w.walk(ctx.Err, graphVisit{root: abs, file: abs}, nil)
+	}
 	if w.proceed(ctx.Err) {
 		l.scopes.scanned[abs] = struct{}{}
+		if l.documents.compact {
+			l.construction++
+		}
 	}
 	return w.count, w.err
 }
@@ -395,12 +500,25 @@ func (l *Loader) loadFile(path string) (int, error) {
 	}
 	reader := l.documents
 	reader.regular = true
-	objs, err := reader.fileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
+	var objs []parsedObject
+	var err error
+	if reader.compact {
+		objs, err = reader.censusFile(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	} else {
+		objs, err = reader.fileObjects(path, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	}
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, child := range objs {
+		if child.fact != nil {
+			l.recordOccurrence(path, child.fact)
+			if !child.fact.facts.uncertain && child.fact.Identity.KindInfo().Discovery {
+				count++
+			}
+			continue
+		}
 		obj := child.Obj
 		if obj == nil || child.outcome.Err != nil {
 			continue
@@ -434,6 +552,21 @@ func (l *Loader) recordDataFile(absPath string) error {
 	if l.documents.cache[absPath].selected {
 		return nil
 	}
+	if l.documents.compact {
+		facts, err := l.documents.censusFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+		if err != nil {
+			return err
+		}
+		for _, child := range facts {
+			if child.outcome.Err != nil {
+				continue
+			}
+			if child.fact.Identity.KindInfo().Data {
+				l.recordOccurrence(absPath, child.fact)
+			}
+		}
+		return nil
+	}
 	objs, err := l.documents.parseFile(absPath, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets, DefaultNamespace: ""})
 	if err != nil {
 		return err
@@ -453,6 +586,26 @@ func (l *Loader) recordDataFile(absPath string) error {
 		l.recordObject(obj, absPath)
 	}
 	return nil
+}
+
+func (l *Loader) recordOccurrence(path string, o *Occurrence) {
+	if o.facts.uncertain || !o.facts.tracked && len(o.facts.targets) == 0 && !o.facts.needsCandidates {
+		return
+	}
+	if !l.acceptObject(o.Identity) {
+		return
+	}
+	if l.locations == nil {
+		l.locations = map[manifest.NamedResource]Occurrence{}
+	}
+	l.locations[o.Identity] = *o
+	r := manifest.DiscoveryRecord{Authored: o.Authored, Path: path, File: l.fileCoordinate(path)}
+	for _, ref := range o.facts.refs {
+		if discoveryReference(ref) {
+			r.Refs = append(r.Refs, ref.NamedResource)
+		}
+	}
+	l.Index.Records[o.Identity] = r
 }
 
 // recordObject retains raw locations and authored source references for deferred admission.
@@ -501,4 +654,44 @@ func isManifestFile(path string) bool {
 		return true
 	}
 	return false
+}
+
+func (l *Loader) replayFile(file fileAdmission) (int, error) {
+	if file.kind == admissionWarning {
+		l.Store.AddWarning(file.warning)
+		return 0, nil
+	}
+	if file.kind == admissionBootstrap {
+		l.documents.restore(file.file)
+		for _, child := range l.documents.cache[file.file].objects {
+			if child.fact == nil || child.fact.Declaration != file.coordinate || !l.acceptObject(child.fact.Identity) {
+				continue
+			}
+			l.recordOccurrence(file.file, child.fact)
+			doc := l.documents.cache[file.file]
+			doc.bootstrap = true
+			l.documents.cache[file.file] = doc
+			return 1, nil
+		}
+		return 0, nil
+	}
+	var n int
+	var err error
+	if file.kind == admissionData {
+		err = l.recordDataFile(file.file)
+	} else {
+		n, err = l.loadFile(file.file)
+	}
+	if err != nil && (file.kind == admissionPackage || file.kind == admissionData) {
+		message := "component data file failed to parse"
+		if file.kind == admissionPackage {
+			message = "kustomization file failed to parse"
+		}
+		l.Store.AddWarning(manifest.Warning{Category: manifest.WarnInputParseFailed, Message: message, Detail: []string{file.file, err.Error()}})
+		return n, nil
+	}
+	if err != nil {
+		return n, fmt.Errorf("loader: %w", err)
+	}
+	return n, nil
 }

@@ -19,7 +19,7 @@ type DependencySubstitutions struct {
 
 // NewDependencySubstitutions captures agreeing inline declarations and excludes conflicting keys.
 func NewDependencySubstitutions(kustomizations []*manifest.Kustomization) DependencySubstitutions {
-	union := map[string]string{}
+	var union map[string]string
 	conflicting := map[string]struct{}{}
 	for _, ks := range kustomizations {
 		if ks.PostBuild == nil {
@@ -33,6 +33,9 @@ func NewDependencySubstitutions(kustomizations []*manifest.Kustomization) Depend
 				delete(union, k)
 				conflicting[k] = struct{}{}
 				continue
+			}
+			if union == nil {
+				union = map[string]string{}
 			}
 			union[k] = v
 		}

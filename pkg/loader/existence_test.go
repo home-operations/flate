@@ -93,7 +93,7 @@ data:
 	if st.GetObject(id) != nil {
 		t.Fatalf("precondition: CM should not be in store yet")
 	}
-	if !Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}) {
+	if promoted, err := Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
 		t.Fatalf("Promote should return true on a known id")
 	}
 	if st.GetObject(id) == nil {
@@ -110,18 +110,12 @@ func TestPromote_UnknownIDReturnsFalse(t *testing.T) {
 	t.Parallel()
 	idx := loaderFixture(store.New(), nil)
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ghost"}
-	if got := Promote(t.Context(), idx.Store, id, PromoteOptions{Record: productionForTest(idx.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got, err := Promote(t.Context(), idx.Store, id, PromoteOptions{Record: productionForTest(idx.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || got {
 		t.Errorf("Promote on unknown id should return false, got true")
 	}
 }
 
-// TestPromote_FileRemovedBetweenRecordAndPromote
-// exercises the race where the indexed file was deleted (or
-// permission-stripped) between the file walk and the lazy lookup.
-// Promote should fail gracefully (return false), not panic, so the
-// depwait surfaces "dependency not found" instead of crashing the
-// orchestrator.
-func TestPromote_FileRemovedBetweenRecordAndpromoteForTest(t *testing.T) {
+func TestPromote_FileRemovedBetweenRecordAndPromote(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -145,7 +139,7 @@ data:
 		t.Fatalf("remove: %v", err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "ephemeral"}
-	if got := Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}); got {
+	if got, err := Promote(t.Context(), l.Store, id, PromoteOptions{Record: productionForTest(l.Index.Records[id]), WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || got {
 		t.Errorf("Promote on a removed file should return false, got true")
 	}
 	if st.GetObject(id) != nil {
@@ -176,13 +170,13 @@ sops: {encrypted_regex: "^(data|stringData)$", version: 3.9.0}
 			cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "app-config"}
 			secretID := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "app-secret"}
 			record := manifest.Production{Authored: cmID, Path: filepath.Join(dir, "bundle.yaml")}
-			opts := PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) bool { return true }}
+			opts := PromoteOptions{WipeSecrets: true, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}
 			if input == "built" {
 				record = manifest.Production{}
 				opts.Documents = builtObjectsForTest(t, bundle)
 			}
 			opts.Record = record
-			if !Promote(t.Context(), st, cmID, opts) {
+			if promoted, err := Promote(t.Context(), st, cmID, opts); err != nil || !promoted {
 				t.Fatal("ConfigMap promotion failed")
 			}
 			for _, id := range []manifest.NamedResource{cmID, secretID} {
@@ -236,13 +230,13 @@ stringData: {value: fixture}
 						id = secret
 					}
 					record := manifest.Production{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
-					opts := PromoteOptions{WipeSecrets: true, Admit: func(obj manifest.BaseManifest) bool { return obj.Named() == cm.Named() }}
+					opts := PromoteOptions{WipeSecrets: true, Admit: func(obj manifest.BaseManifest) (bool, error) { return obj.Named() == cm.Named(), nil }}
 					if input == "built" {
 						record = manifest.Production{}
 						opts.Documents = builtObjectsForTest(t, bundle)
 					}
 					opts.Record = record
-					if got := Promote(t.Context(), st, id, opts); got == tc.secret {
+					if got, err := Promote(t.Context(), st, id, opts); err != nil || got == tc.secret {
 						t.Errorf("Promote returned %v, want %v", got, !tc.secret)
 					}
 					if st.GetObject(cm.Named()) == nil || st.GetObject(secret) != nil {
@@ -334,7 +328,7 @@ spec:
 				record.Authored = id
 				record.Authored.Namespace = tc.authored
 			}
-			if got := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) bool { return true }}); got != (tc.version != "") {
+			if got, err := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || got != (tc.version != "") {
 				t.Fatalf("promoteForTest(t.Context(), %s) = %v, want %v", id, got, tc.version != "")
 			}
 			if got := st.GetObject(id).(*manifest.HelmRelease).Chart.Version; got != tc.version {
@@ -342,7 +336,7 @@ spec:
 			}
 			foreign := id
 			foreign.Group = "foreign.example"
-			if Promote(t.Context(), st, foreign, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) bool { return true }}) {
+			if promoted, err := Promote(t.Context(), st, foreign, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || promoted {
 				t.Fatal("foreign promotion borrowed the real HelmRelease")
 			}
 			sibling := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "note"}
@@ -395,8 +389,9 @@ func TestPromote_SourceView(t *testing.T) {
 			id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "selected"}
 			record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "values.yaml"), Productions: []manifest.Production{{Source: source.Named()}}}
 			record.Authored.Namespace = "authored"
-			if got := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) bool { return true }}); got != present {
-				t.Fatalf("Promote = %v, want %v", got, present)
+			got, err := Promote(t.Context(), st, id, PromoteOptions{Record: productionForTest(record), Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }})
+			if got != present || err != nil {
+				t.Fatalf("Promote = %v, %v, want availability %v", got, err, present)
 			}
 			if present && st.GetObject(id).(*manifest.ConfigMap).Data["source"] != "committed" {
 				t.Fatal("promotion read the working file instead of the mounted view")
@@ -431,7 +426,7 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "old", LocalPath: root, FS: barrier})
 	var first store.ReadSet
 	first.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
-	options := PromoteOptions{Record: manifest.Production{Source: source.Named(), Authored: id, Path: filepath.Join(root, "values.yaml")}, Reads: &first, Admit: func(manifest.BaseManifest) bool { return true }}
+	options := PromoteOptions{Record: manifest.Production{Source: source.Named(), Authored: id, Path: filepath.Join(root, "values.yaml")}, Reads: &first, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}
 	var arrivals int
 	st.AddListener(store.EventObjectAdded, func(changed manifest.NamedResource, _ any) {
 		if changed == id {
@@ -439,7 +434,13 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 		}
 	}, false)
 	done := make(chan bool, 1)
-	go func() { done <- Promote(t.Context(), st, id, options) }()
+	go func() {
+		promoted, err := Promote(t.Context(), st, id, options)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- promoted
+	}()
 	<-barrier.opened
 	st.SetArtifact(source.Named(), &store.SourceArtifact{Key: "new", LocalPath: root, FS: makeFS("new")})
 	close(barrier.release)
@@ -450,7 +451,7 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	var second store.ReadSet
 	second.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
 	options.Reads = &second
-	if !Promote(t.Context(), st, id, options) {
+	if promoted, err := Promote(t.Context(), st, id, options); err != nil || !promoted {
 		t.Fatal("current captured source did not admit")
 	}
 	if got, _ := second.Get[*manifest.ConfigMap](id); got == nil || got.Data["value"] != "new" || !second.Valid() {
@@ -463,7 +464,7 @@ func TestPromote_CapturedSourceReplacement(t *testing.T) {
 	var third store.ReadSet
 	third.Init(st, testutil.KustomizationID("apps", "consumer"), nil)
 	options.Reads = &third
-	if !Promote(t.Context(), st, id, options) {
+	if promoted, err := Promote(t.Context(), st, id, options); err != nil || !promoted {
 		t.Fatal("replacement source could not replace raw admission")
 	}
 	if got, _ := third.Get[*manifest.ConfigMap](id); got == nil || got.Data["value"] != "third" || !third.Valid() {

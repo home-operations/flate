@@ -24,6 +24,17 @@ func (m MapLister) Objects() []manifest.BaseManifest {
 	return out
 }
 
+// ListObjects returns fixture objects of the exact group and kind.
+func (m MapLister) ListObjects(group, kind string) []manifest.BaseManifest {
+	var out []manifest.BaseManifest
+	for id, obj := range m {
+		if id.Group == group && id.Kind == kind {
+			out = append(out, obj)
+		}
+	}
+	return out
+}
+
 // EmptyLister returns an empty object fixture.
 func EmptyLister() MapLister { return MapLister{} }
 
@@ -36,6 +47,11 @@ func (m MapLister) Productions(id manifest.NamedResource, index *manifest.Discov
 // GetArtifact returns no acquired artifact for map-only fixtures.
 func (m MapLister) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact { return nil }
 
+// GetStatus returns no assessment for map-only fixtures.
+func (m MapLister) GetStatus(manifest.NamedResource) (store.StatusInfo, bool) {
+	return store.StatusInfo{}, false
+}
+
 // IncomingProductions returns only the contribution evidence supplied by the fixture.
 func (m MapLister) IncomingProductions(child store.Child, _ *manifest.DiscoveryIndex) []manifest.Production {
 	return child.Productions
@@ -44,4 +60,10 @@ func (m MapLister) IncomingProductions(child store.Child, _ *manifest.DiscoveryI
 // GetEmission returns no accepted fixture output.
 func (m MapLister) GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission) {
 	return nil, nil, store.Emission{}
+}
+
+// ReferenceFacts exposes map-only data without supplied inputs.
+func (m MapLister) ReferenceFacts(id manifest.NamedResource, index *manifest.DiscoveryIndex) store.ReferenceFacts {
+	data, _ := m[id].(manifest.Data)
+	return store.ReferenceFacts{Data: data, Accepted: data != nil, Productions: m.Productions(id, index)}
 }

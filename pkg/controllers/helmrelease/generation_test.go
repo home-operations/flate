@@ -8,6 +8,7 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/filtertest"
 	"github.com/home-operations/flate/internal/testutil"
@@ -35,8 +36,10 @@ func TestGeneratedObjects_PublishBeforeSourceWait(t *testing.T) {
 			}
 			hr := (&manifest.HelmRelease{Name: "app", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: template}}).WithNamespace("apps").(*manifest.HelmRelease)
 			index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "release.yaml"}}}
-			filter := change.NewFilter(change.NewSet([]string{"release.yaml"}), index, filtertest.MapLister{}, "")
-			c, st := newTestController(t, filter)
+			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"release.yaml"}), Index: index, Inventory: filtertest.MapLister{}})
+			admissiontest.Commit(t, filterLoader, nil)
+			filter := filterLoader.Options.Filter
+			c, st := newTestController(t, filterLoader)
 			reconcile := func(level manifest.DrainLevel) *base.Execution {
 				var run *base.Execution
 				c.Tasks.Go(t.Context(), "release", func(ctx context.Context) {
@@ -46,7 +49,7 @@ func TestGeneratedObjects_PublishBeforeSourceWait(t *testing.T) {
 				return run
 			}
 			st.AddObject(hr)
-			c.KeepEmitted(manifest.NamedResource{}, store.Child{Obj: hr}, nil)
+			c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: hr}, nil)
 			id := hr.ChartSource()
 			arrivals := 0
 			stop := st.AddListener(store.EventObjectAdded, func(got manifest.NamedResource, value any) {

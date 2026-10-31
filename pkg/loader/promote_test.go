@@ -147,11 +147,11 @@ spec:
 	if _, exists := l.Index.Lookup(separate); !exists {
 		t.Fatal("independently loaded evidence under the entry prefix was removed")
 	}
-	admit := func(obj manifest.BaseManifest) bool {
+	admit := func(obj manifest.BaseManifest) (bool, error) {
 		record, ok := l.Index.Lookup(obj.Named())
-		return ok && record.Parent == testutil.KustomizationID("apps", "entry")
+		return ok && record.Parent == testutil.KustomizationID("apps", "entry"), nil
 	}
-	if !Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}) {
+	if promoted, err := Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}); err != nil || !promoted {
 		t.Fatal("built promotion failed")
 	}
 	selected.Namespace, selected.Name = "apps", "selected-dev"
@@ -176,7 +176,7 @@ spec:
 		t.Fatal("colliding source document was not loaded")
 	}
 	l.Admit(root)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	if retainedErrorsForTest(l)[selectedFile] != nil || !errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
@@ -193,7 +193,7 @@ spec:
 		t.Fatalf("reloaded independent raw error = %v, want ErrInput", independentError)
 	}
 	l.Admit(root)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	if retainedErrorsForTest(l)[selectedFile] != nil || !errors.Is(retainedErrorsForTest(l)[independentFile], independentError) {
@@ -250,7 +250,11 @@ spec:
 		{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "values"},
 		{Kind: manifest.KindSecret, Namespace: "apps", Name: "credentials"},
 	})
-	sources := slices.Collect(l.Sources())
+	var sources []store.Child
+	for source, err := range l.Sources(t.Context()) {
+		assert.NoError(t, err)
+		sources = append(sources, source)
+	}
 	if !slices.ContainsFunc(sources, func(child store.Child) bool { return child.Obj.Named().Name == "source-dev" && child.Doc != nil }) {
 		t.Fatal("built source is unavailable to discovery")
 	}
@@ -343,7 +347,7 @@ func TestRegisterBuilt_RemoteGenerator(t *testing.T) {
 	docs := []store.Child{{Obj: &manifest.ConfigMap{Name: "remote-with-hash", Data: map[string]any{"VALUE": "fetched"}}}}
 	l.RegisterBuilt(BuiltInput{Root: root, Source: manifest.BootstrapSourceID, Owner: testutil.KustomizationID("apps", "entry")}, docs)
 	l.Admit(root)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatalf("finalization fetched an already built remote generator: %v", err)
 	}
 	if _, exists := l.Index.Lookup(manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "remote"}); exists {
@@ -408,15 +412,15 @@ spec:
 	if err := retainedErrorsForTest(l)[selectedFile]; err != nil {
 		t.Fatalf("deleted resource raw error survived successful built registration: %v", err)
 	}
-	admit := func(obj manifest.BaseManifest) bool {
+	admit := func(obj manifest.BaseManifest) (bool, error) {
 		record, ok := l.Index.Lookup(obj.Named())
-		return ok && record.Parent == testutil.KustomizationID("apps", "entry")
+		return ok && record.Parent == testutil.KustomizationID("apps", "entry"), nil
 	}
-	if !Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}) {
+	if promoted, err := Promote(t.Context(), st, docs[0].Obj.Named(), PromoteOptions{Documents: docs, Admit: admit}); err != nil || !promoted {
 		t.Fatal("retained built promotion failed")
 	}
 	l.Admit(root)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(retainedErrorsForTest(l)) != 0 {
@@ -515,7 +519,14 @@ func TestRegisterBuilt_StandaloneRoots(t *testing.T) {
 			if _, err := l.Load(t.Context(), entry); err != nil {
 				t.Fatal(err)
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			var want []string
+			if tc.eligible {
+				want = []string{"entry"}
+			}
+			if roots := l.StandaloneRoots(root); !slices.Equal(roots, want) {
+				t.Fatalf("standalone roots = %v, want %v", roots, want)
+			}
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			if tc.reader {
@@ -542,7 +553,7 @@ func TestPromote_ContentOnlyBinding(t *testing.T) {
 	var reads store.ReadSet
 	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
 	defer reads.Close()
-	if !Promote(t.Context(), st, id, PromoteOptions{Record: manifest.Production{Source: source, Path: "/input/settings.yaml"}, Reads: &reads, Admit: func(manifest.BaseManifest) bool { return true }}) {
+	if promoted, err := Promote(t.Context(), st, id, PromoteOptions{Record: manifest.Production{Source: source, Path: "/input/settings.yaml"}, Reads: &reads, Admit: func(manifest.BaseManifest) (bool, error) { return true, nil }}); err != nil || !promoted {
 		t.Fatal("source document was not promoted")
 	}
 	var consumer store.ReadSet

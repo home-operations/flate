@@ -7,6 +7,7 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
@@ -33,16 +34,26 @@ func TestKeepEmitted_MatchesHistoryBeforePublication(t *testing.T) {
 					art.LocalPath, art.LocalRoot, art.Key, art.Content = "/selected", root, "commit", "generation"
 				}
 				st.SetArtifact(source.Named(), art)
-				filter := change.NewFilter(change.NewSet([]string{"apps/red/file"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, st, root)
+				l := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}, Inventory: st, Root: root})
+				filter := l.Options.Filter
 				production := manifest.Production{Owner: owner, Source: manifest.BootstrapSourceID}
 				if side == 0 {
-					filter.RefineHistory(map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{owner: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+					proposal, err := l.Prepare(t.Context(), store.Child{}, nil, map[manifest.NamedResource]struct {
+						Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+						Complete bool
+					}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 						yield(child.Named(), manifest.DiscoveryRecord{Refs: []manifest.NamedResource{source.Named()}, ContentRoots: map[manifest.NamedResource][]string{source.Named(): {child.Path}}, Productions: []manifest.Production{production}})
-					}}, map[manifest.NamedResource]bool{owner: true})
+					}, Complete: true}})
+					assert.NoError(t, err)
+					admissiontest.Commit(t, l, proposal)
 				} else {
 					controller := New(st, task.NewBounded(2))
-					controller.Configure(Options{Filter: filter})
-					assert.Equal(t, controller.KeepEmitted(owner, store.Child{Obj: child, Productions: []manifest.Production{production}}, nil), mode == "mutable")
+					controller.Configure(Options{Filter: filter, Loader: l})
+					kept1, admissionErr1 := controller.KeepEmitted(t.Context(), owner, store.Child{Obj: child, Productions: []manifest.Production{production}}, nil)
+					if admissionErr1 != nil {
+						t.Fatal(admissionErr1)
+					}
+					assert.Equal(t, kept1, mode == "mutable")
 				}
 				assert.Equal(t, filter.ShouldReconcile(child.Named()), mode == "mutable")
 				assert.Equal(t, filter.ShouldReconcile(owner), mode == "mutable")
@@ -66,13 +77,23 @@ func TestKeepEmitted_OverridesHistoricalReferences(t *testing.T) {
 	}
 	child := &manifest.Kustomization{Name: "child", Namespace: "apps", Path: "apps/red", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: newSource.Named().Kind, Name: newSource.Name}}
 	owner := testutil.KustomizationID("apps", "emitter")
-	filter := change.NewFilter(change.NewSet([]string{"apps/red/file"}), nil, st, root)
-	filter.RefineHistory(map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{owner: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+	l := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"apps/red/file"}), Index: nil, Inventory: st, Root: root})
+	filter := l.Options.Filter
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, map[manifest.NamedResource]struct {
+		Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+		Complete bool
+	}{owner: {Records: func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 		yield(child.Named(), manifest.DiscoveryRecord{Refs: []manifest.NamedResource{oldSource.Named()}, ContentRoots: map[manifest.NamedResource][]string{oldSource.Named(): {"elsewhere"}}})
-	}}, map[manifest.NamedResource]bool{})
+	}}})
+	assert.NoError(t, err)
+	admissiontest.Commit(t, l, proposal)
 	controller := New(st, task.NewBounded(2))
-	controller.Configure(Options{Filter: filter})
-	assert.Equal(t, controller.KeepEmitted(owner, store.Child{Obj: child}, nil), true)
+	controller.Configure(Options{Filter: filter, Loader: l})
+	kept2, admissionErr2 := controller.KeepEmitted(t.Context(), owner, store.Child{Obj: child}, nil)
+	if admissionErr2 != nil {
+		t.Fatal(admissionErr2)
+	}
+	assert.Equal(t, kept2, true)
 	assert.Equal(t, filter.ShouldReconcile(newSource.Named()), true)
 	assert.Equal(t, filter.ShouldReconcile(oldSource.Named()), false)
 	assert.Equal(t, st.GetObject(child.Named()) == nil, true)

@@ -259,7 +259,9 @@ spec:
 				t.Errorf("missing ownership suppression: stdout=%s stderr=%s", stdout, stderr)
 			}
 			for _, name := range []string{"x-demo", "y-demo"} {
-				assert.Equal(t, strings.Contains(stderr, "HelmRelease.helm.toolkit.fluxcd.io apps/"+name+":"), true)
+				if !strings.Contains(stderr, "HelmRelease.helm.toolkit.fluxcd.io apps/"+name+":") {
+					t.Errorf("missing suppression for %s: stdout=%s stderr=%s", name, stdout, stderr)
+				}
 			}
 			assert.Equal(t, strings.Contains(stderr, "(skipped:"), false)
 			if strings.Contains(stdout, "ConfigMap apps/") {
@@ -480,7 +482,7 @@ spec:
 
 				stdout, stderr, code := runCLI(t, args...)
 				assert.Equal(t, code, tc.wantCode)
-				assert.Equal(t, strings.Contains(stderr, "values not used by the chart"), tc.namespace == "")
+				assert.Equal(t, strings.Contains(stderr, "values not used by the chart"), tc.namespace == "" && tc.verb != "ks")
 				assert.Equal(t, strings.Contains(stdout, "flate warning:"), false)
 				for _, side := range []struct {
 					name string

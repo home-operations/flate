@@ -1,6 +1,7 @@
 package base
 
 import (
+	"context"
 	"slices"
 
 	"github.com/home-operations/flate/pkg/loader"
@@ -22,8 +23,7 @@ func (c *Controller) ParseChildren(parent manifest.BaseManifest, docs []manifest
 	return children, visible, failures
 }
 
-// Emit extends changed-only selection before the single coherent publication.
-func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) {
+func (c *Controller) emit(ctx context.Context, id manifest.NamedResource, next *store.Emission, payloads map[manifest.NamedResource]*store.SourceArtifact) error {
 	children := next.Children
 	cloned := false
 	if next.Reads.Valid() {
@@ -39,8 +39,13 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, paylo
 				}
 				next.Children[i].Obj = obj
 			}
-			c.KeepEmitted(id, next.Children[i], next.Reads)
+			if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
+				return err
+			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	c.Store.RecordEmitted(id, next, payloads)
 	if cloned && !next.Complete {
@@ -54,4 +59,5 @@ func (c *Controller) Emit(id manifest.NamedResource, next *store.Emission, paylo
 			}
 		}
 	}
+	return nil
 }

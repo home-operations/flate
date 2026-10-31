@@ -6,18 +6,18 @@ import (
 	"strings"
 	"testing"
 
+	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/home-operations/flate/pkg/schedule"
 
-	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
-
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	resourcesetctrl "github.com/home-operations/flate/pkg/controllers/resourceset"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/schedule"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -502,7 +502,9 @@ func TestWarnMissingCRDs_ReplacementAndRetainedOutput(t *testing.T) {
 			s.AddObject(&fresh)
 			if strings.HasPrefix(state, "filter") {
 
-				opts.Filter = change.NewFilter(change.NewSet(nil), indexForTest(nil), s, "")
+				opts.Loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(nil), Index: indexForTest(nil), Inventory: s, Root: ""})
+				admissiontest.Commit(t, opts.Loader, nil)
+				opts.Filter = opts.Loader.Options.Filter
 				c = resourcesetctrl.New(s, tasks, true)
 				c.Configure(opts)
 				c.StartLifecycle()

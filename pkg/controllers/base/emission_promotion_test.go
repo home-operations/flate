@@ -6,11 +6,15 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -35,8 +39,10 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 					primary.Named(): {File: "changed.yaml"},
 					settings:        {Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID}}},
 				}}
-				filter := change.NewFilter(change.NewSet([]string{"changed.yaml"}), index, s, "")
-				c.Configure(Options{Filter: filter, Index: index})
+				filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"changed.yaml"}), Index: index, Inventory: s, Root: ""})
+				admissiontest.Commit(t, filterLoader, nil)
+				filter := filterLoader.Options.Filter
+				c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
 				var rendered string
 				arrived := false
 				stop := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
@@ -54,7 +60,7 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 							defer next.Finish()
 							next.Complete = true
 							next.Manifests = testutil.DocumentOccurrences([]map[string]any{{"value": rendered}})
-							return execution.Emit(obj.Named(), &next, nil)
+							return execution.Emit(t.Context(), obj.Named(), &next, nil)
 						})
 						return execution.Valid()
 					}
@@ -67,7 +73,7 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 					if before {
 						<-promoted
 					}
-					c.KeepEmitted(parent.Named(), store.Child{Obj: child}, nil)
+					c.KeepEmitted(t.Context(), parent.Named(), store.Child{Obj: child}, nil)
 					close(admitted)
 					if !before {
 						<-promoted
@@ -79,7 +85,7 @@ func TestKeepEmitted_LatePromotionConverges(t *testing.T) {
 						<-admitted
 					}
 					assert.Equal(t, s.GetObject(child.Named()) == nil, true)
-					c.Emit(primary.Named(), captureEmission(s, primary.Named(), &store.Emission{Children: []store.Child{{Obj: source}}, Complete: true}), nil)
+					c.emit(t.Context(), primary.Named(), captureEmission(s, primary.Named(), &store.Emission{Children: []store.Child{{Obj: source}}, Complete: true}), nil)
 					close(promoted)
 				})
 				tasks.BlockTillDone()
@@ -109,8 +115,10 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 	s.SetIncluded(source.Named(), false)
 	child := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: source.Name}, Name: "consumer", Namespace: "apps", Chart: manifest.HelmChart{Source: source.Named()}}
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{parent: {File: "parent.yaml"}}}
-	filter := change.NewFilter(change.NewSet([]string{"parent.yaml"}), index, s, "/repo")
-	c.Configure(Options{Filter: filter, Index: index})
+	filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"parent.yaml"}), Index: index, Inventory: s, Root: "/repo"})
+	admissiontest.Commit(t, filterLoader, nil)
+	filter := filterLoader.Options.Filter
+	c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
 	captured := new(Execution)
 	captured.Init(c, source.Named())
 	defer captured.Close()
@@ -124,7 +132,7 @@ func TestKeepEmitted_ConcurrentAdmissionRefiresOnce(t *testing.T) {
 		slots.Go(t.Context(), "admit", func(context.Context) {
 			ready.Done()
 			<-start
-			c.KeepEmitted(parent, store.Child{Obj: child}, nil)
+			c.KeepEmitted(t.Context(), parent, store.Child{Obj: child}, nil)
 		})
 	}
 	ready.Wait()
@@ -149,7 +157,9 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 			index := &manifest.DiscoveryIndex{}
 			child := store.Child{Obj: &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "incoming"}}, Productions: []manifest.Production{{Owner: parent.Named(), Source: manifest.BootstrapSourceID, File: "incoming.yaml"}}}
 			attempt := captureEmission(s, parent.Named(), &store.Emission{Fingerprint: manifest.Fingerprint("same"), Children: []store.Child{child}, Complete: true})
-			filter := change.NewFilter(change.NewSet([]string{"incoming.yaml"}), index, s, "/repo")
+			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"incoming.yaml"}), Index: index, Inventory: s, Root: "/repo"})
+			admissiontest.Commit(t, filterLoader, nil)
+			filter := filterLoader.Options.Filter
 			if mode == "cached" {
 				s.RecordEmitted(parent.Named(), attempt, nil)
 			}
@@ -163,7 +173,7 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 			run := new(Execution)
 			run.Init(c, parent.Named())
 			defer run.Close()
-			c.Configure(Options{Filter: filter, Index: index})
+			c.Configure(Options{Filter: filter, Index: index, Loader: filterLoader})
 			arrivals := 0
 			stop := s.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
 				if id == child.Obj.Named() && payload != nil {
@@ -175,9 +185,9 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 			}, false)
 			defer stop()
 			if mode == "emit" {
-				run.Emit(parent.Named(), attempt, nil)
+				run.Emit(t.Context(), parent.Named(), attempt, nil)
 			} else {
-				_, handled, err := run.FingerprintDedup(parent.Named(), "same", &store.Emission{})
+				_, handled, err := run.FingerprintDedup(t.Context(), parent.Named(), "same", &store.Emission{})
 				assert.NoError(t, err)
 				assert.Equal(t, handled, true)
 			}
@@ -194,5 +204,104 @@ func TestFingerprintDedup_IncomingSelectionEvidence(t *testing.T) {
 			}
 			assert.Diff(t, obj.Data, map[string]any{"VALUE": "incoming"})
 		})
+	}
+}
+
+func TestRequire_PromotesPresentRuntimeInput(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps"}
+	input := &manifest.HelmChartSource{Name: "generated", Namespace: "apps"}
+	st.AddObjects([]manifest.BaseManifest{consumer, input})
+	l := admissiontest.New(t, admissiontest.Config{Inventory: st})
+	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{consumer.Named()}, []manifest.NamedResource{consumer.Named()}, []manifest.NamedResource{consumer.Named()}, 0)
+	assert.Equal(t, retry, false)
+	st.SetIncluded(input.Named(), false)
+	c := New(st, task.NewBounded(2))
+	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+	var execution Execution
+	execution.Init(c, consumer.Named())
+	defer execution.Close()
+	err := execution.Require(t.Context(), []manifest.DependencyRef{{NamedResource: input.Named(), Artifact: true, ChartSource: true}}, manifest.DrainNone)
+	if err == nil {
+		t.Fatal("the input without acquired content did not block")
+	}
+	if !l.Options.Filter.ShouldReconcile(input.Named()) {
+		t.Fatal("a present runtime input was left excluded from acquisition")
+	}
+}
+
+func TestKeepEmitted_DirtyInputDoesNotConsumeReaders(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"input.yaml":    {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: input, namespace: apps}\ndata: {VALUE: stable}\n")},
+		"consumer.yaml": {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: consumer, namespace: apps}\nspec:\n  path: ./app\n  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: input}]\n")},
+	}})
+	l := loader.New(st)
+	l.SourceRoot = root
+	l.Options.Filter = change.NewFilter()
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Changes = change.NewSet(nil)
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, true))
+	input := &manifest.ConfigMap{Name: "input", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
+	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{{Kind: manifest.KindConfigMap, Name: "input"}}}}
+	st.AddObjects([]manifest.BaseManifest{input, consumer})
+	_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{input.Named()}, []manifest.NamedResource{input.Named()}, []manifest.NamedResource{input.Named()}, 0)
+	assert.Equal(t, retry, false)
+	c := New(st, nil)
+	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+	var reads store.ReadSet
+	reads.Init(st, input.Named(), nil)
+	defer reads.Retire()
+	reads.GetObject(input.Named())
+	_, err = c.KeepEmitted(t.Context(), manifest.NamedResource{}, store.Child{Obj: input}, &reads)
+	assert.NoError(t, err)
+	assert.Equal(t, reads.Valid(), true)
+	st.DeleteObject(consumer.Named())
+	if !reads.Valid() {
+		t.Fatal("reader publication invalidated the input that only admitted it")
+	}
+}
+
+func TestDispatch_AdmissionDoesNotConsumeProducerInventory(t *testing.T) {
+	t.Parallel()
+	st := store.New()
+	producer := &manifest.ResourceSet{Name: "producer", Namespace: "apps"}
+	child := &manifest.ExternalArtifact{Name: "child", Namespace: "apps"}
+	st.AddObject(producer)
+	var publication store.ReadSet
+	publication.Init(st, producer.Named(), nil)
+	defer publication.Close()
+	_, _, first := publication.GetEmission(producer.Named())
+	defer first.Finish()
+	first.Children = []store.Child{{Obj: child}}
+	publication.Bind(&first)
+	st.RecordEmitted(producer.Named(), &first, nil)
+	assert.Equal(t, st.GetObject(child.Named()), manifest.BaseManifest(child))
+	l := loader.New(st)
+	l.Options.Filter = change.NewFilter()
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Changes = change.NewSet(nil)
+	c := New(st, nil)
+	c.Configure(Options{Loader: l, Filter: l.Options.Filter, Index: l.Index})
+	var execution Execution
+	execution.Init(c, child.Named())
+	defer execution.Close()
+	execution.Dispatch(t.Context(), manifest.DrainNone, struct{}{}, func(struct{}, context.Context, *manifest.ExternalArtifact, manifest.DrainLevel) error {
+		t.Error("excluded child reconciled")
+		return nil
+	})
+	assert.Equal(t, execution.Reads.Valid(), true)
+	_, _, next := publication.GetEmission(producer.Named())
+	defer next.Finish()
+	next.Children = []store.Child{{Obj: &manifest.ExternalArtifact{Name: "unrelated", Namespace: "apps"}}}
+	publication.Bind(&next)
+	st.RecordEmitted(producer.Named(), &next, nil)
+	if !execution.Reads.Valid() {
+		t.Fatal("unrelated partial publication invalidated the child's admission-only inventory proof")
 	}
 }

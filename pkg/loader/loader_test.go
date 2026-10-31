@@ -16,6 +16,7 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -41,7 +42,7 @@ func TestFinalizeIndex_ExcludesWorkingTreeGeneratorsUnderPinnedClaim(t *testing.
 	testutil.WriteFile(t, artifactDir, "apps/kustomization.yaml", "configMapGenerator:\n- name: pinned\n  literals: [value=pinned]\n")
 	l.documents.read(filepath.Join(root, "apps"))
 	l.documents.read(filepath.Join(artifactDir, "apps"))
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "pinned"}
@@ -115,7 +116,7 @@ func TestLoader_DiscoveryBootstrapScanSkipsCoveredDir(t *testing.T) {
 			_, err := loadForTest(t.Context(), t, l, filepath.Join(sourceRoot, parent.Path))
 			assert.NoError(t, err)
 			l.Admit(root)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			for _, child := range []struct {
@@ -1302,6 +1303,42 @@ func (unreadableListingFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	return nil, &fs.PathError{Op: "readdir", Path: name, Err: fs.ErrPermission}
 }
 
+func TestLoader_ComponentParseFailure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		selection manifest.Selection
+	}{
+		{name: "full"},
+		{name: "named", selection: manifest.Selection{Roots: []manifest.NamedResource{{Kind: manifest.KindKustomization, Name: "selected"}}}},
+		{name: "changed", selection: manifest.Selection{Changed: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "component/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [bad.yaml]\n")
+			testutil.WriteFile(t, root, "component/bad.yaml", "apiVersion: v1\nkind: ConfigMap\ndata: {value: invalid}\n")
+			st := store.New()
+			admitForTest(st, root)
+			l := New(st)
+			l.SourceRoot = root
+			l.Options.Selection = tc.selection
+			l.Options.Filter = change.NewFilter()
+			count, err := l.Load(t.Context(), filepath.Join(root, "component"))
+			if err != nil || count != 0 {
+				t.Fatalf("Load = (%d, %v), want retained parse failure", count, err)
+			}
+			failed := l.documents.cache[filepath.Join(root, "component/bad.yaml")].objects
+			if len(failed) != 1 || failed[0].outcome.Err == nil || failed[0].fact != nil {
+				t.Fatalf("component parse failure not retained: %+v", failed)
+			}
+			if len(st.ListObjects("", manifest.KindConfigMap)) != 0 || len(st.Warnings()) != 0 {
+				t.Fatal("failed component document escaped census")
+			}
+		})
+	}
+}
+
 func TestLoader_WarningConditions(t *testing.T) {
 	t.Parallel()
 	for _, site := range []string{"kustomization", "sibling", "component", "readdir"} {
@@ -1437,7 +1474,7 @@ func TestLoader_ProjectedEvidence(t *testing.T) {
 			l.candidates = nil
 		}
 		sources := 0
-		for child := range l.Sources() {
+		for child := range l.Sources(t.Context()) {
 			source := child.Obj
 			sources++
 			assert.Equal(t, source.Named().Namespace, "apps")

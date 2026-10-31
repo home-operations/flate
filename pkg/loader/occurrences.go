@@ -3,6 +3,7 @@ package loader
 import (
 	"context"
 	"fmt"
+	"iter"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -25,6 +26,7 @@ type OccurrenceID struct {
 	Source   string
 	File     string
 	Document int
+	item     int
 }
 
 // Occurrence retains an immutable declaration and its contextual resource identity.
@@ -32,7 +34,82 @@ type Occurrence struct {
 	Declaration OccurrenceID
 	Identity    manifest.NamedResource
 	Authored    manifest.NamedResource
-	Object      manifest.BaseManifest
+	object      manifest.BaseManifest
+	facts       *occurrenceFacts
+}
+
+type occurrenceFacts struct {
+	source                         manifest.NamedResource
+	path                           string
+	hasPath, namespaced, uncertain bool
+	tracked                        bool
+	structural                     *manifest.Kustomization
+	catalog                        manifest.BaseManifest
+	reverse                        []manifest.NamedResource
+	refs                           []manifest.Reference
+	roots                          []string
+	targets, authoredTargets       []manifest.ProducerTarget
+	needsCandidates                bool
+	placeholder                    bool
+	policy                         *manifest.EmissionPolicy
+	labels                         map[string]string
+	labeled                        bool
+}
+
+// SourcePath returns the source and path in the occurrence's effective namespace.
+func (o Occurrence) SourcePath() (manifest.NamedResource, string, bool) {
+	if o.facts == nil {
+		obj := o.object
+		if obj == nil {
+			return manifest.NamedResource{}, "", false
+		}
+		if o.Identity.Namespace != o.Authored.Namespace {
+			obj = obj.WithNamespace(o.Identity.Namespace)
+		}
+		return obj.SourcePath()
+	}
+	return manifest.Resolve(o.facts.source, "", o.Identity.Namespace), o.facts.path, o.facts.hasPath
+}
+
+func compactOccurrence(obj manifest.BaseManifest) Occurrence {
+	source, path, hasPath := obj.SourcePath()
+	targets := manifest.ProducerTargets(obj)
+	facts := &occurrenceFacts{source: source, path: path, hasPath: hasPath,
+		namespaced: manifest.KindOf(obj).Namespaced(), tracked: manifest.KindOf(obj).Tracked,
+		targets: targets, authoredTargets: targets, needsCandidates: manifest.ProducerNeedsCandidates(obj), roots: slices.Collect(manifest.RenderRoots(obj))}
+
+	generated, _ := manifest.GeneratedObjects(obj)
+	for _, child := range generated {
+		facts.targets = append(facts.targets, manifest.ProducerTarget{NamedResource: child.Named()})
+	}
+
+	facts.catalog = manifest.CatalogObject(obj, obj.Named())
+	facts.structural, _ = facts.catalog.(*manifest.Kustomization)
+
+	if data, ok := obj.(interface{ HasPlaceholder() bool }); ok {
+		facts.placeholder = data.HasPlaceholder()
+	}
+	if producer, ok := obj.(interface {
+		EmissionPolicy() manifest.EmissionPolicy
+	}); ok {
+		policy := producer.EmissionPolicy()
+		facts.policy = &manifest.EmissionPolicy{Namespace: policy.Namespace, InternalNamespace: policy.InternalNamespace, ExcludeChildren: policy.ExcludeChildren}
+	}
+	if labeled, ok := facts.catalog.(interface{ GetLabels() map[string]string }); ok {
+		facts.labels, facts.labeled = labeled.GetLabels(), true
+	}
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		facts.refs = append(facts.refs, ref.Clone())
+	}
+	facts.reverse = slices.Collect(manifest.ContentInputs(obj, true))
+	id := obj.Named()
+	if manifest.HasEnvsubstReference(id.Name) {
+		id.Name, facts.uncertain = "", true
+	}
+	if manifest.HasEnvsubstReference(id.Namespace) {
+		id.Namespace, facts.uncertain = "", true
+	}
+	return Occurrence{Identity: id, Authored: id, facts: facts}
 }
 
 // PackageEvidence borrows parsed package and scan provenance, without deciding root ownership.
@@ -47,10 +124,15 @@ func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []Occurrence) []m
 	l.ensureScopes()
 	claims := make([]ownerClaims, 0, len(occurrences))
 	for _, o := range occurrences {
-		if !manifest.KindOf(o.Object).Structural {
+		if !o.Identity.KindInfo().Structural {
 			continue
 		}
-		ks := o.Object.(*manifest.Kustomization)
+		var ks *manifest.Kustomization
+		if o.facts != nil {
+			ks = o.facts.structural
+		} else {
+			ks = o.object.(*manifest.Kustomization)
+		}
 		if ks.Name != o.Identity.Name || ks.Namespace != o.Identity.Namespace {
 			projected := *ks
 			projected.Name, projected.Namespace = o.Identity.Name, o.Identity.Namespace
@@ -67,8 +149,14 @@ func (l *Loader) OccurrenceClaims(repoRoot string, occurrences []Occurrence) []m
 }
 
 // PathObjects returns live path witnesses, retaining occurrences until construction completes.
-func (l *Loader) PathObjects() []store.Child {
-	objects := l.Kustomizations()
+func (l *Loader) PathObjects() []Occurrence {
+	stored := l.Store.ListObjects(manifest.FluxKustomizeDomain, manifest.KindKustomization)
+	objects := make([]Occurrence, 0, len(stored))
+	l.eachKustomization(stored, func(child store.Child) {
+		if !l.inactiveKustomization(child.Obj.Named()) {
+			objects = append(objects, Occurrence{Identity: child.Obj.Named(), Authored: child.Obj.Named(), object: child.Obj})
+		}
+	})
 	if l.scopes == nil || !l.scopes.complete {
 		files := make([]string, 0, len(l.documents.cache))
 		for file := range l.documents.cache {
@@ -81,29 +169,35 @@ func (l *Loader) PathObjects() []store.Child {
 				continue
 			}
 			for _, child := range doc.objects {
-				if child.Obj == nil || child.outcome.Err != nil {
+				if child.outcome.Err != nil || child.Obj == nil && child.fact == nil {
 					continue
 				}
-				source, path, ok := child.Obj.SourcePath()
-				if !ok {
+				var o Occurrence
+				if child.fact != nil {
+					o = *child.fact
+				} else {
+					o = Occurrence{Identity: child.Obj.Named(), Authored: child.Obj.Named(), object: child.Obj}
+				}
+				source, path, ok := o.SourcePath()
+				if !ok || o.facts != nil && o.facts.uncertain {
 					continue
 				}
-				if slices.ContainsFunc(objects, func(other store.Child) bool {
-					otherSource, otherPath, _ := other.Obj.SourcePath()
-					return other.Obj.Named() == child.Obj.Named() && otherSource == source && otherPath == path
+				if slices.ContainsFunc(objects, func(other Occurrence) bool {
+					otherSource, otherPath, _ := other.SourcePath()
+					return other.Identity == o.Identity && otherSource == source && otherPath == path
 				}) {
 					continue
 				}
-				objects = append(objects, child.Child)
+				objects = append(objects, o)
 			}
 		}
 	}
-	slices.SortStableFunc(objects, func(a, b store.Child) int {
-		if c := a.Obj.Named().Compare(b.Obj.Named()); c != 0 {
+	slices.SortStableFunc(objects, func(a, b Occurrence) int {
+		if c := a.Identity.Compare(b.Identity); c != 0 {
 			return c
 		}
-		sa, pa, _ := a.Obj.SourcePath()
-		sb, pb, _ := b.Obj.SourcePath()
+		sa, pa, _ := a.SourcePath()
+		sb, pb, _ := b.SourcePath()
 		if c := sa.Compare(sb); c != 0 {
 			return c
 		}
@@ -207,14 +301,26 @@ func (l *Loader) Occurrences(ctx context.Context, dir, namespace string) ([]Occu
 		source := l.documents.mountedRoot(origin)
 		file, _ := filepath.Rel(source, origin)
 		for _, child := range doc.objects {
-			if child.Obj == nil || child.outcome.Err != nil {
+			if child.outcome.Err != nil || child.Obj == nil && child.fact == nil {
 				continue
 			}
-			id, err := l.projectIdentity(child.Obj, v, child.version)
+			var o Occurrence
+			var namespaced bool
+			if child.fact != nil {
+				o, namespaced = *child.fact, child.fact.facts.namespaced
+				if o.facts.uncertain {
+					continue
+				}
+			} else {
+				o = Occurrence{Declaration: OccurrenceID{Source: source, File: filepath.ToSlash(file), Document: child.outcome.Ordinal}, Authored: child.Obj.Named(), Identity: child.Obj.Named(), object: child.Obj}
+				namespaced = manifest.KindOf(child.Obj).Namespaced()
+			}
+			id, err := l.projectIdentity(o.Authored, v, child.version, namespaced)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, Occurrence{Declaration: OccurrenceID{Source: source, File: filepath.ToSlash(file), Document: child.outcome.Ordinal}, Identity: id, Authored: child.Obj.Named(), Object: child.Obj})
+			o.Identity = id
+			out = append(out, o)
 		}
 	}
 	return out, nil
@@ -225,18 +331,18 @@ type identityProjection struct {
 	version, namespace, prefix, suffix string
 }
 
-func (l *Loader) projectIdentity(obj manifest.BaseManifest, v graphVisit, version string) (manifest.NamedResource, error) {
-	id := obj.Named()
-	namespaced := manifest.KindOf(obj).Namespaced()
+func (l *Loader) projectIdentity(id manifest.NamedResource, v graphVisit, version string, namespaced bool) (manifest.NamedResource, error) {
+	projection := 0
 	if namespaced {
 		id = manifest.Resolve(id, v.namespace, v.fallback)
+		projection = 1
 	}
 	if v.namePrefix == "" && v.nameSuffix == "" && (v.namespace == "" || namespaced) {
 		return id, nil
 	}
 	l.ensureScopes()
 	key := identityProjection{identity: id, version: version, namespace: v.namespace, prefix: v.namePrefix, suffix: v.nameSuffix}
-	if projected, ok := l.scopes.projections[key]; ok {
+	if projected, ok := l.scopes.projections[projection][key]; ok {
 		return projected, nil
 	}
 	doc := map[string]any{"apiVersion": version, "kind": id.Kind, "metadata": map[string]any{"name": id.Name}}
@@ -264,10 +370,10 @@ func (l *Loader) projectIdentity(obj manifest.BaseManifest, v graphVisit, versio
 		return id, fmt.Errorf("%w: project suffix: %w", manifest.ErrFlux, err)
 	}
 	id.Name = r.GetName()
-	if l.scopes.projections == nil {
-		l.scopes.projections = make(map[identityProjection]manifest.NamedResource)
+	if l.scopes.projections[projection] == nil {
+		l.scopes.projections[projection] = make(map[identityProjection]manifest.NamedResource)
 	}
-	l.scopes.projections[key] = id
+	l.scopes.projections[projection][key] = id
 	return id, nil
 }
 
@@ -283,11 +389,11 @@ func (l *Loader) AdmitsOccurrence(occurrence Occurrence) bool {
 		}
 		doc := l.documents.cache[record.Path]
 		for _, child := range doc.objects {
-			if child.Obj == nil || child.outcome.Err != nil {
+			if child.outcome.Err != nil || child.Obj == nil && child.fact == nil {
 				continue
 			}
-			if child.Obj.Named() == record.Authored && child.outcome.Ordinal == occurrence.Declaration.Document {
-				return l.AdmitsRoot(l.IndexedObject(id, record).Obj, record.Path)
+			if child.fact != nil && child.fact.Declaration == occurrence.Declaration || child.fact == nil && child.Obj.Named() == record.Authored && child.outcome.Ordinal == occurrence.Declaration.Document {
+				return l.AdmitsRoot(l.CatalogObject(id), record.Path)
 			}
 		}
 	}
@@ -296,6 +402,9 @@ func (l *Loader) AdmitsOccurrence(occurrence Occurrence) bool {
 
 // EntryFailure assesses retained failures admitted as unowned native entry resources.
 func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
+	if !l.Options.Selection.Matches(manifest.NamedResource{}) {
+		return nil
+	}
 	l.Admit(repoRoot)
 	relative, _ := filepath.Rel(repoRoot, l.entryPath)
 	var files []string
@@ -306,6 +415,12 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 		doc := l.documents.cache[visit.file]
 		if doc.selected {
 			continue
+		}
+		if l.Options.Selection.Changed && l.Options.Changes != nil {
+			evidence := admissionClosure{loader: l, objects: l.Store}
+			if !evidence.fileChanged(manifest.BootstrapSourceID, visit.coordinate) {
+				continue
+			}
 		}
 		admission := l.rootAdmission(visit.file, visit.coordinate, false)
 		if !admission.denied && len(admission.owners) == 0 {
@@ -319,9 +434,113 @@ func (l *Loader) EntryFailure(ctx context.Context, repoRoot string) error {
 		}
 		for _, child := range l.documents.cache[file].objects {
 			if child.outcome.Err != nil {
-				return fmt.Errorf("entry %s: %w", l.fileCoordinate(l.documents.localPath(file)), manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}))
+				return fmt.Errorf("entry %s: %w (invalid YAML)", l.fileCoordinate(l.documents.localPath(file)), manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}))
 			}
 		}
+	}
+	return nil
+}
+
+func (l *Loader) exactObject(ctx context.Context, occurrence Occurrence, input *store.SourceArtifact) (store.Child, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Child{}, err
+	}
+	reader := l.documents
+	reader.cache, reader.parsed = nil, nil
+	reader.coordinate = &occurrence.Declaration
+	if input != nil {
+		if input.LocalPath != occurrence.Declaration.Source {
+			return store.Child{}, nil
+		}
+		reader.views = nil
+		reader.artifacts = nil
+		reader.setSources(map[string]*store.SourceArtifact{input.LocalPath: input})
+	}
+	file := filepath.Join(occurrence.Declaration.Source, filepath.FromSlash(occurrence.Declaration.File))
+	parsed, err := reader.fileObjects(file, manifest.ParseDocOptions{WipeSecrets: l.Options.WipeSecrets})
+	if err != nil {
+		return store.Child{}, fmt.Errorf("%w: hydrate %s: %w", manifest.ErrInput, occurrence.Identity, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return store.Child{}, err
+	}
+	var children []store.Child
+	for _, child := range parsed {
+		if child.outcome.Err != nil {
+			return store.Child{}, fmt.Errorf("%w: hydrate %s: %w", manifest.ErrInput, occurrence.Identity, manifest.DocumentFailure([]manifest.DocOccurrence{child.outcome}))
+		}
+		if child.Obj != nil && manifest.KindOf(child.Obj).Tracked {
+			children = append(children, child.Child)
+		}
+	}
+	if len(children) != 1 || children[0].Obj.Named() != occurrence.Authored {
+		return store.Child{}, nil
+	}
+	child := children[0]
+	if child.Obj.Named().Namespace != occurrence.Identity.Namespace {
+		child.Obj = child.Obj.WithNamespace(occurrence.Identity.Namespace)
+	}
+	return child, nil
+}
+
+func (o Occurrence) references() iter.Seq[manifest.Reference] {
+	return func(yield func(manifest.Reference) bool) {
+		for _, ref := range o.facts.refs {
+			if ref.NamespaceDefault {
+				ref.Namespace = o.Identity.Namespace
+			}
+			if !yield(ref) {
+				return
+			}
+		}
+	}
+}
+
+func (l *Loader) occurrence(id manifest.NamedResource) (Occurrence, bool) {
+	if o, ok := l.locations[id]; ok {
+		return o, true
+	}
+	if id.Namespace != "" {
+		bare := id
+		bare.Namespace = ""
+		if o, ok := l.locations[bare]; ok && o.facts != nil && o.facts.namespaced && o.Authored.Namespace == "" {
+			o.Identity = id
+			return o, true
+		}
+	}
+	return Occurrence{}, false
+}
+
+// IsFileIndexed reports whether source input supplies an authoritative declaration for id.
+func (l *Loader) IsFileIndexed(id manifest.NamedResource) bool {
+	if l.Index.IsFileIndexed(id) {
+		return true
+	}
+	if record, ok := l.Index.Lookup(id); ok && record.Builder != "" && l.candidates[id].Obj != nil {
+		return true
+	}
+	if occurrence, ok := l.occurrence(id); ok && occurrence.Authored.Namespace == "" && id.Namespace != "" {
+		id.Namespace = ""
+		return l.Index.IsFileIndexed(id)
+	}
+	return false
+}
+
+// CatalogObject returns immutable reporting facts without hydrating or admitting the declaration.
+func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
+	if occurrence, ok := l.occurrence(id); ok && occurrence.facts.catalog != nil {
+		obj := occurrence.facts.catalog
+		if obj.Named() == id {
+			return obj
+		}
+		return manifest.CatalogObject(obj, id)
+	}
+	record, _ := l.Index.Lookup(id)
+	if obj := l.IndexedObject(id, record).Obj; obj != nil {
+		return manifest.CatalogObject(obj, id)
+	}
+	if obj := l.Store.GetObject(id); obj != nil {
+		return manifest.CatalogObject(obj, id)
 	}
 	return nil
 }

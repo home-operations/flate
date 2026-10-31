@@ -38,12 +38,40 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 	if !quiescent || len(changed) != 0 || ctx.Err() != nil {
 		return changed
 	}
+	// Raw root admission MUST wait for its possible owners' settled publications.
+	if d.o.loader != nil {
+		var reads *store.ReadSet
+		for id, record := range d.o.index.Files() {
+			_, selected, _, _ := d.o.filter.Membership(id)
+			if selected && record.Path != "" && record.Parent == (manifest.NamedResource{}) && record.BuilderOwner == (manifest.NamedResource{}) && d.o.loader.AdmitsRoot(d.o.loader.CatalogObject(id), record.Path) && d.o.store.GetObject(id) == nil {
+				if reads == nil {
+					reads = &store.ReadSet{}
+					reads.Init(d.o.store, manifest.NamedResource{}, nil)
+				}
+				reads.RequireData(id)
+			}
+		}
+		if reads != nil {
+			_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, reads)
+			reads.Retire()
+			if err != nil {
+				d.o.entryFailure = err
+			}
+			changed = slices.Collect(d.o.store.Sweep())
+			if len(changed) != 0 {
+				return changed
+			}
+		}
+	}
 	if d.o.entryBinding == (discovery.Binding{}) && d.o.entryFailure == nil {
 		root, binding, err := d.o.admission.BindEntry(ctx, d.o.store)
 		d.o.entryFailure = err
 		if root != nil {
 			d.o.entryBinding = binding
-			d.o.ksc.KeepEmitted(manifest.NamedResource{}, store.Child{Obj: root}, nil)
+			if _, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{Obj: root}, nil); err != nil {
+				d.o.entryFailure = err
+				return changed
+			}
 			d.o.store.AddObject(root)
 			return slices.Collect(d.o.store.Sweep())
 		}
@@ -60,7 +88,11 @@ func (o *Orchestrator) seedNodes() []manifest.NamedResource {
 		}
 		for _, obj := range o.store.ListObjects(info.Group, info.Kind) {
 			if o.schedulable(obj) {
-				o.store.SetIncluded(obj.Named(), o.filter.ShouldReconcile(obj.Named()))
+				if o.filter.Enabled() {
+					if !o.includeNode(obj.Named()) {
+						continue
+					}
+				}
 				ids = append(ids, obj.Named())
 			}
 		}
@@ -106,6 +138,9 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		if observeEntry {
 			o.admission.AddApplication(o.store, obj)
 		}
+		if o.filter.Enabled() && o.schedulable(obj) && !o.includeNode(id) {
+			return
+		}
 		sched.OnArrival(id, o.schedulable(obj))
 	}, false)
 
@@ -117,4 +152,10 @@ func (o *Orchestrator) watchDAG(sched *schedule.Scheduler) func() {
 		unsubStatus()
 		unsubArtifact()
 	}
+}
+
+func (o *Orchestrator) includeNode(id manifest.NamedResource) bool {
+	included := o.filter.ShouldReconcile(id)
+	o.store.SetIncluded(id, included)
+	return included
 }

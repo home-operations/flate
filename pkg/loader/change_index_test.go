@@ -1,11 +1,12 @@
-package change
+package loader
 
 import (
+	"slices"
+
 	"github.com/home-operations/flate/internal/testutil"
-	"github.com/home-operations/flate/pkg/loader"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
-	"slices"
 )
 
 type filterFixture struct {
@@ -16,7 +17,7 @@ type filterFixture struct {
 	excluded map[manifest.NamedResource]struct{}
 	pinned   map[manifest.NamedResource]struct{}
 	readers  func(string) []manifest.FileReader
-	changed  *Set
+	changed  *change.Set
 }
 
 func (f filterFixture) index() *manifest.DiscoveryIndex {
@@ -34,7 +35,7 @@ func (f filterFixture) index() *manifest.DiscoveryIndex {
 	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}}
 	index.Claims = map[string][]manifest.NamedResource{}
 	index.Readers = map[string][]manifest.FileReader{}
-	claims := loader.Claims(st, f.root, st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
+	claims := Claims(st, f.root, st.ListAs[*manifest.Kustomization](manifest.FluxKustomizeDomain, manifest.KindKustomization))
 	for _, c := range claims {
 		index.Claims[c.Prefix] = append(index.Claims[c.Prefix], c.ID)
 	}

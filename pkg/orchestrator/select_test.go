@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
@@ -13,11 +14,11 @@ import (
 	"testing"
 	"testing/fstest"
 
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/selection"
 	"github.com/home-operations/flate/internal/testutil"
@@ -142,7 +143,9 @@ func TestSelect_InferredNamespacesAreNotIdentityFilter(t *testing.T) {
 	}
 	set := change.NewSet([]string{"a.yaml"})
 	run.index = indexForTest(map[manifest.NamedResource]string{a: "a.yaml", sibling: "sibling.yaml", other: "other.yaml"})
-	run.filter = change.NewFilter(set, run.index, run.store, "")
+	run.loader = admissiontest.New(t, admissiontest.Config{Changes: set, Index: run.index, Inventory: run.store, Root: ""})
+	admissiontest.Commit(t, run.loader, nil)
+	run.filter = run.loader.Options.Filter
 	selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
 	if err != nil || selected[0].Counts[manifest.KindKustomization] != 2 {
 		t.Fatalf("inferred scope excluded healthy sibling or admitted foreign namespace: %+v %v", selected, err)
@@ -189,7 +192,9 @@ func TestSelect_IncompleteInputCoverageScope(t *testing.T) {
 				for i, active := range enabled {
 					runs[i] = Rendered{Orchestrator: &Orchestrator{store: run.store, index: run.index}, Result: run.Result}
 					if active {
-						runs[i].filter = change.NewFilter(change.NewSet(paths), run.index, run.store, "")
+						runs[i].loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(paths), Index: run.index, Inventory: run.store, Root: ""})
+						admissiontest.Commit(t, runs[i].loader, nil)
+						runs[i].filter = runs[i].loader.Options.Filter
 					}
 				}
 				root := testutil.KustomizationID(tc.namespace, tc.requested)
@@ -648,6 +653,52 @@ func TestSelect_UnavailabilityUsesLocalCanonicalEvidence(t *testing.T) {
 
 }
 
+func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name             string
+		required, paired bool
+	}{
+		{name: "excluded"},
+		{name: "required", required: true},
+		{name: "required with other side", required: true, paired: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parent := testutil.KustomizationID("flux-system", "parent")
+			child := testutil.HelmReleaseID("apps", "child")
+			run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+				parent: {Status: store.StatusFailed, Message: "parent failed"},
+			}})
+			run.store.AddObject(&manifest.Kustomization{Name: parent.Name, Namespace: parent.Namespace})
+			run.filter = change.NewFilter()
+			var needed []manifest.NamedResource
+			if tc.required {
+				needed = append(needed, parent)
+				run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+					child: {Parent: parent},
+				}}
+			}
+			_, retry := run.filter.AddEmitted(needed, []manifest.NamedResource{child}, nil, 0)
+			assert.Equal(t, retry, false)
+			run.Err = &FailuresError{Message: "parent failed"}
+			runs := []Rendered{run}
+			if tc.paired {
+				other := selectedRun(&Result{})
+				other.filter = change.NewFilter()
+				_, retry := other.filter.AddEmitted(nil, []manifest.NamedResource{testutil.HelmReleaseID(parent.Namespace, "other")}, nil, 0)
+				assert.Equal(t, retry, false)
+				runs = append(runs, other)
+			}
+			selected, err, remainder := Select(runs, run.Err, []manifest.NamedResource{{Group: child.Group, Kind: child.Kind}}, nil)
+			assert.Equal(t, err != nil, tc.required)
+			assert.Equal(t, remainder == nil, true)
+			_, visible := selected[0].Failed[parent]
+			assert.Equal(t, visible, tc.required)
+		})
+	}
+}
+
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	t.Parallel()
 	victim := testutil.KustomizationID("flux-system", "victim")
@@ -879,7 +930,9 @@ func TestSelect_NamespaceSnapshots(t *testing.T) {
 				for invocation := range 2 {
 					for i, run := range runs {
 						if !tc.disabled {
-							run.filter = change.NewFilter(change.NewSet(tc.changes[(i+invocation)%2]), run.index, run.store, "")
+							run.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet(tc.changes[(i+invocation)%2]), Index: run.index, Inventory: run.store, Root: ""})
+							admissiontest.Commit(t, run.loader, nil)
+							run.filter = run.loader.Options.Filter
 						}
 						runs[i] = run
 					}
@@ -1041,7 +1094,9 @@ func TestSelect_SingleRunOmitsExternalDisclosures(t *testing.T) {
 				kept := &manifest.Kustomization{Name: "kept", Namespace: "kept"}
 				run.store.AddObject(kept)
 				run.index = indexForTest(map[manifest.NamedResource]string{kept.Named(): "kept.yaml", obj.Named(): "external.yaml"})
-				run.filter = change.NewFilter(change.NewSet([]string{"kept.yaml"}), run.index, run.store, "")
+				run.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"kept.yaml"}), Index: run.index, Inventory: run.store, Root: ""})
+				admissiontest.Commit(t, run.loader, nil)
+				run.filter = run.loader.Options.Filter
 			}
 			var labels map[string]string
 			if tc.labels {
@@ -1288,6 +1343,41 @@ func TestRenderTrees_InputWarningOnly(t *testing.T) {
 	assert.Diff(t, result.Warnings, []manifest.Warning{warning})
 }
 
+func TestSelect_ComparedRootFailureOutsideLocalNamespace(t *testing.T) {
+	t.Parallel()
+	for _, compared := range []bool{true, false} {
+		t.Run(fmt.Sprintf("compared=%t", compared), func(t *testing.T) {
+			t.Parallel()
+			var runs []Rendered
+			failed := &manifest.HelmRelease{Name: "failed", Namespace: "media"}
+			anchor := &manifest.Kustomization{Name: "anchor", Namespace: "apps"}
+			other := &manifest.HelmRelease{Name: "other", Namespace: "media"}
+			for side := range 2 {
+				run := selectedRun(&Result{})
+				run.store.AddObjects([]manifest.BaseManifest{failed, anchor, other})
+				run.filter = change.NewFilter()
+				selected := anchor.Named()
+				if side == 1 {
+					selected = other.Named()
+					if compared {
+						selected = failed.Named()
+					}
+				} else {
+					run.Result.Failed = map[manifest.NamedResource]store.StatusInfo{failed.Named(): {Status: store.StatusFailed, Message: "required chart unavailable"}}
+					run.Err = &FailuresError{Message: "required chart unavailable"}
+				}
+				_, retry := run.filter.AddEmitted([]manifest.NamedResource{failed.Named(), anchor.Named(), other.Named()}, []manifest.NamedResource{selected}, nil, 0)
+				assert.Equal(t, retry, false)
+				runs = append(runs, run)
+			}
+			selected, err, _ := Select(runs, runs[0].Err, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+			assert.Equal(t, err != nil, compared)
+			_, retained := selected[0].Failed[failed.Named()]
+			assert.Equal(t, retained, compared)
+		})
+	}
+}
+
 func TestSelect_EntryDocuments(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -1384,6 +1474,54 @@ func TestSelect_EntryDocuments(t *testing.T) {
 		})
 	}
 
+	for _, shared := range []bool{true, false} {
+		t.Run(fmt.Sprintf("paired output coverage/shared=%t", shared), func(t *testing.T) {
+			t.Parallel()
+			var runs []Rendered
+			for side := range 2 {
+				run := selectedRun(&Result{})
+				run.ID.Side = manifest.TreeSide(side)
+				parent := &manifest.Kustomization{Name: "parent", Namespace: "flux-system"}
+				if side == 1 && !shared {
+					parent.Name = "other"
+				}
+				anchor := &manifest.Kustomization{Name: "anchor", Namespace: "apps"}
+				release := &manifest.HelmRelease{Name: "release", Namespace: "media"}
+				run.store.AddObjects([]manifest.BaseManifest{parent, anchor, release})
+				declaration := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease, "metadata": map[string]any{"name": release.Name, "namespace": release.Namespace}}
+				static := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unchanged", "namespace": release.Namespace}}
+				publishEntryForTest(run, []map[string]any{static})
+				run.store.RecordEmitted(parent.Named(), &store.Emission{Children: []store.Child{{Obj: release, Doc: declaration}}, Manifests: testutil.DocumentOccurrences([]map[string]any{declaration}), Complete: true}, nil)
+				run.filter = change.NewFilter()
+				selected := []manifest.NamedResource{anchor.Named()}
+				if side == 1 {
+					selected = []manifest.NamedResource{release.Named()}
+				}
+				_, retry := run.filter.AddEmitted([]manifest.NamedResource{parent.Named(), anchor.Named(), release.Named()}, selected, nil, 0)
+				assert.Equal(t, retry, false)
+				run.Result.Manifests = run.collectManifests()
+				runs = append(runs, run)
+			}
+			selected, err, _ := Select(runs, nil, []manifest.NamedResource{testutil.KustomizationID("", ""), testutil.HelmReleaseID("", "")}, nil)
+			assert.NoError(t, err)
+			snapshots := [2]diff.Snapshot{}
+			for i, side := range selected {
+				snapshots[i] = diff.Snapshot{Manifests: side.Manifests, Unavailable: side.Unavailable, ProducerKeys: side.ProducerKeys}
+			}
+			body, _, _, err := diff.Compare(snapshots[0], snapshots[1], nil, diff.Options{Format: diff.FormatJSON})
+			assert.NoError(t, err)
+			var output struct {
+				Changes []json.RawMessage `json:"changes"`
+			}
+			assert.NoError(t, json.Unmarshal(body, &output))
+			want := 0
+			if !shared {
+				want = 1
+			}
+			assert.Equal(t, len(output.Changes), want)
+		})
+	}
+
 	t.Run("failed and skipped declarations", func(t *testing.T) {
 		t.Parallel()
 		for _, outcome := range []store.StatusInfo{
@@ -1456,6 +1594,27 @@ func TestSelect_EntryDocuments(t *testing.T) {
 		}
 	})
 
+	t.Run("proof-only batch", func(t *testing.T) {
+		t.Parallel()
+		for _, namespace := range []string{"", "apps"} {
+			t.Run("namespace="+namespace, func(t *testing.T) {
+				t.Parallel()
+				run := selectedRun(&Result{})
+				run.filter = change.NewFilter()
+				entry := manifest.NewEntryKustomization(manifest.BootstrapSourceID, ".", manifest.NamedResource{})
+				_, retry := run.filter.AddEmitted([]manifest.NamedResource{entry.Named()}, nil, nil, 0)
+				assert.Equal(t, retry, false)
+				doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": "unselected", "namespace": namespace}}
+				publishEntryForTest(run, []map[string]any{doc})
+				run.Result.Manifests = run.collectManifests()
+				assert.Equal(t, len(run.Result.Manifests), 1)
+				selected, err, _ := Select([]Rendered{run}, nil, []manifest.NamedResource{testutil.KustomizationID("", "")}, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, len(selected[0].Manifests), 0)
+			})
+		}
+	})
+
 	t.Run("changed-only both sides", func(t *testing.T) {
 		t.Parallel()
 		var runs []Rendered
@@ -1469,7 +1628,9 @@ func TestSelect_EntryDocuments(t *testing.T) {
 			run.entryBinding = discovery.Binding{Producer: entry.Named(), Key: entry.Named()}
 			id := manifest.DocIdentity(doc)
 			run.index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {}}, Readers: map[string][]manifest.FileReader{"kustomization.yaml": {{Reader: id, Source: manifest.BootstrapSourceID}}}}
-			run.filter = change.NewFilter(change.NewSet([]string{"kustomization.yaml"}), run.index, run.store, "")
+			run.loader = admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{"kustomization.yaml"}), Index: run.index, Inventory: run.store, Root: ""})
+			admissiontest.Commit(t, run.loader, nil)
+			run.filter = run.loader.Options.Filter
 			run.Result.Manifests = run.collectManifests()
 			runs = append(runs, run)
 		}

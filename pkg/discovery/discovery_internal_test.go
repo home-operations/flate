@@ -22,6 +22,7 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -46,7 +47,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 		artifact.FS = os.DirFS(artifact.LocalPath)
 		st.AddObject(repository)
 		st.SetArtifact(repository.Named(), artifact)
-		d := discoverer{cfg: Config{Store: st}, loader: loader.New(st)}
+		d := Session{cfg: Config{Store: st}, loader: loader.New(st)}
 		d.loader.SourceRoot = root
 		if _, err := d.loader.Load(t.Context(), root); err != nil {
 			t.Fatal(err)
@@ -86,7 +87,7 @@ func TestDiscardPinnedWorkingTreeFiles_PreservesSources(t *testing.T) {
 			cm := &manifest.ConfigMap{Name: "dirty", Namespace: "flux-system"}
 			artifact := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalRoot: root, LocalPath: t.TempDir(), Key: "pinned", Content: "pinned"}
 			artifact.FS = os.DirFS(artifact.LocalPath)
-			d := discoverer{
+			d := Session{
 				cfg: Config{Store: st}, loader: loader.New(st),
 				resolvedSources: map[manifest.NamedResource]entryResolution{other.Named(): {object: other}},
 			}
@@ -160,7 +161,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 		st.AddObject(source)
 		st.SetArtifact(source.Named(), &store.SourceArtifact{LocalPath: root, FS: input})
 		st.SetArtifact(manifest.BootstrapSourceID, st.GetArtifact(source.Named(), store.ArtifactContent).(*store.SourceArtifact))
-		d := discoverer{cfg: Config{Path: root, Store: st, Trees: testTrees(t)}, loader: loader.New(st)}
+		d := Session{cfg: Config{Path: root, Store: st, Input: st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact), Trees: testTrees(t)}, loader: loader.New(st)}
 		if err := d.loadManifests(t.Context(), root, true); err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +177,7 @@ func TestLoadAt_IgnoreFileAndMissingDirectory(t *testing.T) {
 				t.Parallel()
 				root := t.TempDir()
 				st := store.New()
-				d := discoverer{cfg: Config{Store: st}, loader: loader.New(st)}
+				d := Session{cfg: Config{Store: st}, loader: loader.New(st)}
 				d.loader.IgnoreFile = filepath.Join(root, "override.krmignore")
 				target := filepath.Join(root, "missing")
 				if scenario == "missing-ignore" {
@@ -611,7 +612,7 @@ spec:
 			source := &store.SourceArtifact{Kind: manifest.KindGitRepository, LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, source)
-			d := discoverer{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+			d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 			d.loader.SourceRoot = root
 			if _, err := d.loader.Load(t.Context(), d.cfg.Path); err != nil {
 				t.Fatal(err)
@@ -649,7 +650,7 @@ spec:
 			testutil.WriteFile(t, root, selectedFile, strings.ReplaceAll(string(input[selectedFile].Data), "bad/group/version", "v1"))
 			st = store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, source)
-			d = discoverer{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+			d = Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 			d.loader.SourceRoot = root
 			_, err := d.loader.Load(t.Context(), d.cfg.Path)
 			assert.NoError(t, err)
@@ -676,7 +677,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	source := &store.SourceArtifact{LocalPath: root, FS: os.DirFS(root)}
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, source)
-	d := discoverer{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
+	d := Session{cfg: Config{Path: filepath.Join(root, "app"), Store: st, Trees: trees}, loader: loader.New(st)}
 	d.loader.SourceRoot = root
 	_, err := d.loader.Load(t.Context(), d.cfg.Path)
 	assert.NoError(t, err)
@@ -827,7 +828,7 @@ func TestRun_BuiltPackages(t *testing.T) {
 						assert.Diff(t, cm.Data, map[string]any{"A": wantValue, "B": "patched"})
 					}
 				}
-				assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root))
+				assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root, true))
 				assert.NoError(t, d.acceptEntry(t.Context()))
 				if dir != "" {
 					assert.Diff(t, packageHistory(t, trees, req, owner.Named()), wantHistory)
@@ -902,7 +903,7 @@ func TestRun_DiscoveryOnlyEntry(t *testing.T) {
 	}
 }
 
-func bindEntryForTest(t *testing.T, d *discoverer, root string) *manifest.Kustomization {
+func bindEntryForTest(t *testing.T, d *Session, root string) *manifest.Kustomization {
 	t.Helper()
 	owner, err := d.bindEntry(t.Context(), root)
 	assert.NoError(t, err)
@@ -1229,4 +1230,59 @@ func (f *entryGeneratorFS) observe() {
 			return
 		}
 	}
+}
+
+func TestAdvance_PlaceholderInputReachesFixpoint(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	testutil.WriteFile(t, root, "flux/kustomization.yaml", "namespace: apps\nresources: [consumer.yaml, source.yaml]\n")
+	testutil.WriteFile(t, root, "flux/consumer.yaml", testutil.KustomizationYAML("consumer", "", "  path: ./app\n  sourceRef: {kind: GitRepository, name: cluster}\n  postBuild:\n    substituteFrom: [{kind: Secret, name: settings}]\n"))
+	testutil.WriteFile(t, root, "flux/source.yaml", "apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: cluster}\nspec: {url: 'git://fixture.invalid/repo'}\n")
+	testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [settings.yaml]\n")
+	testutil.WriteFile(t, root, "app/settings.yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: settings}\nstringData: {KEY: 'ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]'}\nsops: {mac: encrypted}\n")
+	st := store.New()
+	l := loader.New(st)
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"flux/consumer.yaml"})
+	session, err := Begin(t.Context(), Config{Path: filepath.Join(root, "flux"), RepoRoot: root, SelfURLs: []string{"git://fixture.invalid/repo"}, Store: st, Loader: l, WipeSecrets: true, Trees: kustomize.NewTreeCache(cachetest.New(t, "", cache.New), nil, task.NewBounded(2)), Selection: manifest.Selection{Changed: true}})
+	assert.NoError(t, err)
+	for range 3 {
+		proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+		assert.NoError(t, err)
+		advanced, err := session.Advance(t.Context(), proposal)
+		assert.NoError(t, err)
+		if !advanced {
+			return
+		}
+	}
+	t.Fatal("construction repeatedly readmitted the placeholder input without reaching a fixpoint")
+}
+
+type constructionFS struct {
+	fs.FS
+	statErr error
+}
+
+func (f *constructionFS) Stat(name string) (fs.FileInfo, error) {
+	if f.statErr != nil {
+		return nil, f.statErr
+	}
+	return fs.Stat(f.FS, name)
+}
+
+func TestAdvance_LeafAdmissionPreservesConstruction(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	input := &constructionFS{FS: fstest.MapFS{"flux/owner.yaml": {Data: []byte(testutil.KustomizationYAML("owner", "apps", "  path: ./app\n"))}, "app/kustomization.yaml": {Data: []byte("resources: []\n")}}}
+	st := store.New()
+	l := loader.New(st)
+	l.Options.Filter = change.NewFilter()
+	session, err := Begin(t.Context(), Config{Input: &store.SourceArtifact{LocalPath: root, FS: input}, Path: filepath.Join(root, "flux"), Store: st, Loader: l, Selection: manifest.Selection{Changed: true}})
+	assert.NoError(t, err)
+	input.statErr = fs.ErrPermission
+	leaf := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"VALUE": "stable"}}
+	advanced, err := session.Advance(t.Context(), &loader.Admission{Objects: []store.Child{{Obj: leaf}}})
+	assert.NoError(t, err)
+	assert.Equal(t, advanced, true)
+	assert.Equal(t, st.GetObject(leaf.Named()), manifest.BaseManifest(leaf))
 }

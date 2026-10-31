@@ -14,7 +14,6 @@ import (
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	"github.com/home-operations/flate/pkg/store"
 
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -22,6 +21,7 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
@@ -33,7 +33,7 @@ func TestResolveEntrySources_EvidenceAfterRemoval(t *testing.T) {
 	st := store.New()
 	l := loader.New(st)
 	l.SourceRoot = root
-	d := discoverer{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st, SelfURLs: []string{"https://example.test/cluster"}}, loader: l}
+	d := Session{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st, SelfURLs: []string{"https://example.test/cluster"}}, loader: l}
 	if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ spec:
 			}
 			l := loader.New(st)
 			l.SourceRoot = root
-			d := discoverer{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st}, loader: l}
+			d := Session{cfg: Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st}, loader: l}
 			if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
 				t.Fatal(err)
 			}
@@ -145,7 +145,7 @@ spec:
 			if st.GetObject(id) != nil {
 				t.Fatal("source census published an orphan release")
 			}
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			if tc.kind == manifest.KindGitRepository && tc.want && !slices.Contains(l.Index.Readers["charts/demo/templates/cm.yaml"], manifest.FileReader{Reader: id, Source: source, Exact: true}) {
@@ -247,7 +247,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			}
 			ks := &manifest.Kustomization{Name: "apps", Namespace: tc.namespace, Path: tc.path, SourceRef: ref}
 			st.AddObject(ks)
-			d := discoverer{cfg: Config{Path: root, Store: st}}
+			d := Session{cfg: Config{Path: root, Store: st}}
 			count, err := d.resolveEntrySources(t.Context(), true)
 			if err != nil || (count == 1) != tc.want {
 				t.Fatalf("resolution = %d, %v", count, err)
@@ -285,7 +285,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"file": {}}})
 			st.AddObject(tc.obj)
-			d := discoverer{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
+			d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
 			count, err := d.resolveEntrySources(t.Context(), true)
 			if err != nil || (count == 1) != tc.want {
 				t.Fatalf("generic reference resolution = %d, %v", count, err)
@@ -321,7 +321,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 			}
 			source := &manifest.GitRepository{Name: "cluster", Namespace: "flux-system", URL: cfg.SelfURLs[0]}
 			st.AddObject(source)
-			d := discoverer{cfg: cfg}
+			d := Session{cfg: cfg}
 			if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 				t.Fatal(err)
 			}
@@ -380,7 +380,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		}
 		wrong := manifest.NamedResource{Group: "wrong.group", Kind: manifest.KindOCIRepository, Namespace: "one", Name: "source"}
 		st.AddObject(&manifest.Kustomization{Name: "wrong", Namespace: "consumer", Path: "./apps/x", SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: wrong.Group + "/v1", Kind: wrong.Kind, Namespace: wrong.Namespace, Name: wrong.Name}})
-		d := discoverer{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
+		d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
 		count, err := d.resolveEntrySources(t.Context(), true)
 		if err != nil || count != len(ids) {
 			t.Fatalf("resolution = %d, %v, want %d", count, err, len(ids))
@@ -449,7 +449,7 @@ func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
 					if tc.scan != "" {
 						scan = tc.scan
 					}
-					d := discoverer{cfg: Config{Path: filepath.Join(root, scan), Store: st}}
+					d := Session{cfg: Config{Path: filepath.Join(root, scan), Store: st}}
 					aliases, err := d.resolveEntrySources(t.Context(), true)
 					if err != nil {
 						t.Fatal(err)
@@ -493,11 +493,11 @@ func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
 				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
 			st.AddObject(witness)
 			source := witness.SourceID()
-			d := discoverer{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
+			d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
 			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != nil {
 				t.Fatalf("failed root resolution = %d, %v", aliases, err)
 			}
-			if !slices.Equal(d.resolvedSources[source].refs, []manifest.BaseManifest{witness}) {
+			if !slices.Equal(d.resolvedSources[source].refs, []sourceWitness{{id: witness.Named(), path: witness.Path}}) {
 				t.Fatalf("loader/store witnesses were duplicated or copied: %+v", d.resolvedSources[source].refs)
 			}
 			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != nil {
@@ -538,7 +538,7 @@ func TestAliasMissingKustomizationSources_OCIReadErrors(t *testing.T) {
 			if tc.canceled {
 				cancel()
 			}
-			d := discoverer{cfg: Config{Path: root, Store: st}}
+			d := Session{cfg: Config{Path: root, Store: st}}
 			if _, err := d.resolveEntrySources(ctx, true); !errors.Is(err, tc.want) {
 				t.Fatalf("error = %v, want %v", err, tc.want)
 			}

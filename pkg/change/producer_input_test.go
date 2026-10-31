@@ -11,6 +11,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
@@ -88,7 +89,7 @@ spec:
 				assert.Diff(t, result.Binding, discovery.Binding{})
 				assert.Diff(t, owners, []manifest.NamedResource(nil))
 				assert.Diff(t, ancestors, []manifest.NamedResource(nil))
-				filter := change.NewFilter(changes, result.Index, st, "")
+				filter := admissiontest.Filter(t, admissiontest.Config{Changes: changes, Index: result.Index, Inventory: st, Root: ""})
 				for _, id := range []manifest.NamedResource{input, generator, consumer} {
 					if !filter.ShouldReconcile(id) {
 						t.Errorf("side %d: changed producer input did not select %s", side, id)

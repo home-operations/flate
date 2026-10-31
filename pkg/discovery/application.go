@@ -20,7 +20,7 @@ type entryApplication interface {
 	EntryApplication() (manifest.EntryApplication, bool)
 }
 
-func (d *discoverer) applications() []manifest.BaseManifest {
+func (d *Session) applications() []manifest.BaseManifest {
 	objects := map[manifest.NamedResource]manifest.BaseManifest{}
 	add := func(obj manifest.BaseManifest) {
 		if application, ok := obj.(entryApplication); ok {
@@ -30,12 +30,19 @@ func (d *discoverer) applications() []manifest.BaseManifest {
 		}
 	}
 	for _, child := range d.loader.PathObjects() {
-		add(child.Obj)
+		obj := d.cfg.Store.GetObject(child.Identity)
+		if obj == nil {
+			obj = d.loader.CatalogObject(child.Identity)
+		}
+		add(obj)
 	}
 	for id, record := range d.loader.Index.Records {
 		obj := record.Declaration
 		if obj == nil && objects[id] == nil {
-			obj = d.loader.IndexedObject(id, record).Obj
+			obj = d.loader.CatalogObject(id)
+			if obj == nil {
+				obj = d.loader.IndexedObject(id, record).Obj
+			}
 		}
 		add(obj)
 	}
@@ -114,7 +121,7 @@ func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects [
 		artifact := resolved.artifact
 		if artifact == nil {
 			var err error
-			resolved, err = a.resolve(ctx, application.Source, resolved.object, []manifest.BaseManifest{obj})
+			resolved, err = a.resolve(ctx, application.Source, resolved.object, []sourceWitness{{id: obj.Named(), path: application.Path}})
 			if err != nil {
 				return err
 			}
@@ -128,7 +135,7 @@ func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects [
 			return nil
 		}
 		target := filepath.Join(root, manifest.NormalizeClaimBase(application.Path))
-		if safepath.Contains(root, target) && loader.OriginPath(artifact, target) == loader.OriginPath(a.input, a.path) {
+		if safepath.Contains(root, target) && artifact.OriginPath(target) == a.input.OriginPath(a.path) {
 			appliers = append(appliers, obj)
 		}
 		return nil

@@ -79,7 +79,7 @@ type objectCell struct {
 	publication                                    uint64
 	binding                                        *Input
 	support                                        *Input
-	excluded, rooted, retired, hidden, independent bool
+	excluded, included, rooted, retired, hidden, independent bool
 	// Auxiliary follows the emitted contender; current static authority still wins.
 	auxiliary bool
 	preflight string

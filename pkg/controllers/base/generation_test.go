@@ -44,7 +44,7 @@ func TestGeneratedObjects_Lifecycle(t *testing.T) {
 				defer next.Finish()
 				rendered = store.Child{Obj: manifest.NewConfigMap(manifest.NamedResource{Name: "rendered", Namespace: "apps"}, map[string]any{"value": "rendered"})}
 				next.Children, next.Complete, next.Fingerprint = []store.Child{rendered}, true, manifest.Fingerprint("same")
-				return run.Emit(first.Named(), &next, nil)
+				return run.Emit(t.Context(), first.Named(), &next, nil)
 			})
 			if run.Outcome() != schedule.Terminal || s.GetObject(id) == nil {
 				t.Fatal("first execution did not publish its generated object")
@@ -67,7 +67,7 @@ func TestGeneratedObjects_Lifecycle(t *testing.T) {
 					return manifest.ErrInput
 				}
 				if mode == "replay" {
-					_, handled, err := run.FingerprintDedup(next.Named(), "same", &store.Emission{})
+					_, handled, err := run.FingerprintDedup(t.Context(), next.Named(), "same", &store.Emission{})
 					if !handled {
 						t.Error("completed output was unavailable for replay")
 					}
@@ -80,7 +80,7 @@ func TestGeneratedObjects_Lifecycle(t *testing.T) {
 					doc := map[string]any{"apiVersion": "v1", "kind": manifest.KindConfigMap, "metadata": map[string]any{"name": id.Name, "namespace": id.Namespace}, "data": map[string]any{"value": "authored"}}
 					output.Children, output.Manifests, output.Failures = c.ParseChildren(&next, []manifest.DocOccurrence{{Document: doc}}, manifest.ParseDocOptions{})
 				}
-				return run.Emit(next.Named(), &output, nil)
+				return run.Emit(t.Context(), next.Named(), &output, nil)
 			})
 			if calls.Load() != 2 {
 				t.Fatalf("rule evaluated %d times, want once per declaration", calls.Load())
@@ -222,7 +222,7 @@ func TestGeneratedObjects_ReplayReadinessAndReceipt(t *testing.T) {
 				output.Children = append(output.Children, store.Child{Obj: manifest.NewConfigMap(manifest.NamedResource{Name: "rendered", Namespace: "apps"}, map[string]any{"VALUE": "output"}), Doc: doc})
 				output.Manifests = []manifest.DocOccurrence{{Document: doc}}
 				output.Complete, output.Fingerprint, output.Render = true, manifest.Fingerprint("same"), receipt
-				return run.Emit(object.Named(), &output, nil)
+				return run.Emit(t.Context(), object.Named(), &output, nil)
 			})
 			if tc.readmitted {
 				s.SetIncluded(object.Named(), false)
@@ -246,7 +246,7 @@ func TestGeneratedObjects_ReplayReadinessAndReceipt(t *testing.T) {
 			second := newExecution(c, object.Named())
 			defer second.Close()
 			second.Dispatch(t.Context(), manifest.DrainNone, second, func(run *Execution, _ context.Context, _ *configGenerator, _ manifest.DrainLevel) error {
-				_, handled, err := run.FingerprintDedup(object.Named(), "same", &store.Emission{})
+				_, handled, err := run.FingerprintDedup(t.Context(), object.Named(), "same", &store.Emission{})
 				if !handled {
 					t.Error("completed render was unavailable after provisional publication")
 				}

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"maps"
 	"slices"
 
 	"sigs.k8s.io/kustomize/api/types"
@@ -14,32 +15,101 @@ import (
 type ParsedInputs struct {
 	sources     map[string]parsedSource
 	wipeSecrets bool
+	compact     bool
 }
 
 type parsedSource struct {
 	input     any
 	documents map[string]parsedDocument
+	binding   *store.ArtifactInput
+	walks     map[physicalContext][]graphVisit
+	loads     map[loadContext]loadFacts
 }
 
 type parsedDocument struct {
-	body    *types.Kustomization
-	file    string
-	objects []parsedObject
+	body      *types.Kustomization
+	file      string
+	objects   []parsedObject
+	state     pathState
+	searched  bool
+	plugins   *[]pluginInputs
+	decodeErr error
+}
+
+type physicalContext struct {
+	graphContext
+	sourceRoot, prefix, localBase string
+}
+
+type loadContext struct{ path, ignore string }
+type loadDirectory struct{ adHoc, traversed bool }
+type loadFacts struct {
+	files       []fileAdmission
+	directories map[string]loadDirectory
+}
+
+type admissionKind uint8
+
+const (
+	admissionResource admissionKind = iota
+	admissionData
+	admissionPackage
+	admissionBootstrap
+	admissionWarning
+)
+
+type fileAdmission struct {
+	file       string
+	kind       admissionKind
+	coordinate OccurrenceID
+	warning    manifest.Warning
+}
+
+func (l *Loader) sourceFacts(root string) parsedSource {
+	if l.facts == nil {
+		l.facts = &ParsedInputs{sources: map[string]parsedSource{}}
+	}
+	root = l.documents.mountedRoot(root)
+	artifact := l.documents.artifacts[root]
+	var identity any
+	if artifact != nil {
+		identity = parsedInputIdentity(artifact)
+	}
+	binding := artifact.Input(store.ArtifactContent | store.ArtifactRevision)
+	if source, ok := l.facts.sources[root]; ok && source.input == identity && *source.binding == binding {
+		return source
+	}
+	sourceBinding := binding
+	source := parsedSource{input: identity, binding: &sourceBinding, walks: map[physicalContext][]graphVisit{}, loads: map[loadContext]loadFacts{}}
+	if prepared := l.documents.parsed; prepared != nil && prepared.compact {
+		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
+			source.walks, source.loads = maps.Clone(prior.walks), maps.Clone(prior.loads)
+		}
+	}
+	l.facts.sources[root] = source
+	return source
 }
 
 // ParsedInputs snapshots parsed bodies without retaining entry admission state.
 func (l *Loader) ParsedInputs() *ParsedInputs {
-	inputs := &ParsedInputs{sources: map[string]parsedSource{}, wipeSecrets: l.Options.WipeSecrets}
+	inputs := &ParsedInputs{sources: map[string]parsedSource{}, wipeSecrets: l.Options.WipeSecrets, compact: l.documents.compact}
 	for root, artifact := range l.documents.artifacts {
-		inputs.sources[root] = parsedSource{input: parsedInputIdentity(artifact), documents: map[string]parsedDocument{}}
+		source := parsedSource{input: parsedInputIdentity(artifact)}
+		if inputs.compact {
+			source = l.sourceFacts(root)
+			source.walks, source.loads = maps.Clone(source.walks), maps.Clone(source.loads)
+		}
+		source.documents = map[string]parsedDocument{}
+		inputs.sources[root] = source
 	}
 	for file, doc := range l.documents.cache {
-		if doc.body == nil && doc.objects == nil {
+		if doc.body == nil && doc.objects == nil && (!inputs.compact || !doc.searched && doc.pathState == pathUnknown && doc.decodeErr == nil) {
 			continue
 		}
 		if source, ok := inputs.sources[l.documents.mountedRoot(file)]; ok {
 			source.documents[file] = parsedDocument{
 				body: doc.body, file: doc.file, objects: cloneInputObjects(doc.objects),
+				state: doc.pathState, searched: doc.searched, plugins: doc.plugins, decodeErr: doc.decodeErr,
 			}
 		}
 	}
@@ -49,7 +119,7 @@ func (l *Loader) ParsedInputs() *ParsedInputs {
 // Matches reports whether input owns a source view retained by these parsed facts.
 func (p *ParsedInputs) Matches(input *store.SourceArtifact) bool {
 	source, ok := p.sources[input.LocalPath]
-	return ok && source.input == parsedInputIdentity(input)
+	return ok && source.input == parsedInputIdentity(input) && (!p.compact || *source.binding == input.Input(store.ArtifactContent|store.ArtifactRevision))
 }
 
 func parsedInputIdentity(input *store.SourceArtifact) any {
@@ -60,7 +130,7 @@ func parsedInputIdentity(input *store.SourceArtifact) any {
 }
 
 func (r documentReader) restore(file string) {
-	if r.parsed == nil {
+	if r.parsed == nil || r.parsed.compact != r.compact {
 		return
 	}
 	cached := r.cache[file]
@@ -73,12 +143,15 @@ func (r documentReader) restore(file string) {
 	if !ok || artifact == nil {
 		return
 	}
-	if parsedInputIdentity(artifact) != source.input {
+	if parsedInputIdentity(artifact) != source.input || r.compact && artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *source.binding {
 		return
 	}
 	if doc, ok := source.documents[file]; ok {
 		cached.body, cached.file = doc.body, doc.file
 		cached.objects = cloneInputObjects(doc.objects)
+		if r.compact {
+			cached.pathState, cached.searched, cached.plugins, cached.decodeErr = doc.state, doc.searched, doc.plugins, doc.decodeErr
+		}
 		r.cache[file] = cached
 	}
 }

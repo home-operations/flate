@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -105,5 +106,34 @@ func TestRun_DiffExcludedOrderingAndSelectedSourceFailure(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestRun_Diff_UnchangedInputProducerOutput(t *testing.T) {
+	before, after := t.TempDir(), t.TempDir()
+	for _, root := range []string{before, after} {
+		testutil.GitInit(t, root)
+		testutil.WriteFile(t, root, "flux/inputs.yaml", testutil.KustomizationYAML("inputs", "apps", "  path: ./inputs\n  targetNamespace: apps\n"))
+		testutil.WriteFile(t, root, "flux/app.yaml", testutil.KustomizationYAML("app", "apps", "  path: ./app\n  targetNamespace: apps\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: vars}]}\n"))
+		testutil.WriteFile(t, root, "inputs/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "inputs/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: vars, namespace: apps}\ndata: {VALUE: stable}\n")
+		testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: [cm.yaml]\n")
+		testutil.WriteFile(t, root, "app/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered, namespace: apps}\ndata: {value: '${VALUE}'}\n")
+	}
+	testutil.WriteFile(t, after, "flux/app.yaml", testutil.KustomizationYAML("app", "apps", "  path: ./app\n  targetNamespace: apps\n  postBuild: {substitute: {VALUE: stable}}\n"))
+	var full []string
+	for _, root := range []string{before, after} {
+		output, diagnostic, code := runCLI(t, "build", "ks", "app", "--path", filepath.Join(root, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2")
+		if code != 0 {
+			t.Fatalf("full render failed: %s", diagnostic)
+		}
+		full = append(full, output)
+	}
+	if full[0] != full[1] {
+		t.Fatalf("full outputs differ: before=%s after=%s", full[0], full[1])
+	}
+	output, diagnostic, code := runCLI(t, "diff", "ks", "app", "--path", filepath.Join(after, "flux"), "--path-orig", filepath.Join(before, "flux"), "--cache-dir", t.TempDir(), "--concurrency", "2", "-o", "diff")
+	if code != 0 || output != "" {
+		t.Fatalf("unchanged input producer appeared in diff: code=%d stdout=%s stderr=%s", code, output, diagnostic)
 	}
 }

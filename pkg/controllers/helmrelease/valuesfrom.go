@@ -10,7 +10,10 @@ import (
 )
 
 func (c *execution) resolvePreRenderValuesFrom(ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
-	inputs := c.run.DataInputs(ctx, hr, c.data)
+	inputs, err := c.run.DataInputs(ctx, hr, c.data)
+	if err != nil {
+		return err
+	}
 	return c.run.AwaitData(ctx, base.DataWait{Inputs: inputs, Resume: func(ctx context.Context, level manifest.DrainLevel, omitted []manifest.NamedResource) error {
 		hr = omitValues(hr, omitted)
 		return c.render(ctx, hr, level, omitted)

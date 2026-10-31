@@ -4,9 +4,10 @@ import (
 	"testing"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -18,7 +19,9 @@ func BenchmarkCollectHRDeps(b *testing.B) {
 	hr := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: id.Name, Namespace: id.Namespace}}}
 	st := store.New()
 	c := gateExecution(New(st, nil), manifest.NamedResource{})
-	c.Configure(Options{Filter: change.NewFilter(change.NewSet([]string{"target.yaml"}), &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, st, "")})
+	admissionLoader1 := admissiontest.New(b, admissiontest.Config{Changes: change.NewSet([]string{"target.yaml"}), Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: "target.yaml"}}}, Inventory: st, Root: ""})
+	admissiontest.Commit(b, admissionLoader1, nil)
+	c.Configure(Options{Filter: admissionLoader1.Options.Filter, Loader: admissionLoader1})
 	b.ReportAllocs()
 	for b.Loop() {
 		c.dependencies(hr, manifest.GateInputs)
@@ -53,10 +56,12 @@ func TestController_CollectHRDepsOrderingFilter(t *testing.T) {
 				changes = change.NewSet(files)
 			}
 			hr := &manifest.HelmRelease{ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "chart"}, Name: "consumer", Namespace: "apps", DependsOn: []helmv2.DependencyReference{{Name: target.Name, Namespace: target.Namespace, ReadyExpr: "dep.spec.suspend == false"}}}
-			filter := change.NewFilter(changes, &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, store.New(), "")
+			filterLoader := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{hr.Named(): {File: "consumer.yaml"}, target.Named(): {File: "target.yaml"}}}, Inventory: store.New(), Root: ""})
+			admissiontest.Commit(t, filterLoader, nil)
+			filter := filterLoader.Options.Filter
 			st := store.New()
 			c := gateExecution(New(st, task.NewBounded(2)), manifest.NamedResource{})
-			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}})
+			c.Configure(Options{Filter: filter, Existence: indexedOrderingDeps{target.Named(): tc.indexed}, Loader: filterLoader})
 			if tc.present {
 				st.AddObject(target)
 				st.UpdateStatus(target.Named(), store.StatusInfo{Status: tc.status, Reason: "", Message: "fixture"})

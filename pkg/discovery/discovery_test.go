@@ -21,12 +21,15 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/kustomize"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/source/cache"
@@ -402,7 +405,7 @@ func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 					t.Fatalf("sibling readers = %v", readers)
 				}
 				for _, file := range []string{"kubernetes/apps/x/cm.yaml", "apps/x/cm.yaml"} {
-					selected := change.NewFilter(change.NewSet([]string{file}), res.Index, st, "").KeepNames()
+					selected := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: res.Index, Inventory: st, Root: ""}).KeepNames()
 					consumer := child
 					consumer.Name = "consumer"
 					for _, id := range []manifest.NamedResource{parent, child, consumer} {
@@ -1107,7 +1110,7 @@ func TestRun_ValuesFromOnlyChangeSelectsConsumer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st, "")
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"producer/values.yaml"}), Index: res.Index, Inventory: st, Root: ""})
 			id := testutil.HelmReleaseID(ns, "consumer")
 			if got := filter.ShouldReconcile(id); got != (ns == "apps" && tc.apiVersion == "v1") {
 				t.Fatalf("consumer %s selected=%t", id, got)
@@ -1136,7 +1139,7 @@ func TestRun_SubstituteFromOnlyChangeSelectsConsumer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			filter := change.NewFilter(change.NewSet([]string{"producer/values.yaml"}), res.Index, st, "")
+			filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"producer/values.yaml"}), Index: res.Index, Inventory: st, Root: ""})
 			id := testutil.KustomizationID("apps", "consumer")
 			if got := filter.ShouldReconcile(id); !got {
 				t.Fatalf("optional=%t consumer selected=%t", optional, got)
@@ -1226,12 +1229,20 @@ spec:
 					assert.Equal(t, ok, true)
 					assert.Equal(t, record.Parent, owner)
 					assert.Equal(t, st.GetObject(demo) == nil, true)
-					filter := change.NewFilter(change.NewSet([]string{"config/prod.yaml"}), result.Index, st, "")
+					filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"config/prod.yaml"}), Index: result.Index, Inventory: st, Root: ""})
 					for _, id := range []manifest.NamedResource{demo, owner, parent} {
 						assert.Equal(t, filter.ShouldReconcile(id), true)
 					}
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
-					assert.Equal(t, len(filter.AddEmitted(owner, store.Child{Obj: &manifest.HelmRelease{Name: "sibling", Namespace: "apps"}}, st)), 0)
+					candidate := loader.New(st)
+					candidate.Index = result.Index
+					candidate.Options.Filter, candidate.Options.Selection = filter, manifest.Selection{Changed: true}
+					candidate.Options.Changes = change.NewSet([]string{"config/prod.yaml"})
+					proposal, err := candidate.Prepare(t.Context(), store.Child{Obj: &manifest.HelmRelease{Name: "sibling", Namespace: "apps"}, Productions: []manifest.Production{{Owner: owner}}}, nil, nil)
+					assert.NoError(t, err)
+					added, retry := filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+					assert.Equal(t, retry, false)
+					assert.Equal(t, len(added), 0)
 					assert.Equal(t, filter.ShouldReconcile(sibling), false)
 					assert.Equal(t, len(result.Index.Claims["config/"]), 0)
 					if previous != nil {

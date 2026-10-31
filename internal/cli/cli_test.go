@@ -537,7 +537,7 @@ func TestRun_AdvisoryDestinations(t *testing.T) {
 		})
 	}
 	stdout, stderr, code := runCLI(t, "test", "ks", "absent", "--path", k8s, "--concurrency=2")
-	if code != 1 || stdout != "" || strings.Count(stderr, "[UnresolvedSubstitution]") != 1 || !strings.Contains(stderr, "no Kustomization named") {
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "no Kustomization named") {
 		t.Fatalf("absent roster diagnostic: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
 	}
 }

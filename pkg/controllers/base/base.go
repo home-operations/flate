@@ -2,11 +2,14 @@
 package base
 
 import (
+	"context"
+	"fmt"
 	"slices"
 	"sync/atomic"
 
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/depwait"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -21,6 +24,7 @@ type Controller struct {
 
 	started atomic.Bool
 	filter  *change.Filter
+	loader  *loader.Loader
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
 
@@ -50,13 +54,10 @@ func (c *Controller) requireNotStarted(method string) {
 	}
 }
 
-// Options is the post-bootstrap, reconcile-shaping config common to every
-// render controller (Kustomization, HelmRelease, ResourceSet). The
-// orchestrator wires it once before dispatch; the source controller is fetch-only
-// and configures just its filter directly, so it does NOT embed this. A
-// concrete controller embeds Options in its own option struct and forwards it
-// to Configure, then assigns its controller-specific fields.
+// Options contains immutable controller configuration installed before dispatch.
 type Options struct {
+	// Loader supplies the invocation's declaration admission boundary.
+	Loader *loader.Loader
 	// SkipKinds is the immutable visible-output exclusion list.
 	SkipKinds []string
 	// DependencySubstitutions is the frozen discovered lookup used before child publication.
@@ -82,6 +83,7 @@ func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.DependencySubstitutions = opts.DependencySubstitutions
 	c.filter = opts.Filter
+	c.loader = opts.Loader
 	c.SkipKinds = opts.SkipKinds
 	c.existence = opts.Existence
 	c.preflight = opts.PreflightFailure
@@ -91,26 +93,88 @@ func (c *Controller) Configure(opts Options) {
 }
 
 // KeepEmitted admits the incoming child and reports whether it is selected.
-// Admission MUST precede publication so Store listeners observe the selected identity.
-func (c *Controller) KeepEmitted(parent manifest.NamedResource, child store.Child, reads *store.ReadSet) bool {
-	if f := c.filter; f != nil {
-		var objects interface {
-			GetObject(manifest.NamedResource) manifest.BaseManifest
-			GetDeclaration(manifest.NamedResource) manifest.BaseManifest
-			GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact
-			GetEmission(manifest.NamedResource) (manifest.BaseManifest, map[string]any, store.Emission)
-			Productions(manifest.NamedResource, *manifest.DiscoveryIndex) []manifest.Production
-			IncomingProductions(store.Child, *manifest.DiscoveryIndex) []manifest.Production
-		} = c.Store
-		if reads != nil {
-			objects = reads
+// Admission MUST precede publication; a nil child admits the captured required inputs only.
+func (c *Controller) KeepEmitted(ctx context.Context, parent manifest.NamedResource, child store.Child, reads *store.ReadSet) (bool, error) {
+	if f := c.filter; f.Enabled() {
+		if err := ctx.Err(); err != nil {
+			return false, err
 		}
-		for _, id := range f.AddEmitted(parent, child, objects) {
-			c.Store.SetIncluded(id, true)
+		if c.loader == nil {
+			return false, fmt.Errorf("%w: restricted controller requires its invocation loader", manifest.ErrInput)
 		}
-		return f.ShouldReconcile(child.Obj.Named())
+		if reads == nil {
+			reads = &store.ReadSet{}
+			reads.Init(c.Store, parent, nil)
+			defer reads.Retire()
+		}
+		incoming := child
+		if child.Obj != nil && parent != (manifest.NamedResource{}) && parent != child.Obj.Named() {
+			incoming.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
+		}
+		var proof *store.ReadSet
+		defer func() { proof.Retire() }()
+	prepare:
+		for {
+			proof.Retire()
+			proof = &store.ReadSet{}
+			proof.Init(c.Store, reads.ID(), nil)
+			for id := range reads.Required() {
+				proof.RequireData(id)
+			}
+			if incoming.Obj != nil && parent == (manifest.NamedResource{}) && len(child.Productions) == 0 {
+				incoming.Productions = proof.Promotions(incoming.Obj.Named(), nil)
+			}
+			proposal, err := c.loader.Prepare(ctx, incoming, proof, nil)
+			if err != nil {
+				return false, err
+			}
+			if !reads.Valid() {
+				return false, nil
+			}
+			if !proof.Valid() {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			added, retry := f.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+			if retry {
+				continue
+			}
+			for _, id := range added {
+				c.Store.SetIncluded(id, true)
+			}
+			for _, input := range proposal.Objects {
+				if err := ctx.Err(); err != nil {
+					return false, err
+				}
+				if !reads.Valid() {
+					return false, nil
+				}
+				if !proof.Valid() {
+					continue prepare
+				}
+				source := manifest.BootstrapSourceID
+				for _, proof := range input.Productions {
+					if proof.Source != (manifest.NamedResource{}) {
+						source = proof.Source
+						break
+					}
+				}
+				proof.Admit(input.Obj, source, manifest.NamedResource{}, input.Doc)
+			}
+			if !proof.Valid() {
+				continue
+			}
+			break
+		}
+		if child.Obj == nil {
+			return true, nil
+		}
+		c.Store.SetIncluded(child.Obj.Named(), f.ShouldReconcile(child.Obj.Named()))
+		return f.ShouldReconcile(child.Obj.Named()), nil
 	}
-	return true
+	return true, nil
 }
 
 // SetPendingUnlessReady initializes progress without changing an existing condition.

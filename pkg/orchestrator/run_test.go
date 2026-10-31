@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -56,7 +57,7 @@ spec: {}
 		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{WipeSecrets: true}},
 		ksc: &kustomization.Controller{Controller: base.New(st, nil)},
 	}}
-	if !e.Promote(t.Context(), nil, id) || st.GetObject(id) == nil {
+	if promoted, err := e.Promote(t.Context(), nil, id); err != nil || !promoted || st.GetObject(id) == nil {
 		t.Fatal("selected data must be admitted")
 	}
 	for _, excluded := range []manifest.NamedResource{
@@ -102,35 +103,38 @@ spec: {url: https://example.test/excluded.git}
 	chart := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "chart"}
 	excludedSource := manifest.NamedResource{Group: "source.toolkit.fluxcd.io", Kind: manifest.KindGitRepository, Namespace: "apps", Name: "excluded-source"}
 	files := map[manifest.NamedResource]string{hr.Named(): "consumer.yaml", selected: "bundle.yaml", excluded: "bundle.yaml", chart: "bundle.yaml", excludedSource: "bundle.yaml"}
-	filter := change.NewFilter(change.NewSet([]string{"consumer.yaml"}), indexForTest(files), st, "")
-	idx := loader.New(store.New())
-	for id := range files {
-		record := manifest.DiscoveryRecord{Authored: id, Path: filepath.Join(dir, "bundle.yaml")}
-		if id == selected {
-			record.Authored.Namespace = "authored"
-		}
-		record.Productions = []manifest.Production{{Authored: record.Authored, Path: record.Path}}
-		idx.Index.Records[id] = record
-	}
-	idx.Store = st
+	filter := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{"consumer.yaml"}), Index: indexForTest(files), Inventory: st})
 	input, _, err := baseline.AdmitDirectory(t.Context(), dir, dir)
 	assert.NoError(t, err)
 	st.SetArtifact(manifest.BootstrapSourceID, input)
+	testutil.WriteFile(t, dir, "kustomization.yaml", "namespace: apps\nresources: [bundle.yaml]\n")
+	idx := loader.New(st)
+	idx.SourceRoot = dir
+	idx.Options.Filter, idx.Options.Changes = filter, change.NewSet([]string{"consumer.yaml"})
+	idx.Options.Selection.Changed = true
+	_, err = idx.Load(t.Context(), dir)
+	assert.NoError(t, err)
+	assert.NoError(t, idx.FinalizeIndex(t.Context(), dir, true))
 	controller := base.New(st, nil)
-	controller.Configure(base.Options{Filter: filter, Index: idx.Index})
+	controller.Configure(base.Options{Filter: filter, Index: idx.Index, Loader: idx})
 	e := &orchestratorExistence{DiscoveryIndex: idx.Index, o: &Orchestrator{
-		store: idx.Store, index: idx.Index, cfg: treeConfig{Config: Config{WipeSecrets: true}}, filter: filter,
+		store: idx.Store, index: idx.Index, loader: idx, cfg: treeConfig{Config: Config{WipeSecrets: true}}, filter: filter,
 		ksc: &kustomization.Controller{Controller: controller},
 	}}
 	size := len(filter.KeepNames())
-	if !e.Promote(t.Context(), nil, selected) || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
+	reads := &store.ReadSet{}
+	reads.Init(st, hr.Named(), nil)
+	defer reads.Retire()
+	reads.RequireData(chart)
+	reads.RequireData(selected)
+	if promoted, err := e.Promote(t.Context(), reads, selected); err != nil || !promoted || st.GetObject(selected) == nil || st.GetObject(chart) == nil {
 		t.Fatal("selected values and required chart source must be admitted")
 	}
 	if got := st.GetObject(selected).(*manifest.ConfigMap).Data["values.yaml"]; got != "greeting: selected" {
 		t.Errorf("selected values = %v", got)
 	}
 	for _, id := range []manifest.NamedResource{excluded, excludedSource} {
-		if e.Promote(t.Context(), nil, id) || st.GetObject(id) != nil || filter.ShouldReconcile(id) {
+		if promoted, err := e.Promote(t.Context(), nil, id); err != nil || promoted || st.GetObject(id) != nil || filter.ShouldReconcile(id) {
 			t.Errorf("excluded sibling %s must remain absent", id)
 		}
 	}
@@ -138,7 +142,7 @@ spec: {url: https://example.test/excluded.git}
 		t.Error("ordering promotion must not expand keep")
 	}
 	st.AddObject(&manifest.ConfigMap{Name: "excluded", Namespace: "apps"})
-	if e.Promote(t.Context(), nil, excluded) {
+	if promoted, err := e.Promote(t.Context(), nil, excluded); err != nil || promoted {
 		t.Error("availability must not bypass admission")
 	}
 }
@@ -159,7 +163,9 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	record.Path = filepath.Join(dir, file)
 	record.Productions = []manifest.Production{{Authored: id, Source: source.Named(), Path: record.Path, File: file}}
 	index.Records[id] = record
-	filter := change.NewFilter(change.NewSet([]string{file}), index, st, dir)
+	filterLoader := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: index, Inventory: st, Root: dir})
+	admissiontest.Commit(t, filterLoader, nil)
+	filter := filterLoader.Options.Filter
 	if filter.ShouldReconcile(id) {
 		t.Fatal("unavailable source evidence must not admit existing data")
 	}
@@ -167,15 +173,16 @@ func TestOrchestratorExistence_ExistingDataUsesNewSourceEvidence(t *testing.T) {
 	assert.NoError(t, err)
 	st.SetArtifact(source.Named(), input)
 	controller := base.New(st, nil)
-	controller.Configure(base.Options{Filter: filter, Index: index})
+	controller.Configure(base.Options{Filter: filter, Loader: filterLoader, Index: index})
 	e := &orchestratorExistence{DiscoveryIndex: index, o: &Orchestrator{
-		store: st, index: index, filter: filter,
+		store: st, index: index, filter: filter, loader: filterLoader,
 		ksc: &kustomization.Controller{Controller: controller},
 	}}
 	var reads store.ReadSet
 	reads.Init(st, testutil.KustomizationID("apps", "reader"), nil)
 	defer reads.Close()
-	if !e.Promote(t.Context(), &reads, id) || !filter.ShouldReconcile(id) {
+	reads.RequireData(id)
+	if promoted, err := e.Promote(t.Context(), &reads, id); err != nil || !promoted || !filter.ShouldReconcile(id) {
 		t.Fatal("new source evidence must admit the existing changed data")
 	}
 	assert.Equal(t, st.GetObject(id).(*manifest.ConfigMap).Data["value"], "selected")

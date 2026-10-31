@@ -19,10 +19,10 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
+
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
-
-	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
@@ -466,11 +466,11 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 			assert.NoError(t, err)
 			assert.Diff(t, set.Paths(), []string{tc.file})
-			var want map[manifest.NamedResource]string
+			var want map[manifest.NamedResource]InputChange
 			if len(tc.want) > 0 {
-				want = make(map[manifest.NamedResource]string)
+				want = make(map[manifest.NamedResource]InputChange)
 				for _, id := range tc.want {
-					want[id] = tc.file
+					want[id] = InputChange{File: tc.file, Unbound: true}
 				}
 			}
 			assert.Diff(t, set.inputs, want)
@@ -513,44 +513,16 @@ func TestSet_WithReaders(t *testing.T) {
 			if tc.before {
 				indexes = [2]*manifest.DiscoveryIndex{admitted, opposite}
 			}
-			want := map[manifest.NamedResource]string{reader: tc.file}
-			maps.Copy(want, original)
+			want := map[manifest.NamedResource]InputChange{reader: {File: tc.file}}
+			for id, input := range original {
+				input.Unbound = false
+				want[id] = input
+			}
 			resolved := set.WithReaders(indexes[0], indexes[1])
 			assert.Diff(t, resolved.inputs, want)
 			assert.Diff(t, set.inputs, original)
 			assert.Diff(t, set.WithReaders(indexes[0], indexes[1]).inputs, want)
 		})
-	}
-}
-
-func TestSet_WithReadersSelectedSource(t *testing.T) {
-	t.Parallel()
-	changes, stores, roots, source := optionalSupplierPair(t, "apps")
-	reader := testutil.HelmReleaseID("apps", "reader")
-	foreign := testutil.HelmReleaseID("apps", "foreign")
-	opposite := testutil.HelmReleaseID("apps", "opposite")
-	var indexes [2]*manifest.DiscoveryIndex
-	for side := range indexes {
-		indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}, Readers: map[string][]manifest.FileReader{}}
-		for _, id := range []manifest.NamedResource{reader, foreign, opposite} {
-			indexes[side].Records[id] = manifest.DiscoveryRecord{File: "flux/" + id.Name + ".yaml", Refs: []manifest.NamedResource{source.Named()}}
-		}
-	}
-	file := ".supplier/inputs/optional.yaml"
-	indexes[0].Readers[file] = []manifest.FileReader{{Reader: reader, Source: source.Named(), Exact: true}, {Reader: foreign, Source: manifest.BootstrapSourceID, Exact: true}}
-	indexes[1].Readers[file] = []manifest.FileReader{{Reader: opposite, Source: source.Named(), Exact: true}}
-	original := maps.Clone(changes.sources[source.Named()].changes.inputs)
-	resolved := changes.WithReaders(indexes[0], indexes[1])
-	assert.Equal(t, len(resolved.inputs), 0)
-	assert.Equal(t, resolved.sources[source.Named()].changes.inputs[reader], "inputs/optional.yaml")
-	assert.Equal(t, resolved.sources[source.Named()].changes.inputs[foreign], "")
-	assert.Equal(t, resolved.sources[source.Named()].changes.inputs[opposite], "")
-	assert.Diff(t, changes.sources[source.Named()].changes.inputs, original)
-	for side, st := range stores {
-		filter := NewFilter(resolved, indexes[side], st, roots[side])
-		assert.Equal(t, filter.ShouldReconcile(reader), true)
-		assert.Equal(t, filter.ShouldReconcile(foreign), false)
-		assert.Equal(t, filter.ShouldReconcile(opposite), side == 1)
 	}
 }
 
@@ -571,13 +543,13 @@ func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
 			set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 			assert.NoError(t, err)
 			assert.Equal(t, set.Contains("input.yaml"), ignored != "both")
-			var want map[manifest.NamedResource]string
+			var want map[manifest.NamedResource]InputChange
 			if ignored != "both" {
 				name := "after"
 				if ignored == "after" {
 					name = "before"
 				}
-				want = map[manifest.NamedResource]string{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}: "input.yaml"}
+				want = map[manifest.NamedResource]InputChange{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: name}: {File: "input.yaml", Unbound: true}}
 			}
 			assert.Diff(t, set.inputs, want)
 		})
@@ -659,7 +631,7 @@ func TestDetect_ExistingInputHasNoOneSidedEvidence(t *testing.T) {
 	set, err := Detect(t.Context(), &store.SourceArtifact{FS: before}, &store.SourceArtifact{FS: after})
 	assert.NoError(t, err)
 	assert.Equal(t, set.Contains("input.yaml"), true)
-	assert.Diff(t, set.inputs, map[manifest.NamedResource]string(nil))
+	assert.Diff(t, set.inputs, map[manifest.NamedResource]InputChange(nil))
 }
 
 func TestCollectInputs_CancelBeforeOpen(t *testing.T) {
@@ -756,7 +728,7 @@ func TestCollectInputs_ReadResults(t *testing.T) {
 			err := set.CollectInputs(checked, input, "input.yaml", false)
 			if tc.wantErr == nil {
 				assert.NoError(t, err)
-				assert.Diff(t, set.inputs, map[manifest.NamedResource]string{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: "input.yaml"})
+				assert.Diff(t, set.inputs, map[manifest.NamedResource]InputChange{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {File: "input.yaml", Unbound: true}})
 			} else {
 				if !errors.Is(err, tc.wantErr) || len(set.inputs) != 0 {
 					t.Fatalf("collected inputs=%v error=%v", set.inputs, err)

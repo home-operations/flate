@@ -13,8 +13,8 @@ import (
 type EventKind int
 
 const (
-	// EventObjectAdded fires when a new manifest is added (or when a
-	// listener is registered with flush=true, to replay existing state).
+	// EventObjectAdded fires on publication, the first explicit inclusion of a
+	// present manifest, or registration with flush=true to replay existing state.
 	EventObjectAdded EventKind = iota + 1
 	// EventStatusUpdated reports condition transitions and transient reconciliation progress.
 	EventStatusUpdated

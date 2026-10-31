@@ -19,7 +19,7 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 	s.result.Failed = make(map[manifest.NamedResource]store.StatusInfo)
 	s.result.Blocked = make(map[manifest.NamedResource][]manifest.NamedResource)
 	var required map[manifest.NamedResource]struct{}
-	if roots[0].Name != "" {
+	if roots[0].Name != "" || roots[0].Namespace == "" && s.run.filter.Enabled() {
 		required = s.requiredClosure(roots, other)
 	}
 	unrelated := make(map[manifest.NamedResource]store.StatusInfo)
@@ -32,11 +32,17 @@ func (s *selectionSide) prepareFailures(roots []manifest.NamedResource, other *s
 			continue
 		}
 		if required == nil && !s.includes(id.Namespace) {
-			producer, ok := s.run.store.GetObject(id).(interface {
-				EmissionPolicy() manifest.EmissionPolicy
-			})
-			if !ok || !producer.EmissionPolicy().DocumentScope {
-				continue
+			compared := false
+			if other != nil && other.includes(id.Namespace) {
+				_, compared, _, _ = other.run.filter.Membership(id)
+			}
+			if !compared {
+				producer, ok := s.run.store.GetObject(id).(interface {
+					EmissionPolicy() manifest.EmissionPolicy
+				})
+				if !ok || !producer.EmissionPolicy().DocumentScope {
+					continue
+				}
 			}
 		}
 		s.result.Failed[id] = info
@@ -64,12 +70,22 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 		kinds[manifest.NamedResource{Group: root.Group, Kind: root.Kind}] = true
 	}
 	seed := func(id manifest.NamedResource) {
-		if kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] && id.Name == roots[0].Name && s.includes(id.Namespace) {
+		if roots[0].Name == "" && s.run.filter.Enabled() {
+			if _, selected, _, _ := s.run.filter.Membership(id); !selected {
+				return
+			}
+		}
+		if kinds[manifest.NamedResource{Group: id.Group, Kind: id.Kind}] && (roots[0].Name == "" || id.Name == roots[0].Name) && s.includes(id.Namespace) {
 			add(id)
 		}
 	}
 	for _, id := range s.roots {
 		seed(id)
+	}
+	if s.run.index != nil {
+		for id := range s.run.index.Records {
+			seed(id)
+		}
 	}
 	for id := range s.run.Result.Failed {
 		seed(id)
@@ -86,8 +102,16 @@ func (s *selectionSide) requiredClosure(roots []manifest.NamedResource, other *s
 			add(child)
 		}
 	}
+	if id := s.run.entryBinding.Producer; id != (manifest.NamedResource{}) && s.run.filter.Enabled() && s.run.filter.ShouldReconcile(id) {
+		add(id)
+	}
 	if other != nil {
 		for _, id := range other.roots {
+			if s.run.filter.Enabled() {
+				if _, selected, _, _ := other.run.filter.Membership(id); selected {
+					add(id)
+				}
+			}
 			visited := make(map[manifest.NamedResource]bool)
 			for s.run.store.GetObject(id) == nil && !visited[id] {
 				visited[id] = true
@@ -294,7 +318,7 @@ func (s *selectionSide) prepareStatuses(name string) {
 			var known bool
 			info, known = s.run.statusOf(id)
 			if !known {
-				info = store.StatusInfo{Status: store.StatusFailed, Message: "no status reported"}
+				info = s.status(id)
 			}
 		}
 		add(id, info)

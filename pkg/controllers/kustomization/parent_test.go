@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -82,7 +83,7 @@ func TestReconcile_OwnerDoesNotEraseReadyExpr(t *testing.T) {
 				DependsOn: []kustomizev1.DependencyReference{{Name: owner.Name, ReadyExpr: expr}},
 			}
 			s.AddObject(owner)
-			c.Emit(owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true}, nil)
+			controllertest.Emit(t.Context(), c.Controller, owner.Named(), &store.Emission{Children: []store.Child{{Obj: child}}, Complete: true})
 			s.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
 			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: child.Named(), ReconcileNode: c.ReconcileNode})
 			output, _ := s.GetArtifact(child.Named(), store.ArtifactContent).(*store.Emission)

@@ -239,7 +239,7 @@ func (r *ResourceSet) references(yield func(Reference) bool) {
 		}
 		if !yield(Reference{
 			NamedResource: Resolve(NamedResource{Group: referenceGroup(kind, ref.APIVersion), Kind: kind, Name: ref.Name}, "", r.Namespace),
-			Use:           "inputsFrom", Position: i, Content: true, Gate: gate,
+			Use:           "inputsFrom", Position: i, Content: true, Gate: gate, Selector: ref.Selector, NamespaceDefault: true,
 		}) {
 			return
 		}

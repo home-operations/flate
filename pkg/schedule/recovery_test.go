@@ -92,7 +92,7 @@ func runScaleDAG(t *testing.T, workers, producers int) {
 			next.Children = append(next.Children, store.Child{Obj: &manifest.ConfigMap{Name: fmt.Sprintf("%s-object-%02d", id.Name, n), Namespace: id.Namespace}})
 		}
 		next.Complete = true
-		return e.Emit(id, &next, nil)
+		return e.Emit(t.Context(), id, &next, nil)
 	})
 	var publications atomic.Int64
 	unsubscribe := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, payload any) {
@@ -276,14 +276,14 @@ func TestDispatchNode_SelfStatusSettlement(t *testing.T) {
 					e.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: fmt.Sprintf("feedback %d", count)})
 					return nil
 				}
-				fp, reused, err := e.FingerprintDedup(id, "unchanged output", &store.Emission{})
+				fp, reused, err := e.FingerprintDedup(t.Context(), id, "unchanged output", &store.Emission{})
 				if reused || err != nil {
 					return err
 				}
 				renders.Add(1)
 				_, _, output := e.Reads.GetEmission(id)
 				output.Fingerprint, output.Complete = fp, true
-				e.Emit(id, &output, nil)
+				e.Emit(t.Context(), id, &output, nil)
 				output.Finish()
 				return nil
 			})
@@ -451,7 +451,7 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 					child := &manifest.ConfigMap{Name: id.Name, Namespace: "ns", Data: map[string]any{"value": run}}
 					next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
 					next.Manifests, next.Complete = testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
-					e.Emit(id, &next, nil)
+					e.Emit(t.Context(), id, &next, nil)
 					if blocked {
 						return e.Require(ctx, []manifest.DependencyRef{{NamedResource: other}}, level)
 					}
@@ -460,7 +460,7 @@ func TestScheduler_RegisteredFixpointBound(t *testing.T) {
 				c := base.New(st, nil)
 				for _, obj := range []*manifest.Kustomization{x, y} {
 					child := &manifest.ConfigMap{Name: obj.Name, Namespace: "ns", Data: map[string]any{"value": int64(0)}}
-					c.Emit(obj.Named(), &store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true}, nil)
+					controllertest.Emit(t.Context(), c, obj.Named(), &store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true})
 				}
 				done := make(chan error, 1)
 				go func() { done <- s.Run(ctx) }()
@@ -570,7 +570,7 @@ func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 			defer next.Finish()
 			child := &manifest.ConfigMap{Name: "rendered", Namespace: "ns", Data: map[string]any{"value": "identical"}}
 			next.Children, next.Manifests, next.Complete = []store.Child{{Obj: child, Doc: child.Snapshot()}}, testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
-			e.Emit(id, &next, nil)
+			e.Emit(t.Context(), id, &next, nil)
 			return nil
 		})
 		st = current
@@ -623,7 +623,7 @@ func TestScheduler_RegisteredLateDeclaration(t *testing.T) {
 				foreign := &manifest.RawObject{APIVersion: "example.test/v1", Kind: manifest.KindKustomization, Namespace: "ns", Name: "late"}
 				next.Children = []store.Child{{Obj: foreign, Doc: docs[0]}, {Obj: late, Doc: docs[1]}}
 				next.Manifests, next.Complete = testutil.DocumentOccurrences(docs), true
-				e.Emit(id, &next, nil)
+				e.Emit(t.Context(), id, &next, nil)
 				e.Tasks.YieldSlot(func() { <-ready })
 				close(published)
 				return nil
@@ -704,7 +704,7 @@ func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 			child := &manifest.ConfigMap{Name: "output", Namespace: "ns", Data: map[string]any{"value": captured.Data["value"]}}
 			next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
 			next.Manifests, next.Complete = testutil.DocumentOccurrences([]map[string]any{child.Snapshot()}), true
-			return e.Emit(id, &next, nil)
+			return e.Emit(t.Context(), id, &next, nil)
 		}}
 		s := schedule.New(tasks, d)
 		defer st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) { s.OnArrival(id, id.KindInfo().Runnable) }, true)()

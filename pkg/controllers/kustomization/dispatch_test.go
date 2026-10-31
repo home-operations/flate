@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
@@ -90,10 +90,10 @@ func TestEmitRenderedChildren_EqualReplay(t *testing.T) {
 	docs := []map[string]any{{"apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization", "metadata": map[string]any{"name": "child", "namespace": "apps"}, "spec": map[string]any{"path": "./child"}}}
 	children, retained := parseChildrenForTest(parent.Named(), docs, manifest.ParseDocOptions{})
 	next := &store.Emission{Children: children, Manifests: testutil.DocumentOccurrences(retained), Complete: true}
-	c.Emit(parent.Named(), next, nil)
+	controllertest.Emit(t.Context(), c.Controller, parent.Named(), next)
 	arrivals := 0
 	s.AddListener(store.EventObjectAdded, func(manifest.NamedResource, any) { arrivals++ }, false)
-	c.Emit(parent.Named(), next, nil)
+	controllertest.Emit(t.Context(), c.Controller, parent.Named(), next)
 	if arrivals != 0 {
 		t.Fatalf("equal accepted replay fired %d arrivals", arrivals)
 	}

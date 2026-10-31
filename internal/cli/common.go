@@ -354,6 +354,10 @@ func runSelected(ctx context.Context, req selectedRequest, payload func(*selecte
 		inv.groups = append(inv.groups, group)
 	} else {
 		cfg.HeadOnly = !req.pair && c.baseInput != nil
+		cfg.Selection.Roots = slices.Clone(req.roots)
+		if req.roots[0].Namespace == "" && cfg.Selection.Matches(manifest.NamedResource{}) {
+			cfg.Selection.Roots = nil
+		}
 		var stop func()
 		if barSink != nil {
 			cfg.StatusListener, stop = barSink.progress(ctx)

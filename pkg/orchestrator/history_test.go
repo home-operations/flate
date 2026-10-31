@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -265,8 +266,14 @@ func TestBootstrap_EntryHistoryMatchesEmission(t *testing.T) {
 			selection := func(records map[manifest.NamedResource]manifest.DiscoveryRecord) [][]bool {
 				selected := make([][]bool, len(paths))
 				for i, path := range paths {
-					filter := change.NewFilter(change.NewSet([]string{path}), o.index, o.store, root)
-					filter.RefineHistory(map[manifest.NamedResource]iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]{owner: maps.All(records)}, map[manifest.NamedResource]bool{owner: true})
+					fixture := admissiontest.New(t, admissiontest.Config{Changes: change.NewSet([]string{path}), Index: o.index, Inventory: o.store, Root: root})
+					proposal, failure := fixture.Prepare(t.Context(), store.Child{}, nil, map[manifest.NamedResource]struct {
+						Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+						Complete bool
+					}{owner: {Records: maps.All(records), Complete: true}})
+					assert.NoError(t, failure)
+					admissiontest.Commit(t, fixture, proposal)
+					filter := fixture.Options.Filter
 					for _, id := range append(slices.SortedFunc(maps.Keys(before), manifest.NamedResource.Compare), owner, testutil.KustomizationID("apps", "ready")) {
 						selected[i] = append(selected[i], filter.ShouldReconcile(id))
 					}
@@ -360,7 +367,7 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	assert.Equal(t, fresh.filter.ShouldReconcile(owner), true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
-	assert.Equal(t, fresh.index.Records[child].Declaration.(*manifest.Kustomization).Path, "./${ROOT}")
+	assert.Equal(t, fresh.loader.IndexedObject(child, fresh.index.Records[child]).Obj.(*manifest.Kustomization).Path, "./${ROOT}")
 	for range fresh.store.Sweep() {
 		t.Fatal("Bootstrap left probe registrations waiting for retirement")
 	}
@@ -368,20 +375,23 @@ func TestBootstrap_AcceptedLiteralChildRoot(t *testing.T) {
 	canceled, err := newTestOrchestrator(t, tree, cfg)
 	assert.NoError(t, err)
 	t.Cleanup(func() { canceled.stop() })
-	err = canceled.discover(t.Context())
+	err = canceled.prepareBootstrap(t.Context())
 	assert.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	ref := canceled.index.Records[child].Declaration.(*manifest.Kustomization).SourceID()
+	ref := canceled.loader.IndexedObject(child, canceled.index.Records[child]).Obj.(*manifest.Kustomization).SourceID()
 	input := *canceled.store.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
 	input.FS = cancelRootFS{FS: input.FS, cancel: cancel}
 	canceled.store.SetArtifact(ref, &input)
 	canceled.completeBootstrap()
 	canceled.cfg.ExternalChanges = tree.ExternalChanges
 	err = canceled.buildChangeFilter(ctx)
+	if err == nil {
+		err = canceled.installAdmission(ctx)
+	}
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, canceled.filter == nil, true)
+	assert.Equal(t, len(canceled.filter.KeepNames()) == 0, true)
 }
 
 func TestCompleteBootstrap_Cancellation(t *testing.T) {
@@ -395,10 +405,10 @@ func TestCompleteBootstrap_Cancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	o.completeBootstrap()
-	o.cfg.ExternalChanges = change.NewSet(nil)
+	o.cfg.ExternalChanges = change.NewSet([]string{"flux/emitter.yaml"})
 	err = o.buildChangeFilter(ctx)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, o.filter == nil, true)
+	assert.Equal(t, len(o.filter.KeepNames()) == 0, true)
 	for range o.store.Sweep() {
 		t.Fatal("canceled preparation left probe registrations")
 	}
@@ -451,7 +461,7 @@ spec:
 	assert.Equal(t, fresh.store.GetObject(child) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(owner, store.ArtifactContent) == nil, true)
 	assert.Equal(t, fresh.store.GetArtifact(child, store.ArtifactContent) == nil, true)
-	declaration := fresh.index.Records[owner].Declaration.(*manifest.HelmRelease)
+	declaration := fresh.store.GetObject(owner).(*manifest.HelmRelease)
 	declaration = declaration.Clone()
 	declaration.Chart.Name = "./missing-chart"
 	fresh.store.AddObject(declaration)
@@ -473,25 +483,26 @@ func (f cancelProbeFS) Open(name string) (fs.File, error) {
 func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFile(t, root, "flux/emitter.yaml", testutil.KustomizationYAML("emitter", "apps", "  path: ./apps\n"))
-	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root}, Config{CacheDir: t.TempDir(), Concurrency: 2})
+	o, err := newTestOrchestrator(t, Tree{Path: filepath.Join(root, "flux"), RepoRoot: root, ExternalChanges: change.NewSet([]string{"flux/emitter.yaml"})}, Config{CacheDir: t.TempDir(), Concurrency: 2})
 	assert.NoError(t, err)
 	t.Cleanup(func() { o.stop() })
-	err = o.discover(t.Context())
+	err = o.prepareBootstrap(t.Context())
 	assert.NoError(t, err)
+	owner := testutil.KustomizationID("apps", "emitter")
+	o.store.AddObject(&manifest.Kustomization{Name: owner.Name, Namespace: owner.Namespace, Path: "./apps"})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	input := *o.store.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
 	input.FS = cancelProbeFS{FS: input.FS, cancel: cancel}
 	o.store.SetArtifact(manifest.BootstrapSourceID, &input)
 	o.completeBootstrap()
-	owner := testutil.KustomizationID("apps", "emitter")
 	// Clean builds exercise lookup cancellation; dirty builds must leave the probe unopened.
 	if !o.cache.CanPersistRenders() {
 		o.configureControllers()
 		reads := &store.ReadSet{}
 		reads.Init(o.store, owner, nil)
 		defer reads.Retire()
-		records, narrow := o.controllers.PreviousRender(ctx, o.index.Records[owner].Declaration, reads)
+		records, narrow := o.controllers.PreviousRender(ctx, o.store.GetObject(owner), reads)
 		assert.Equal(t, records == nil, true)
 		assert.Equal(t, narrow, false)
 		assert.NoError(t, ctx.Err())
@@ -501,8 +512,8 @@ func TestCompleteBootstrap_CanceledLookupMiss(t *testing.T) {
 	err = o.buildChangeFilter(ctx)
 	assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
-	assert.Equal(t, o.filter == nil, true)
-	declaration := o.index.Records[owner].Declaration.(*manifest.Kustomization).Clone()
+	assert.Equal(t, len(o.filter.KeepNames()), 0)
+	declaration := o.store.GetObject(owner).(*manifest.Kustomization).Clone()
 	declaration.Path = "./different"
 	o.store.AddObject(declaration)
 	for id := range o.store.Sweep() {
@@ -603,12 +614,20 @@ spec:
 			assert.NoError(t, err)
 			t.Cleanup(func() { fresh.stop() })
 			if mode == "helm_values_from" {
-				assert.NoError(t, fresh.discover(t.Context()))
+				assert.NoError(t, fresh.prepareBootstrap(t.Context()))
 				fresh.completeBootstrap()
-				reconcileEntryForTest(t, fresh)
 				supplied := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "supplied"}
+				var entryReads store.ReadSet
+				entryReads.Init(fresh.store, fresh.entryBinding.Producer, nil)
+				_, _, entry := entryReads.GetEmission(fresh.entryBinding.Producer)
+				entry.Children = []store.Child{{Obj: declaration}, {Obj: warm.store.GetObject(supplied)}}
+				entryReads.Bind(&entry)
+				fresh.store.RecordEmitted(fresh.entryBinding.Producer, &entry, nil)
+				entry.Finish()
+				entryReads.Retire()
 				assert.Equal(t, fresh.store.EmissionOwner(supplied), fresh.entryBinding.Producer)
 				assert.NoError(t, fresh.buildChangeFilter(t.Context()))
+				assert.NoError(t, fresh.installAdmission(t.Context()))
 			} else {
 				assert.NoError(t, fresh.bootstrap(t.Context()))
 			}
@@ -720,10 +739,11 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 				assert.NoError(t, warm.run(t.Context()))
 				warm.stop()
 			}
+			tree.ExternalChanges = change.NewSet([]string{"flux/emitter.yaml"})
 			current, err := newTestOrchestrator(t, tree, cfg)
 			assert.NoError(t, err)
 			t.Cleanup(func() { current.stop() })
-			err = current.discover(t.Context())
+			err = current.prepareBootstrap(t.Context())
 			assert.NoError(t, err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -741,12 +761,11 @@ func TestBuildChangeFilter_ReclaimsProbes(t *testing.T) {
 				declaration := current.store.GetObject(owner).(*manifest.Kustomization)
 				done := make(chan struct{})
 				runtime.AddCleanup(declaration, func(done chan struct{}) { close(done) }, done)
-				current.cfg.ExternalChanges = change.NewSet(nil)
 				err := current.buildChangeFilter(ctx)
 				if mode == "cancel" && current.cache.CanPersistRenders() {
 					assert.Equal(t, errors.Is(err, context.Canceled), true)
 					assert.Equal(t, errors.Is(ctx.Err(), context.Canceled), true)
-					assert.Equal(t, current.filter == nil, true)
+					assert.Equal(t, len(current.filter.KeepNames()) == 0, true)
 				} else {
 					assert.NoError(t, err)
 					assert.NoError(t, ctx.Err())

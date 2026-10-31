@@ -36,6 +36,7 @@ type Controller struct {
 	WipeSecrets bool
 
 	strictSubstitutions bool
+	restricted          bool
 }
 
 // Options carries the post-bootstrap state the orchestrator wires onto the
@@ -75,6 +76,8 @@ func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
 	c.retry = retry
 	c.strictSubstitutions = opts.StrictSubstitutions
+	c.restricted = opts.Filter != nil
+
 }
 
 // ReconcileNode runs id's reconcile under the dag engine, returning the blocked
@@ -104,7 +107,10 @@ func (c *execution) reconcile(ctx context.Context, ks *manifest.Kustomization, l
 	if err != nil {
 		return err
 	}
-	inputs := c.run.DataInputs(ctx, ks, c.data)
+	inputs, err := c.run.DataInputs(ctx, ks, c.data)
+	if err != nil {
+		return err
+	}
 	return c.run.AwaitData(ctx, base.DataWait{Inputs: inputs, Resume: func(ctx context.Context, _ manifest.DrainLevel, _ []manifest.NamedResource) error {
 		return c.render(ctx, ks, source, applyIgnore)
 	}}, level)
@@ -124,9 +130,13 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	var attempt store.Emission
 	defer attempt.Finish()
 	var fp string
-	if source.Content != "" {
+	if source.Content != "" || c.restricted {
 		var handled bool
-		fp, handled, err = c.run.FingerprintDedup(id, ks.Content(sourceContent), &attempt)
+		var content any
+		if source.Content != "" {
+			content = ks.Content(sourceContent)
+		}
+		fp, handled, err = c.run.FingerprintDedup(ctx, id, content, &attempt)
 		if handled || err != nil {
 			if err != nil {
 				return err
@@ -149,7 +159,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 		// Mutable reads MUST be validated before replay can suppress readiness transitions.
 		var handled bool
 		sourceContent.Output = docs
-		fp, handled, err = c.run.FingerprintDedup(id, ks.Content(sourceContent), &attempt)
+		fp, handled, err = c.run.FingerprintDedup(ctx, id, ks.Content(sourceContent), &attempt)
 		if handled || err != nil {
 			if err != nil {
 				return err
@@ -163,7 +173,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 
 	attempt.Children, attempt.Manifests, attempt.Failures = c.ParseChildren(ks, docs, manifest.ParseDocOptions{WipeSecrets: c.WipeSecrets})
 	attempt.Fingerprint, attempt.Complete, attempt.Render = fp, true, receipt
-	if err := c.run.Emit(id, &attempt, nil); err != nil {
+	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
 	return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
@@ -182,7 +192,7 @@ func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManife
 			continue
 		}
 		availability := waiter.Available(ctx, depwait.DataDependency{DependencyRef: ref.DependencyRef, Input: data.Lookup(ref.NamedResource), Optional: ref.Optional}, manifest.DrainNone)
-		if availability.Kind != schedule.Terminal {
+		if availability.Err != nil || availability.Kind != schedule.Terminal {
 			return nil, false
 		}
 	}

@@ -83,7 +83,7 @@ func TestFinalizeIndex_RemoteInputs(t *testing.T) {
 			if mode == "missing-owner" {
 				wantErr = manifest.ErrInput
 			}
-			err := l.FinalizeIndex(ctx, root)
+			err := l.FinalizeIndex(ctx, root, true)
 			if !errors.Is(err, wantErr) {
 				t.Fatalf("finalization: %v, want %v", err, wantErr)
 			}
@@ -151,7 +151,7 @@ func TestFinalizeIndex_RemoteCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- l.FinalizeIndex(ctx, root) }()
+	go func() { done <- l.FinalizeIndex(ctx, root, true) }()
 	<-entered
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {

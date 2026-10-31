@@ -78,7 +78,7 @@ func rendererFixture(t *testing.T, l *Loader, root string) *manifest.DiscoveryIn
 	t.Helper()
 	admitForTest(l.Store, root)
 	l.documents.mountSources(l.Store)
-	if err := l.FinalizeIndex(t.Context(), root); err != nil {
+	if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 		t.Fatal(err)
 	}
 	return l.Index
@@ -186,7 +186,7 @@ func TestFinalizeIndex_Productions(t *testing.T) {
 			assert.Diff(t, r.Productions, []manifest.Production{{Owner: overlay.Named(), Authored: id,
 				Path: filepath.Join(root, "raw/input.yaml"), File: "raw/input.yaml", Source: manifest.BootstrapSourceID}})
 			snapshot := snapshotIndexForTest(l.Index)
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			assertIndexForTest(t, *l.Index, snapshot)
@@ -254,19 +254,19 @@ func TestFinalizeIndex_RecordCompletion(t *testing.T) {
 				return l
 			}
 			l := newLoader()
-			if err := l.FinalizeIndex(t.Context(), ""); err != nil {
+			if err := l.FinalizeIndex(t.Context(), "", true); err != nil {
 				t.Fatal(err)
 			}
 			if diff := gocmp.Diff(tc.want, l.Index.Records[id], gocmp.Comparer(manifest.Equal)); diff != "" {
 				t.Errorf("discovery record differs (-want +got):\n%s", diff)
 			}
 			snapshot := snapshotIndexForTest(l.Index)
-			if err := l.FinalizeIndex(t.Context(), ""); err != nil {
+			if err := l.FinalizeIndex(t.Context(), "", true); err != nil {
 				t.Fatal(err)
 			}
 			assertIndexForTest(t, *l.Index, snapshot)
 			fresh := newLoader()
-			if err := fresh.FinalizeIndex(t.Context(), ""); err != nil {
+			if err := fresh.FinalizeIndex(t.Context(), "", true); err != nil {
 				t.Fatal(err)
 			}
 			assertIndexForTest(t, *fresh.Index, snapshot)

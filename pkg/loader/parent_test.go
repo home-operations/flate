@@ -183,7 +183,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 				}
 			}
 			l.SourceRoot = root
-			if err := l.FinalizeIndex(t.Context(), root); err != nil {
+			if err := l.FinalizeIndex(t.Context(), root, true); err != nil {
 				t.Fatal(err)
 			}
 			assert.Equal(t, l.Index.Records[child].Parent, ks.Named())
@@ -200,7 +200,7 @@ func TestFinalizeIndex_ParentSegments(t *testing.T) {
 
 func parentsForTest(t *testing.T, l *Loader, repoRoot, kind string) map[manifest.NamedResource]manifest.NamedResource {
 	t.Helper()
-	if err := l.FinalizeIndex(t.Context(), repoRoot); err != nil {
+	if err := l.FinalizeIndex(t.Context(), repoRoot, true); err != nil {
 		t.Fatal(err)
 	}
 	out := map[manifest.NamedResource]manifest.NamedResource{}
@@ -809,9 +809,9 @@ func TestSourceView_InputOrigin(t *testing.T) {
 			}
 			file := filepath.Join(mount, "apps")
 			origin := filepath.Join(repoRoot, filepath.FromSlash(tc.physicalInput))
-			assert.Equal(t, OriginPath(art, file), origin)
+			assert.Equal(t, art.OriginPath(file), origin)
 			if tc.identity {
-				assert.Equal(t, OriginPath(art, mount+string(filepath.Separator)+filepath.FromSlash("discard/../apps")), origin)
+				assert.Equal(t, art.OriginPath(mount+string(filepath.Separator)+filepath.FromSlash("discard/../apps")), origin)
 			}
 			reader := documentReader{}
 			reader.mountSources(st)

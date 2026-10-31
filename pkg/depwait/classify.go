@@ -70,9 +70,15 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 				return failedClassification(id, obj, failMsg, nil)
 			}
 		}
-		if !present && existence != nil && existence.Promote(ctx, reads, id) {
-			existence = nil
-			continue
+		if !present && existence != nil {
+			promoted, err := existence.Promote(ctx, reads, id)
+			if err != nil {
+				return Classification{Err: err}
+			}
+			if promoted {
+				existence = nil
+				continue
+			}
 		}
 		if dep.UnknownArtifactRoot && level >= manifest.DrainCascade && obj == nil && w.Store.GetArtifact(id, store.ArtifactContent) == nil {
 			return Classification{Err: fmt.Errorf("%w: source %s has an unknown OCI artifact root", manifest.ErrInput, manifest.DiagnosticFor(id, obj))}

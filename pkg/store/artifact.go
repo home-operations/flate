@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"io/fs"
+	"path/filepath"
 	"reflect"
 	"slices"
 
@@ -339,4 +340,17 @@ func (sh *shard) clearFacetsLocked(id manifest.NamedResource) {
 		sh.publishArtifactLocked(id, &record, nil)
 		sh.artifacts[id] = record
 	}
+}
+
+// OriginPath projects mutable inputs and aliases onto their physical input origin.
+// file MUST be within the admitted artifact's LocalPath.
+func (a *SourceArtifact) OriginPath(file string) string {
+	if a != nil && a.LocalRoot != "" && (a.InputAlias || a.Content == "") {
+		if a.LocalRoot == a.LocalPath {
+			return filepath.Clean(file)
+		}
+		rel, _ := filepath.Rel(a.LocalPath, file)
+		return filepath.Join(a.LocalRoot, rel)
+	}
+	return file
 }

@@ -71,8 +71,12 @@ metadata: {name: out, namespace: default}
 data: {v: "${K}"}
 `)
 			stdout, stderr, code := harness.RunCLIBuffers("build", "ks", "consumer", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
-			if code != 0 || !strings.Contains(stdout, "name: out") || !strings.Contains(stdout, "v: v") || !strings.Contains(stderr, "other") {
+			if code != 0 || !strings.Contains(stdout, "name: out") || !strings.Contains(stdout, "v: v") || strings.Contains(stderr, "other") {
 				t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+			}
+			_, fullErr, fullCode := harness.RunCLIBuffers("build", "all", "--path", root, "--cache-dir", t.TempDir(), "--concurrency", workers, "--no-progress", "--log-level", "warn")
+			if fullCode != 1 || !strings.Contains(fullErr, "other") {
+				t.Fatalf("full render omitted unrelated producer failure: exit=%d stderr=%s", fullCode, fullErr)
 			}
 		})
 	}
@@ -341,7 +345,7 @@ sops:
 func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, diagnostic, kind string
-		later                        bool
+		later, editChild             bool
 	}{
 		{name: "subtree", path: "./apps/x"},
 		{name: "bucket_subtree", path: "./apps/x", kind: "Bucket"},
@@ -349,6 +353,7 @@ func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
 		{name: "repository", path: "kubernetes/apps/x"},
 		{name: "unknown", path: "./absent", diagnostic: "unknown OCI artifact root"},
 		{name: "frozen", path: "./apps/x", diagnostic: "kustomization path is not a directory", later: true},
+		{name: "frozen_changed_child", path: "./apps/x", diagnostic: "kustomization path is not a directory", later: true, editChild: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			kind := tc.kind
@@ -380,6 +385,9 @@ func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
 			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			orig := t.TempDir()
 			testutil.CopyTree(t, root, orig)
+			if tc.editChild {
+				testutil.WriteFile(t, root, "kubernetes/apps/x/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  {path: ./root-only, interval: 2m, sourceRef: {kind: "+kind+", name: flux-system}}\n"))
+			}
 			origScan := filepath.Join(orig, "kubernetes/clusters/c0")
 			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: after}\n")
 			scan := filepath.Join(root, "kubernetes/clusters/c0")
@@ -393,6 +401,12 @@ func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
 					args = append(args, "--path-orig", origScan)
 				}
 				stdout, stderr, code := harness.RunCLIBuffers(args...)
+				if tc.later && !tc.editChild && mode == "diff" {
+					if code != 0 || stderr != "" || strings.Count(stdout, "- before\n") != 1 || strings.Count(stdout, "+ after\n") != 1 || !strings.Contains(stdout, "artifact-output") || strings.Contains(stdout, "unrelated-root-output") || strings.Contains(stdout, "child") {
+						t.Fatalf("unreached child affected the parent diff: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
+					}
+					continue
+				}
 				if tc.name == "unknown" && mode == "diff" {
 					if code != 0 || stdout != "" || strings.Contains(stderr, "diff suppressed") {
 						t.Fatalf("unknown diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)

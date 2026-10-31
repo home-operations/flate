@@ -30,7 +30,7 @@ type generatorRecord struct {
 
 var errRemoteInputs = fmt.Errorf("%w: remote generator input requires HTTPInputs", manifest.ErrInput)
 
-func (r generatorRecord) materialize(ctx context.Context, opts Options) (manifest.BaseManifest, error) {
+func (r generatorRecord) materialize(ctx context.Context, opts options) (manifest.BaseManifest, error) {
 	var ldr ifc.Loader
 	if len(r.args.EnvSources)+len(r.args.FileSources) != 0 {
 		input, name := r.reader.input(r.root)

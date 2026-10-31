@@ -172,6 +172,7 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
 			ArtifactStages:      GateInputs | GateArtifacts,
 			UnknownArtifactRoot: src.Group == SourceDomain && src.Kind == KindOCIRepository,
+			NamespaceDefault:    use != "" && k.SourceRef.Namespace == "",
 		}) {
 			return
 		}
@@ -180,7 +181,7 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 		dep := &k.DependsOn[i]
 		if !yield(Reference{
 			NamedResource: Resolve(NamedResource{Group: kindTable[kindKustomization].Group, Kind: KindKustomization, Namespace: dep.Namespace, Name: dep.Name}, "", k.Namespace),
-			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true,
+			Use:           "dependsOn", Position: i, ReadyExpr: referenceExpression(&dep.ReadyExpr), Gate: GateInputs, Ordering: true, NamespaceDefault: dep.Namespace == "",
 		}) {
 			return
 		}
@@ -195,7 +196,7 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 		content := !ref.Optional && ref.Name != ""
 		if !yield(Reference{
 			NamedResource: Resolve(NamedResource{Kind: ref.Kind, Name: ref.Name}, "", k.Namespace),
-			Use:           "substituteFrom", Position: i, Optional: ref.Optional, Content: content,
+			Use:           "substituteFrom", Position: i, Optional: ref.Optional, Content: content, NamespaceDefault: true,
 		}) {
 			return
 		}
@@ -262,4 +263,11 @@ func (k *Kustomization) RenderDocument() (map[string]any, error) {
 		k.projection.Store(&kustomizationProjection{raw: bytes.Clone(raw), document: doc})
 	}
 	return doc, nil
+}
+
+func (*Kustomization) outputFields() string {
+	return `interval retryInterval timeout wait prune deletionPolicy force
+healthChecks.apiVersion healthChecks.kind healthChecks.name healthChecks.namespace
+healthCheckExprs.apiVersion healthCheckExprs.kind healthCheckExprs.current healthCheckExprs.failed healthCheckExprs.inProgress
+ dependsOn.name dependsOn.namespace dependsOn.readyExpr`
 }

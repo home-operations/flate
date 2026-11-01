@@ -132,7 +132,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 		})
 	}
 	if handled {
-		return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+		return c.Helm.RecordRender(ctx, helm.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), Sources: attempt.SourcePaths()})
 	}
 	hr.EmissionPolicy().Stamp(docs)
 
@@ -141,7 +141,7 @@ func (c *execution) render(ctx context.Context, hr *manifest.HelmRelease, level 
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.Helm.RecordRender(ctx, id, attempt.Render, attempt.Footprint())
+	return c.Helm.RecordRender(ctx, helm.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), Sources: attempt.SourcePaths()})
 }
 
 // PreviousRender prepares the immutable candidate with captured values and admitted charts without runtime effects.

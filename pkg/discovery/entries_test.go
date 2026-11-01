@@ -3,11 +3,13 @@ package discovery
 import (
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
+	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -117,5 +119,55 @@ func TestPlan_AdmittedSourceViews(t *testing.T) {
 				t.Fatalf("equal coordinate borrowed another admitted view: %+v", independent)
 			}
 		})
+	}
+}
+
+func TestPlan_SharedProducerProjection(t *testing.T) {
+	t.Parallel()
+	projections := manifest.NewProducerProjections()
+	const document = `apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata: {name: set, namespace: apps}
+spec:
+  resourcesTemplate: |
+    apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata: {name: child, namespace: apps}
+    spec:
+      path: ./workload
+      sourceRef: {kind: GitRepository, name: content}
+`
+	var entries [2][]Entry
+	var failures [2]error
+	var callers sync.WaitGroup
+	for i := range entries {
+		callers.Go(func() {
+			root := filepath.Join(t.TempDir(), "plan")
+			input := &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{"set.yaml": {Data: []byte(document)}}}
+			entries[i], failures[i] = Plan(t.Context(), Config{Input: input, Path: root, Selection: manifest.Selection{Changed: true}, Projections: projections})
+		})
+	}
+	callers.Wait()
+	projections.Clear()
+	var objects [2]manifest.BaseManifest
+	child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Name: "child", Namespace: "apps"}
+	for i := range entries {
+		assert.NoError(t, failures[i])
+		assert.Equal(t, len(entries[i]), 1)
+		entry := entries[i][0]
+		session, err := Begin(t.Context(), Config{Entry: &entry, Input: entry.Input, Path: entry.Path, Store: store.New(), Selection: manifest.Selection{Changed: true}})
+		assert.NoError(t, err)
+		record, ok := session.loader.Index.Lookup(child)
+		assert.Equal(t, ok, true)
+		objects[i] = session.loader.IndexedObject(child, record).Obj
+		if record.File != "set.yaml" || entry.Input.LocalPath != entry.Path {
+			t.Fatalf("shared projection lost its source coordinate: %+v", record)
+		}
+	}
+	if objects[0] == nil || objects[0] != objects[1] {
+		t.Fatal("identical-content plans computed separate projected declarations")
+	}
+	if entries[0][0].Path == entries[1][0].Path {
+		t.Fatal("independent plans shared an entry coordinate")
 	}
 }

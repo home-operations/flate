@@ -32,6 +32,8 @@ type Kustomization struct {
 
 	Labels      map[string]string `json:"-" yaml:"-"`
 	Annotations map[string]string `json:"-" yaml:"-"`
+	// EntryReceipt retains accepted bootstrap application evidence for an internal entry.
+	EntryReceipt *RenderReceipt `json:"-" yaml:"-"`
 }
 
 // NewEntryKustomization constructs an internal producer for an admitted literal entry.

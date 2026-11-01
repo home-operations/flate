@@ -210,7 +210,7 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	o.src.Fetchers[manifest.KindExternalArtifact] = source.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})
 	o.ksc = kustomization.New(st, ts, trees, cfg.WipeSecrets)
 	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions, cfg.WipeSecrets)
-	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
+	o.rsc = resourcesetctrl.New(st, ts, cfg.Cache, cfg.WipeSecrets)
 	o.agc = artifactgenerator.New(st, ts, cfg.Cache)
 	o.controllers = base.Controllers{Kustomization: o.ksc, HelmRelease: o.hrc, ResourceSet: o.rsc, Source: o.src, ArtifactGenerator: o.agc}
 	o.depGraph = newDependencyGraph()

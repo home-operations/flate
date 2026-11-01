@@ -21,6 +21,12 @@ func (l *Loader) recordReader(file, local string, reader manifest.FileReader) {
 			if order := cmp.Or(a.Reader.Compare(b.Reader), a.Source.Compare(b.Source)); order != 0 {
 				return order
 			}
+			if a.Materialize != b.Materialize {
+				if a.Materialize {
+					return 1
+				}
+				return -1
+			}
 			if a.Exact == b.Exact {
 				return 0
 			}
@@ -65,6 +71,11 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 
 	objects := map[manifest.NamedResource]manifest.BaseManifest{}
 	object := func(id manifest.NamedResource) manifest.BaseManifest {
+		if record, ok := l.Index.Lookup(id); ok && record.Builder != "" {
+			if child := l.IndexedObject(id, record); child.Obj != nil {
+				return child.Obj
+			}
+		}
 		if obj := l.Store.GetObject(id); obj != nil {
 			return obj
 		}
@@ -78,17 +89,57 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 	}
 	sources := map[manifest.NamedResource]graphVisit{}
 	charts := map[string][]string{}
+	templateBodies := map[string][][]byte{}
+	templateRefs := map[[2]string]manifest.TemplateProjection{}
+	templateWalks := map[[2]string]bool{}
 	visited := map[manifest.NamedResource]struct{}{}
-	var collect func(manifest.NamedResource, manifest.NamedResource) error
-	observe := func(ref manifest.Reference, consumer manifest.NamedResource) error {
+	var collect func(manifest.NamedResource, manifest.NamedResource, bool) error
+	var observe func(manifest.Reference, manifest.NamedResource, bool) error
+	project := func(input manifest.TemplateInput, consumer manifest.NamedResource) error {
+		if input.Reader.Namespace == "" && input.Reader.KindInfo().Namespaced() {
+			input.Reader.Namespace = consumer.Namespace
+		}
+		if l.Index.IsFileIndexed(input.Reader) {
+			return nil
+		}
+		ref := input.Reference
+		if ref.NamespaceDefault && ref.Namespace == "" {
+			ref.Namespace = consumer.Namespace
+		}
+		if ref.ContentInput() {
+			if l.Store.ReferenceFacts(ref.NamedResource, l.Index).Supplied != nil {
+				return nil
+			}
+			record, _ := l.Index.Lookup(ref.NamedResource)
+
+			if record.File != "" {
+				if len(record.Productions) == 0 {
+					l.recordReader(record.File, "", manifest.FileReader{Reader: consumer, Source: manifest.BootstrapSourceID, Exact: true, Materialize: true})
+				}
+				for _, production := range record.Productions {
+					source := production.Source
+					if source == (manifest.NamedResource{}) {
+						source = manifest.BootstrapSourceID
+					}
+					l.recordReader(record.File, "", manifest.FileReader{Reader: consumer, Source: source, Exact: true, Materialize: true})
+				}
+			}
+		}
+		return observe(ref, consumer, true)
+	}
+
+	observe = func(ref manifest.Reference, consumer manifest.NamedResource, materialize bool) error {
+		if ref.ContentInput() && l.Store.ReferenceFacts(ref.NamedResource, l.Index).Supplied != nil {
+			return nil
+		}
 		if ref.Content {
 			record, _ := l.Index.Lookup(ref.NamedResource)
 			for _, file := range record.Inputs {
-				l.recordReader(file, "", manifest.FileReader{Reader: consumer, Source: manifest.BootstrapSourceID})
+				l.recordReader(file, "", manifest.FileReader{Reader: consumer, Source: manifest.BootstrapSourceID, Materialize: materialize})
 			}
 		}
 		if ref.Use == "chart" {
-			if err := collect(ref.NamedResource, consumer); err != nil {
+			if err := collect(ref.NamedResource, consumer, materialize); err != nil {
 				return err
 			}
 			return nil
@@ -116,14 +167,23 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 		}
 		add := func(name string) {
 			v.coordinate = path.Join(v.prefix, name)
-			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true})
+			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: true, Materialize: materialize})
 		}
 		for _, name := range ref.Files {
 			clean := path.Clean(name)
-			if name != "" && fs.ValidPath(clean) && clean != "." && strings.IndexByte(clean, 0) < 0 {
-				add(clean)
+			if ref.Subtree {
+				var valid bool
+				clean, valid = resolveRoot(l.Store, ref.NamedResource, cmp.Or(name, "."))
+				if !valid {
+					continue
+				}
+			} else if name == "" || !fs.ValidPath(clean) || clean == "." || strings.IndexByte(clean, 0) >= 0 {
+				continue
 			}
+			v.coordinate = path.Join(v.prefix, clean)
+			l.recordReader(v.coordinate, v.localCoordinate(), manifest.FileReader{Reader: consumer, Source: ref.NamedResource, Exact: !ref.Subtree, Materialize: materialize})
 		}
+
 		if ref.ChartPath == "" {
 			return nil
 		}
@@ -138,8 +198,18 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 					names = append(names, path.Join(ref.ChartPath, ".helmignore"))
 					if sub, err := fs.Sub(input, name); err == nil {
 						// Reconciliation owns chart-local loading errors, including policy failures.
-						_ = chartinput.Walk(ctx, sub, true, func(name string, _ fs.FileInfo, _ []byte) error {
+						_ = chartinput.Walk(ctx, sub, true, func(name string, _ fs.FileInfo, data []byte) error {
 							names = append(names, path.Join(ref.ChartPath, name))
+							if strings.HasPrefix(name, "templates/") || strings.Contains(name, "/templates/") {
+								if data == nil {
+									var err error
+									data, err = fs.ReadFile(sub, name)
+									if err != nil {
+										return nil
+									}
+								}
+								templateBodies[location] = append(templateBodies[location], data)
+							}
 							return nil
 						})
 					}
@@ -155,10 +225,43 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 		for _, name := range names {
 			add(name)
 		}
+		namespace := consumer.Namespace
+		if producer, ok := object(consumer).(emissionProducer); ok {
+			namespace = producer.EmissionPolicy().Namespace
+		}
+		key := [2]string{location, namespace}
+		refs, seen := templateRefs[key]
+		if !seen {
+			templateRefs[key] = manifest.TemplateProjection{}
+			for _, data := range templateBodies[location] {
+				next := manifest.ProjectTemplate(data, namespace)
+				refs.Inputs = append(refs.Inputs, next.Inputs...)
+				refs.Targets = append(refs.Targets, next.Targets...)
+			}
+			templateRefs[key] = refs
+		}
+		if templateWalks[key] {
+			return nil
+		}
+		templateWalks[key] = true
+		for _, target := range refs.Targets {
+			if l.templateTargets == nil {
+				l.templateTargets = map[manifest.NamedResource][]manifest.ProducerTarget{}
+			}
+			targets := l.templateTargets[consumer]
+			if !slices.ContainsFunc(targets, func(known manifest.ProducerTarget) bool { return known.NamedResource == target.NamedResource }) {
+				l.templateTargets[consumer] = append(targets, target)
+			}
+		}
+		for _, input := range refs.Inputs {
+			if err := project(input, consumer); err != nil {
+				return err
+			}
+		}
 
 		return nil
 	}
-	collect = func(id, consumer manifest.NamedResource) error {
+	collect = func(id, consumer manifest.NamedResource, materialize bool) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -168,8 +271,13 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 		visited[id] = struct{}{}
 		if l.documents.compact {
 			if occurrence, ok := l.locations[id]; ok {
+				for _, input := range occurrence.facts.templateInputs {
+					if err := project(input, consumer); err != nil {
+						return err
+					}
+				}
 				for ref := range occurrence.references() {
-					if err := observe(ref, consumer); err != nil {
+					if err := observe(ref, consumer, materialize); err != nil {
 						return err
 					}
 				}
@@ -177,18 +285,20 @@ func (l *Loader) finalizeRecords(ctx context.Context, repoRoot string, emittedFi
 			}
 		}
 		for ref := range manifest.References(object(id), manifest.ReferenceRelations) {
-			if err := observe(ref, consumer); err != nil {
+			if err := observe(ref, consumer, materialize); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for id, r := range l.Index.Records {
-		if len(r.Refs) == 0 || repoRoot == "" {
+		occurrence, located := l.locations[id]
+		if repoRoot == "" || len(r.Refs) == 0 && (!located || len(occurrence.facts.templateInputs) == 0) {
 			continue
 		}
 		clear(visited)
-		if err := collect(id, id); err != nil {
+		clear(templateWalks)
+		if err := collect(id, id, false); err != nil {
 			return err
 		}
 	}

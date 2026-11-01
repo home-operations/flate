@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"maps"
 	"path/filepath"
@@ -47,6 +48,8 @@ type Result struct {
 
 // Config is the input contract for Run. Store is mandatory.
 type Config struct {
+	// Projections shares source-free facts across concurrent Plan calls.
+	Projections *manifest.ProducerProjections
 	// Selection controls restricted declaration construction.
 	Selection manifest.Selection
 	// Loader borrows the invocation's sole declaration loader.
@@ -189,11 +192,33 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 // PrepareEntry completes discovery preparation after validated receipt evidence is admitted.
 // It MUST run before reconciliation publishes the discovery index to concurrent readers.
-func (r *Result) PrepareEntry(ctx context.Context) error {
+func (r *Result) PrepareEntry(ctx context.Context, changes *change.Set, history map[manifest.NamedResource]struct {
+	Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+	Complete bool
+}) error {
 	d := r.pending
 	r.pending = nil
+
 	if d == nil || r.Binding != (Binding{}) {
 		return nil
+	}
+	if d.cfg.Trees != nil && d.needsEntry(changes) {
+		root, _, err := r.Admission.entry(ctx, d.cfg.Store, d.cfg.Store.ListObjects("", ""))
+		if err != nil {
+			return err
+		}
+		if root == nil {
+			evidence, err := d.qualifyEntry(ctx, r.Admission)
+			if err != nil {
+				return err
+			}
+			if evidence.Records != nil {
+				history[evidence.Owner] = struct {
+					Records  iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
+					Complete bool
+				}{Records: evidence.Records, Complete: true}
+			}
+		}
 	}
 	root, binding, err := r.Admission.BindEntry(ctx, d.cfg.Store)
 	if err != nil || root == nil {
@@ -264,6 +289,7 @@ func newDiscoverer(cfg Config) *Session {
 	}
 	l.Options.WipeSecrets, l.Options.RemoteInputs, l.Options.RemoteRetry = cfg.WipeSecrets, cfg.RemoteInputs, cfg.RemoteRetry
 	l.Options.Selection = cfg.Selection
+	l.Options.Projections = cfg.Projections
 	d := &Session{cfg: cfg, loader: l, aliasViews: map[string]*store.SourceArtifact{}}
 	if cfg.Entry == nil || cfg.Entry.prepared == nil {
 		return d
@@ -646,9 +672,14 @@ func (d *Session) acceptEntry(ctx context.Context) error {
 				children[i].Obj = obj
 			}
 		}
+		source := ks.SourceID()
+		if source.Name == "" || source.Kind == "" {
+			source = manifest.BootstrapSourceID
+		}
+		input := prepared.source
 		if err := d.cfg.Trees.RecordRender(ctx, kustomize.RenderAcceptance{
-			Owner: d.binding.Producer, Receipt: prepared.receipt,
-			Records: d.cfg.Store.ChildFootprint(d.binding.Producer, children, d.loader.Index), DependencySubstitutions: d.substitutions,
+			Owner: d.binding.Producer, Receipt: prepared.receipt, Entry: ks.EntryReceipt, Source: input.HistoryIdentity(source),
+			Records: d.cfg.Store.ChildFootprint(d.binding.Producer, children, d.loader.Index), Sources: d.cfg.Store.ChildSourcePaths(d.binding.Producer, children, d.loader.Index), DependencySubstitutions: d.substitutions,
 		}); err != nil {
 			return fmt.Errorf("discovery entry %q publish: %w", ks.Path, err)
 		}

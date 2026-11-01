@@ -74,7 +74,7 @@ func BenchmarkParseFile_Kustomization(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		objs, err := reader.parseFile(path, opts)
+		objs, err := reader.parseFile(b.Context(), path, opts)
 		if err != nil {
 			b.Fatalf("parseFile: %v", err)
 		}
@@ -145,7 +145,7 @@ spec:
 
 	b.ReportAllocs()
 	for b.Loop() {
-		objs, err := reader.parseFile(path, opts)
+		objs, err := reader.parseFile(b.Context(), path, opts)
 		if err != nil {
 			b.Fatalf("parseFile: %v", err)
 		}

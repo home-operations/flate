@@ -354,3 +354,18 @@ func (a *SourceArtifact) OriginPath(file string) string {
 	}
 	return file
 }
+
+// HistoryIdentity identifies a qualified source family across changed filesystem generations.
+func (a *SourceArtifact) HistoryIdentity(source manifest.NamedResource) manifest.SourceIdentity {
+	if a == nil || a.FS == nil || !a.Reads.Valid() {
+		return manifest.SourceIdentity{}
+	}
+	if source.Name == "" || source.Kind == "" || source == manifest.BootstrapSourceID || a.InputAlias {
+		return manifest.SourceIdentity{Root: a.OriginPath(a.LocalPath)}
+	}
+	identity := manifest.SourceIdentity{Kind: a.Kind, URL: a.URL, Key: a.Key}
+	if a.Content == "" {
+		identity.Root = a.OriginPath(a.LocalPath)
+	}
+	return identity
+}

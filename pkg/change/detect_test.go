@@ -526,6 +526,42 @@ func TestSet_WithReaders(t *testing.T) {
 	}
 }
 
+func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
+	t.Parallel()
+	root := testutil.KustomizationID("apps", "root")
+	driver := testutil.KustomizationID("apps", "driver")
+	child := testutil.KustomizationID("apps", "child")
+	foreign := testutil.KustomizationID("apps", "foreign")
+	other := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "other"}
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		root:    {File: "entry/root.yaml", Path: "/tree/entry/root.yaml"},
+		driver:  {File: "app/driver.yaml", Parent: root, Productions: []manifest.Production{{Owner: root, Source: manifest.BootstrapSourceID}}},
+		child:   {Authored: child, File: "declarations/child.yaml", Parent: driver, Productions: []manifest.Production{{Owner: driver, Source: manifest.BootstrapSourceID}}},
+		foreign: {File: "entry/root.yaml", Path: "/other/entry/root.yaml", Productions: []manifest.Production{{Source: other}}},
+	}, Readers: map[string][]manifest.FileReader{
+		"leaf/kustomization.yaml": {{Reader: child, Source: manifest.BootstrapSourceID}},
+	}}
+	for _, before := range []bool{false, true} {
+		t.Run(fmt.Sprint(before), func(t *testing.T) {
+			t.Parallel()
+			set := NewSet([]string{"entry/root.yaml", "leaf/kustomization.yaml"})
+			set.oneSided[0] = map[string]struct{}{"leaf/kustomization.yaml": {}}
+			indexes := [2]*manifest.DiscoveryIndex{index, nil}
+			if !before {
+				indexes = [2]*manifest.DiscoveryIndex{nil, index}
+				set.oneSided[1], set.oneSided[0] = set.oneSided[0], nil
+			}
+			resolved := set.WithReaders(indexes[0], indexes[1])
+			want := InputChange{File: "entry/root.yaml", Declarations: []string{"app/driver.yaml", "declarations/child.yaml", "entry/root.yaml"}, Productions: []manifest.Production{{Owner: driver, Declaration: driver, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}, {Owner: root, Declaration: root, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}}}
+			assert.Diff(t, resolved.inputs[child], want)
+			_, admitted := resolved.inputs[foreign]
+			assert.Equal(t, admitted, false)
+			assert.Equal(t, len(set.inputs), 0)
+			assert.Diff(t, set.WithReaders(indexes[0], indexes[1]).inputs, resolved.inputs)
+		})
+	}
+}
+
 func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
 	t.Parallel()
 	for _, ignored := range []string{"before", "after", "both"} {

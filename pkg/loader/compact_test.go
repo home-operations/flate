@@ -152,7 +152,7 @@ items:
 	reader := l.documents
 	reader.cache = nil
 	reader.coordinate = &OccurrenceID{Document: 1, item: 1}
-	children, err := reader.parseFile(file, manifest.ParseDocOptions{})
+	children, err := reader.parseFile(t.Context(), file, manifest.ParseDocOptions{})
 	assert.NoError(t, err)
 	assert.Equal(t, len(children), 1)
 	assert.Equal(t, children[0].Obj.(*manifest.ConfigMap).Data["VALUE"], "second")

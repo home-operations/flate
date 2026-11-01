@@ -108,20 +108,21 @@ func TestSelfProduceBuilder_RecordProducedReuse(t *testing.T) {
 			l := New(s)
 			obj := &manifest.Kustomization{Name: "child", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindGitRepository, Name: "input"}}
 			children := []parsedObject{{Obj: obj, version: manifest.FluxKustomizeDomain + "/v1"}}
+			builder.reader.cache = map[string]document{"child.yaml": {objects: children}}
 			var visits []graphVisit
 			for _, name := range []string{"a", "z"} {
 				owner := &manifest.Kustomization{Name: name, Namespace: "apps"}
 				s.AddObject(owner)
 				visit := graphVisit{namePrefix: prefix, owner: owner.Named(), namespace: "apps", file: "child.yaml", coordinate: "child.yaml"}
 				visits = append(visits, visit)
-				_, err := builder.recordProduced(visit, children, nil, l)
+				_, err := builder.recordProduced(t.Context(), visit, nil, l)
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
 			if got := testing.AllocsPerRun(100, func() {
 				for _, visit := range visits {
-					_, err := builder.recordProduced(visit, children, nil, l)
+					_, err := builder.recordProduced(t.Context(), visit, nil, l)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -455,7 +456,7 @@ func TestFinalizeIndex_OwnersOfFileDanglingResource(t *testing.T) {
 			}
 			if tc.preload {
 				l.documents.mountSources(s)
-				_, err := l.loadFile(filepath.Join(dir, input.missing))
+				_, err := l.loadFile(t.Context(), filepath.Join(dir, input.missing))
 				assert.NoError(t, err)
 				input.opens = 0
 			}
@@ -597,7 +598,7 @@ func TestFinalizeIndex_EmissionParentByFile(t *testing.T) {
 				l := New(st)
 				admitForTest(st, root)
 				l.mountSources()
-				objects, err := l.documents.parseFile(path, manifest.ParseDocOptions{})
+				objects, err := l.documents.parseFile(t.Context(), path, manifest.ParseDocOptions{})
 				assert.NoError(t, err)
 				for _, child := range objects {
 					obj := child.Obj
@@ -1059,7 +1060,7 @@ func TestLoader_DotDotPaths(t *testing.T) {
 
 			w := traversal{documents: documents, visited: map[graphContext]struct{}{}}
 			var files []string
-			if !w.walk(nil, graphVisit{root: root, dir: tc.path}, func(v graphVisit) bool {
+			if !w.walk(t.Context(), graphVisit{root: root, dir: tc.path}, func(v graphVisit) bool {
 				files = append(files, v.file)
 				return true
 			}) {
@@ -1097,7 +1098,7 @@ func TestTraversal_RootCoordinates(t *testing.T) {
 			w := traversal{documents: readerForTest(root), visited: map[graphContext]struct{}{}}
 			context := graphContext{root: root, dir: dir}
 			count := 0
-			if !w.walk(nil, graphVisit{graphContext: context}, func(v graphVisit) bool {
+			if !w.walk(t.Context(), graphVisit{graphContext: context}, func(v graphVisit) bool {
 				assert.Equal(t, v.graphContext, context)
 				count++
 				return true
@@ -1294,7 +1295,7 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 					if mode == "unadmitted" && name == "generator" {
 						continue
 					}
-					children, err := reader.parseFile(filepath.Join(root, name+".yaml"), manifest.ParseDocOptions{})
+					children, err := reader.parseFile(t.Context(), filepath.Join(root, name+".yaml"), manifest.ParseDocOptions{})
 					assert.NoError(t, err)
 					obj := children[0].Obj
 					if mode == "projected" || mode == "self_owner" {
@@ -1317,7 +1318,7 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 			w := traversal{documents: reader, visited: map[graphContext]struct{}{}}
 			var scope []graphVisit
 			var declarations []producerDeclaration
-			if !w.walk(nil, graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID}, func(v graphVisit) bool {
+			if !w.walk(t.Context(), graphVisit{root: root, dir: ".", source: manifest.BootstrapSourceID}, func(v graphVisit) bool {
 				v.deferMaterialization = mode != "explicit" && mode != "transformed"
 				if mode == "self_owner" {
 					v.owner = generator
@@ -1325,7 +1326,7 @@ func TestSelfProduceBuilder_ArtifactDocumentVisit(t *testing.T) {
 				scope = append(scope, v)
 				if v.document == nil && v.readable {
 					var err error
-					declarations, err = b.recordProduced(v, nil, declarations, l)
+					declarations, err = b.recordProduced(t.Context(), v, declarations, l)
 					assert.NoError(t, err)
 				}
 				return true

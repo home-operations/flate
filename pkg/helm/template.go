@@ -158,7 +158,6 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 				if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
 					return false, nil
 				}
-				frame.identity = identity
 				record = &renderRecord{key: key, identity: identity, Output: frame.output, Analysis: frame.header.Analysis, frame: frame}
 			}
 			var err error
@@ -168,7 +167,6 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			}
 		} else {
 			record.identity = identity
-			record.frame.identity = identity
 		}
 		if record.Analysis.RequiresLoader {
 			if err := c.decodeChart(ctx, &loaded); err != nil {
@@ -188,7 +186,7 @@ func (c *Client) Template(ctx context.Context, hr *manifest.HelmRelease, hrValue
 			binding := manifest.Fingerprint(prepared.binding)
 			if frame.header.Binding != binding {
 				frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-				frame.accepted, frame.acceptedKey, frame.identity = nil, "", ""
+				frame.accepted, frame.acceptedKey = nil, ""
 			}
 			fresh.receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 			record = &fresh

@@ -529,7 +529,11 @@ func recordTestRender(t *testing.T, cache *TreeCache, req RenderRequest, receipt
 	}
 	replayed, replayReceipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	if replayReceipt == nil || replayReceipt.Value().(renderFrame).identity == "" {
+	if replayReceipt == nil {
+		t.Fatal("unchanged input returned no receipt")
+	}
+	frame := replayReceipt.Value().(renderFrame)
+	if frame.accepted == nil || frame.acceptedKey == "" {
 		t.Fatal("unchanged input did not hit the accepted render cache")
 	}
 	assert.Diff(t, replayed, stored)

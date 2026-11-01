@@ -32,7 +32,7 @@ func newController(t *testing.T) (*Controller, *store.Store) {
 	t.Helper()
 	s := store.New()
 	tasks := task.NewBounded(0)
-	c := New(s, tasks, true)
+	c := New(s, tasks, nil, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 	t.Cleanup(func() {
@@ -124,7 +124,7 @@ func TestReconcile_SelectorInputsFrom_LateRSIP(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := New(s, tasks, true)
+	c := New(s, tasks, nil, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -427,7 +427,7 @@ func TestReconcile_SuspensionAfterRefresh(t *testing.T) {
 			t.Parallel()
 			st := store.New()
 			tasks := task.NewBounded(2)
-			c := New(st, tasks, true)
+			c := New(st, tasks, nil, true)
 			var deliveries atomic.Int64
 			c.Configure(base.Options{})
 			c.StartLifecycle()

@@ -483,11 +483,6 @@ func TestRender_DisabledReconcileAnnotationSkips(t *testing.T) {
 	}
 }
 
-// TestRender_InputsProviderBuiltinField asserts every rendered input
-// carries the built-in inputs.provider block per the upstream
-// flux-operator contract. Templates rely on inputs.provider.kind to
-// distinguish ResourceSet inline inputs from ResourceSetInputProvider
-// inputs once that's supported.
 func TestRender_InputsProviderBuiltinField(t *testing.T) {
 	t.Parallel()
 	rs := &manifest.ResourceSet{
@@ -498,6 +493,7 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 					"apiVersion": "v1", "kind": "ConfigMap",
 					"metadata": {"name": "x", "namespace": "flux-system"},
 					"data": {
+						"providerAPIVersion": "<< inputs.provider.apiVersion >>",
 						"providerKind":      "<< inputs.provider.kind >>",
 						"providerName":      "<< inputs.provider.name >>",
 						"providerNamespace": "<< inputs.provider.namespace >>"
@@ -510,6 +506,9 @@ func TestRender_InputsProviderBuiltinField(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	data := docs[0].Document["data"].(map[string]any)
+	if data["providerAPIVersion"] != fluxopv1.GroupVersion.String() {
+		t.Errorf("inputs.provider.apiVersion=%v want %s", data["providerAPIVersion"], fluxopv1.GroupVersion.String())
+	}
 	if data["providerKind"] != "ResourceSet" {
 		t.Errorf("inputs.provider.kind=%v want ResourceSet", data["providerKind"])
 	}

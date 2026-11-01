@@ -134,15 +134,16 @@ func (s specView) entryKeys(listKey, field string) []string {
 	return slices.Compact(keys)
 }
 
-func (*Kustomization) producerTargets([]NamedResource) []ProducerTarget            { return nil }
-func (*HelmRelease) producerTargets([]NamedResource) []ProducerTarget              { return nil }
-func (*HelmRepository) producerTargets([]NamedResource) []ProducerTarget           { return nil }
-func (*HelmChartSource) producerTargets([]NamedResource) []ProducerTarget          { return nil }
-func (*GitRepository) producerTargets([]NamedResource) []ProducerTarget            { return nil }
-func (*OCIRepository) producerTargets([]NamedResource) []ProducerTarget            { return nil }
-func (*ExternalArtifact) producerTargets([]NamedResource) []ProducerTarget         { return nil }
-func (*Bucket) producerTargets([]NamedResource) []ProducerTarget                   { return nil }
-func (*ResourceSet) producerTargets([]NamedResource) []ProducerTarget              { return nil }
+func (*Kustomization) producerTargets([]NamedResource) []ProducerTarget    { return nil }
+func (*HelmRelease) producerTargets([]NamedResource) []ProducerTarget      { return nil }
+func (*HelmRepository) producerTargets([]NamedResource) []ProducerTarget   { return nil }
+func (*HelmChartSource) producerTargets([]NamedResource) []ProducerTarget  { return nil }
+func (*GitRepository) producerTargets([]NamedResource) []ProducerTarget    { return nil }
+func (*OCIRepository) producerTargets([]NamedResource) []ProducerTarget    { return nil }
+func (*ExternalArtifact) producerTargets([]NamedResource) []ProducerTarget { return nil }
+func (*Bucket) producerTargets([]NamedResource) []ProducerTarget           { return nil }
+func (*ResourceSet) producerTargets([]NamedResource) []ProducerTarget      { return nil }
+
 func (*ResourceSetInputProvider) producerTargets([]NamedResource) []ProducerTarget { return nil }
 func (*ConfigMap) producerTargets([]NamedResource) []ProducerTarget                { return nil }
 func (*Secret) producerTargets([]NamedResource) []ProducerTarget                   { return nil }

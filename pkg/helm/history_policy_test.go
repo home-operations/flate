@@ -39,7 +39,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 	assert.NoError(t, err)
 	child := manifest.NamedResource{Group: manifest.FluxKustomizeDomain, Kind: manifest.KindKustomization, Namespace: "apps", Name: "child"}
 	records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {Refs: []manifest.NamedResource{manifest.BootstrapSourceID}, ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"apps/blue"}}}}
-	assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
+	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: maps.All(records)}))
 	indexPath := filepath.Join(directory, "oci", "index.json")
 	index, err := os.ReadFile(indexPath)
 	assert.NoError(t, err)
@@ -173,7 +173,7 @@ func TestTemplate_HistoryPolicyProjection(t *testing.T) {
 		assert.NoError(t, json.Unmarshal([]byte(`{"commonMetadata":{"labels":{"rev":"changed"}}}`), &changed.HelmReleaseSpec))
 		_, next, err := testutil.RenderMaps(renderer.Template(t.Context(), changed, nil, RenderOptions{Sources: input.Sources}))
 		assert.NoError(t, err)
-		assert.NoError(t, renderer.RecordRender(t.Context(), changed.Named(), next, maps.All(records)))
+		assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: changed.Named(), Receipt: next, Records: maps.All(records)}))
 		after, err := os.ReadFile(indexPath)
 		assert.NoError(t, err)
 		assert.Equal(t, bytes.Equal(index, after), true)
@@ -198,7 +198,7 @@ func TestTemplate_SelectedActionHistory(t *testing.T) {
 		assert.NoError(t, err)
 		child := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "default", Name: "demo"}
 		records := map[manifest.NamedResource]manifest.DiscoveryRecord{child: {}}
-		assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, maps.All(records)))
+		assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: maps.All(records)}))
 		for _, tc := range []struct {
 			name                      string
 			policy                    helmv2.CRDsPolicy
@@ -263,7 +263,7 @@ func TestPreviousRender_InlineOCITemplatePolicy(t *testing.T) {
 	input := RenderOptions{Sources: NewSources(st)}
 	_, receipt, err := renderer.Template(t.Context(), hr, nil, input)
 	assert.NoError(t, err)
-	assert.NoError(t, renderer.RecordRender(t.Context(), hr.Named(), receipt, emptyRenderInventory))
+	assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: hr.Named(), Receipt: receipt, Records: emptyRenderInventory}))
 	if _, complete := renderer.PreviousRender(t.Context(), hr.Clone(), nil, input); !complete {
 		t.Fatal("unchanged inline declaration lost accepted history")
 	}

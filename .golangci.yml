@@ -49,6 +49,7 @@ linters:
             - "**/internal/fetcherr/**"
             - "**/internal/kustpath/**"
             - "**/internal/kustomizeinput/**"
+            - "**/internal/resourcesetinput/**"
           deny:
             - pkg: github.com/home-operations/flate/pkg
               desc: leaf packages import nothing from pkg/

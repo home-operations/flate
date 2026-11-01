@@ -101,7 +101,7 @@ func (l *Loader) buildProductions(ctx context.Context, repoRoot string, emittedF
 		}
 		if v.readable || l.documents.compact && v.deferDecode && safepath.Contains(v.root, v.file) {
 			var err error
-			declarations, err = b.recordProduced(v, l.documents.cache[v.file].objects, declarations, l)
+			declarations, err = b.recordProduced(ctx, v, declarations, l)
 			return err
 		}
 		return nil
@@ -450,7 +450,7 @@ type selfProduceBuilder struct {
 	err            error
 }
 
-func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject, declarations []producerDeclaration, l *Loader) ([]producerDeclaration, error) {
+func (b *selfProduceBuilder) recordProduced(ctx context.Context, v graphVisit, declarations []producerDeclaration, l *Loader) ([]producerDeclaration, error) {
 	coordinate := cmp.Or(v.localCoordinate(), v.coordinate)
 	var projectionErr error
 	record := func(child parsedObject, version string) {
@@ -557,10 +557,11 @@ func (b *selfProduceBuilder) recordProduced(v graphVisit, objects []parsedObject
 			b.emittedFiles[coordinate] = appendUniqueProducer(b.emittedFiles[coordinate], v.owner)
 		}
 	}
+	objects := b.reader.cache[v.file].objects
 	if objects == nil {
 		var err error
 		if b.reader.compact {
-			objects, err = b.reader.censusFile(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
+			objects, err = b.reader.censusFile(ctx, v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
 		} else {
 			objects, err = b.reader.fileObjects(v.file, manifest.ParseDocOptions{WipeSecrets: b.wipeSecrets})
 		}

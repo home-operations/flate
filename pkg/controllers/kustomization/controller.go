@@ -141,7 +141,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 			if err != nil {
 				return err
 			}
-			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
+			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Entry: ks.EntryReceipt, Records: attempt.Footprint(), Source: source.HistoryIdentity(ks.SourceID()), Sources: attempt.SourcePaths(), DependencySubstitutions: c.DependencySubstitutions})
 		}
 	} else if err := c.run.Checkpoint(); err != nil {
 		return err
@@ -164,7 +164,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 			if err != nil {
 				return err
 			}
-			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
+			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Entry: ks.EntryReceipt, Records: attempt.Footprint(), Source: source.HistoryIdentity(ks.SourceID()), Sources: attempt.SourcePaths(), DependencySubstitutions: c.DependencySubstitutions})
 		}
 	}
 	if err := kustomize.Shape(ks, docs, c.strictSubstitutions); err != nil {
@@ -176,7 +176,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
+	return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Entry: ks.EntryReceipt, Records: attempt.Footprint(), Source: source.HistoryIdentity(ks.SourceID()), Sources: attempt.SourcePaths(), DependencySubstitutions: c.DependencySubstitutions})
 }
 
 // PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.

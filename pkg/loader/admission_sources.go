@@ -145,15 +145,14 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 			if id.Namespace != "" {
 				return true
 			}
-			for readerSource := range c.sources(consumer) {
-				if readerSource == source {
+			readerSource := c.source(consumer)
+			if readerSource == source {
+				return true
+			}
+			if source == manifest.BootstrapSourceID {
+				_, artifact, paired := c.delta(readerSource)
+				if !paired && artifact != nil && artifact.OriginPath(artifact.LocalPath) == c.loader.SourceRoot {
 					return true
-				}
-				if source == manifest.BootstrapSourceID {
-					_, artifact, paired := c.delta(readerSource)
-					if !paired && artifact != nil && artifact.OriginPath(artifact.LocalPath) == c.loader.SourceRoot {
-						return true
-					}
 				}
 			}
 		}
@@ -205,8 +204,8 @@ func (c *admissionClosure) changedProduction(p manifest.Production) bool {
 
 func (c *admissionClosure) reverse(id manifest.NamedResource, object manifest.BaseManifest, ref manifest.Reference) bool {
 	if object != nil {
-		for input := range manifest.ContentInputs(object, true) {
-			if input == ref.NamedResource {
+		for input := range manifest.References(object, manifest.ReferenceRelations) {
+			if input.AffectedInput() && input.NamedResource == ref.NamedResource {
 				return true
 			}
 		}

@@ -48,6 +48,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 			l.Index.Records[id] = record
 		}
 	}
+	l.projectTemplates()
 	var claims []manifest.KSClaim
 	if l.scopes != nil {
 		claims = slices.DeleteFunc(l.scopes.claims, func(c manifest.KSClaim) bool {
@@ -83,7 +84,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 			rel, _ := filepath.Rel(repoRoot, origin)
 			r.File = filepath.ToSlash(rel)
 		}
-		if id.KindInfo().Parent {
+		if id.KindInfo().Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
 				r.Parent = parent
 			}
@@ -185,4 +186,23 @@ func (l *Loader) freezeConstruction() {
 	l.frozen = true
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes, l.facts, l.Options.ParsedInputs, l.documents.parsed = nil, nil, nil, nil
+}
+
+// Retire releases admission readers while preserving completed owners' read tracking.
+func (l *Loader) Retire() {
+	l.Options.HistoryOwners = nil
+	l.inputReaders, l.inputObjects = nil, nil
+	l.templateTargets = nil
+	l.producerFacts.Store(nil)
+	if !l.Options.Filter.Enabled() {
+		return
+	}
+	for file, readers := range l.Index.Readers {
+		readers = slices.DeleteFunc(readers, func(reader manifest.FileReader) bool { return !l.Options.Filter.ShouldReconcile(reader.Reader) })
+		if len(readers) == 0 {
+			delete(l.Index.Readers, file)
+		} else {
+			l.Index.Readers[file] = readers
+		}
+	}
 }

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/home-operations/flate/pkg/change"
+	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/safepath"
@@ -18,6 +20,176 @@ import (
 
 type entryApplication interface {
 	EntryApplication() (manifest.EntryApplication, bool)
+}
+
+type entryQualification struct {
+	loader     *loader.Loader
+	trees      *kustomize.TreeCache
+	candidates []manifest.NamedResource
+	current    manifest.NamedResource
+	receipt    *manifest.RenderReceipt
+	documents  map[manifest.NamedResource]map[string]any
+	visited    map[manifest.NamedResource]bool
+	observed   bool
+}
+
+func (d *Session) needsEntry(changes *change.Set) bool {
+	if changes == nil || !d.cfg.Selection.Changed {
+		return false
+	}
+	delta, _, _ := changes.ForSource(manifest.BootstrapSourceID)
+	for id, record := range d.loader.Index.Files() {
+		if record.Path == "" || record.Parent != (manifest.NamedResource{}) || !d.cfg.Selection.Matches(id) || !delta.Contains(record.File) || !safepath.Contains(d.cfg.Path, record.Path) {
+			continue
+		}
+		if slices.ContainsFunc(record.Productions, func(p manifest.Production) bool {
+			return p.Owner != (manifest.NamedResource{}) && p.Owner != id && !p.Owner.ReportHidden()
+		}) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func (d *Session) qualifyEntry(ctx context.Context, admission *Admission) (kustomize.EntryEvidence, error) {
+	q := &entryQualification{loader: d.loader, trees: d.cfg.Trees, visited: map[manifest.NamedResource]bool{}}
+	admission.qualification = q
+	relative, _ := filepath.Rel(d.cfg.Input.LocalPath, d.cfg.Path)
+	root := manifest.NewEntryKustomization(manifest.BootstrapSourceID, filepath.ToSlash(relative), manifest.NamedResource{})
+	evidence := d.cfg.Trees.PreviousEntry(ctx, kustomize.RenderRequest{
+		Source: d.cfg.Input, ApplyIgnore: true, SubPath: root.Path, Spec: root,
+		WipeSecrets: d.cfg.WipeSecrets, StrictSubstitutions: d.cfg.StrictSubstitutions, SkipKinds: d.cfg.SkipKinds, DependencySubstitutions: d.substitutions,
+	})
+	if evidence.Application != nil {
+		obj, _, _, err := manifest.ParseDoc(evidence.Application, manifest.ParseDocOptions{WipeSecrets: d.cfg.WipeSecrets})
+		if err == nil && obj != nil {
+			admission.addApplication(d.cfg.Store, obj, true)
+			q.receipt = evidence.Receipt
+			return evidence, nil
+		}
+	}
+	for id, record := range d.loader.Index.Files() {
+		if record.Path == "" || !safepath.Contains(d.cfg.Path, record.Path) {
+			continue
+		}
+		object := d.loader.CatalogObject(id)
+		if object == nil {
+			continue
+		}
+		if record.Parent == (manifest.NamedResource{}) && !d.loader.AdmitsRoot(object, record.Path) {
+			continue
+		}
+		if _, _, applies := object.SourcePath(); applies {
+			continue
+		}
+		if _, producer := object.(interface {
+			EmissionPolicy() manifest.EmissionPolicy
+		}); producer {
+			q.candidates = append(q.candidates, id)
+		}
+	}
+	slices.SortFunc(q.candidates, manifest.NamedResource.Compare)
+	return kustomize.EntryEvidence{}, ctx.Err()
+}
+
+// EntryProducer returns the next producer needed to qualify an otherwise unknown entry applier.
+func (a *Admission) EntryProducer() manifest.NamedResource {
+	if a == nil || a.qualification == nil || a.entryBound.Load() {
+		return manifest.NamedResource{}
+	}
+	q := a.qualification
+	if q.current != (manifest.NamedResource{}) && !q.observed {
+		return manifest.NamedResource{}
+	}
+	for len(q.candidates) != 0 {
+		id := q.candidates[0]
+		q.candidates[0], q.candidates = manifest.NamedResource{}, q.candidates[1:]
+		if q.visited[id] {
+			continue
+		}
+		q.visited[id] = true
+		q.current, q.observed = id, false
+		return id
+	}
+	a.qualification = nil
+	return manifest.NamedResource{}
+}
+
+func (a *Admission) captureApplication(ctx context.Context, st *store.Store, owner manifest.BaseManifest) (*manifest.RenderReceipt, error) {
+	q := a.qualification
+	if q == nil {
+		return nil, nil
+	}
+	if q.receipt != nil {
+		return q.receipt, nil
+	}
+	document := q.documents[owner.Named()]
+	if document == nil {
+		return nil, nil
+	}
+	var files []string
+	seen := map[manifest.NamedResource]bool{}
+	queue := []manifest.NamedResource{q.current}
+	for len(queue) != 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		record, _ := q.loader.Index.Lookup(id)
+		if record.File != "" {
+			files = append(files, record.File)
+		}
+		files = append(files, record.Inputs...)
+		for _, production := range st.Productions(id, q.loader.Index) {
+			if production.Owner != (manifest.NamedResource{}) {
+				queue = append(queue, production.Owner)
+			}
+			if production.Declaration != (manifest.NamedResource{}) {
+				queue = append(queue, production.Declaration)
+			}
+		}
+		for ref := range q.loader.References(id) {
+			queue = append(queue, ref.NamedResource)
+		}
+	}
+	for file, readers := range q.loader.Index.Readers {
+		if slices.ContainsFunc(readers, func(reader manifest.FileReader) bool {
+			return reader.Exact && !reader.Materialize && seen[reader.Reader]
+		}) {
+			files = append(files, file)
+		}
+	}
+	for i, file := range files {
+		absolute := filepath.Join(a.input.LocalPath, filepath.FromSlash(file))
+		if safepath.Contains(a.input.LocalPath, absolute) {
+			continue
+		}
+		mapped := false
+		for id := range a.sources {
+			artifact, _ := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
+			if artifact == nil || !artifact.InputAlias || !safepath.Contains(artifact.LocalPath, absolute) {
+				continue
+			}
+			origin := artifact.OriginPath(absolute)
+			if safepath.Contains(a.input.OriginPath(a.input.LocalPath), origin) {
+				relative, _ := filepath.Rel(a.input.OriginPath(a.input.LocalPath), origin)
+				files[i], mapped = filepath.ToSlash(relative), true
+				break
+			}
+		}
+		if !mapped {
+			return nil, nil
+		}
+	}
+	slices.Sort(files)
+	output, ok := st.GetArtifact(q.current, store.ArtifactContent).(*store.Emission)
+	if !ok {
+		return nil, nil
+	}
+	return q.trees.ApplicationReceipt(ctx, a.input, kustomize.EntryEvidence{Application: document, Owner: q.current, Records: st.ChildFootprint(q.current, output.Children, q.loader.Index)}, slices.Compact(files))
 }
 
 func (d *Session) applications() []manifest.BaseManifest {
@@ -214,9 +386,57 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	if a == nil {
 		return nil, Binding{}, nil
 	}
+	if q := a.qualification; q != nil && q.current != (manifest.NamedResource{}) && !q.observed {
+		output, ok := st.GetArtifact(q.current, store.ArtifactContent).(*store.Emission)
+		if !ok || !output.Complete || !output.OutputReads.Valid() {
+			status, _ := st.GetStatus(q.current)
+			switch status.Outcome() {
+			case store.OutcomeFailed, store.OutcomeSkipped, store.OutcomeSuspended, store.OutcomeUnchanged:
+				q.observed = true
+			}
+			record, _ := q.loader.Index.Lookup(q.current)
+			parents := []manifest.NamedResource{record.Parent, record.BuilderOwner}
+			for _, production := range st.Productions(q.current, q.loader.Index) {
+				parents = append(parents, production.Materializer(q.current))
+			}
+			for _, owner := range parents {
+
+				parent, accepted := st.GetArtifact(owner, store.ArtifactContent).(*store.Emission)
+				if accepted && parent.Complete && parent.OutputReads.Valid() && !slices.ContainsFunc(parent.Children, func(child store.Child) bool { return child.Obj.Named() == q.current }) {
+					q.observed = true
+				}
+			}
+			return nil, Binding{}, ctx.Err()
+		}
+		if output.Complete && output.OutputReads.Valid() {
+			q.observed = true
+			q.documents = map[manifest.NamedResource]map[string]any{}
+			for _, child := range output.Children {
+				if applier, ok := child.Obj.(entryApplication); ok {
+					if _, valid := applier.EntryApplication(); valid {
+						a.addApplication(st, child.Obj, true)
+						q.documents[child.Obj.Named()] = child.Doc
+					}
+				}
+				if _, _, applies := child.Obj.SourcePath(); !applies && !q.visited[child.Obj.Named()] {
+					if _, producer := child.Obj.(interface {
+						EmissionPolicy() manifest.EmissionPolicy
+					}); producer && !slices.Contains(q.candidates, child.Obj.Named()) {
+						q.candidates = append(q.candidates, child.Obj.Named())
+					}
+				}
+			}
+		}
+	}
 	root, owner, err := a.entry(ctx, st, st.ListObjects("", ""))
 	if err != nil || root == nil {
 		return nil, Binding{}, err
+	}
+	if owner != nil {
+		root.EntryReceipt, err = a.captureApplication(ctx, st, owner)
+		if err != nil {
+			return nil, Binding{}, err
+		}
 	}
 	key := root.Named()
 	if candidate, ok := owner.(*manifest.Kustomization); ok && len(candidate.DependsOn) == 0 && (candidate.PostBuild == nil || len(candidate.PostBuild.SubstituteFrom) == 0) {
@@ -226,6 +446,7 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 	}
 	a.entryBound.Store(true)
 	a.applications.Store(nil)
+	a.qualification = nil
 	source := root.SourceID()
 	if source.Name == "" || source.Kind == "" {
 		source = manifest.BootstrapSourceID

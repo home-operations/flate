@@ -15,7 +15,7 @@ import (
 func TestReconcile_SharedAdmission(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := New(s, task.NewBounded(2), false)
+	c := New(s, task.NewBounded(2), nil, false)
 	c.Configure(base.Options{})
 	rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", ResourcesTemplate: "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: output}\n"}
 	s.AddObject(rs)
@@ -30,7 +30,7 @@ func TestReconcile_SharedAdmission(t *testing.T) {
 func TestReconcile_SingleFailureTransition(t *testing.T) {
 	t.Parallel()
 	s := store.New()
-	c := New(s, task.NewBounded(2), false)
+	c := New(s, task.NewBounded(2), nil, false)
 	c.Configure(base.Options{})
 	rs := &manifest.ResourceSet{Name: "app", Namespace: "apps", ResourcesTemplate: "<< missingFunction >>"}
 	s.AddObject(rs)

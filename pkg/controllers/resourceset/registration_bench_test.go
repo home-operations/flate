@@ -32,7 +32,7 @@ func BenchmarkReadRegistration_Collection(b *testing.B) {
 				b.Run(fmt.Sprintf("providers=%d/%s/workers=%d", count, mode, workers), func(b *testing.B) {
 					s := store.New()
 					tasks := task.NewBounded(workers)
-					c := New(s, tasks, true)
+					c := New(s, tasks, nil, true)
 					c.Configure(base.Options{})
 					c.StartLifecycle()
 
@@ -128,7 +128,7 @@ func BenchmarkDirtyRerun_IndependentWriters(b *testing.B) {
 						}
 					}
 				}()
-				c := New(s, tasks, true)
+				c := New(s, tasks, nil, true)
 				c.Configure(base.Options{})
 				c.StartLifecycle()
 
@@ -242,7 +242,7 @@ func TestDirtyRerun_EqualOutputReuse(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := New(s, tasks, true)
+	c := New(s, tasks, nil, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 

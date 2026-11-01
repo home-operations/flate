@@ -200,7 +200,7 @@ func TestDocumentReader_SourceViewsAndReuse(t *testing.T) {
 		t.Fatalf("source views were mixed: working=%v committed=%v", first, other)
 	}
 	host := filepath.Join(committed, "host.yaml")
-	objects, err := r.parseFile(host, manifest.ParseDocOptions{DefaultNamespace: ""})
+	objects, err := r.parseFile(t.Context(), host, manifest.ParseDocOptions{DefaultNamespace: ""})
 	assert.NoError(t, err)
 	assert.Equal(t, len(objects), 0)
 	if failed := r.cache[host].objects; len(failed) != 1 || !errors.Is(failed[0].outcome.Err, fs.ErrNotExist) || failed[0].Obj != nil || failed[0].Doc != nil {
@@ -281,7 +281,7 @@ metadata: {name: pending}
 		before, err := k.RenderDocument()
 		assert.NoError(t, err)
 		testutil.WriteFile(t, root, "next.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: next}\ndata: {VALUE: replaced}\n")
-		_, err = reader.parseFile(filepath.Join(root, "next.yaml"), opts)
+		_, err = reader.parseFile(t.Context(), filepath.Join(root, "next.yaml"), opts)
 		assert.NoError(t, err)
 		assert.Equal(t, k.Namespace, "apps")
 		after, err := k.RenderDocument()
@@ -324,7 +324,7 @@ metadata: {name: pending}
 		st.AddObject(repo)
 		st.SetArtifact(repo.Named(), &store.SourceArtifact{LocalPath: committed, Key: "pin"})
 		r.mountSources(st)
-		if _, err := r.parseFile(filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{DefaultNamespace: ""}); !errors.Is(err, manifest.ErrInput) {
+		if _, err := r.parseFile(t.Context(), filepath.Join(committed, "host.yaml"), manifest.ParseDocOptions{DefaultNamespace: ""}); !errors.Is(err, manifest.ErrInput) {
 			t.Fatalf("released pin read host content through its coordinate: %v", err)
 		}
 	})

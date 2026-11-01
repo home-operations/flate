@@ -89,13 +89,18 @@ func newTestOrchestrator(tb testing.TB, tree Tree, cfg Config) (*Orchestrator, e
 }
 
 func (o *Orchestrator) prepareBootstrap(ctx context.Context) error {
-	if err := o.discover(ctx); err != nil {
-		return err
+	if o.session == nil {
+		if err := o.discover(ctx); err != nil {
+			return err
+		}
 	}
 	if o.session != nil {
 		for {
 			o.loader.Options.Changes = o.cfg.ExternalChanges
-			proposal, err := o.loader.Prepare(ctx, store.Child{}, nil, nil)
+			if err := o.lookupHistory(ctx); err != nil {
+				return err
+			}
+			proposal, err := o.loader.Prepare(ctx, store.Child{}, nil, o.history)
 			if err != nil {
 				return err
 			}

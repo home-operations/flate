@@ -16,6 +16,8 @@ with `go test -race ./test/e2e/...`.
 
 ## Layout
 
+- `unclaimed-change/` - an offline Helm producer emits a Kustomization over unchanged content. A changed text file has no owner or reader. `TestE2E_UnclaimedPathWithoutHistory` requires empty changed-only output with separate cold caches.
+
 - `hr-oci-template/` - inline OCI chart template and tiny chart for package-level
   orchestration integration tests with an in-process registry. The test replaces
   the registry URL, serves an unrelated first layer, and compares tag/digest,

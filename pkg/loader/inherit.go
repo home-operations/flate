@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"context"
 	"io/fs"
 	"maps"
 	"path"
@@ -182,6 +183,7 @@ func (l *Loader) Admit(repoRoot string) {
 }
 
 func (l *Loader) admit(repoRoot string) {
+	l.projectTemplates()
 	l.ensureScopes()
 	kss := l.kustomizations()
 	if l.scopes.complete && l.scopesMatch(kss, repoRoot) {
@@ -354,7 +356,7 @@ func (l *Loader) scopeWalk(root graphVisit) []graphVisit {
 		if l.documents.compact {
 			physical.owner, physical.source, physical.input, physical.membershipOnly = manifest.NamedResource{}, manifest.NamedResource{}, 0, false
 		}
-		w.walk(nil, physical, collect)
+		w.walk(context.TODO(), physical, collect)
 		walk.visits = visits
 		if l.documents.compact {
 			source.walks[key] = visits
@@ -416,35 +418,32 @@ func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 	return visits
 }
 
-type indexedRecord struct {
-	id manifest.NamedResource
-	manifest.DiscoveryRecord
-}
-
 func (l *Loader) projectAuthored(repoRoot string) bool {
-	var indexed []indexedRecord
+	var indexed []manifest.NamedResource
 	for id, r := range l.Index.Files() {
 		if r.Authored != (manifest.NamedResource{}) && r.Path != "" {
-			indexed = append(indexed, indexedRecord{id, r})
+			indexed = append(indexed, id)
 		}
 	}
-	slices.SortFunc(indexed, func(a, b indexedRecord) int {
-		if a.Path != b.Path {
-			return strings.Compare(a.Path, b.Path)
+	slices.SortFunc(indexed, func(a, b manifest.NamedResource) int {
+		ar, br := l.Index.Records[a], l.Index.Records[b]
+		if ar.Path != br.Path {
+			return strings.Compare(ar.Path, br.Path)
 		}
-		if c := a.Authored.Compare(b.Authored); c != 0 {
+		if c := ar.Authored.Compare(br.Authored); c != 0 {
 			return c
 		}
-		return a.id.Compare(b.id)
+		return a.Compare(b)
 	})
 	scopes := make(map[string]rootAdmission)
 	raw := indexed[:0]
 	for start := 0; start < len(indexed); {
+		first := l.Index.Records[indexed[start]]
 		end := start + 1
-		for end < len(indexed) && indexed[end].Path == indexed[start].Path {
+		for end < len(indexed) && l.Index.Records[indexed[end]].Path == first.Path {
 			end++
 		}
-		file := indexed[start].Path
+		file := first.Path
 		if l.terminalInput(file) {
 			doc := l.documents.cache[file]
 			doc.objects, doc.lookup, doc.loaded = nil, nil, false
@@ -454,12 +453,17 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 		}
 		doc := l.documents.cache[file]
 		if l.documents.compact || doc.bootstrap || l.entry == entryKustomize || !doc.loaded {
-			structural := slices.ContainsFunc(indexed[start:end], func(r indexedRecord) bool { return r.id.KindInfo().Structural })
-			scopes[file] = l.rootAdmission(file, indexed[start].File, structural)
+			structural := slices.ContainsFunc(indexed[start:end], func(id manifest.NamedResource) bool { return id.KindInfo().Structural })
+			scopes[file] = l.rootAdmission(file, first.File, structural)
 		}
-		for _, r := range indexed[start:end] {
-			if len(raw) == 0 || raw[len(raw)-1].Path != file || raw[len(raw)-1].Authored != r.Authored {
-				raw = append(raw, r)
+		for _, id := range indexed[start:end] {
+			if len(raw) == 0 {
+				raw = append(raw, id)
+				continue
+			}
+			previous := l.Index.Records[raw[len(raw)-1]]
+			if previous.Path != file || previous.Authored != l.Index.Records[id].Authored {
+				raw = append(raw, id)
 			}
 		}
 		start = end
@@ -506,7 +510,7 @@ func (l *Loader) projectAuthored(repoRoot string) bool {
 	return l.applyAuthored(next, objects, allowed)
 }
 
-func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]store.Child) {
+func (l *Loader) desiredAuthored(raw []manifest.NamedResource, repoRoot string) (map[manifest.NamedResource]manifest.DiscoveryRecord, map[manifest.NamedResource]store.Child) {
 	next := l.scopes.records
 	if next == nil {
 		next = map[manifest.NamedResource]manifest.DiscoveryRecord{}
@@ -520,7 +524,7 @@ func (l *Loader) desiredAuthored(raw []indexedRecord, repoRoot string) (map[mani
 	clear(objects)
 	prediction := map[string]nsResolution{}
 	for _, indexed := range raw {
-		r := indexed.DiscoveryRecord
+		r := l.Index.Records[indexed]
 		path, id := r.Path, r.Authored
 		authored := l.authoredObject(path, id)
 		forced := ""

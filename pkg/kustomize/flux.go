@@ -91,9 +91,8 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 		binding := manifest.Fingerprint(prepared.binding)
 		if frame.header.Binding != binding {
 			frame.header.Binding, frame.encoded, frame.raw = binding, nil, ""
-			frame.accepted, frame.acceptedKey, frame.identity = nil, "", ""
+			frame.accepted, frame.acceptedKey = nil, ""
 		}
-		frame.identity = sourcecache.AcquisitionIdentity(generation)
 		receipt = manifest.NewRenderReceipt(frame, equalRenderFrame)
 		return true, nil
 	}}

@@ -13,8 +13,6 @@ import (
 	"iter"
 	"slices"
 
-	"oras.land/oras-go/v2/errdef"
-
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/values"
@@ -22,12 +20,17 @@ import (
 
 const frameDomain = "flateks2"
 
-const acceptedRenderAnnotation = "flate.accepted-render"
-
 type renderHeader struct {
 	Key, Binding, Output string
 	Size                 int
 	Reads                readSetSnapshot
+	Entry                *entryApplication `json:",omitempty"`
+}
+
+type entryApplication struct {
+	Application map[string]any
+	Reads       readSetSnapshot
+	Inventory   acceptedRender
 }
 
 const frameHeaderLimit = 16 << 20
@@ -52,7 +55,7 @@ type renderFrame struct {
 	binding               renderBinding
 	output, encoded       []byte
 	accepted              *acceptedRender
-	acceptedKey, identity string
+	acceptedKey           string
 }
 
 func equalRenderFrame(a, b any) bool {
@@ -265,10 +268,43 @@ func (c *TreeCache) PreviousRender(ctx context.Context, req RenderRequest, owner
 	return frame.history(owner)
 }
 
+type renderPublication struct {
+	frame    renderFrame
+	accepted acceptedRender
+	data     []byte
+}
+
+// WriteTo writes the render frame and accepted inventory.
+func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
+	data := p.data
+	if data == nil {
+		encoded, err := json.Marshal(p.accepted)
+		if err != nil {
+			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
+		}
+		data = encoded
+	}
+	if len(data) > frameHeaderLimit {
+		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted kustomize render exceeds frame limit")
+	}
+	if p.frame.encoded == nil {
+		encoded, err := encodeFrame(p.frame.header, p.frame.output)
+		if err != nil {
+			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
+		}
+		p.frame.encoded = encoded
+	}
+	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+}
+
 // RenderAcceptance binds a complete inventory to its final owner and dependency snapshot.
 type RenderAcceptance struct {
+	// Source identifies the admitted filesystem used by the receipt.
+	Source                  manifest.SourceIdentity
+	Sources                 []manifest.SourceEvidence
 	Owner                   manifest.NamedResource
 	Receipt                 *manifest.RenderReceipt
+	Entry                   *manifest.RenderReceipt
 	Records                 iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]
 	DependencySubstitutions values.DependencySubstitutions
 }
@@ -283,18 +319,34 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	if !ok || frame.header.Key == "" {
 		return manifest.NewError(manifest.ErrFlux, nil, "invalid kustomize receipt")
 	}
+	if acceptance.Entry != nil {
+		if application, ok := acceptance.Entry.Value().(entryApplication); ok {
+			frame.header.Entry = &application
+			frame.encoded, frame.accepted, frame.raw, frame.acceptedKey = nil, nil, "", ""
+		}
+	}
 	if !frame.binding.Dependencies.Equal(acceptance.DependencySubstitutions) {
 		frame.binding.Dependencies = acceptance.DependencySubstitutions
 		frame.header.Binding, frame.lookup, frame.raw = "", "", ""
-		frame.encoded, frame.accepted, frame.acceptedKey, frame.identity = nil, nil, "", ""
+		frame.encoded, frame.accepted, frame.acceptedKey = nil, nil, ""
 	}
-	descriptor, identity, enabled, err := c.owner.RenderMetadata(ctx, frame.header.Key, frame.lookup)
-	if err != nil && !errors.Is(err, errdef.ErrNotFound) {
-		return fmt.Errorf("lookup kustomize render cache: %w", err)
+	sources := acceptance.Sources
+	if sources != nil {
+		sources = slices.Clone(sources)
+		source := acceptance.Source
+		for _, file := range frame.header.Reads.Files {
+			sources = append(sources, manifest.SourceEvidence{Source: source, Path: file.Path})
+		}
+		for _, node := range frame.header.Reads.Nodes {
+			if node.Kind == kindFile {
+				sources = append(sources, manifest.SourceEvidence{Source: source, Path: node.Path})
+			}
+		}
 	}
-	if !enabled {
-		return nil
+	if !c.owner.CanPersistRenders() {
+		return ctx.Err()
 	}
+	var err error
 	if frame.header.Binding == "" {
 		frame.header.Binding = manifest.Fingerprint(frame.binding)
 	}
@@ -311,35 +363,14 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	if err != nil {
 		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
 	}
-	if frame.accepted != nil && frame.identity != "" && identity == frame.identity && frame.acceptedKey != "" && descriptor.Annotations[acceptedRenderAnnotation] == frame.acceptedKey && frame.accepted.equal(&accepted) {
-		return nil
-	}
-	data, err := json.Marshal(accepted)
-	if err != nil {
-		return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
-	}
-	if len(data) > frameHeaderLimit {
-		return manifest.NewError(manifest.ErrFlux, nil, "accepted kustomize render exceeds frame limit")
-	}
-	content := manifest.Fingerprint(data)
-	if descriptor.Annotations[acceptedRenderAnnotation] == content {
-		return nil
-	}
-	if frame.encoded == nil {
-		frame.encoded, err = encodeFrame(frame.header, frame.output)
+	var data []byte
+	content := frame.acceptedKey
+	if frame.accepted == nil || content == "" || !frame.accepted.equal(&accepted) {
+		data, err = json.Marshal(accepted)
 		if err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
+			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
 		}
+		content = manifest.Fingerprint(data)
 	}
-	key := sourcecache.BlobKey{Content: frame.header.Key, Render: sourcecache.RenderAccepted}
-	raw := frame.encoded
-	result := sourcecache.ProducerResult{Annotations: map[string]string{acceptedRenderAnnotation: content}}
-	_, _, _, err = c.owner.Blob(ctx, key, sourcecache.Policy{MaxAge: 0, Retry: sourcecache.RetryConfig{Attempts: 1}}, func(_ context.Context, w sourcecache.ProducerInput) (sourcecache.ProducerResult, error) {
-		_, err := io.Copy(w, io.MultiReader(bytes.NewReader(raw), bytes.NewReader(data)))
-		return result, err
-	})
-	if err != nil {
-		return fmt.Errorf("kustomize render cache publish: %w", err)
-	}
-	return nil
+	return sourcecache.RecordInventory(ctx, c.owner, sourcecache.AcceptedInventory[renderPublication]{Key: frame.header.Key, Lookup: frame.lookup, Acceptance: content, History: sourcecache.RenderHistory{Owner: owner, Sources: sources}, Content: renderPublication{frame: frame, accepted: accepted, data: data}})
 }

@@ -48,7 +48,7 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 		l.locations = map[manifest.NamedResource]Occurrence{}
 		for _, name := range []string{"z", "a"} {
 			provider := &manifest.ResourceSetInputProvider{Name: name, Labels: map[string]string{"app": "selected"}}
-			occurrence := compactOccurrence(provider)
+			occurrence := compactOccurrence(provider, manifest.ProjectProducer(provider))
 			occurrence.Identity.Namespace = "apps"
 			l.locations[occurrence.Identity] = occurrence
 		}
@@ -127,11 +127,10 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 				stores[side].AddObject(producer)
 				stores[side].RecordEmitted(producer.Named(), &store.Emission{Complete: true, Children: []store.Child{{Obj: consumers[side]}}}, nil)
 				stores[side].UpdateStatus(producer.Named(), store.StatusInfo{Status: store.StatusReady})
-				occurrence := compactOccurrence(producer)
-				occurrence.Declaration.Source = l.SourceRoot
-				closure := admissionClosure{loader: l, objects: stores[side]}
-				closure.materializers(materializerDemand{target: providers[side].Named(), source: l.SourceRoot, readers: true}, providers[side].Named(), true, [2][]Occurrence{{occurrence}})
-				assert.Equal(t, closure.role(producer.Named()).needed, true)
+				l.Options.HistoryOwners = []manifest.NamedResource{producer.Named()}
+				proposal, err = l.Prepare(t.Context(), store.Child{}, nil, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Contains(proposal.Needed, producer.Named()), true)
 
 				if manifest.TreeSide(side) != tc.side {
 					l.Options.Filter = change.NewFilter()

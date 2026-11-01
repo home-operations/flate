@@ -1,13 +1,13 @@
 package resourceset
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 
 	fluxopv1 "github.com/controlplaneio-fluxcd/flux-operator/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/resourcesetinput"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -33,49 +33,20 @@ type ProviderInputs struct {
 	Inputs      []map[string]any
 }
 
-type providerInputs struct {
-	name   string
-	inputs []map[string]any
-}
-
-func isPermute(rs *manifest.ResourceSet) bool {
-	return rs.InputStrategy != nil && rs.InputStrategy.Name == fluxopv1.InputStrategyPermute
-}
-
 func buildInputSets(rs *manifest.ResourceSet, providers []ProviderInputs) ([]map[string]any, error) {
-	groups := make([]providerInputs, 0, 1+len(providers))
-	inlineProv := providerBlock(manifest.KindResourceSet, rs.Name, rs.Namespace)
-	inline := make([]map[string]any, 0, len(rs.Inputs))
-	for _, in := range rs.Inputs {
-		decoded := decodeInputSet(in)
-		decoded["provider"] = inlineProv
-		inline = append(inline, decoded)
-	}
-	groups = append(groups, providerInputs{name: rs.Name, inputs: inline})
-	for _, p := range providers {
-		exported := make([]map[string]any, 0, len(p.Inputs))
-		for _, input := range p.Inputs {
-			exported = append(exported, manifest.DeepCopyMap(input))
+	groups := make([]resourcesetinput.Group, 0, 1+len(providers))
+	groups = append(groups, resourcesetinput.Inline(rs.Name, rs.Namespace, rs.Inputs))
+	for _, provider := range providers {
+		inputs := make([]map[string]any, 0, len(provider.Inputs))
+		block := resourcesetinput.Provider(provider.ID.Kind, provider.ID.Name, provider.ID.Namespace)
+		for _, input := range provider.Inputs {
+			input = manifest.DeepCopyMap(input)
+			input["provider"] = block
+			inputs = append(inputs, input)
 		}
-		provBlock := providerBlock(p.ID.Kind, p.ID.Name, p.ID.Namespace)
-		for _, set := range exported {
-			set["provider"] = provBlock
-		}
-		groups = append(groups, providerInputs{name: p.ID.Name, inputs: exported})
+		groups = append(groups, resourcesetinput.Group{Name: provider.ID.Name, Inputs: inputs})
 	}
-
-	if isPermute(rs) {
-		return permute(groups, rs.InputStrategy.IncludeEmptyProviders)
-	}
-	total := 0
-	for _, g := range groups {
-		total += len(g.inputs)
-	}
-	out := make([]map[string]any, 0, total)
-	for _, g := range groups {
-		out = append(out, g.inputs...)
-	}
-	return out, nil
+	return resourcesetinput.Combine(groups, rs.InputStrategy)
 }
 
 // CollectProviders resolves unique provider declarations in canonical order.
@@ -109,34 +80,6 @@ func CollectProviders(rs *manifest.ResourceSet, resolve ProviderResolver) ([]Pro
 	}
 	slices.SortFunc(content, func(a, b ProviderInputs) int { return a.ID.Compare(b.ID) })
 	return content, nil
-}
-
-func providerBlock(kind, name, namespace string) map[string]any {
-	return map[string]any{
-		"apiVersion": fluxopv1.GroupVersion.String(),
-		"kind":       kind,
-		"name":       name,
-		"namespace":  namespace,
-	}
-}
-
-func decodeInputSet(in fluxopv1.ResourceSetInput) map[string]any {
-	decoded := make(map[string]any, len(in))
-	for k, v := range in {
-		if v == nil {
-			decoded[k] = nil
-			continue
-		}
-		var raw any
-		if err := json.Unmarshal(v.Raw, &raw); err != nil {
-			// Malformed entries are skipped silently — the parser
-			// already accepted the document, and there's no good
-			// signaling channel beyond a controller log line.
-			continue
-		}
-		decoded[k] = raw
-	}
-	return decoded
 }
 
 type providerReader interface {

@@ -207,5 +207,7 @@ mise run vulncheck
 mise run bench       # when touching a package with benchmarks; paste benchstat, base against branch
 ```
 
-CI runs the same plus a goreleaser snapshot and workflow lint; "Build Success" is the merge gate
-behind a squash-only merge queue; lint enforces the shape of `//nolint` directives.
+CI runs the same except `mise run vulncheck`, plus a goreleaser snapshot and workflow lint;
+`.github/workflows/govulncheck.yaml` runs the vulncheck daily and on manual dispatch. "Build
+Success" is the merge gate behind a squash-only merge queue; lint enforces the shape of `//nolint`
+directives.

@@ -123,7 +123,13 @@ func encodeAccepted(owner manifest.NamedResource, frame renderFrame, records ite
 func TestAcceptedRender_ExactValue(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Group: "group", Kind: "kind", Namespace: "namespace", Name: "name"}
-	original := acceptedRender{Version: 1, Complete: true, Owner: id, Raw: "raw", Records: []acceptedRecord{{ID: id, Record: manifest.DiscoveryRecord{Authored: id, Path: "path", File: "file", Parent: id, Refs: []manifest.NamedResource{id}, Productions: []manifest.Production{{Owner: id, Declaration: id, Authored: id, Source: id, Path: "path", File: "file"}}, Builder: "builder", Inputs: []string{"input"}, Pinned: true}, Roots: []acceptedRoot{{Source: id, Paths: []string{"path"}}}}}}
+	original := acceptedRender{Version: 1, Complete: true, Owner: id, Raw: "raw", Records: []acceptedRecord{{
+		ID: id, Record: manifest.DiscoveryRecord{
+			Authored: id, Path: "path", File: "file", Parent: id, Refs: []manifest.NamedResource{id},
+			Productions: []manifest.Production{{Owner: id, Declaration: id, Authored: id, Source: id, Path: "path", File: "file"}},
+			Builder:     "builder", Inputs: []string{"input"}, Pinned: true,
+		}, Roots: []acceptedRoot{{Source: id, Paths: []string{"path"}}},
+	}}}
 	copyValue := func(t *testing.T, a acceptedRender) acceptedRender {
 		t.Helper()
 		data, err := json.Marshal(a)
@@ -132,8 +138,11 @@ func TestAcceptedRender_ExactValue(t *testing.T) {
 		assert.NoError(t, json.Unmarshal(data, &b))
 		return b
 	}
-	if !original.equal(&original) || original.equal(nil) || (*acceptedRender)(nil).equal(&original) || !(*acceptedRender)(nil).equal(nil) {
+	if !original.equal(&original) || original.equal(nil) || (*acceptedRender)(nil).equal(&original) {
 		t.Fatal("accepted-value presence comparison differs")
+	}
+	if !(*acceptedRender)(nil).equal(nil) {
+		t.Fatal("nil accepted values differ")
 	}
 	for _, tc := range []struct {
 		name   string
@@ -142,7 +151,10 @@ func TestAcceptedRender_ExactValue(t *testing.T) {
 		{"version", func(a *acceptedRender) { a.Version++ }},
 		{"complete", func(a *acceptedRender) { a.Complete = false }},
 		{"raw", func(a *acceptedRender) { a.Raw = "different" }},
+		{"application", func(a *acceptedRender) { a.Records[0].Record.Application = "different" }},
+		{"static output", func(a *acceptedRender) { a.Records[0].Record.StaticOutput = true }},
 		{"record count", func(a *acceptedRender) { a.Records = nil }},
+		{"record length", func(a *acceptedRender) { a.Records = a.Records[:0] }},
 		{"authored", func(a *acceptedRender) { a.Records[0].Record.Authored.Name = "different" }},
 		{"path", func(a *acceptedRender) { a.Records[0].Record.Path = "different" }},
 		{"file", func(a *acceptedRender) { a.Records[0].Record.File = "different" }},
@@ -155,6 +167,7 @@ func TestAcceptedRender_ExactValue(t *testing.T) {
 		{"production path", func(a *acceptedRender) { a.Records[0].Record.Productions[0].Path = "different" }},
 		{"production file", func(a *acceptedRender) { a.Records[0].Record.Productions[0].File = "different" }},
 		{"root count", func(a *acceptedRender) { a.Records[0].Roots = nil }},
+		{"root length", func(a *acceptedRender) { a.Records[0].Roots = a.Records[0].Roots[:0] }},
 		{"root path count", func(a *acceptedRender) { a.Records[0].Roots[0].Paths = nil }},
 		{"root path", func(a *acceptedRender) { a.Records[0].Roots[0].Paths[0] = "different" }},
 	} {
@@ -209,10 +222,27 @@ func TestAcceptedRender_ExactValue(t *testing.T) {
 		setEmpty func(*acceptedRender)
 	}{
 		{"records", func(a *acceptedRender) { a.Records = nil }, func(a *acceptedRender) { a.Records = []acceptedRecord{} }},
-		{"references", func(a *acceptedRender) { a.Records[0].Record.Refs = nil }, func(a *acceptedRender) { a.Records[0].Record.Refs = []manifest.NamedResource{} }},
-		{"productions", func(a *acceptedRender) { a.Records[0].Record.Productions = nil }, func(a *acceptedRender) { a.Records[0].Record.Productions = []manifest.Production{} }},
+		{"inputs", func(a *acceptedRender) {
+			a.Records[0].Record.Inputs = nil
+		}, func(a *acceptedRender) {
+			a.Records[0].Record.Inputs = []string{}
+		}},
+		{"references", func(a *acceptedRender) {
+			a.Records[0].Record.Refs = nil
+		}, func(a *acceptedRender) {
+			a.Records[0].Record.Refs = []manifest.NamedResource{}
+		}},
+		{"productions", func(a *acceptedRender) {
+			a.Records[0].Record.Productions = nil
+		}, func(a *acceptedRender) {
+			a.Records[0].Record.Productions = []manifest.Production{}
+		}},
 		{"roots", func(a *acceptedRender) { a.Records[0].Roots = nil }, func(a *acceptedRender) { a.Records[0].Roots = []acceptedRoot{} }},
-		{"paths", func(a *acceptedRender) { a.Records[0].Roots[0].Paths = nil }, func(a *acceptedRender) { a.Records[0].Roots[0].Paths = []string{} }},
+		{"paths", func(a *acceptedRender) {
+			a.Records[0].Roots[0].Paths = nil
+		}, func(a *acceptedRender) {
+			a.Records[0].Roots[0].Paths = []string{}
+		}},
 	} {
 		t.Run("nil-empty/"+tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -180,13 +180,15 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw || (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
+	if a.Version != b.Version || a.Complete != b.Complete || a.Owner != b.Owner || a.Raw != b.Raw {
+		return false
+	}
+	if (a.Records == nil) != (b.Records == nil) || len(a.Records) != len(b.Records) {
 		return false
 	}
 	for i, x := range a.Records {
 		y := b.Records[i]
-		p, q := x.Record, y.Record
-		if x.ID != y.ID || p.Application != q.Application || p.Authored != q.Authored || p.Path != q.Path || p.File != q.File || p.Parent != q.Parent || p.Builder != q.Builder || (p.Inputs == nil) != (q.Inputs == nil) || !slices.Equal(p.Inputs, q.Inputs) || p.Pinned != q.Pinned || p.StaticOutput != q.StaticOutput || (p.Refs == nil) != (q.Refs == nil) || !slices.Equal(p.Refs, q.Refs) || (p.Productions == nil) != (q.Productions == nil) || !slices.Equal(p.Productions, q.Productions) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
+		if x.ID != y.ID || !x.Record.Equal(y.Record) || (x.Roots == nil) != (y.Roots == nil) || len(x.Roots) != len(y.Roots) {
 			return false
 		}
 		for j, root := range x.Roots {

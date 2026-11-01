@@ -27,19 +27,18 @@ func cmChild(t *testing.T, root, name string, id manifest.NamedResource) {
 		"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: "+id.Name+"}\ndata: {k: v}\n")
 }
 
-// TestRender_DuplicateID_NamesProducers is the repro: two children emit the
-// same id, the auto-generated parent accumulates both and fails, and the error
-// now names BOTH producing paths (sorted) instead of just the one kustomize hit.
 func TestRender_DuplicateID_NamesProducers(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	cmChild(t, root, "a", manifest.NamedResource{Namespace: "shared", Name: "dup"})
 	cmChild(t, root, "b", manifest.NamedResource{Namespace: "shared", Name: "dup"})
-	// No apps/kustomization.yaml → Render synthesizes one over a + b.
 
 	_, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{}))
 	if err == nil {
 		t.Fatal("expected a duplicate-id build failure")
+	}
+	if !errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: ") {
+		t.Fatalf("duplicate failure lost renderer attribution: %v", err)
 	}
 	s := err.Error()
 	for _, want := range []string{
@@ -106,9 +105,6 @@ func TestRender_NonDuplicateError_DuplicatesBehindIt(t *testing.T) {
 	}
 }
 
-// TestRender_DuplicateID_Unattributable_FallsBack confirms graceful
-// fallback: when the collision is between two leaf files of one kustomization
-// (no directory producer to attribute), the raw error stands unchanged.
 func TestRender_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -122,6 +118,9 @@ func TestRender_DuplicateID_Unattributable_FallsBack(t *testing.T) {
 	_, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, ApplyIgnore: false, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{}))
 	if err == nil {
 		t.Fatal("expected a duplicate-id build failure")
+	}
+	if !errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: ") {
+		t.Fatalf("duplicate failure lost renderer attribution: %v", err)
 	}
 	s := err.Error()
 	if !strings.Contains(s, "already registered id") {
@@ -147,6 +146,9 @@ func TestRender_DuplicateID_ManyIDsNamesProducers(t *testing.T) {
 	_, _, err := testutil.RenderMaps(Render(t.Context(), newTestTreeCache(t, ""), RenderRequest{Source: localSource(t, root), Label: root, SubPath: "apps", Spec: fluxKS()}, sourcecache.RetryConfig{}))
 	if err == nil {
 		t.Fatal("expected duplicate-id failure")
+	}
+	if !errors.Is(err, manifest.ErrFlux) || !strings.HasPrefix(err.Error(), "kustomize build apps: ") {
+		t.Fatalf("duplicate failure lost renderer attribution: %v", err)
 	}
 	_, diagnostic, ok := strings.Cut(err.Error(), "duplicate resource(s) produced by multiple accumulated paths:")
 	if !ok {

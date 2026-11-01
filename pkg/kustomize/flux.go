@@ -149,8 +149,7 @@ func Render(ctx context.Context, cache *TreeCache, req RenderRequest, retry sour
 			}()
 			if err != nil {
 				built := manifest.NewError(manifest.ErrFlux, fmt.Errorf("kustomize build %s: %w", subPath, err), "")
-				// On a duplicate-resource-id failure, name every accumulated path that
-				// emits the colliding resource so a localized duplicate is locatable.
+				// Kustomize API v0.21.2 resmap/reswrangler.go Append returns an untyped formatted duplicate-ID error.
 				if strings.Contains(err.Error(), "already registered id") {
 					data, readErr := memFS.ReadFile(kfile)
 					if readErr != nil {

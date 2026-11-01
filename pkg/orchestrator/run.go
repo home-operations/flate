@@ -78,8 +78,7 @@ func (e *orchestratorExistence) Promote(ctx context.Context, reads *store.ReadSe
 		}
 	}
 	if e.o.admission != nil && reads != nil && reads.GetDeclaration(reads.ID()) != nil {
-		witness := reads.GetDeclaration(reads.ID())
-		object, artifact, err := e.o.admission.Resolve(ctx, id, nil, []manifest.BaseManifest{witness})
+		object, artifact, err := e.o.admission.Resolve(ctx, id, nil)
 		if err == nil && object != nil && artifact != nil && reads.Valid() {
 			accepted, admissionErr := e.admit(ctx, store.Child{Obj: object}, reads)
 			if admissionErr != nil {

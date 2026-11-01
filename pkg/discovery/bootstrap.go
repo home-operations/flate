@@ -3,12 +3,10 @@ package discovery
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
 	"net/url"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -22,7 +20,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/git"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
-	"github.com/home-operations/flate/pkg/source/safepath"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -34,10 +31,8 @@ type entryResolution struct {
 	object    manifest.BaseManifest
 	input     *store.SourceArtifact
 	git       *manifest.GitRepository
-	subtree   string
 	synthetic bool
 	pinned    bool
-	refs      []sourceWitness
 	artifact  *store.SourceArtifact
 	warnings  []manifest.Warning
 	viewKey   string
@@ -89,12 +84,6 @@ func (d *Session) admitBootstrapInput(ctx context.Context) (*store.SourceArtifac
 	return admitted, nil
 }
 
-type sourceWitness struct {
-	id   manifest.NamedResource
-	path string
-}
-
-// Missing roots freeze at the first no-progress point; new references alone never invalidate them.
 func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (int, error) {
 	restricted := d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0
 	if d.resolvedSources != nil {
@@ -115,16 +104,16 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 		d.aliasViews = nil
 	}
 	type sourceGroup struct {
-		refs     []sourceWitness
+		refs     []manifest.NamedResource
 		evidence store.Child
 		required bool
 	}
 	groups := map[manifest.NamedResource]sourceGroup{manifest.BootstrapSourceID: {required: true}}
-	add := func(id manifest.NamedResource, witness sourceWitness) {
+	add := func(id manifest.NamedResource, requester manifest.NamedResource) {
 		group := groups[id]
 		group.required = true
-		if witness.id != (manifest.NamedResource{}) && !slices.Contains(group.refs, witness) {
-			group.refs = append(group.refs, witness)
+		if requester != (manifest.NamedResource{}) && !slices.Contains(group.refs, requester) {
+			group.refs = append(group.refs, requester)
 		}
 		groups[id] = group
 	}
@@ -134,7 +123,7 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 		}
 		for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
 			if _, ok := obj.(entrySource); ok {
-				add(obj.Named(), sourceWitness{})
+				add(obj.Named(), manifest.NamedResource{})
 			}
 		}
 	}
@@ -146,8 +135,12 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 			group := groups[child.Obj.Named()]
 			group.evidence = child
 			groups[child.Obj.Named()] = group
-			if _, ok := child.Obj.(entrySource); ok && restricted {
-				add(child.Obj.Named(), sourceWitness{})
+			if restricted {
+				id := child.Obj.Named()
+				record, _ := d.loader.Index.Lookup(id)
+				if d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path) {
+					add(id, manifest.NamedResource{})
+				}
 			}
 		}
 		for _, child := range d.loader.PathObjects() {
@@ -156,17 +149,17 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 					continue
 				}
 			}
-			ref, path, _ := child.SourcePath()
+			ref, _, _ := child.SourcePath()
 			if allowMissing || groups[ref].evidence.Obj != nil || d.cfg.Store.GetObject(ref) != nil {
-				add(ref, sourceWitness{id: child.Identity, path: path})
+				add(ref, child.Identity)
 			}
 		}
 	}
 	if allowMissing {
-		addReferences := func(obj manifest.BaseManifest, witness sourceWitness) {
+		addReferences := func(obj manifest.BaseManifest, requester manifest.NamedResource) {
 			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 				if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
-					add(ref.NamedResource, witness)
+					add(ref.NamedResource, requester)
 				}
 			}
 		}
@@ -175,11 +168,7 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 				continue
 			}
 			for _, obj := range d.cfg.Store.ListObjects(kind.Group, kind.Kind) {
-				var witness sourceWitness
-				if _, path, hasPath := obj.SourcePath(); hasPath {
-					witness = sourceWitness{id: obj.Named(), path: path}
-				}
-				addReferences(obj, witness)
+				addReferences(obj, obj.Named())
 			}
 		}
 		if d.loader != nil {
@@ -192,7 +181,7 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 				}
 				for ref := range d.loader.References(id) {
 					if ref.Group == manifest.SourceDomain && (ref.Use == "source" || ref.Use == "artifact") {
-						add(ref.NamedResource, sourceWitness{})
+						add(ref.NamedResource, manifest.NamedResource{})
 					}
 				}
 			}
@@ -223,8 +212,8 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 				record, _ := d.loader.Index.Lookup(id)
 				independentlyAdmitted = d.loader.AdmitsRoot(d.loader.CatalogObject(id), record.Path)
 			}
-			if obj != nil && (independentlyAdmitted || slices.ContainsFunc(group.refs, func(witness sourceWitness) bool {
-				return d.cfg.Store.GetObject(witness.id) != nil
+			if obj != nil && (independentlyAdmitted || slices.ContainsFunc(group.refs, func(requester manifest.NamedResource) bool {
+				return d.cfg.Store.GetObject(requester) != nil
 			})) {
 				d.cfg.Store.AddObject(obj, group.evidence.Doc)
 			}
@@ -250,7 +239,7 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 			}
 			continue
 		}
-		if seen && previous.input == bootstrap && (obj == nil && slices.Equal(previous.refs, group.refs) || obj != nil && previous.object == obj) {
+		if seen && previous.input == bootstrap && previous.object == obj {
 			if previous.artifact != nil && obj != nil && d.cfg.Store.GetArtifact(id, store.ArtifactContent) == nil {
 				d.publishEntrySource(previous, previous.artifact)
 				if id != manifest.BootstrapSourceID {
@@ -259,7 +248,7 @@ func (d *Session) resolveEntrySources(ctx context.Context, allowMissing bool) (i
 			}
 			continue
 		}
-		candidate, err := admission.resolve(ctx, id, obj, group.refs)
+		candidate, err := admission.resolve(ctx, id, obj)
 		if err != nil {
 			return 0, err
 		}
@@ -315,20 +304,13 @@ func (d *Session) admission() *Admission {
 	return admission
 }
 
-// Resolve admits a known source or a missing source reference with its requesting witnesses.
+// Resolve admits a known source or a missing Git bootstrap reference.
 // A nil artifact leaves normal acquisition responsible for the source.
-func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, object manifest.BaseManifest, witnesses []manifest.BaseManifest) (manifest.BaseManifest, *store.SourceArtifact, error) {
+func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, object manifest.BaseManifest) (manifest.BaseManifest, *store.SourceArtifact, error) {
 	if a == nil {
 		return nil, nil, nil
 	}
-	var witnessBuf [1]sourceWitness
-	proofs := witnessBuf[:0]
-	for _, obj := range witnesses {
-		if _, path, ok := obj.SourcePath(); ok {
-			proofs = append(proofs, sourceWitness{id: obj.Named(), path: path})
-		}
-	}
-	resolved, err := a.resolve(ctx, id, object, proofs)
+	resolved, err := a.resolve(ctx, id, object)
 	if resolved.artifact != nil && len(resolved.warnings) != 0 {
 		captured := *resolved.artifact
 		captured.Warnings = append(slices.Clone(captured.Warnings), resolved.warnings...)
@@ -337,9 +319,9 @@ func (a *Admission) Resolve(ctx context.Context, id manifest.NamedResource, obje
 	return resolved.object, resolved.artifact, err
 }
 
-func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest, witnesses []sourceWitness) (entryResolution, error) {
+func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj manifest.BaseManifest) (entryResolution, error) {
 	bootstrap := a.input
-	candidate := entryResolution{object: obj, input: bootstrap, subtree: ".", synthetic: obj == nil, refs: slices.Clone(witnesses)}
+	candidate := entryResolution{object: obj, input: bootstrap, synthetic: obj == nil}
 	if obj == nil {
 		obj, _ = id.BindLocal(bootstrap.LocalPath)
 	}
@@ -349,24 +331,10 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 	}
 	alias, descriptor := behavior.BootstrapAlias(bootstrap.LocalPath)
 	candidate.git = descriptor
-	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID && descriptor != nil && (*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
-	if id != manifest.BootstrapSourceID {
-		if !candidate.synthetic {
-			if descriptor == nil {
-				return candidate, nil
-			}
-			if _, match := a.remotes[normalizeGitURL(descriptor.URL)]; !match {
-				return candidate, nil
-			}
-		} else if descriptor == nil {
-			witnesses = slices.Clone(witnesses)
-			slices.SortFunc(witnesses, func(a, b sourceWitness) int { return a.id.Compare(b.id) })
-			var err error
-			candidate.subtree, err = a.bootstrapArtifactRoot(ctx, witnesses)
-			if err != nil || candidate.subtree == "" {
-				return candidate, err
-			}
-			alias, _ = behavior.BootstrapAlias(filepath.Join(bootstrap.LocalPath, candidate.subtree))
+	candidate.pinned = !candidate.synthetic && id != manifest.BootstrapSourceID && (*manifest.GitRepositoryRef)(descriptor.Reference).String() != ""
+	if id != manifest.BootstrapSourceID && !candidate.synthetic {
+		if _, match := a.remotes[normalizeGitURL(descriptor.URL)]; !match {
+			return candidate, nil
 		}
 	}
 	if candidate.synthetic {
@@ -403,49 +371,9 @@ func (a *Admission) resolve(ctx context.Context, id manifest.NamedResource, obj 
 	return candidate, err
 }
 
-func (a *Admission) bootstrapArtifactRoot(ctx context.Context, witnesses []sourceWitness) (string, error) {
-	bootstrap := a.input
-	scan, err := filepath.Rel(bootstrap.LocalPath, a.path)
-	if err != nil {
-		return "", err
-	}
-	if !safepath.Contains(bootstrap.LocalPath, a.path) {
-		return "", nil
-	}
-	var selected string
-	for candidate := filepath.ToSlash(scan); ; candidate = path.Dir(candidate) {
-		valid := true
-		for _, witness := range witnesses {
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-			authoredPath := witness.path
-			name := path.Join(candidate, manifest.NormalizeClaimBase(authoredPath))
-			if !safepath.Contains(filepath.Join(bootstrap.LocalPath, candidate), filepath.Join(bootstrap.LocalPath, name)) {
-				valid = false
-				break
-			}
-			info, err := fs.Stat(bootstrap.FS, name)
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return "", manifest.NewError(manifest.ErrInput, fmt.Errorf("inspect bootstrap artifact root: %w", err), "")
-			}
-			if err != nil || !info.IsDir() {
-				valid = false
-				break
-			}
-		}
-		if valid {
-			selected = candidate
-		}
-		if candidate == "." {
-			return selected, nil
-		}
-	}
-}
-
 // Mutable aliases keep empty keys and source-qualified mounts; their input is immutable.
 func (a *Admission) entrySourceView(ctx context.Context, candidate entryResolution) (*store.SourceArtifact, string, error) {
-	bootstrap, subtree := candidate.input, candidate.subtree
+	bootstrap := candidate.input
 	repoRoot := bootstrap.LocalPath
 	ignore := ""
 	var sparse []string
@@ -457,11 +385,11 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 		sparse, recurse = repo.SparseCheckout, repo.RecurseSubmodules
 	}
 	label, viewKey := gittree.Label(gittree.LabelOptions{Root: repoRoot, Mode: gittree.Source, Source: candidate.object.Named(), Content: struct {
-		Root, Subtree, Origin, Key, Content, Digest string
-		Ignore                                      string
-		Sparse                                      []string `json:",omitempty"`
-		Recurse                                     bool
-	}{repoRoot, subtree, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}})
+		Root, Origin, Key, Content, Digest string
+		Ignore                             string
+		Sparse                             []string `json:",omitempty"`
+		Recurse                            bool
+	}{repoRoot, bootstrap.LocalRoot, bootstrap.Key, bootstrap.Content, bootstrap.Digest, ignore, sparse, recurse}})
 	var input fs.FS
 	var identity string
 	var err error
@@ -469,25 +397,19 @@ func (a *Admission) entrySourceView(ctx context.Context, candidate entryResoluti
 	if cached != nil {
 		input, identity, err = cached.FS, cached.Content, ctx.Err()
 	} else {
-		current := bootstrap.FS
-		if subtree != "." {
-			current, err = gittree.Sub(current, subtree)
-		}
-		if err == nil {
-			input, identity, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: current, CurrentContent: bootstrap.Content, Content: struct{ Subtree string }{subtree}, Ignore: ignore, Sparse: sparse})
-		}
+		input, identity, err = gittree.New(ctx, nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: bootstrap.FS, CurrentContent: bootstrap.Content, Ignore: ignore, Sparse: sparse})
 	}
 	if err != nil {
 		return nil, "", err
 	}
 	id := candidate.object.Named()
 	artifact := *bootstrap
-	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+filepath.Join(repoRoot, subtree), input
+	artifact.Kind, artifact.URL, artifact.FS = id.Kind, "file://"+repoRoot, input
 	artifact.ContentFingerprint = gittree.ContentFingerprint
 	artifact.InputAlias, artifact.Key, artifact.Content = true, "", identity
 	artifact.Warnings = nil
 	artifact.LocalPath = label
-	artifact.LocalRoot = filepath.Join(repoRoot, subtree)
+	artifact.LocalRoot = repoRoot
 	return &artifact, viewKey, nil
 }
 

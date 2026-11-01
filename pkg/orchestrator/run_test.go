@@ -12,6 +12,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/controllers/kustomization"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -214,6 +215,63 @@ func TestOrchestratorExistence_FileIndexNamespaceConvention(t *testing.T) {
 			id.Namespace = tc.requested
 			if got := e.IsFileIndexed(id); got != tc.want {
 				t.Errorf("IsFileIndexed(%s) = %v, want %v", id, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOrchestratorExistence_MissingBootstrapSources(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, kind                     string
+		absentDeclaration, stale, want bool
+	}{
+		{name: "oci", kind: manifest.KindOCIRepository},
+		{name: "helm", kind: manifest.KindHelmRepository},
+		{name: "bucket", kind: manifest.KindBucket},
+		{name: "git", kind: manifest.KindGitRepository, want: true},
+		{name: "missing requesting declaration", kind: manifest.KindGitRepository, absentDeclaration: true},
+		{name: "invalid reads", kind: manifest.KindGitRepository, stale: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "apps/decoy", "working tree")
+			st := store.New()
+			result, err := discovery.Run(t.Context(), discovery.Config{Path: root, Store: st})
+			assert.NoError(t, err)
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps"}
+			if !tc.absentDeclaration {
+				st.AddObject(consumer)
+			}
+			var reads store.ReadSet
+			reads.Init(st, consumer.Named(), nil)
+			defer reads.Retire()
+			if tc.stale {
+				marker := &manifest.ConfigMap{Name: "marker", Namespace: "apps"}
+				reads.GetObject(marker.Named())
+				st.AddObject(marker)
+				if reads.Valid() {
+					t.Fatal("fixture reads remain valid")
+				}
+			}
+			controller := base.New(st, nil)
+			controller.Configure(base.Options{})
+			o := &Orchestrator{store: st, index: result.Index, admission: result.Admission, ksc: &kustomization.Controller{Controller: controller}}
+			e := &orchestratorExistence{DiscoveryIndex: result.Index, o: o}
+			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: tc.kind, Namespace: "sources", Name: "missing"}
+			promoted, err := e.Promote(t.Context(), &reads, id)
+			assert.NoError(t, err)
+			assert.Equal(t, promoted, tc.want)
+			if !tc.want {
+				if st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil {
+					t.Fatal("unresolved source was published")
+				}
+				if status, ok := st.GetStatus(id); ok && status.Status == store.StatusReady {
+					t.Fatal("unresolved source became ready")
+				}
+			} else if st.GetObject(id) == nil || st.GetArtifact(id, store.ArtifactContent) == nil {
+				t.Fatal("Git control did not publish its alias")
 			}
 		})
 	}

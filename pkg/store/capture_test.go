@@ -1024,7 +1024,6 @@ func TestRequire_RetainsPredicates(t *testing.T) {
 				{NamedResource: obj.Named(), ReadyExpr: new("")},
 				{NamedResource: obj.Named(), ReadyExpr: new("true")},
 				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true},
-				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true},
 				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, ChartSource: true},
 				{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, ArtifactOnly: true},
 			}
@@ -1098,7 +1097,7 @@ func TestRequire_CapturedIdentityDuringAdmission(t *testing.T) {
 	reads.Init(s, ownerID("reader"), nil)
 	defer reads.Retire()
 	assert.Equal(t, reads.GetObject(obj.Named()), manifest.BaseManifest(nil))
-	ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true, ChartSource: true, ArtifactOnly: true}
+	ref := manifest.DependencyRef{NamedResource: obj.Named(), ReadyExpr: new("true"), Artifact: true, ChartSource: true, ArtifactOnly: true}
 	start := make(chan struct{})
 	var workers sync.WaitGroup
 	workers.Go(func() {

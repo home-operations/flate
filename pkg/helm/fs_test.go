@@ -19,14 +19,11 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/discovery"
-	"github.com/home-operations/flate/pkg/kustomize"
 	"github.com/home-operations/flate/pkg/manifest"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
 	"github.com/home-operations/flate/pkg/source/gitrepo"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
-	"github.com/home-operations/flate/pkg/task"
 	"helm.sh/helm/v4/pkg/chart/loader/archive"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
@@ -815,59 +812,4 @@ func TestLoadFSChart_AutomaticInputErrors(t *testing.T) {
 			assert.Equal(t, len(cli.chartCache), 1)
 		})
 	}
-}
-
-func TestLoadChart_AliasArchiveLayout(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	files := map[string]string{
-		"cluster/kustomization.yaml": "resources: [ks.yaml, hr.yaml]\n",
-		"cluster/ks.yaml":            testutil.KustomizationYAML("apps", "flux-system", "  path: ./apps\n  sourceRef: {kind: OCIRepository, name: automatic}\n"),
-		"apps/kustomization.yaml":    "resources: []\n",
-		"cluster/hr.yaml": `apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
-metadata: {name: demo, namespace: apps}
-spec:
-  chartRef: {kind: OCIRepository, name: automatic, namespace: flux-system}
-`,
-		"demo/Chart.yaml":         "apiVersion: v2\nname: demo\nversion: 1.0.0\n",
-		"demo/.helmignore":        "templates/.hidden\n",
-		"demo/templates/.hidden":  "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: hidden}\n",
-		"other/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n",
-	}
-	for name, data := range files {
-		testutil.WriteFile(t, root, name, data)
-		assert.NoError(t, os.Chtimes(filepath.Join(root, filepath.FromSlash(name)), time.Unix(0, 0), time.Unix(0, 0)))
-	}
-	testutil.GitInit(t, root)
-	want, err := loader.LoadArchive(bytes.NewReader(testutil.TarGz(t, files, 0o644, gzip.DefaultCompression)))
-	assert.NoError(t, err)
-	owner := cachetest.New(t, "", sourcecache.New)
-	trees := kustomize.NewTreeCache(owner, nil, task.NewBounded(2))
-	t.Cleanup(trees.Close)
-	st := store.New()
-	discovered, err := discovery.Run(t.Context(), discovery.Config{Trees: trees, Path: filepath.Join(root, "cluster"), RepoRoot: root, Store: st})
-	assert.NoError(t, err)
-	id := testutil.HelmReleaseID("apps", "demo")
-	assert.Equal(t, st.GetObject(id) == nil, true)
-	record, known := discovered.Index.Lookup(id)
-	hr, ok := record.Declaration.(*manifest.HelmRelease)
-	if !known || !ok {
-		t.Fatalf("HelmRelease declaration missing from discovery index: %+v", record)
-	}
-	assert.Equal(t, hr.TracksDigest(), true)
-	artifact := st.GetArtifact(hr.ChartSource(), store.ArtifactContent).(*store.SourceArtifact)
-	assert.Equal(t, artifact.InputAlias, true)
-	assert.Equal(t, artifact.Revision, "")
-	cli := NewClient(owner)
-	loaded, err := loadDecodedChart(t.Context(), cli, hr, NewSources(st))
-	assert.NoError(t, err)
-	if diff := cmp.Diff(want, loaded.chart, cmp.AllowUnexported(chart.Chart{}), cmpopts.IgnoreFields(chart.Chart{}, "parent")); diff != "" {
-		t.Fatalf("alias chart (-want +got):\n%s", diff)
-	}
-	warm, err := loadDecodedChart(t.Context(), cli, hr, NewSources(st))
-	assert.NoError(t, err)
-	assert.Equal(t, warm.chart == loaded.chart, true)
-	assert.Equal(t, warm.fingerprint, loaded.fingerprint)
-	assert.Equal(t, st.GetArtifact(hr.ChartSource(), store.ArtifactContent), store.Artifact(artifact))
 }

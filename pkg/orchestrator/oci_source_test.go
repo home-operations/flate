@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -102,8 +103,14 @@ spec:
 				if name, _ := manifest.DocMetadata(outputByParent(res.Manifests)[id][0]); name != "artifact-output" {
 					t.Fatalf("rendered %q from the working tree instead of the OCI artifact", name)
 				}
-			} else if f.fetched.Load() || status.Status != store.StatusFailed || !strings.Contains(status.Message, "unknown OCI artifact root") || len(status.BlockedBy()) != 0 {
-				t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
+			} else {
+				missing := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "app"}
+				if f.fetched.Load() || status.Status != store.StatusFailed || !slices.Contains(status.BlockedBy(), missing) {
+					t.Fatalf("fetched=%t status=%+v", f.fetched.Load(), status)
+				}
+				if len(outputByParent(res.Manifests)[id]) != 0 {
+					t.Fatal("missing source emitted consumer payload")
+				}
 			}
 		})
 	}

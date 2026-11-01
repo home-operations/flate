@@ -80,9 +80,6 @@ func (w *Waiter) Classify(ctx context.Context, dep manifest.DependencyRef, level
 				continue
 			}
 		}
-		if dep.UnknownArtifactRoot && level >= manifest.DrainCascade && obj == nil && w.Store.GetArtifact(id, store.ArtifactContent) == nil {
-			return Classification{Err: manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("source %s has an unknown OCI artifact root", manifest.DiagnosticFor(id, obj)))}
-		}
 		if present && ready {
 			return w.artifactReady(dep, level)
 		}

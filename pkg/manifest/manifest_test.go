@@ -2226,38 +2226,31 @@ func TestBootstrapAlias_SourceKinds(t *testing.T) {
 	ignore := "excluded/"
 	ref := &sourcev1.GitRepositoryRef{Tag: "v1"}
 	git := &GitRepository{Name: "entry", Namespace: "other", URL: "https://fixture.invalid/repo", Reference: ref, Ignore: &ignore, SparseCheckout: []string{"apps"}, RecurseSubmodules: true}
-	oci := &OCIRepository{Name: "entry", Namespace: "other", URL: "oci://fixture.invalid/repo", Ignore: &ignore,
-		Verify: &sourcev1.OCIRepositoryVerification{}, Labels: map[string]string{"team": "apps"}, Annotations: map[string]string{"input": "authored"}}
-	bucket := &Bucket{Name: "entry", Namespace: "other", Endpoint: "fixture.invalid", BucketName: "authored"}
-	for _, obj := range []interface {
-		BaseManifest
-		BootstrapAlias(string) (BaseManifest, *GitRepository)
-	}{git, oci, bucket} {
+	for _, obj := range []BaseManifest{git, &OCIRepository{}, &Bucket{}, &HelmRepository{}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
 			t.Parallel()
+			behavior, ok := obj.(interface {
+				BootstrapAlias(string) (BaseManifest, *GitRepository)
+			})
+			if ok != (obj == git) {
+				t.Fatalf("bootstrap capability on %T", obj)
+			}
+			if !ok {
+				return
+			}
 			before := Fingerprint(obj)
-			alias, descriptor := obj.BootstrapAlias("/repo/subtree")
+			alias, descriptor := behavior.BootstrapAlias("/repo")
 			assert.Equal(t, alias.Named(), obj.Named())
 			if alias == obj || Fingerprint(obj) != before {
 				t.Fatal("alias mutated or retained receiver")
 			}
-			switch a := alias.(type) {
-			case *GitRepository:
-				if descriptor != git || a.URL != "file:///repo/subtree" || a.Reference != ref || a.Ignore != &ignore || !a.RecurseSubmodules || len(a.SparseCheckout) != 1 {
-					t.Fatalf("Git policy/view: %+v, %p", a, descriptor)
-				}
-			case *OCIRepository:
-				if descriptor != nil || a.URL != "file:///repo/subtree" || a.Ignore != &ignore {
-					t.Fatalf("OCI policy/view: %+v", a)
-				}
-				assert.Equal(t, a.Verify.Provider, "cosign")
-				assert.Equal(t, a.Labels["team"], "apps")
-				assert.Equal(t, a.Annotations["input"], "authored")
-			case *Bucket:
-				if descriptor != nil || a.Endpoint != "file:///repo/subtree" || a.BucketName != a.Name {
-					t.Fatalf("bucket policy/view: %+v", a)
-				}
-			}
+			a := alias.(*GitRepository)
+			assert.Equal(t, descriptor, git)
+			assert.Equal(t, a.URL, "file:///repo")
+			assert.Equal(t, a.Reference, ref)
+			assert.Equal(t, a.Ignore, &ignore)
+			assert.Equal(t, a.RecurseSubmodules, true)
+			assert.Diff(t, a.SparseCheckout, []string{"apps"})
 		})
 	}
 }

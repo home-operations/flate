@@ -200,15 +200,6 @@ func (o *OCIRepository) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindOCIRepository].Group, Kind: KindOCIRepository, Namespace: o.Namespace, Name: o.Name}
 }
 
-// BootstrapAlias returns a local copy; a nil Git descriptor selects a derived frozen root.
-func (o *OCIRepository) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
-	spec := o.OCIRepositorySpec
-	spec.URL = "file://" + root
-	out := NewOCIRepository(sourcev1.OCIRepository{Name: o.Name, Namespace: o.Namespace, Labels: o.Labels, Annotations: o.Annotations, Spec: spec})
-	out.diagnosticOwner, out.diagnosticPath, out.hasDiagnostic = o.diagnosticOwner, o.diagnosticPath, o.hasDiagnostic
-	return out, nil
-}
-
 // Content returns the source inputs that define the selected OCI content.
 func (o *OCIRepository) Content(ref sourcev1.OCIRepositoryRef) any {
 	var auth []NamedResource

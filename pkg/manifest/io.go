@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	yaml "go.yaml.in/yaml/v4"
-	"go.yaml.in/yaml/v4/plugin/limit"
+	"go.yaml.in/yaml/v4/plugin/loaderlimits"
 )
 
 // yaml.v4 reuses non-nil maps; only unretained documents may return here.
@@ -59,10 +59,10 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 	stream := &documentStream{Reader: r}
 	dec := yaml.NewDecoder(stream)
 	var priorAliases, priorConstructs, lastAliases, lastConstructs int
-	guard := limit.New()
+	guard := loaderlimits.New()
 	// Node.Load creates a constructor per document; the decoder's alias policy
 	// requires cumulative stream counts, including skipped documents.
-	constructionOption := yaml.WithPlugin(limit.New(limit.AliasFunc(func(aliases, constructs int) error {
+	constructionOption := yaml.WithPlugin(loaderlimits.New(loaderlimits.AliasFunc(func(aliases, constructs int) error {
 		if constructs == 1 {
 			priorAliases += lastAliases
 			priorConstructs += lastConstructs

@@ -520,7 +520,7 @@ func TestResolveExplicit_FetchCancellation(t *testing.T) {
 			dir := historylessCheckout(t, scheme+"://origin/repo", "a.yaml", "current")
 			location, err := gitrepo.Locate(t.Context(), dir, "")
 			assert.NoError(t, err)
-			_, err = resolveExplicit(t.Context(), location, "main", cachetest.New(t, "", sourcecache.New))
+			_, err = (selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New)}).resolveExplicit(t.Context(), location, "main")
 			assert.Equal(t, errors.Is(err, wrapped), true)
 			assert.Equal(t, errors.Is(err, tc.cause), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), tc.input)

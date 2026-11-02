@@ -60,13 +60,18 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 	if repo == nil {
 		return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("--path %q is not inside a git working tree; pass --path-orig=<dir> or --base=<rev> with a git checkout", path))
 	}
+	repo, err = git.PlainOpenWithOptions(location.RepositoryRoot, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("baseline: open working tree: %w", err), "")
+	}
 	root := location.ContentRoot
 	input, err := admitLocation(ctx, location)
 	if err != nil {
 		return nil, err
 	}
 	current := input.FS.(*gittree.FS)
-	r, err := resolve(ctx, location, base, owner)
+	s := selection{repo: repo, current: current, owner: owner}
+	r, err := s.resolve(ctx, location, base)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +80,8 @@ func AutoResolve(ctx context.Context, path, base string, owner *sourcecache.Cach
 		Root    string
 		Remotes []string
 	}{root, urls}
-	before, selected, identity, warnings, err := selectChanges(ctx, selection{repo: repo, base: r, current: current, owner: owner, content: content})
+	s.base, s.content = r, content
+	before, selected, identity, warnings, err := selectChanges(ctx, s)
 	input.Warnings = append(slices.Clone(input.Warnings), warnings...)
 	var baseWarnings []manifest.Warning
 	if before != nil {
@@ -155,10 +161,10 @@ func ResolvePaths(ctx context.Context, current, original string) (*Result, error
 	return &Result{Source: input, BaseInput: baseInput, ScanPath: after.ScanPath, BaseScanPath: before.ScanPath, SelfURLs: urls}, nil
 }
 
-func resolve(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
-	repo := location.Repository
+func (s selection) resolve(ctx context.Context, location *gitrepo.Location, base string) (*resolution, error) {
+	repo := s.repo
 	if base != "" {
-		return resolveExplicit(ctx, location, base, owner)
+		return s.resolveExplicit(ctx, location, base)
 	}
 	head, err := repo.Head()
 	if err != nil {
@@ -205,8 +211,8 @@ func resolve(ctx context.Context, location *gitrepo.Location, base string, owner
 			"and origin/{main,master} are absent; pass --base=<ref> or --path-orig=<dir>")
 }
 
-func resolveExplicit(ctx context.Context, location *gitrepo.Location, base string, owner *sourcecache.Cache) (*resolution, error) {
-	repo := location.Repository
+func (s selection) resolveExplicit(ctx context.Context, location *gitrepo.Location, base string) (*resolution, error) {
+	repo := s.repo
 	h, err := repo.ResolveRevision(plumbing.Revision(base))
 	if err == nil {
 		return &resolution{Hash: *h, Source: "explicit --base=" + base, Repo: repo}, nil
@@ -219,7 +225,7 @@ func resolveExplicit(ctx context.Context, location *gitrepo.Location, base strin
 	if !ok {
 		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("could not resolve --base=%q: not found locally or as origin/%s, and there is no origin remote to fetch it from: %w", base, base, err), "")
 	}
-	r, err := fetchBase(ctx, url, base, owner)
+	r, err := fetchBase(ctx, url, base, s.owner)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err

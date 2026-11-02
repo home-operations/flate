@@ -19,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/memory"
 
 	"github.com/home-operations/flate/internal/admissiontest"
@@ -416,6 +417,74 @@ func TestSelection_AcquireBaseNoOrigin(t *testing.T) {
 	assert.Equal(t, strings.Contains(err.Error(), hash.String()), true)
 	assert.Equal(t, strings.Contains(err.Error(), "input error"), false)
 	assert.Equal(t, strings.Contains(err.Error(), "flux error"), false)
+}
+
+func TestSelection_SharedIndexInitialization(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("shared index unavailable")
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "nil"},
+		{name: "wrapped_object_not_found", err: fmt.Errorf("shared index: %w", plumbing.ErrObjectNotFound)},
+		{name: "unexpected", err: cause},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			pin := initRepoWithFile(t, root, "value.txt", "before")
+			writeAndCommit(t, root, "value.txt", "after")
+			testutil.WriteFile(t, root, ".git/index", "invalid index")
+			location, err := gitrepo.Locate(t.Context(), root, "")
+			assert.NoError(t, err)
+			input, err := admitLocation(t.Context(), location)
+			assert.NoError(t, err)
+			shared := &sharedIndexStorage{Storer: location.Repository.Storer, err: tc.err}
+			location.Repository.Storer = shared
+			repo := openHelper(t, root)
+			worktree, err := repo.Worktree()
+			assert.NoError(t, err)
+			_, statusErr := worktree.Status()
+			if statusErr == nil {
+				t.Fatal("malformed index did not fail Worktree.Status")
+			}
+			base, changes, identity, warnings, err := selectChanges(t.Context(), selection{
+				repo: repo, base: &resolution{Repo: repo, Hash: pin}, current: input.FS.(*gittree.FS),
+			})
+			assert.Diff(t, shared.probes, []plumbing.Hash{plumbing.ZeroHash})
+			assert.Diff(t, warnings, []manifest.Warning{{Category: manifest.WarnBaselineStatusUnavailable,
+				Message: "Git status unavailable; comparing checkout conservatively", Count: 1, Detail: []string{statusErr.Error()}}})
+			if errors.Is(tc.err, cause) {
+				if !errors.Is(err, cause) || base != nil || changes != nil || identity != "" {
+					t.Fatalf("shared index failure published inputs or lost its cause: base=%v changes=%v identity=%q err=%v", base, changes, identity, err)
+				}
+				return
+			}
+			assert.NoError(t, err)
+			if base == nil || changes == nil || identity == "" {
+				t.Fatalf("shared index initialization did not publish inputs: base=%v changes=%v identity=%q", base, changes, identity)
+			}
+			assert.Diff(t, changes.Paths(), []string{"value.txt"})
+			before, err := fs.ReadFile(base, "value.txt")
+			assert.NoError(t, err)
+			assert.Equal(t, string(before), "before")
+			after, err := fs.ReadFile(input.FS, "value.txt")
+			assert.NoError(t, err)
+			assert.Equal(t, string(after), "after")
+		})
+	}
+}
+
+type sharedIndexStorage struct {
+	storage.Storer
+	err    error
+	probes []plumbing.Hash
+}
+
+func (s *sharedIndexStorage) HasEncodedObject(hash plumbing.Hash) error {
+	s.probes = append(s.probes, hash)
+	return s.err
 }
 
 func TestAutoResolve_StatusWarningSurvivesFailure(t *testing.T) {

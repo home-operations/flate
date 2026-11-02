@@ -55,6 +55,11 @@ func selectChanges(ctx context.Context, s selection) (*gittree.FS, *change.Set, 
 	if s.base.backing != nil {
 		backing = s.base.backing
 	}
+	s.repo.Storer.(*filesystem.Storage).Reindex()
+	// go-git initializes its pack index without synchronization, before readers share it.
+	if err := s.current.Location().Repository.Storer.HasEncodedObject(plumbing.ZeroHash); err != nil && !errors.Is(err, plumbing.ErrObjectNotFound) {
+		return nil, nil, "", warnings, err
+	}
 	baseline, identity, err := gittree.New(ctx, backing, s.base.Hash, gittree.ViewOptions{Location: s.current.Location(), Content: s.content, Mode: gittree.Direct, Current: s.current, Changes: routing})
 	if err != nil {
 		return baseline, nil, "", warnings, err

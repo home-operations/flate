@@ -3,15 +3,14 @@ package kustomize
 import (
 	"encoding/json"
 	"fmt"
-	"math"
-	"slices"
-	"strings"
 
 	yaml "go.yaml.in/yaml/v3"
 	sigsyaml "sigs.k8s.io/yaml"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/store"
+	"github.com/home-operations/flate/pkg/values"
 )
 
 // Shape applies producer metadata and effective substitutions to private decoded documents.
@@ -41,10 +40,9 @@ func Shape(ks *manifest.Kustomization, docs []manifest.DocOccurrence, strict boo
 // Only expansion/escape text and scalars changed by JSON decoding need a
 // round trip. Both map keys and values must be inspected.
 func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map[string]any, error) {
-	if !needsSubstitution(doc) {
+	if !values.NeedsSubstitution(doc) {
 		return doc, nil
 	}
-	// Direct YAML marshaling avoids an intermediate JSON decode with the same YAML 1.1 emitter.
 	raw, err := yaml.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("substitute: marshal doc: %w", err)
@@ -65,38 +63,34 @@ func substituteDoc(doc map[string]any, vars map[string]string, strict bool) (map
 	return next, nil
 }
 
-// String-only walkers cannot detect scalars changed or rejected by JSON decoding.
-func needsSubstitution(v any) bool {
-	switch v := v.(type) {
-	case string:
-		return hasSubstitution(v)
-	case float64:
-		return math.IsNaN(v) || math.IsInf(v, 0) || v == 0 && math.Signbit(v)
-	case int:
-		return v < -(1<<53) || v > 1<<53
-	case uint64:
-		return v > 1<<53
-	case map[string]any:
-		for k, vv := range v {
-			if hasSubstitution(k) || needsSubstitution(vv) {
-				return true
-			}
-		}
-	case []any:
-		return slices.ContainsFunc(v, needsSubstitution)
-	}
-	return false
+type renderContent struct {
+	Manifest     any
+	Dependencies values.DependencySubstitutions
 }
 
-func hasSubstitution(s string) bool {
-	for {
-		i := strings.IndexByte(s, '$')
-		if i < 0 || i+1 == len(s) {
-			return false
+// Content projects validated raw documents and effective variables into immutable final inputs.
+//
+//nolint:ireturn // Fingerprint accepts type-specific render identities.
+func (r RenderRequest) Content(docs []manifest.DocOccurrence) any {
+	ks := r.Spec
+	ks.EmissionPolicy().Stamp(docs)
+	active := ks.PostBuild != nil && len(ks.PostBuild.Substitute) > 0 || ks.SubstituteStrategy() == kustomizev1.SubstituteStrategyAlways
+	names := values.SubstitutionNames(docs, active)
+	if names == nil {
+		names = make(map[string]struct{}, len(ks.PostBuild.Substitute))
+		for name := range ks.PostBuild.Substitute {
+			names[name] = struct{}{}
 		}
-		if s[i+1] == '{' || s[i+1] == '$' {
-			return true
-		}
-		s = s[i+1:]
 	}
+	source := struct {
+		Input        store.ArtifactInput
+		ApplyIgnore  bool
+		Output       string
+		Wipe, Strict bool
+		Skip         []string
+	}{
+		r.Source.Input(store.ArtifactContent), r.ApplyIgnore, manifest.Fingerprint(docs),
+		r.WipeSecrets, r.StrictSubstitutions, r.SkipKinds,
+	}
+	return renderContent{ks.Content(source, names, active), r.DependencySubstitutions}
 }

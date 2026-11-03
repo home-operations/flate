@@ -40,7 +40,7 @@ func TestDiagnosticFor_EntryContext(t *testing.T) {
 			if diff := cmp.Diff(before, after); diff != "" {
 				t.Fatal(diff)
 			}
-			if Fingerprint(entry.Content("source")) != Fingerprint(plain.Content("source")) {
+			if Fingerprint(entry.Content("source", nil, false)) != Fingerprint(plain.Content("source", nil, false)) {
 				t.Fatal("display context entered render identity")
 			}
 			raw, err := json.Marshal(entry)

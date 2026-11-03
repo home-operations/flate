@@ -24,6 +24,7 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -286,7 +287,12 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 				}
 				indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
 			}
-			changes, err := res.Changes.WithReaders(t.Context(), indexes[0], indexes[1])
+			changes, err := res.Changes.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
 				_, directIdentity, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS})

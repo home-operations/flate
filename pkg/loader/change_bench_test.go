@@ -11,6 +11,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/filtertest"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -251,7 +252,12 @@ func oneSidedSuppliers(b *testing.B, count int) (*change.Set, *store.Store, *man
 		observations[0].Visibility = append(observations[0].Visibility, visible)
 		observations[1].Visibility = append(observations[1].Visibility, empty)
 	}
-	changes, err = changes.WithReaders(b.Context(), &observations[0], &observations[1])
+	changes, err = changes.WithReaders(
+		b.Context(),
+		&observations[0],
+		&observations[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -321,7 +327,7 @@ func BenchmarkCollectInputs_LargeFile(b *testing.B) {
 	}
 	visible := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"input.yaml"}}}}}
 	empty := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}}}
-	resolved, err := set.WithReaders(b.Context(), empty, visible)
+	resolved, err := set.WithReaders(b.Context(), empty, visible, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	if err != nil {
 		b.Fatal(err)
 	}

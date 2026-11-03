@@ -88,3 +88,23 @@ func TestOutputEqual_OwnershipLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestOutputEqual_ReleaseEmissionMetadata(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"annotations", "labels", "namespace", "unknown"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			owner := &HelmRelease{Name: "app", Namespace: "apps"}
+			docs := [2]map[string]any{}
+			for side := range docs {
+				docs[side] = map[string]any{
+					"metadata": map[string]any{field: fmt.Sprint(side)},
+					"spec":     map[string]any{"values": map[string]any{"value": "same"}},
+				}
+			}
+			equal, err := OutputEqual(owner, owner, docs)
+			assert.NoError(t, err)
+			assert.Equal(t, equal, field == "annotations" || field == "labels")
+		})
+	}
+}

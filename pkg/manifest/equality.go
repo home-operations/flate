@@ -91,7 +91,7 @@ func MapEqualExcept[V any](a, b map[string]V, excluded func(string) bool) bool {
 	return true
 }
 
-// OutputEqual compares authoritative desired documents after removing known reconciliation-only leaves.
+// OutputEqual compares authoritative desired documents after removing type-owned leaves that do not affect rendering.
 // Unknown fields remain significant; supplied documents preserve fields outside typed specs.
 func OutputEqual(a, b BaseManifest, documents [2]map[string]any) (bool, error) {
 	if a == nil || b == nil || a.Named() != b.Named() {
@@ -111,10 +111,9 @@ func OutputEqual(a, b BaseManifest, documents [2]map[string]any) (bool, error) {
 			}
 		}
 		documents[side] = DeepCopyMap(doc)
-		spec, _ := documents[side]["spec"].(map[string]any)
 		if ok {
 			for field := range strings.FieldsSeq(policy.outputFields()) {
-				removeOutputField(spec, strings.Split(field, "."))
+				removeOutputField(documents[side], strings.Split(field, "."))
 			}
 		}
 		documents[side] = WithoutOwnershipLabels(documents[side])

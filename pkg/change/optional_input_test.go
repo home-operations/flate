@@ -15,6 +15,7 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -62,13 +63,18 @@ func TestOptionalInput_CrossSourcePreparedStores(t *testing.T) {
 			}
 		}
 	}
-	delta, err = delta.WithReaders(t.Context(), observations[0], observations[1])
+	delta, err = delta.WithReaders(
+		t.Context(),
+		observations[0],
+		observations[1],
+		[2]map[manifest.NamedResource]inputprojection.Projection{},
+	)
 	assert.NoError(t, err)
 	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: delta, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), true)
 	assert.Equal(t, admissiontest.Filter(t, admissiontest.Config{Changes: bootstrap, Index: nil, Inventory: probe, Root: selected[0].LocalPath}).ShouldReconcile(input), false)
 	changes, err := change.Qualify(t.Context(), bootstrap, stores[0], stores[1])
 	assert.NoError(t, err)
-	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
+	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	for side, st := range stores {
 		filter := admissiontest.Filter(t, admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: st, Root: roots[side]})
@@ -352,7 +358,7 @@ func optionalInputFilters(t *testing.T, inputs [2]*store.SourceArtifact, changes
 		indexes[side] = result.Index
 	}
 	var err error
-	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
+	changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	for side, input := range inputs {
 		l := admissiontest.New(t, admissiontest.Config{Changes: changes, Index: indexes[side], Inventory: stores[side], Root: input.LocalPath})

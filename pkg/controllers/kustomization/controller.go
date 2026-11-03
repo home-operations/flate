@@ -122,51 +122,43 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err != nil {
 		return err
 	}
-	sourceContent := struct {
-		Input       store.ArtifactInput
-		ApplyIgnore bool
-		Output      []manifest.DocOccurrence
-	}{Input: source.Input(store.ArtifactContent), ApplyIgnore: applyIgnore}
 	var attempt store.Emission
 	defer attempt.Finish()
-	var fp string
-	if source.Content != "" || c.restricted {
-		var handled bool
-		var content any
-		if source.Content != "" {
-			content = ks.Content(sourceContent)
-		}
-		fp, handled, err = c.run.FingerprintDedup(ctx, id, content, &attempt)
+	if c.restricted {
+		_, handled, err := c.run.FingerprintDedup(ctx, id, nil, &attempt)
 		if handled || err != nil {
-			if err != nil {
-				return err
-			}
-			return c.recordRender(ctx, ks, source, &attempt)
+			return err
 		}
 	} else if err := c.run.Checkpoint(); err != nil {
 		return err
 	}
 
 	_, _, attempt = c.run.Reads.GetEmission(id)
-	docs, receipt, err := kustomize.Render(ctx, c.Trees, kustomize.RenderRequest{
+	request := kustomize.RenderRequest{
 		Source: source, ApplyIgnore: applyIgnore, SubPath: ks.Path, Spec: ks, HeldSlot: c.Tasks,
 		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
-	}, c.retry)
+	}
+	docs, receipt, err := kustomize.Render(ctx, c.Trees, request, c.retry)
 	if err != nil {
 		return err
 	}
-	if source.Content == "" {
-		// Mutable reads MUST be validated before replay can suppress readiness transitions.
-		var handled bool
-		sourceContent.Output = docs
-		fp, handled, err = c.run.FingerprintDedup(ctx, id, ks.Content(sourceContent), &attempt)
-		if handled || err != nil {
-			if err != nil {
-				return err
-			}
-			return c.recordRender(ctx, ks, source, &attempt)
-		}
+	attempt.Render = receipt
+	content := request.Content(docs)
+	acceptance := kustomize.RenderAcceptance{
+		Owner:                   id,
+		Entry:                   ks.EntryReceipt,
+		Source:                  source.HistoryIdentity(ks.SourceID()),
+		Content:                 content,
+		DependencySubstitutions: c.DependencySubstitutions,
 	}
+	fp, handled, err := c.run.FingerprintDedup(ctx, id, content, &attempt)
+	if handled || err != nil {
+		if err != nil {
+			return err
+		}
+		return c.recordRender(ctx, &attempt, acceptance)
+	}
+
 	if err := kustomize.Shape(ks, docs, c.strictSubstitutions); err != nil {
 		return err
 	}
@@ -176,22 +168,20 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.recordRender(ctx, ks, source, &attempt)
+	return c.recordRender(ctx, &attempt, acceptance)
 }
 
-func (c *execution) recordRender(ctx context.Context, ks *manifest.Kustomization, source *store.SourceArtifact, attempt *store.Emission) error {
-	acceptance := kustomize.RenderAcceptance{Owner: ks.Named(), Receipt: attempt.Render, Entry: ks.EntryReceipt, DependencySubstitutions: c.DependencySubstitutions}
+func (c *execution) recordRender(ctx context.Context, attempt *store.Emission, acceptance kustomize.RenderAcceptance) error {
+	acceptance.Receipt, acceptance.Reads, acceptance.OutputReads = attempt.Render, attempt.Reads, attempt.OutputReads
+	acceptance.Records = attempt.Footprint()
 	acceptance.Sources = attempt.SourcePaths()
-	if ks.EntryReceipt != nil {
-		acceptance.Sources = c.Store.ChildSourcePaths(ks.Named(), attempt.Children, nil)
-	}
-	if acceptance.Sources != nil {
-		acceptance.Source, acceptance.Records = source.HistoryIdentity(ks.SourceID()), attempt.Footprint()
+	if acceptance.Entry != nil {
+		acceptance.Sources = c.Store.ChildSourcePaths(acceptance.Owner, attempt.Children, nil)
 	}
 	return c.Trees.RecordRender(ctx, acceptance)
 }
 
-// PreviousRender returns the entry applier inventory without rendering or acquiring sources.
+// PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.
 func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	ks, ok := obj.(*manifest.Kustomization)
 	if !ok || ctx.Err() != nil {
@@ -216,12 +206,14 @@ func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManife
 	if err != nil {
 		return nil, false
 	}
-	records, found := c.Trees.PreviousRender(ctx, kustomize.RenderRequest{
+	request := kustomize.RenderRequest{
 		Source: source, ApplyIgnore: ignore, SubPath: prepared.Path, Spec: prepared,
 		SkipKinds: c.SkipKinds, DependencySubstitutions: c.DependencySubstitutions, WipeSecrets: c.WipeSecrets, StrictSubstitutions: c.strictSubstitutions,
-	}, ks.Named())
+	}
+	docs, receipt, found := c.Trees.PreviousRender(ctx, request)
 	if !found {
 		return nil, false
 	}
-	return records, ks.PostBuild == nil || len(ks.PostBuild.SubstituteFrom) == 0
+	content := request.Content(docs)
+	return c.Trees.RenderHistory(ks.Named(), receipt, content)
 }

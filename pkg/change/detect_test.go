@@ -22,6 +22,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
@@ -516,7 +517,12 @@ func TestSet_WithReaders(t *testing.T) {
 			}
 			set, err := Detect(t.Context(), inputs[0], inputs[1])
 			assert.NoError(t, err)
-			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			resolved, err := set.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			changed, known := resolved.DeclarationChanged(manifest.TreeBase, manifest.BootstrapSourceID, declaration.Named(), nil)
 			assert.Equal(t, known, scenario != "partial" && scenario != "ambiguous content")
@@ -525,7 +531,12 @@ func TestSet_WithReaders(t *testing.T) {
 			}
 			_, selected := resolved.inputs[reader]
 			assert.Equal(t, selected, scenario != "move")
-			repeated, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			repeated, err := set.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, repeated.inputs, resolved.inputs)
 		})
@@ -568,11 +579,21 @@ func TestSet_WithReaders(t *testing.T) {
 				input.Unbound = false
 				want[id] = input
 			}
-			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			resolved, err := set.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, resolved.inputs, want)
 			assert.Diff(t, set.inputs, original)
-			repeated, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			repeated, err := set.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, repeated.inputs, want)
 		})
@@ -597,7 +618,7 @@ func TestSet_WithReadersBuildInputs(t *testing.T) {
 	}
 	changes, err := Detect(t.Context(), inputs[0], inputs[1])
 	assert.NoError(t, err)
-	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1])
+	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	changed, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, child.Named(), nil)
 	assert.Equal(t, known, false)
@@ -643,7 +664,9 @@ func TestSet_WithReadersUnindexedDeclarationMove(t *testing.T) {
 					changes, err = Detect(t.Context(), inputs[1], inputs[0])
 					assert.NoError(t, err)
 				}
-				qualified, err := changes.WithReaders(t.Context(), before, after)
+				qualified, err := changes.WithReaders(
+					t.Context(), before, after, [2]map[manifest.NamedResource]inputprojection.Projection{},
+				)
 				assert.NoError(t, err)
 				changed, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
 				assert.Equal(t, known, scenario != "partial")
@@ -692,14 +715,24 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 				indexes = [2]*manifest.DiscoveryIndex{nil, index}
 				set.oneSided[1], set.oneSided[0] = set.oneSided[0], nil
 			}
-			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			resolved, err := set.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			want := InputChange{File: "entry/root.yaml", Declarations: []string{"app/driver.yaml", "declarations/child.yaml", "entry/root.yaml"}, Productions: []manifest.Production{{Owner: driver, Declaration: driver, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}, {Owner: root, Declaration: root, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}}}
 			assert.Diff(t, resolved.inputs[child], want)
 			_, admitted := resolved.inputs[foreign]
 			assert.Equal(t, admitted, false)
 			assert.Equal(t, len(set.inputs), 0)
-			repeated, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			repeated, err := set.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			assert.Diff(t, repeated.inputs, resolved.inputs)
 		})
@@ -724,7 +757,7 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 		}
 		set, err := Detect(t.Context(), artifacts[0], artifacts[1])
 		assert.NoError(t, err)
-		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1])
+		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 		assert.NoError(t, err)
 		_, direct := set.inputs[root]
 		_, named := set.inputs[reader]
@@ -732,7 +765,7 @@ func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
 		assert.Equal(t, named, false)
 		set, err = set.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
 		assert.NoError(t, err)
-		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1])
+		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 		assert.NoError(t, err)
 		_, direct = set.inputs[root]
 		_, named = set.inputs[reader]
@@ -1174,7 +1207,7 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 		record.Declared = declared[changed]
 		indexes[side].Records[changed] = record
 	}
-	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1])
+	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	for _, reader := range readers {
 		assert.Equal(t, reader.opens.Load(), int64(1))
@@ -1185,7 +1218,7 @@ func TestSet_WithReadersChangedDeclarations(t *testing.T) {
 	assert.Equal(t, known, false)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = changes.WithReaders(ctx, indexes[0], indexes[1])
+	_, err = changes.WithReaders(ctx, indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("WithReaders error = %v, want canceled", err)
 	}
@@ -1227,7 +1260,12 @@ func TestSet_InputVisibilityAvailability(t *testing.T) {
 			t.Parallel()
 			set := NewSet([]string{".krmignore"})
 			indexes := [2]*manifest.DiscoveryIndex{{Visibility: tc.before}, {Visibility: tc.after}}
-			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			resolved, err := set.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			want := map[manifest.NamedResource]InputChange{}
 			if tc.want {
@@ -1251,17 +1289,17 @@ func TestSet_WithReadersRequalification(t *testing.T) {
 	empty := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}
 	before := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{visible}, Readers: map[string][]manifest.FileReader{"removed.yaml": {{Reader: oldReader, Source: manifest.BootstrapSourceID}}}}
 	after := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{empty}}
-	first, err := set.WithReaders(t.Context(), before, after)
+	first, err := set.WithReaders(t.Context(), before, after, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}})
 	next := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{visible}, Readers: map[string][]manifest.FileReader{"removed.yaml": {{Reader: newReader, Source: manifest.BootstrapSourceID}}}}
-	second, err := first.WithReaders(t.Context(), next, next)
+	second, err := first.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(second.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{newReader: {File: "removed.yaml"}})
-	fresh, err := set.WithReaders(t.Context(), next, next)
+	fresh, err := set.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(second.Inputs(manifest.NamedResource{})), maps.Collect(fresh.Inputs(manifest.NamedResource{})))
-	repeated, err := second.WithReaders(t.Context(), next, next)
+	repeated, err := second.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(repeated.Inputs(manifest.NamedResource{})), maps.Collect(second.Inputs(manifest.NamedResource{})))
 	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{input: {File: "removed.yaml"}, oldReader: {File: "removed.yaml"}})
@@ -1269,7 +1307,7 @@ func TestSet_WithReadersRequalification(t *testing.T) {
 	assert.Diff(t, before.Visibility[0].Inputs[input], []string{"removed.yaml"})
 	frozen, err := first.WithDeclarations(t.Context(), nil, nil, [2]map[manifest.NamedResource]store.Child{})
 	assert.NoError(t, err)
-	qualified, err := frozen.WithReaders(t.Context(), next, next)
+	qualified, err := frozen.WithReaders(t.Context(), next, next, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(qualified.Inputs(manifest.NamedResource{})), maps.Collect(second.Inputs(manifest.NamedResource{})))
 }
@@ -1307,7 +1345,12 @@ func TestSet_InputVisibilityDuplicateSourcePolicy(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, set.Contains("a/input.yaml"), true)
 				assert.Equal(t, len(maps.Collect(set.Inputs(manifest.NamedResource{}))), 0)
-				resolved, err := set.WithReaders(t.Context(), &manifest.DiscoveryIndex{Visibility: left}, &manifest.DiscoveryIndex{Visibility: right})
+				resolved, err := set.WithReaders(
+					t.Context(),
+					&manifest.DiscoveryIndex{Visibility: left},
+					&manifest.DiscoveryIndex{Visibility: right},
+					[2]map[manifest.NamedResource]inputprojection.Projection{},
+				)
 				assert.NoError(t, err)
 				want := map[manifest.NamedResource]InputChange{}
 				if last {
@@ -1335,12 +1378,12 @@ func TestQualify_ReplacesBootstrapInputFacts(t *testing.T) {
 	assert.NoError(t, err)
 	before := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{id: {"input.yaml"}}}}}
 	after := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{{Source: manifest.BootstrapSourceID, Root: ".", Complete: true}}}
-	first, err := raw.WithReaders(t.Context(), before, after)
+	first, err := raw.WithReaders(t.Context(), before, after, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(first.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{id: {File: "input.yaml", Unbound: true}})
 	reused, err := Qualify(t.Context(), first, stores[0], stores[1])
 	assert.NoError(t, err)
-	current, err := reused.WithReaders(t.Context(), after, after)
+	current, err := reused.WithReaders(t.Context(), after, after, [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Diff(t, maps.Collect(current.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]InputChange{})
 	for _, st := range stores {

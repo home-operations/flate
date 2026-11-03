@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/source/sourceignore"
@@ -416,7 +417,11 @@ func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.N
 
 // WithReaders derives affected inputs from raw facts and current discovery observations.
 // The receiver and both discovery indexes remain immutable.
-func (s *Set) WithReaders(ctx context.Context, before, after *manifest.DiscoveryIndex) (*Set, error) {
+func (s *Set) WithReaders(
+	ctx context.Context,
+	before, after *manifest.DiscoveryIndex,
+	inputs [2]map[manifest.NamedResource]inputprojection.Projection,
+) (*Set, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -431,7 +436,7 @@ func (s *Set) WithReaders(ctx context.Context, before, after *manifest.Discovery
 		origins = bootstrap.artifacts
 	}
 	if len(s.sources) == 0 {
-		out := s.withReaders(indexes, &bindings, readerComparison{artifacts: origins, source: manifest.BootstrapSourceID})
+		out := s.withReaders(indexes, &bindings, readerComparison{artifacts: origins, source: manifest.BootstrapSourceID, inputs: inputs})
 		out.declarations = bindings.declarations
 		return out, nil
 	}
@@ -439,7 +444,11 @@ func (s *Set) WithReaders(ctx context.Context, before, after *manifest.Discovery
 	out.sources = maps.Clone(s.sources)
 	out.inputs = nil
 	for ref, evidence := range s.sources {
-		qualified := evidence.changes.withReaders(indexes, &bindings, readerComparison{artifacts: evidence.artifacts, source: ref})
+		qualified := evidence.changes.withReaders(
+			indexes,
+			&bindings,
+			readerComparison{artifacts: evidence.artifacts, source: ref, inputs: inputs},
+		)
 		evidence.changes = qualified
 		out.sources[ref] = evidence
 		if ref == manifest.BootstrapSourceID {
@@ -452,6 +461,7 @@ func (s *Set) WithReaders(ctx context.Context, before, after *manifest.Discovery
 }
 
 type readerComparison struct {
+	inputs    [2]map[manifest.NamedResource]inputprojection.Projection
 	source    manifest.NamedResource
 	artifacts [2]*store.SourceArtifact
 }
@@ -563,6 +573,11 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 				}
 				peer, indexed := indexes[1-side].Lookup(id)
 				present := indexed && qualifiedRecord(1-side, peer)
+				key := comparisonKey{source: source, owner: id, input: id}
+				comparison := bindings.declarations[key]
+				comparison.inputContent[side], comparison.inputKnown[side] = evidence.inputs[side][id]
+				comparison.inputContent[1-side], comparison.inputKnown[1-side] = evidence.inputs[1-side][id]
+				bindings.declarations[key] = comparison
 				file, peerFile := fileAt(side, record.File), fileAt(1-side, peer.File)
 				if !s.Contains(file) && (!present || !s.Contains(peerFile)) {
 					continue
@@ -575,8 +590,6 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 				if fingerprint == "" {
 					continue
 				}
-				key := comparisonKey{source: source, owner: id, input: id}
-				comparison := bindings.declarations[key]
 				comparison.declared = [2]string{}
 				comparison.implicitNamespace = [2]bool{}
 				comparison.declared[side] = fingerprint
@@ -724,6 +737,9 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 							break
 						}
 					}
+				}
+				if known && !comparison.changed {
+					continue
 				}
 				if r.File != "" {
 					file := r.File
@@ -970,6 +986,8 @@ type comparisonKey struct {
 }
 
 type declarationComparison struct {
+	inputContent      [2]inputprojection.Projection
+	inputKnown        [2]bool
 	objects           [2]manifest.BaseManifest
 	references        [2]manifest.Reference
 	changed           bool
@@ -1132,8 +1150,30 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if kind := manifest.KindOf(left.Obj); kind.Runnable && !kind.Render {
+			continue
+		}
 		right, ok := objects[1][id]
 		if !ok || sources[0][id] != sources[1][id] {
+			continue
+		}
+		valid := true
+		for side, child := range [2]store.Child{left, right} {
+			ref, path, applies := child.Obj.SourcePath()
+			if !applies {
+				continue
+			}
+			input, _ := stores[side].GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
+			if input == nil || input.FS == nil {
+				continue
+			}
+			info, err := fs.Stat(input.FS, manifest.NormalizeClaimBase(path))
+			if err != nil || !info.IsDir() {
+				valid = false
+				break
+			}
+		}
+		if !valid {
 			continue
 		}
 		source := sources[0][id]
@@ -1145,6 +1185,19 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 		comparison := out.declarations[key]
 		comparison.objects, comparison.changed = [2]manifest.BaseManifest{left.Obj, right.Obj}, !equal
 		out.declarations[key] = comparison
+		projections := comparison.inputContent
+		sameInputs := comparison.inputKnown[0] && comparison.inputKnown[1]
+		if sameInputs {
+			sameInputs = manifest.ValueEqual(projections[0].Content, projections[1].Content)
+			for side, projection := range projections {
+				for input, captured := range projection.Inputs {
+					data, ok := objects[side][input].Obj.(manifest.Data)
+					if !ok || !manifest.ValueEqual(data, captured) {
+						sameInputs = false
+					}
+				}
+			}
+		}
 		refs := [2][]manifest.Reference{}
 		for side, child := range [2]store.Child{left, right} {
 			for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
@@ -1161,6 +1214,12 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 			}
 			inputs := [2]store.Child{objects[0][ref.NamedResource], objects[1][ref.NamedResource]}
 			if inputs[0].Obj == nil || inputs[1].Obj == nil {
+				continue
+			}
+			if _, left := inputs[0].Obj.(manifest.Data); !left {
+				continue
+			}
+			if _, right := inputs[1].Obj.(manifest.Data); !right {
 				continue
 			}
 			changed := false
@@ -1191,6 +1250,9 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 					return nil, err
 				}
 				changed = !equal
+			}
+			if sameInputs {
+				changed = false
 			}
 			out.declarations[comparisonKey{source: source, owner: id, input: ref.NamedResource, use: ref.Use, position: ref.Position}] = declarationComparison{objects: [2]manifest.BaseManifest{left.Obj, right.Obj}, references: [2]manifest.Reference{ref, refs[1][peer]}, changed: changed}
 		}

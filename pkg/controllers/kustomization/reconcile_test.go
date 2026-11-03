@@ -42,8 +42,7 @@ import (
 func newControllerWithFixture(t *testing.T) (*Controller, *store.Store, string) {
 	t.Helper()
 	root := t.TempDir()
-	testutil.WriteFileAt(t, filepath.Join(root, "apps", "kustomization.yaml"),
-		"resources:\n- cm.yaml\n")
+	testutil.WriteFileAt(t, filepath.Join(root, "apps", "kustomization.yaml"), "resources:\n- cm.yaml\n")
 	testutil.WriteFileAt(t, filepath.Join(root, "apps", "cm.yaml"), `---
 apiVersion: v1
 kind: ConfigMap
@@ -307,24 +306,16 @@ func TestReconcile_EmptyPostBuildRespectsSubstituteStrategy(t *testing.T) {
 		{name: "Always", strategy: kustomizev1.SubstituteStrategyAlways, postBuild: map[string]any{}, want: "default"},
 		{name: "empty substitute", postBuild: map[string]any{"substitute": map[string]any{}}, want: "${VAR:=default}"},
 		{
-			name: "missing optional ConfigMap",
-			postBuild: map[string]any{"substituteFrom": []any{
-				map[string]any{"kind": "ConfigMap", "name": "missing", "optional": true},
-			}},
-			want: "${VAR:=default}",
+			name:      "missing optional ConfigMap",
+			postBuild: map[string]any{"substituteFrom": []any{map[string]any{"kind": "ConfigMap", "name": "missing", "optional": true}}},
+			want:      "${VAR:=default}",
 		},
 		{
-			name: "missing optional Secret",
-			postBuild: map[string]any{"substituteFrom": []any{
-				map[string]any{"kind": "Secret", "name": "missing", "optional": true},
-			}},
-			want: "${VAR:=default}",
+			name:      "missing optional Secret",
+			postBuild: map[string]any{"substituteFrom": []any{map[string]any{"kind": "Secret", "name": "missing", "optional": true}}},
+			want:      "${VAR:=default}",
 		},
-		{
-			name:      "inline substitute",
-			postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}},
-			want:      "configured",
-		},
+		{name: "inline substitute", postBuild: map[string]any{"substitute": map[string]any{"VAR": "configured"}}, want: "configured"},
 		{name: "supplied default", input: "${ENV:=prod}", postBuild: map[string]any{"substitute": map[string]any{"ENV": "stage"}}, want: "stage"},
 		{name: "nested default", input: "${ENV:=${OTHER:=prod}}", postBuild: map[string]any{"substitute": map[string]any{"OTHER": "stage"}}, want: "stage"},
 		{name: "escaped default", input: "$${ENV:=prod}", postBuild: map[string]any{"substitute": map[string]any{"ENV": "stage"}}, want: "${ENV:=prod}"},
@@ -387,10 +378,7 @@ spec:
   valuesFrom: [{kind: ConfigMap, name: '%[2]s', valuesKey: '%[2]s', optional: true}]
 `, optOut, input))
 
-			spec := map[string]any{
-				"path":      "./apps",
-				"sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system"},
-			}
+			spec := map[string]any{"path": "./apps", "sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system"}}
 			if tc.postBuild != nil {
 				if tc.strategy != "" {
 					tc.postBuild["substituteStrategy"] = string(tc.strategy)
@@ -530,9 +518,7 @@ func TestReconcile_UnresolvedWarningReplay(t *testing.T) {
 					"spec": map[string]any{
 						"path":      "./apps",
 						"sourceRef": map[string]any{"kind": "GitRepository", "name": "flux-system"},
-						"postBuild": map[string]any{"substituteFrom": []any{
-							map[string]any{"kind": "Secret", "name": "cluster-secrets"},
-						}},
+						"postBuild": map[string]any{"substituteFrom": []any{map[string]any{"kind": "Secret", "name": "cluster-secrets"}}},
 					},
 				}, manifest.ParseDocOptions{})
 				assert.NoError(t, err)
@@ -856,9 +842,7 @@ func TestReconcile_DependsOnFailed(t *testing.T) {
 		SourceRef: kustomizev1.CrossNamespaceSourceReference{
 			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
 		},
-		DependsOn: []kustomizev1.DependencyReference{
-			{Name: dep.Name, Namespace: dep.Namespace},
-		},
+		DependsOn: []kustomizev1.DependencyReference{{Name: dep.Name, Namespace: dep.Namespace}},
 	}
 	s.AddObject(ks)
 	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: s, ID: ks.Named(), ReconcileNode: c.ReconcileNode})
@@ -1095,57 +1079,6 @@ func TestRender_RejectedCapturedInputsSkipsRender(t *testing.T) {
 	}
 	if got.err == nil || !errors.Is(got.err, got.dedupErr) {
 		t.Fatalf("render did not return the admission rejection: %v", got.err)
-	}
-}
-
-type admissionSuspension struct {
-	*manifest.Kustomization
-	checks int
-}
-
-func (s *admissionSuspension) Suspended() bool {
-	s.checks++
-	return s.checks == 3
-}
-
-func TestRender_UnhandledAdmissionErrorSkipsRender(t *testing.T) {
-	t.Parallel()
-	c, st, _ := newControllerWithFixture(t)
-	freezeSourceForTest(t, st)
-	initial := st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-	guard := &guardedSourceFS{FS: initial.FS}
-	counted := *initial
-	counted.FS = guard
-	st.SetArtifact(manifest.BootstrapSourceID, &counted)
-	ks := &manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps",
-		SourceRef: kustomizev1.CrossNamespaceSourceReference{
-			Kind: manifest.KindGitRepository, Name: "flux-system", Namespace: "flux-system",
-		},
-	}
-	declaration := &admissionSuspension{Kustomization: ks}
-	st.AddObject(declaration)
-	sourceContent := counted.Input(store.ArtifactContent)
-	probe := c.newExecution(ks.Named())
-	fp, handled, want := probe.run.FingerprintDedup(t.Context(), ks.Named(), ks.Content(sourceContent), &store.Emission{})
-	probe.run.Close()
-	if fp == "" || handled || want == nil || declaration.checks != 3 {
-		t.Fatalf("admission contract: fingerprint=%q handled=%t err=%v checkpoints=%d", fp, handled, want, declaration.checks)
-	}
-	declaration.checks = 0
-	execution := c.newExecution(ks.Named())
-	defer execution.run.Close()
-	source, applyIgnore, err := kustomize.SourceInput(&execution.run.Reads, ks)
-	assert.NoError(t, err)
-	before := guard.opened.Load()
-	got := execution.render(t.Context(), ks, source, applyIgnore)
-	if !errors.Is(got, want) {
-		t.Errorf("render error = %v, want admission error %v", got, want)
-	}
-	if opens := guard.opened.Load() - before; opens != 0 {
-		t.Errorf("rejected render opened source %d times, want 0", opens)
-	}
-	if artifact := st.GetArtifact(ks.Named(), store.ArtifactContent); artifact != nil {
-		t.Errorf("rejected attempt published %T", artifact)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -280,7 +281,12 @@ func testSelectorVisibility(t *testing.T, incoming bool) {
 				}
 				changes, err := change.Qualify(t.Context(), change.NewSet([]string{".krmignore"}), stores[0], stores[1])
 				assert.NoError(t, err)
-				changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
+				changes, err = changes.WithReaders(
+					t.Context(),
+					indexes[0],
+					indexes[1],
+					[2]map[manifest.NamedResource]inputprojection.Projection{},
+				)
 				assert.NoError(t, err)
 				changes, err = changes.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
 				assert.NoError(t, err)

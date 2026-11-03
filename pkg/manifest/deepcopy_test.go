@@ -117,11 +117,11 @@ spec:
 `)
 	src, err := parseKustomization(doc)
 	assert.NoError(t, err)
-	snapshot := Fingerprint(src.Content(nil))
+	snapshot := Fingerprint(src.Content(nil, nil, false))
 	rawSpec := doc["spec"].(map[string]any)
 	rawSpec["patches"].([]any)[0].(map[string]any)["target"].(map[string]any)["name"] = "raw-edit"
 	rawSpec["commonMetadata"].(map[string]any)["labels"].(map[string]any)["team"] = "raw-edit"
-	assert.Equal(t, Fingerprint(src.Content(nil)), snapshot)
+	assert.Equal(t, Fingerprint(src.Content(nil, nil, false)), snapshot)
 	dst := src.Clone()
 	dst.Patches[0].Patch = "changed"
 	dst.Patches[0].Target.Name = "changed"
@@ -132,8 +132,8 @@ spec:
 	dst.Annotations["note"] = "changed"
 	assert.Equal(t, src.Labels["owner"], "original")
 	assert.Equal(t, src.Annotations["note"], "original")
-	assert.Equal(t, Fingerprint(src.Content(nil)), snapshot)
-	if Fingerprint(dst.Content(nil)) == snapshot {
+	assert.Equal(t, Fingerprint(src.Content(nil, nil, false)), snapshot)
+	if Fingerprint(dst.Content(nil, nil, false)) == snapshot {
 		t.Fatal("typed input edits did not invalidate content")
 	}
 }

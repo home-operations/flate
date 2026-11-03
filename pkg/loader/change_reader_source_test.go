@@ -13,6 +13,7 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -53,7 +54,7 @@ func optionalSupplierPair(tb testing.TB, namespace string) (*change.Set, [2]*sto
 	if err != nil {
 		tb.Fatal(err)
 	}
-	changes, err = changes.WithReaders(tb.Context(), indexes[0], indexes[1])
+	changes, err = changes.WithReaders(tb.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -89,7 +90,12 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 				var err error
 				changes, err = change.Qualify(t.Context(), changes, stores[0], stores[1])
 				assert.NoError(t, err)
-				changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
+				changes, err = changes.WithReaders(
+					t.Context(),
+					indexes[0],
+					indexes[1],
+					[2]map[manifest.NamedResource]inputprojection.Projection{},
+				)
 				assert.NoError(t, err)
 			}
 			assert.Equal(t, inputMap(sourceChanges(changes, source.Named()))[input], "inputs/optional.yaml")
@@ -112,7 +118,12 @@ func TestFilter_CrossSourceOptionalInputPairedSides(t *testing.T) {
 				before := manifest.InputVisibility{Source: source.Named(), Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{input: {"inputs/optional.yaml"}}}
 				after := before
 				after.Inputs = nil
-				changes, err = changes.WithReaders(t.Context(), &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{before}}, &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{after}})
+				changes, err = changes.WithReaders(
+					t.Context(),
+					&manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{before}},
+					&manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{after}},
+					[2]map[manifest.NamedResource]inputprojection.Projection{},
+				)
 				assert.NoError(t, err)
 				for side, st := range stores {
 					st.SetArtifact(manifest.BootstrapSourceID, original[side].(*store.SourceArtifact))
@@ -186,7 +197,12 @@ func TestFilter_ChangedInputUsesDeclarationSource(t *testing.T) {
 			}
 			changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
 			assert.NoError(t, err)
-			changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
+			changes, err = changes.WithReaders(
+				t.Context(),
+				indexes[0],
+				indexes[1],
+				[2]map[manifest.NamedResource]inputprojection.Projection{},
+			)
 			assert.NoError(t, err)
 			for side, st := range stores {
 				filter := newAdmission(t, admissionConfig{changes: changes, index: indexes[side], inventory: st, root: roots[side]})
@@ -338,7 +354,7 @@ func TestSet_WithReadersSelectedSource(t *testing.T) {
 	indexes[0].Readers[file] = []manifest.FileReader{{Reader: reader, Source: source.Named(), Exact: true}, {Reader: foreign, Source: manifest.BootstrapSourceID, Exact: true}}
 	indexes[1].Readers[file] = []manifest.FileReader{{Reader: opposite, Source: source.Named(), Exact: true}}
 	original := maps.Clone(inputMap(sourceChanges(changes, source.Named())))
-	resolved, err := changes.WithReaders(t.Context(), indexes[0], indexes[1])
+	resolved, err := changes.WithReaders(t.Context(), indexes[0], indexes[1], [2]map[manifest.NamedResource]inputprojection.Projection{})
 	assert.NoError(t, err)
 	assert.Equal(t, len(inputMap(resolved)), 0)
 	assert.Equal(t, inputMap(sourceChanges(resolved, source.Named()))[reader], "inputs/optional.yaml")

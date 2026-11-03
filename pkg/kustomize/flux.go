@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/go-git/go-git/v5/plumbing"
 	"sigs.k8s.io/kustomize/api/resmap"
 
@@ -239,13 +238,15 @@ func (c *TreeCache) prepareRender(ctx context.Context, req RenderRequest) (rende
 	}
 	key := renderKey(req, root, ignore)
 	source := manifest.BootstrapSourceID
-	var postBuild *kustomizev1.PostBuild
 	if req.Spec != nil {
 		source = req.Spec.SourceID()
-		postBuild = req.Spec.PostBuild
 	}
 	return renderRequest{lower: lower, root: root, key: key,
-		binding: renderBinding{key, source, req.Source.Kind, req.Source.URL, req.Source.LocalPath, req.Source.LocalRoot, req.Source.Key, req.Source.Revision, req.Source.Digest, req.Source.InputAlias, req.WipeSecrets, req.StrictSubstitutions, slices.Clone(req.SkipKinds), req.DependencySubstitutions, postBuild},
+		binding: renderBinding{
+			key, source, req.Source.Kind, req.Source.URL,
+			req.Source.LocalPath, req.Source.LocalRoot, req.Source.Key, req.Source.Revision, req.Source.Digest,
+			req.Source.InputAlias, req.WipeSecrets, req.StrictSubstitutions, slices.Clone(req.SkipKinds), req.DependencySubstitutions,
+		},
 	}, nil
 }
 
@@ -258,10 +259,7 @@ func renderKey(req RenderRequest, root string, ignore any) string {
 	}
 	var spec any
 	if req.Spec != nil {
-		prepared := *req.Spec
-		prepared.KustomizationSpec = req.Spec.KustomizationSpec
-		prepared.DependsOn, prepared.PostBuild = nil, nil
-		spec = prepared.Content(nil)
+		spec = req.Spec.Content(nil, nil, false)
 	}
 	return manifest.Fingerprint(struct {
 		Spec        any

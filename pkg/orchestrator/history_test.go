@@ -25,8 +25,10 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
+	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/helm"
@@ -810,21 +812,27 @@ spec:
 				assert.NoError(t, err)
 				assert.NoError(t, warm.hrc.Helm.RecordRender(t.Context(), helm.RenderAcceptance{Owner: owner, Receipt: receipt, Records: func(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}, Sources: []manifest.SourceEvidence{}}))
 			} else {
-				ks := declaration.(*manifest.Kustomization)
-				prepared, err := kustomize.Prepare(ks, values.NewStoreProvider(reads, cfg.WipeSecrets))
-				assert.NoError(t, err)
-				source := reads.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent).(*store.SourceArtifact)
-				_, receipt, err := testutil.RenderMaps(kustomize.Render(t.Context(), warm.ksc.Trees, kustomize.RenderRequest{Source: source, ApplyIgnore: true, SubPath: prepared.Path, Spec: prepared, DependencySubstitutions: warm.dependencySubstitutions, StrictSubstitutions: cfg.StrictSubstitutions}, cfg.SourceRetry))
-				assert.NoError(t, err)
-				assert.NoError(t, warm.ksc.Trees.RecordRender(t.Context(), kustomize.RenderAcceptance{Owner: owner, Receipt: receipt, DependencySubstitutions: warm.dependencySubstitutions}))
+				reconcileEntryForTest(t, warm)
+				info := controllertest.DispatchToFixpoint(
+					t.Context(),
+					t,
+					controllertest.Dispatch{Tasks: warm.tasks, Store: warm.store, ID: owner, ReconcileNode: warm.ksc.ReconcileNode},
+				)
+				assert.Equal(t, info.Status, store.StatusReady)
 			}
 			records, narrow = warm.controllers.PreviousRender(t.Context(), declaration, reads)
-			assert.Equal(t, records != nil, mode == "helm_values_from")
-			assert.Equal(t, narrow, mode == "helm_values_from")
-			if records != nil {
+			assert.Equal(t, records != nil, true)
+			assert.Equal(t, narrow, true)
+			if mode == "helm_values_from" {
 				for range records {
 					t.Fatal("accepted empty history gained a child")
 				}
+			} else {
+				record, found := maps.Collect(records)[manifest.NamedResource{
+					Kind: manifest.KindConfigMap, Name: "target", Namespace: "apps",
+				}]
+				assert.Equal(t, found, true)
+				assert.Equal(t, record.Productions[0].Owner, owner)
 			}
 			reads.Retire()
 			for range warm.store.Sweep() {
@@ -1084,7 +1092,12 @@ spec:
 			}
 			changes, err := change.Qualify(t.Context(), change.NewSet([]string{"apps/blue/cm.yaml"}), current[0].store, current[1].store)
 			assert.NoError(t, err)
-			changes, err = changes.WithReaders(t.Context(), current[0].index, current[1].index)
+			changes, err = changes.WithReaders(
+				t.Context(),
+				current[0].index,
+				current[1].index,
+				[2]map[manifest.NamedResource]inputprojection.Projection{current[0].loader.InputContent, current[1].loader.InputContent},
+			)
 			assert.NoError(t, err)
 			owner := testutil.HelmReleaseID("apps", "emitter")
 			child := testutil.KustomizationID("apps", "child")

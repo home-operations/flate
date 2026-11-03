@@ -50,6 +50,7 @@ type admissionState struct {
 	changed, seed, direct, rescan             bool
 	walkedOnce, productionsKnown, listed      bool
 	eligible, declarationChanged, staticOwner bool
+	comparingDeclaration                      bool
 }
 
 type admissionIdentity struct {
@@ -638,7 +639,9 @@ func (c *admissionClosure) outputChanged(id manifest.NamedResource, ref manifest
 	if !paired || !c.loader.sideKnown {
 		return false, false
 	}
-	if prepared := c.loader.candidates[id]; prepared.Obj != nil && obj != prepared.Obj && c.loader.Index.Records[id].Builder != "" && manifest.Equal(obj, prepared.Obj) {
+	record, _ := c.loader.Index.Lookup(id)
+	if prepared := record.Declaration; prepared != nil && obj != prepared && record.Builder != "" && manifest.Equal(obj, prepared) {
+		child := c.loader.preparedObject(id)
 		var doc map[string]any
 		if c.incoming.Obj != nil && c.incoming.Obj.Named() == id && c.incoming.Doc != nil {
 			doc = c.incoming.Doc
@@ -647,8 +650,8 @@ func (c *admissionClosure) outputChanged(id manifest.NamedResource, ref manifest
 			defer output.Finish()
 			doc = current
 		}
-		if manifest.ValueEqual(doc, prepared.Doc) {
-			obj = prepared.Obj
+		if child.Obj == prepared && manifest.ValueEqual(doc, child.Doc) {
+			obj = prepared
 		}
 	}
 	if ref.Use != "" && ref.Name != "" {
@@ -672,8 +675,8 @@ func (c *admissionClosure) declarationChanged(id manifest.NamedResource, object 
 			_, current, output := c.objects.GetEmission(id)
 			document = current
 			output.Finish()
-		} else if prepared := c.loader.candidates[id]; prepared.Obj == object && c.loader.Index.Records[id].Builder != "" {
-			document = prepared.Doc
+		} else if record, _ := c.loader.Index.Lookup(id); record.Declaration == object && record.Builder != "" {
+			document = c.loader.preparedObject(id).Doc
 		}
 	}
 	return c.loader.Options.Changes.DeclarationChanged(c.loader.side, c.source(id), id, document)
@@ -1987,7 +1990,16 @@ func (c *admissionClosure) unchangedDeclaration(id, owner manifest.NamedResource
 		if stable {
 			parent := ownerRecord.Parent
 			if parent != (manifest.NamedResource{}) && parent != owner && !parent.ReportHidden() {
+				state := c.states[id]
+				if state.comparingDeclaration {
+					return false
+				}
+				state.comparingDeclaration = true
+				c.states[id] = state
 				stable = c.unchangedDeclaration(owner, parent, c.object(owner))
+				state = c.states[id]
+				state.comparingDeclaration = false
+				c.states[id] = state
 			}
 		}
 		if stable {

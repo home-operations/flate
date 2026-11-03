@@ -30,6 +30,7 @@ import (
 
 	"github.com/home-operations/flate/internal/admissiontest"
 	"github.com/home-operations/flate/internal/assert"
+	"github.com/home-operations/flate/internal/inputprojection"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
 	"github.com/home-operations/flate/pkg/baseline"
@@ -98,10 +99,10 @@ func TestProjectEntryReaders_PreservesSideEvidence(t *testing.T) {
 			changes := change.NewSet([]string{"removed.yaml"})
 			assert.NoError(t, changes.CollectInputs(t.Context(), fstest.MapFS{"removed.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: removed}\n")}}, "removed.yaml", true))
 			opposite := &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{empty}}
-			paired, err := changes.WithReaders(t.Context(), projected, opposite)
+			paired, err := changes.WithReaders(t.Context(), projected, opposite, [2]map[manifest.NamedResource]inputprojection.Projection{})
 			assert.NoError(t, err)
 			replaced := projectEntryReaders(index, discovery.Binding{Producer: from}, discovery.Binding{Producer: other})
-			current, err := paired.WithReaders(t.Context(), replaced, opposite)
+			current, err := paired.WithReaders(t.Context(), replaced, opposite, [2]map[manifest.NamedResource]inputprojection.Projection{})
 			assert.NoError(t, err)
 			assert.Diff(t, maps.Collect(current.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]change.InputChange{physical: {File: "removed.yaml"}, other: {File: "removed.yaml"}})
 			assert.Diff(t, maps.Collect(paired.Inputs(manifest.NamedResource{})), map[manifest.NamedResource]change.InputChange{physical: {File: "removed.yaml"}, to: {File: "removed.yaml"}})

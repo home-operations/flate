@@ -61,6 +61,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 	}{
 		{"version", func(a *acceptedRender) { a.Version++ }},
 		{"complete", func(a *acceptedRender) { a.Complete = false }},
+		{"missing final inputs", func(a *acceptedRender) { a.Final = "" }},
 		{"raw binding", func(a *acceptedRender) { a.Raw = "foreign" }},
 		{"duplicate identity", func(a *acceptedRender) { a.Records = append(a.Records, a.Records[0]) }},
 		{"duplicate root", func(a *acceptedRender) { a.Records[0].Roots = append(a.Records[0].Roots, a.Records[0].Roots[0]) }},
@@ -113,7 +114,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 }
 
 func encodeAccepted(owner manifest.NamedResource, frame renderFrame, records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord]) ([]byte, error) {
-	accepted, err := prepareAccepted(owner, frame, records)
+	accepted, err := prepareAccepted(owner, frame, manifest.Fingerprint(acceptedInput), records)
 	if err != nil {
 		return nil, err
 	}
@@ -123,13 +124,16 @@ func encodeAccepted(owner manifest.NamedResource, frame renderFrame, records ite
 func TestAcceptedRender_ExactValue(t *testing.T) {
 	t.Parallel()
 	id := manifest.NamedResource{Group: "group", Kind: "kind", Namespace: "namespace", Name: "name"}
-	original := acceptedRender{Version: 1, Complete: true, Owner: id, Raw: "raw", Records: []acceptedRecord{{
-		ID: id, Record: manifest.DiscoveryRecord{
-			Authored: id, Path: "path", File: "file", Parent: id, Refs: []manifest.NamedResource{id},
-			Productions: []manifest.Production{{Owner: id, Declaration: id, Authored: id, Source: id, Path: "path", File: "file"}},
-			Builder:     "builder", Inputs: []string{"input"}, Pinned: true,
-		}, Roots: []acceptedRoot{{Source: id, Paths: []string{"path"}}},
-	}}}
+	original := acceptedRender{
+		Version: 2, Final: manifest.Fingerprint(acceptedInput), Complete: true, Owner: id, Raw: "raw",
+		Records: []acceptedRecord{{
+			ID: id, Record: manifest.DiscoveryRecord{
+				Authored: id, Path: "path", File: "file", Parent: id, Refs: []manifest.NamedResource{id},
+				Productions: []manifest.Production{{Owner: id, Declaration: id, Authored: id, Source: id, Path: "path", File: "file"}},
+				Builder:     "builder", Inputs: []string{"input"}, Pinned: true,
+			}, Roots: []acceptedRoot{{Source: id, Paths: []string{"path"}}},
+		}},
+	}
 	copyValue := func(t *testing.T, a acceptedRender) acceptedRender {
 		t.Helper()
 		data, err := json.Marshal(a)
@@ -151,6 +155,7 @@ func TestAcceptedRender_ExactValue(t *testing.T) {
 		{"version", func(a *acceptedRender) { a.Version++ }},
 		{"complete", func(a *acceptedRender) { a.Complete = false }},
 		{"raw", func(a *acceptedRender) { a.Raw = "different" }},
+		{"final inputs", func(a *acceptedRender) { a.Final = "different" }},
 		{"application", func(a *acceptedRender) { a.Records[0].Record.Application = "different" }},
 		{"static output", func(a *acceptedRender) { a.Records[0].Record.StaticOutput = true }},
 		{"record count", func(a *acceptedRender) { a.Records = nil }},
@@ -273,9 +278,14 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 		}
 	}
 	frame := renderFrame{raw: "raw"}
-	got, err := prepareAccepted(a, frame, oneShot)
+	got, err := prepareAccepted(a, frame, manifest.Fingerprint(acceptedInput), oneShot)
 	assert.NoError(t, err)
-	want, err := prepareAccepted(a, frame, maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{a: record, b: record}))
+	want, err := prepareAccepted(
+		a,
+		frame,
+		manifest.Fingerprint(acceptedInput),
+		maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{a: record, b: record}),
+	)
 	assert.NoError(t, err)
 	if !got.equal(&want) || calls != 1 {
 		t.Fatal("one-shot unordered inventory did not canonicalize")
@@ -289,7 +299,12 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 	if !got.equal(&want) {
 		t.Fatal("caller mutation changed the prepared inventory")
 	}
-	_, err = prepareAccepted(a, frame, func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+	_, err = prepareAccepted(a, frame, manifest.Fingerprint(acceptedInput), func(
+		yield func(
+			manifest.NamedResource,
+			manifest.DiscoveryRecord,
+		) bool,
+	) {
 		if yield(a, record) {
 			yield(a, record)
 		}
@@ -469,7 +484,13 @@ func TestRenderReceipt_AcceptedLifetime(t *testing.T) {
 		runtime.AddCleanup(&payload[0], func(done chan struct{}) { close(done) }, done)
 		receipt := manifest.NewRenderReceipt(renderFrame{header: renderHeader{Key: "large-accepted-lifetime"}, output: payload}, equalRenderFrame)
 		owner := manifest.NamedResource{Kind: "owner", Name: "renderer"}
-		assert.NoError(t, renderer.RecordRender(t.Context(), RenderAcceptance{Owner: owner, Receipt: receipt, Records: emptyRenderInventory}))
+		assert.NoError(
+			t,
+			renderer.RecordRender(
+				t.Context(),
+				RenderAcceptance{Owner: owner, Receipt: receipt, Records: emptyRenderInventory, Content: acceptedInput},
+			),
+		)
 		renderer.Close()
 		assert.NoError(t, renderer.owner.Close())
 		runtime.GC()

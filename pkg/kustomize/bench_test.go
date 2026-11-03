@@ -8,6 +8,7 @@ import (
 
 	"github.com/home-operations/flate/internal/testutil"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
+	"github.com/home-operations/flate/pkg/store"
 )
 
 // BenchmarkRender_SmallKS measures the end-to-end Render call
@@ -35,13 +36,15 @@ data:
 	})
 	input := localSource(b, src)
 	ctx := context.Background()
+	req := RenderRequest{Source: input, Label: src, SubPath: ".", Spec: rawSpec}
+	accepted := acceptBenchmarkRender(b, cache, req)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, receipt1, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt1}); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, acceptanceForEmission(req.Spec.Named(), accepted)); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -81,9 +84,14 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 		}),
 	}
 	ctx := b.Context()
+	accepted := acceptBenchmarkRender(b, cache, req)
 	_, receipt2, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 	if err == nil {
-		if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2}); recordErr != nil {
+		if recordErr := cache.RecordRender(
+			ctx,
+			RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt2, Records: emptyRenderInventory, Content: acceptedInput},
+		); recordErr !=
+			nil {
 			b.Fatal(recordErr)
 		}
 	}
@@ -92,9 +100,9 @@ func BenchmarkRender_CacheHit(b *testing.B) {
 	}
 	b.ReportAllocs()
 	for b.Loop() {
-		out, receipt3, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
+		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt3}); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, acceptanceForEmission(req.Spec.Named(), accepted)); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -156,13 +164,15 @@ data:
 	})
 	input := localSource(b, src)
 	ctx := context.Background()
+	req := RenderRequest{Source: input, Label: src, SubPath: ".", Spec: rawSpec}
+	accepted := acceptBenchmarkRender(b, cache, req)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		out, receipt4, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: ".", Spec: rawSpec}, sourcecache.RetryConfig{})
+		out, _, err := Render(ctx, cache, req, sourcecache.RetryConfig{})
 		if err == nil {
-			if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt4}); recordErr != nil {
+			if recordErr := cache.RecordRender(ctx, acceptanceForEmission(req.Spec.Named(), accepted)); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -199,15 +209,22 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 		"spec":       map[string]any{},
 	})
 
+	requests := make([]RenderRequest, apps)
+	accepted := make([]*store.Emission, apps)
+	for i := range apps {
+		requests[i] = RenderRequest{Source: input, Label: src, SubPath: fmt.Sprintf("apps/app-%d", i), Spec: rawSpec}
+		accepted[i] = acceptBenchmarkRender(b, cache, requests[i])
+	}
+
 	b.ReportAllocs()
 	b.ResetTimer()
 	var ctr atomic.Int64
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			sub := fmt.Sprintf("apps/app-%d", int(ctr.Add(1))%apps)
-			out, receipt5, err := Render(ctx, cache, RenderRequest{Source: input, Label: src, ApplyIgnore: false, SubPath: sub, Spec: rawSpec}, sourcecache.RetryConfig{})
+			i := int(ctr.Add(1)) % apps
+			out, _, err := Render(ctx, cache, requests[i], sourcecache.RetryConfig{})
 			if err == nil {
-				if recordErr := cache.RecordRender(ctx, RenderAcceptance{Owner: demoSpec.Named(), Receipt: receipt5}); recordErr != nil {
+				if recordErr := cache.RecordRender(ctx, acceptanceForEmission(rawSpec.Named(), accepted[i])); recordErr != nil {
 					b.Fatal(recordErr)
 				}
 			}
@@ -224,4 +241,21 @@ func BenchmarkRender_MultiKSPerRoot(b *testing.B) {
 
 func BenchmarkRender_CacheHitConstructed(b *testing.B) {
 	BenchmarkRender_CacheHit(b)
+}
+
+func acceptBenchmarkRender(b *testing.B, cache *TreeCache, request RenderRequest) *store.Emission {
+	b.Helper()
+	_, receipt, err := Render(b.Context(), cache, request, sourcecache.RetryConfig{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	emission := acceptedEmission(b, request.Spec.Named(), receipt, nil)
+	if err := cache.RecordRender(b.Context(), acceptanceForEmission(request.Spec.Named(), emission)); err != nil {
+		b.Fatal(err)
+	}
+	_, receipt, err = Render(b.Context(), cache, request, sourcecache.RetryConfig{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	return acceptedEmission(b, request.Spec.Named(), receipt, nil)
 }

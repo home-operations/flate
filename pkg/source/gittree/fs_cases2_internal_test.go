@@ -45,19 +45,53 @@ func testNewEntryPolicyShaping(t *testing.T) {
 		"fixture",
 		&git.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@e", When: time.Unix(0, 0)}},
 	)
-	for _, tc := range []struct {
+	cases := []struct {
 		name  string
 		opts  ViewOptions
 		files []string
 	}{
-		{"source", ViewOptions{Mode: Source, Sparse: []string{"target", ".root"}, Ignore: "target/\n"}, []string{".rootfile", "target"}},
-		{"source directories", ViewOptions{Mode: Source}, []string{".hidden/file", ".rootfile", "crds/file", "dir/file", "node_modules/file", "target", "templates/file"}},
-		{"direct", ViewOptions{Mode: Direct}, []string{".hidden/file", ".rootfile", "crds/file", "dir/file", "node_modules/file", "target", "templates/file"}},
-		{"remote", ViewOptions{Mode: RemoteBase}, []string{".rootfile", "alias", "crds/file", "dir/file", "target", "templates/file"}},
-	} {
+		{
+			"source",
+			ViewOptions{Mode: Source, Sparse: []string{"target", ".root"}, Ignore: "target/\n"},
+			[]string{".rootfile", "target"},
+		},
+		{
+			"source directories",
+			ViewOptions{Mode: Source},
+			[]string{
+				".hidden/file",
+				".rootfile",
+				"crds/file",
+				"dir/file",
+				"node_modules/file",
+				"target",
+				"templates/file",
+			},
+		},
+		{
+			"direct",
+			ViewOptions{Mode: Direct},
+			[]string{
+				".hidden/file",
+				".rootfile",
+				"crds/file",
+				"dir/file",
+				"node_modules/file",
+				"target",
+				"templates/file",
+			},
+		},
+		{
+			"remote",
+			ViewOptions{Mode: RemoteBase},
+			[]string{".rootfile", "alias", "crds/file", "dir/file", "target", "templates/file"},
+		},
+	}
+	for index := range cases {
+		tc := &cases[index]
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testNewEntryPolicyShapingCase(t, testNewEntryPolicyShapingCaseInputs{repo: &repo, commit: &commit, tc: &tc})
+			testNewEntryPolicyShapingCase(t, testNewEntryPolicyShapingCaseInputs{repo: &repo, commit: &commit, tc: tc})
 		},
 		)
 	}
@@ -167,6 +201,9 @@ func testNewEntryPolicyUnknownModeVisibility(t *testing.T) {
 	entries, err := fs.ReadDir(input, ".")
 	assert.NoError(t, err)
 	var names []string
+	if len(entries) != 0 {
+		names = make([]string, 0, len(entries))
+	}
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
@@ -379,119 +416,7 @@ func testFSContentFingerprintCase(t *testing.T, mode *string,
 
 	var keys [2]string
 	for i := range keys {
-		files := fstest.MapFS{
-			"file":          {Data: []byte("selected")},
-			".sourceignore": {Data: []byte("ignored\n")},
-			"ignored":       {Data: []byte("ignored")},
-		}
-		if i == 1 {
-			switch *mode {
-			case "payload":
-				files["file"].Data = []byte("different")
-			case "name":
-				files["other"] = files["file"]
-				delete(files, "file")
-			case "ignored":
-				files["ignored"].Data = []byte("different")
-			}
-		}
-		reader := &contentReadFS{FS: files}
-		input, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: reader})
-		assert.NoError(t, err)
-		assert.Equal(t, key, "")
-		assert.Equal(t, reader.reads.Load(), int64(0))
-		assert.Equal(t, input.FileDigests() == nil, true)
-		ctx, cancel := context.WithCancel(t.Context())
-		if (*mode) == "read_error" || (*mode) == "walk_error" ||
-			(*mode) == "scan_canceled" ||
-			(*mode) == "scan_deadline" {
-			_, sourcePolicyErr := input.SourcePolicy(t.Context())
-			assert.NoError(t, sourcePolicyErr)
-			want := fs.ErrPermission
-			reader.fail = "file"
-			if (*mode) == "walk_error" {
-				reader.fail = "."
-			}
-			if (*mode) == "scan_canceled" {
-				reader.fail, reader.cancel, want = "", cancel, context.Canceled
-			}
-			if (*mode) == "scan_deadline" {
-				reader.fail, reader.err, want = ".", context.DeadlineExceeded, context.DeadlineExceeded
-			}
-			_, sourcePolicyErr = ContentFingerprint(ctx, input)
-			cancel()
-			assert.Equal(t, input.FileDigests() == nil, true)
-			assert.FatalIf(
-				t,
-				!errors.Is(sourcePolicyErr, want),
-				"fingerprint error = %v, want %v",
-				sourcePolicyErr,
-				want,
-			)
-			reader.fail, reader.cancel, reader.err = "", nil, nil
-			if (*mode) == "read_error" || (*mode) == "walk_error" {
-				_, sourcePolicyErr = ContentFingerprint(t.Context(), input)
-				assert.Equal(t, errors.Is(sourcePolicyErr, want), true)
-				assert.Equal(t, input.FileDigests() == nil, true)
-				continue
-			}
-		}
-		if (*mode) == "canceled" {
-			cancel()
-			_, contentFingerprintErr := ContentFingerprint(ctx, input)
-			assert.FatalIf(
-				t,
-				!errors.Is(contentFingerprintErr, context.Canceled),
-				"fingerprint error = %v",
-				contentFingerprintErr,
-			)
-		}
-		cancel()
-		if (*mode) == "error" {
-			input.view = &directView{FS: admissionErrorFS{err: fs.ErrPermission}}
-			_, contentFingerprintErr2 := ContentFingerprint(t.Context(), input)
-			assert.Equal(t, input.FileDigests() == nil, true)
-			assert.FatalIf(
-				t,
-				!errors.Is(contentFingerprintErr2, fs.ErrPermission),
-				"fingerprint error = %v",
-				contentFingerprintErr2,
-			)
-			continue
-		}
-		var wg sync.WaitGroup
-		for range 2 {
-			wg.Go(func() {
-				fingerprint, contentFingerprintErr3 := ContentFingerprint(t.Context(), input)
-				assert.NoError(t, contentFingerprintErr3)
-				if fingerprint == "" {
-					t.Error("mutable fingerprint is unknown")
-				}
-			})
-		}
-		wg.Wait()
-		reads := reader.reads.Load()
-		if (*mode) != "name" || i == 0 {
-			assert.Equal(t, reads, int64(1))
-		}
-		for name, file := range files {
-			if name != "ignored" {
-				assert.Equal(
-					t,
-					input.FileDigests()[name],
-					manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, file.Data)),
-				)
-			}
-		}
-		_, ignored := input.FileDigests()["ignored"]
-		assert.Equal(t, ignored, false)
-		keys[i], err = ContentFingerprint(t.Context(), input)
-		assert.NoError(t, err)
-		assert.Equal(t, reader.reads.Load(), reads)
-		if (*mode) == "canceled" {
-			_, err := ContentFingerprint(ctx, input)
-			assert.FatalIf(t, !errors.Is(err, context.Canceled), "cached fingerprint error = %v", err)
-		}
+		testFSContentFingerprintIteration(t, mode, i, &keys)
 	}
 	testFSContentFingerprintCaseCompletion(t, &testFSContentFingerprintCaseCompletionInputs{mode: &mode, keys: &keys})
 }
@@ -502,7 +427,7 @@ func testFSContentFingerprintCaseCompletion(t *testing.T, captures *testFSConten
 		(*(*captures.mode)) != "walk_error" {
 		assert.Equal(
 			t,
-			(*captures.keys)[0] == (*captures.keys)[1],
+			captures.keys[0] == captures.keys[1],
 			(*(*captures.mode)) != "payload" && (*(*captures.mode)) != "name",
 		)
 	}
@@ -633,4 +558,146 @@ func testFSContentFingerprintContentCanceled(t *testing.T) {
 type testFSContentFingerprintCaseCompletionInputs struct {
 	mode **string
 	keys *[2]string
+}
+
+func testFSContentFingerprintIteration(t *testing.T, mode *string, i int, keys *[2]string) {
+	t.Helper()
+	files := fstest.MapFS{
+		"file":          {Data: []byte("selected")},
+		".sourceignore": {Data: []byte("ignored\n")},
+		"ignored":       {Data: []byte("ignored")},
+	}
+	if i == 1 {
+		switch *mode {
+		case "payload":
+			files["file"].Data = []byte("different")
+		case "name":
+			files["other"] = files["file"]
+			delete(files, "file")
+		case "ignored":
+			files["ignored"].Data = []byte("different")
+		}
+	}
+	reader := &contentReadFS{FS: files}
+	input, key, err := New(t.Context(), nil, plumbing.ZeroHash, ViewOptions{Mode: Direct, Current: reader})
+	assert.NoError(t, err)
+	assert.Equal(t, key, "")
+	assert.Equal(t, reader.reads.Load(), int64(0))
+	assert.Equal(t, input.FileDigests() == nil, true)
+	ctx, cancel := context.WithCancel(t.Context())
+	if testFSContentFingerprintErrors(
+		ctx,
+		t,
+		mode,
+		&fingerprintErrorCase{input: input, reader: reader, cancel: cancel},
+	) {
+		return
+	}
+	cancel()
+	if (*mode) == "error" {
+		input.view = &directView{FS: admissionErrorFS{err: fs.ErrPermission}}
+		_, contentFingerprintErr2 := ContentFingerprint(t.Context(), input)
+		assert.Equal(t, input.FileDigests() == nil, true)
+		assert.FatalIf(
+			t,
+			!errors.Is(contentFingerprintErr2, fs.ErrPermission),
+			"fingerprint error = %v",
+			contentFingerprintErr2,
+		)
+		return
+	}
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			fingerprint, contentFingerprintErr3 := ContentFingerprint(t.Context(), input)
+			assert.NoError(t, contentFingerprintErr3)
+			if fingerprint == "" {
+				t.Error("mutable fingerprint is unknown")
+			}
+		})
+	}
+	wg.Wait()
+	reads := reader.reads.Load()
+	if (*mode) != "name" || i == 0 {
+		assert.Equal(t, reads, int64(1))
+	}
+	for name, file := range files {
+		if name != "ignored" {
+			assert.Equal(
+				t,
+				input.FileDigests()[name],
+				manifest.Fingerprint(plumbing.ComputeHash(plumbing.BlobObject, file.Data)),
+			)
+		}
+	}
+	_, ignored := input.FileDigests()["ignored"]
+	assert.Equal(t, ignored, false)
+	keys[i], err = ContentFingerprint(t.Context(), input)
+	assert.NoError(t, err)
+	assert.Equal(t, reader.reads.Load(), reads)
+	if (*mode) == "canceled" {
+		_, err := ContentFingerprint(ctx, input)
+		assert.FatalIf(t, !errors.Is(err, context.Canceled), "cached fingerprint error = %v", err)
+	}
+}
+
+type fingerprintErrorCase struct {
+	input  *FS
+	reader *contentReadFS
+	cancel context.CancelFunc
+}
+
+func testFSContentFingerprintErrors(
+	ctx context.Context,
+	t *testing.T,
+	mode *string,
+	sample *fingerprintErrorCase,
+) bool {
+	t.Helper()
+	input, reader, cancel := sample.input, sample.reader, sample.cancel
+	if (*mode) == "read_error" || (*mode) == "walk_error" ||
+		(*mode) == "scan_canceled" ||
+		(*mode) == "scan_deadline" {
+		_, sourcePolicyErr := input.SourcePolicy(t.Context())
+		assert.NoError(t, sourcePolicyErr)
+		want := fs.ErrPermission
+		reader.fail = "file"
+		if (*mode) == "walk_error" {
+			reader.fail = "."
+		}
+		if (*mode) == "scan_canceled" {
+			reader.fail, reader.cancel, want = "", cancel, context.Canceled
+		}
+		if (*mode) == "scan_deadline" {
+			reader.fail, reader.err, want = ".", context.DeadlineExceeded, context.DeadlineExceeded
+		}
+		_, sourcePolicyErr = ContentFingerprint(ctx, input)
+		cancel()
+		assert.Equal(t, input.FileDigests() == nil, true)
+		assert.FatalIf(
+			t,
+			!errors.Is(sourcePolicyErr, want),
+			"fingerprint error = %v, want %v",
+			sourcePolicyErr,
+			want,
+		)
+		reader.fail, reader.cancel, reader.err = "", nil, nil
+		if (*mode) == "read_error" || (*mode) == "walk_error" {
+			_, sourcePolicyErr = ContentFingerprint(t.Context(), input)
+			assert.Equal(t, errors.Is(sourcePolicyErr, want), true)
+			assert.Equal(t, input.FileDigests() == nil, true)
+			return true
+		}
+	}
+	if (*mode) == "canceled" {
+		cancel()
+		_, contentFingerprintErr := ContentFingerprint(ctx, input)
+		assert.FatalIf(
+			t,
+			!errors.Is(contentFingerprintErr, context.Canceled),
+			"fingerprint error = %v",
+			contentFingerprintErr,
+		)
+	}
+	return false
 }

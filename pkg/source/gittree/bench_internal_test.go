@@ -93,26 +93,29 @@ func BenchmarkView_Packed(b *testing.B) {
 					}
 				}
 				if name == "ReadAll" {
-					{
-						err := fs.WalkDir(input, ".", func(path string, entry fs.DirEntry, err error) error {
-							if err != nil || entry.IsDir() {
-								return err
-							}
-							f, err := input.Open(path)
-							if err != nil {
-								return err
-							}
-							_, err = io.Copy(io.Discard, f)
-							closeErr := f.Close()
-							if err != nil {
-								return err
-							}
-							return closeErr
-						})
-						assert.NoError(b, err)
-					}
+					benchReadAll(b, input)
 				}
 			}
 		})
 	}
+}
+
+func benchReadAll(b *testing.B, input *FS) {
+	b.Helper()
+	err := fs.WalkDir(input, ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		f, err := input.Open(path)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(io.Discard, f)
+		closeErr := f.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
+	})
+	assert.NoError(b, err)
 }

@@ -292,6 +292,7 @@ type contentReadBilly struct {
 	all   bool
 }
 
+//nolint:ireturn // The billy.Filesystem implementation must preserve its upstream billy.File return type.
 func (f *contentReadBilly) Open(name string) (billy.File, error) {
 	if f.all || strings.HasPrefix(filepath.ToSlash(name), "dir/") {
 		f.reads.Add(1)
@@ -333,15 +334,37 @@ func testNewEntryPolicyOwnershipLabels(t *testing.T) {
 	root := t.TempDir()
 	content := struct{ Tree string }{"captured"}
 	key := manifest.Fingerprint(content)
-	for _, tc := range []struct {
+	cases := []struct {
 		name      string
 		opts      LabelOptions
 		want, key string
 	}{
-		{"baseline", LabelOptions{Root: root, Mode: Direct, Key: "revision"}, filepath.Join(root, ".flate-base", "revision"), "revision"},
-		{"local source", LabelOptions{Root: root, Mode: Source, Key: "content"}, filepath.Join(filepath.Dir(root), ".flate-sources", "content"), "content"},
-		{"alias", LabelOptions{Root: root, Mode: Source, Content: content, Source: manifest.NamedResource{Namespace: "flux-system", Name: "cluster"}}, filepath.Join(filepath.Dir(root), ".flate-sources", key, "flux-system", "cluster"), key},
-	} {
+		{
+			"baseline",
+			LabelOptions{Root: root, Mode: Direct, Key: "revision"},
+			filepath.Join(root, ".flate-base", "revision"),
+			"revision",
+		},
+		{
+			"local source",
+			LabelOptions{Root: root, Mode: Source, Key: "content"},
+			filepath.Join(filepath.Dir(root), ".flate-sources", "content"),
+			"content",
+		},
+		{
+			"alias",
+			LabelOptions{
+				Root:    root,
+				Mode:    Source,
+				Content: content,
+				Source:  manifest.NamedResource{Namespace: "flux-system", Name: "cluster"},
+			},
+			filepath.Join(filepath.Dir(root), ".flate-sources", key, "flux-system", "cluster"),
+			key,
+		},
+	}
+	for index := range cases {
+		tc := &cases[index]
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			label, key := Label(tc.opts)
@@ -589,6 +612,9 @@ func testNewEntryPolicyCallerOwnedListing(t *testing.T) {
 			entries, err = view.ReadDir("dir")
 			assert.NoError(t, err)
 			var names []string
+			if len(entries) != 0 {
+				names = make([]string, 0, len(entries))
+			}
 			for _, entry := range entries {
 				names = append(names, entry.Name())
 			}

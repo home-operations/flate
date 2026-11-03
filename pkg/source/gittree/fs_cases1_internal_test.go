@@ -174,7 +174,7 @@ func testNewEntryPolicyPolicyEvidencePreservesBytes(t *testing.T) {
 	t.Helper()
 
 	root := t.TempDir()
-	var keys []string
+	keys := make([]string, 0, 2)
 	for _, data := range []string{"#\xff\n", "#\xfe\n"} {
 		testutil.WriteFile(t, root, ".sourceignore", data)
 		artifact, err := admitLocal(t, root)

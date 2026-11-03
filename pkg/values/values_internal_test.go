@@ -14,15 +14,15 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-// SliceProvider is a test-only Provider backed by in-memory slices.
-// Production wires NewStoreProvider against the central Store.
-type SliceProvider struct {
+type sliceProvider struct {
 	ConfigMaps []*manifest.ConfigMap
 	Secrets    []*manifest.Secret
 }
 
 // Data finds data by its full identity.
-func (p *SliceProvider) Data(id manifest.NamedResource) manifest.Data {
+//
+//nolint:ireturn // The provider contract returns both ConfigMap and Secret data.
+func (p *sliceProvider) Data(id manifest.NamedResource) manifest.Data {
 	for _, c := range p.ConfigMaps {
 		if c.Named() == id {
 			return c
@@ -170,7 +170,7 @@ func TestExpandValueReferences_TargetPath(t *testing.T) {
 		Name: "k", Namespace: "default",
 		Data: map[string]any{"v": "secret-value"},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{
@@ -209,7 +209,7 @@ environment = ["FOO=bar", "BAZ=qux"]
 		},
 	}
 	{
-		_, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+		_, err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	runners := hr.Values["runners"].(map[string]any)
@@ -242,7 +242,7 @@ func TestExpandValueReferences_LiteralTargetPathEscapedDot(t *testing.T) {
 		},
 	}
 	{
-		_, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+		_, err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	annotations := hr.Values["annotations"].(map[string]any)
@@ -266,7 +266,7 @@ func TestExpandValueReferences_MissingOptionalTargetPath(t *testing.T) {
 			{Kind: "ConfigMap", Name: "absent", ValuesKey: "v", TargetPath: "k", Optional: true},
 		},
 	}
-	provider := &SliceProvider{}
+	provider := &sliceProvider{}
 	{
 		_, err := ExpandValueReferences(hr, provider, nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
@@ -330,7 +330,7 @@ func TestExpandValueReferences_MissingOptionalKeySkipped(t *testing.T) {
 	}
 
 	{
-		_, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+		_, err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
 		assert.FatalIf(t, err != nil, "ExpandValueReferences: %v", err)
 	}
 	if hr.Values["existing"] != "kept" || len(hr.Values) != 1 {
@@ -345,7 +345,7 @@ func TestExpandValueReferences_CacheHits(t *testing.T) {
 		Name: "platform", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 5\nimage:\n  tag: v2\n"},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	cache := &Cache{}
 	hr := func() *manifest.HelmRelease {
 		return &manifest.HelmRelease{
@@ -404,7 +404,7 @@ func TestExpandValueReferences_CacheInvalidatesOnContentChange(t *testing.T) {
 		Name: "platform", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 5\n"},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	cache := &Cache{}
 	mk := func() *manifest.HelmRelease {
 		return &manifest.HelmRelease{
@@ -443,7 +443,7 @@ func TestExpandValueReferences_NilCache(t *testing.T) {
 		Name: "extra", Namespace: "default",
 		Data: map[string]any{"values.yaml": "replicaCount: 7\n"},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name: "demo", Namespace: "default",
 		ValuesFrom: []manifest.ValuesReference{{Kind: "ConfigMap", Name: "extra"}},
@@ -510,7 +510,7 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
-			provider := &SliceProvider{
+			provider := &sliceProvider{
 				ConfigMaps: []*manifest.ConfigMap{
 					{Name: "vars", Namespace: "ns", Data: map[string]any{"INVALID": []any{"nested"}}},
 				},
@@ -538,7 +538,7 @@ func TestExpandPostBuildSubstituteReference_MalformedDataLeavesSubstitutionsUnto
 func TestExpandPostBuildSubstituteReference_MalformedKeysDeterministic(t *testing.T) {
 	t.Parallel()
 	sec := &manifest.Secret{Name: "vars", Namespace: "ns", Data: map[string]any{"C": "!", "A": "!", "B": "!"}}
-	provider := &SliceProvider{Secrets: []*manifest.Secret{sec}}
+	provider := &sliceProvider{Secrets: []*manifest.Secret{sec}}
 	ks := &manifest.Kustomization{
 		Name:      "app",
 		Namespace: "ns",
@@ -562,7 +562,7 @@ func TestExpandPostBuildSubstituteReference_RejectsInvalidVarName(t *testing.T) 
 			t.Parallel()
 			ks := &manifest.Kustomization{Name: "k", Namespace: "ns"}
 			vars := map[string]any{"z-var": "v", "my-var": "v", "ok_name": "v"}
-			provider := &SliceProvider{}
+			provider := &sliceProvider{}
 			if source == "inline" {
 				ks.PostBuild = &kustomizev1.PostBuild{
 					Substitute: map[string]string{"z-var": "v", "my-var": "v", "ok_name": "v"},
@@ -605,7 +605,7 @@ func TestExpandPostBuildSubstituteReference_InvalidSingleName(t *testing.T) {
 		PostBuild: &kustomizev1.PostBuild{Substitute: map[string]string{"flate-campaign": "v"}},
 	}
 	before := ks.Clone()
-	err := ExpandPostBuildSubstituteReference(ks, &SliceProvider{})
+	err := ExpandPostBuildSubstituteReference(ks, &sliceProvider{})
 	assert.Diff(t, ks.PostBuild.Substitute, before.PostBuild.Substitute)
 	{
 		assert.FatalIf(t, err == nil || err.Error() != "invalid substitute variable flate-campaign" ||

@@ -44,7 +44,16 @@ func TestReplaceValueAtPath_TypeCoercion(t *testing.T) {
 			}
 			leaf := walkPath(t, got, tc.path)
 			{
-				assert.ErrorIf(t, !equalish(leaf, tc.want), "path %q: got %v (%T), want %v (%T)", tc.path, leaf, leaf, tc.want, tc.want)
+				assert.ErrorIf(
+					t,
+					!equalish(leaf, tc.want),
+					"path %q: got %v (%T), want %v (%T)",
+					tc.path,
+					leaf,
+					leaf,
+					tc.want,
+					tc.want,
+				)
 			}
 		})
 	}
@@ -159,7 +168,7 @@ func wholeDocHR() *manifest.HelmRelease {
 func TestExpandValueReferences_ConcurrentSharedCache(t *testing.T) {
 	t.Parallel()
 	cm := nestedValuesCM()
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
 		Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
 	}}}
 	cache := &Cache{}
@@ -283,7 +292,7 @@ func TestExpandValueReferences_TargetPathDoesNotCorruptSharedCache(t *testing.T)
 			}
 			hr := wholeDocHR()
 			cm := nestedValuesCM()
-			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
+			provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, {
 				Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
 			}}}
 			expandValuesForTest(t, hr, provider, cache)
@@ -317,7 +326,7 @@ func TestExpandValueReferences_InterleavedTargetPaths(t *testing.T) {
 			second := &manifest.ConfigMap{Name: "later", Namespace: "default", Data: map[string]any{
 				"values.yaml": "later:\n  image:\n    tag: v2\n  env:\n    - name: B\n      value: two\n",
 			}}
-			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{first, second, {
+			provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{first, second, {
 				Name: "inject", Namespace: "default", Data: map[string]any{"v": "Always"},
 			}}}
 			cache := &Cache{}
@@ -397,7 +406,7 @@ func TestExpandValueReferences_YAMLContainingPlaceholderIsMerged(t *testing.T) {
 			"values.yaml": "domain: ..PLACEHOLDER_DOMAIN..\nport: 8080\n",
 		},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
 		Namespace: "default",
@@ -426,7 +435,7 @@ func TestExpandValueReferences_WipedScalarPlaceholderTolerated(t *testing.T) {
 			"values.yaml": "..PLACEHOLDER_values.yaml..",
 		},
 	}
-	provider := &SliceProvider{Secrets: []*manifest.Secret{sec}}
+	provider := &sliceProvider{Secrets: []*manifest.Secret{sec}}
 	hr := &manifest.HelmRelease{
 		Name:      "demo",
 		Namespace: "default",
@@ -536,7 +545,7 @@ func TestExpandValueReferences_MalformedTargetPathClassified(t *testing.T) {
 					},
 				},
 			}
-			_, err := ExpandValueReferences(hr, &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
+			_, err := ExpandValueReferences(hr, &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}, nil)
 			{
 				assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || !errors.Is(err, manifest.ErrFlux) ||
 					!errors.Is(err, strconv.ErrSyntax), "target parser identities lost: %v", err)

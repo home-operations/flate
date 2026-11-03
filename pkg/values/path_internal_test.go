@@ -65,7 +65,7 @@ func testResolveStaticPathParentSubstitutionsCase(
 			parent.PostBuild.SubstituteFrom[0].Name = "missing"
 		}
 	}
-	provider := &SliceProvider{
+	provider := &sliceProvider{
 		ConfigMaps: []*manifest.ConfigMap{
 			{Name: "settings", Namespace: "apps", Data: map[string]any{"ROOT": "apps/blue"}},
 		},

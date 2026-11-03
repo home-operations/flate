@@ -57,7 +57,7 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 		Name: "platform-values", Namespace: "default",
 		Data: map[string]any{"values.yaml": bigPlatformValuesYAML()},
 	}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "platform-values"}
 	cache := &Cache{} // shared across all HRs, as in production (one per helm.Client)
 
@@ -77,7 +77,7 @@ func BenchmarkExpandValueReferences_SharedLargeCM(b *testing.B) {
 
 // BenchmarkExpandValueReferences_ManyFromRefs measures ExpandValueReferences
 // against an HR with 10 valuesFrom ConfigMap refs — each carrying a
-// multi-key YAML document — backed by a SliceProvider. The merge
+// multi-key YAML document — backed by a sliceProvider. The merge
 // chain dominates here; the lookupValueRef path runs once per ref.
 func BenchmarkExpandValueReferences_ManyFromRefs(b *testing.B) {
 	const n = 10
@@ -100,7 +100,7 @@ counts:
 		})
 		refs = append(refs, manifest.ValuesReference{Kind: "ConfigMap", Name: name})
 	}
-	provider := &SliceProvider{ConfigMaps: cms}
+	provider := &sliceProvider{ConfigMaps: cms}
 	// Shared Cache across iterations: same valuesFrom refs hit the
 	// content-keyed memo and skip yaml.Unmarshal — matches the production
 	// pattern where M HRs sharing a platform-wide values CM parse
@@ -136,8 +136,9 @@ func BenchmarkExpandValueReferences_TargetPaths(b *testing.B) {
 				Namespace: "default",
 				Data:      map[string]any{"value": "replacement"},
 			}
-			provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, inject}}
-			refs := []manifest.ValuesReference{{Kind: "ConfigMap", Name: cm.Name}}
+			provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm, inject}}
+			refs := make([]manifest.ValuesReference, 0, 1+count)
+			refs = append(refs, manifest.ValuesReference{Kind: "ConfigMap", Name: cm.Name})
 			for i := range count {
 				refs = append(
 					refs,
@@ -177,7 +178,7 @@ func BenchmarkExpandValueReferences_ManyKeyCM(b *testing.B) {
 		data[fmt.Sprintf("sibling-%d.yaml", i)] = fmt.Sprintf("key%d: value-%d\n", i, i)
 	}
 	cm := &manifest.ConfigMap{Name: "shared", Namespace: "default", Data: data}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 	ref := manifest.ValuesReference{Kind: "ConfigMap", Name: "shared", ValuesKey: "values.yaml"}
 	cache := &Cache{}
 
@@ -210,7 +211,7 @@ func BenchmarkExpandPostBuildSubstituteReference_SharedCM(b *testing.B) {
 		data[fmt.Sprintf("VAR_%d", i)] = fmt.Sprintf("value-%d", i)
 	}
 	cm := &manifest.ConfigMap{Name: "cluster-settings", Namespace: "flux-system", Data: data}
-	provider := &SliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
+	provider := &sliceProvider{ConfigMaps: []*manifest.ConfigMap{cm}}
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -240,7 +241,7 @@ spec:
 	for i := range 50 {
 		data[fmt.Sprintf("VAR_%d", i)] = fmt.Sprintf("value-%d", i)
 	}
-	provider := &SliceProvider{
+	provider := &sliceProvider{
 		ConfigMaps: []*manifest.ConfigMap{{Name: "cluster-settings", Namespace: "flux-system", Data: data}},
 	}
 	b.ReportAllocs()

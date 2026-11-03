@@ -45,6 +45,8 @@ type Input struct {
 }
 
 // NewInput resolves data and offline availability from captured source-qualified facts.
+//
+//nolint:gocritic // The SDK takes a value snapshot of captured availability facts.
 func NewInput(facts store.ReferenceFacts, owner manifest.NamedResource) Input {
 	input := Input{}
 	independent := trackProductions(&input, facts.Productions, owner)
@@ -172,7 +174,7 @@ func (c *Cache) lookup(key string) (map[string]any, bool) {
 	if !ok {
 		return nil, false
 	}
-	return v.(map[string]any), true
+	return v.(map[string]any), true //nolint:errcheck // Cache.put publishes only parsed maps under this private cache key.
 }
 
 // put stores an immutable parsed map. A nil receiver disables memoization.
@@ -473,7 +475,12 @@ type valueExpansion struct {
 	owned   bool
 }
 
-func (ex *valueExpansion) expand(ref *manifest.ValuesReference, edge *manifest.Reference, provider Provider, cache *Cache) error {
+func (ex *valueExpansion) expand(
+	ref *manifest.ValuesReference,
+	edge *manifest.Reference,
+	provider Provider,
+	cache *Cache,
+) error {
 	found, err := lookupValueRef(*ref, edge.Namespace, provider)
 	if err != nil {
 		if _, ok := errors.AsType[*missingValueRefError](err); ok && ref.Optional {

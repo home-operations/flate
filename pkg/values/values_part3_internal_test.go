@@ -288,7 +288,12 @@ func TestExpandPostBuildSubstituteReference_DiagnosticLogContext(t *testing.T) {
 			assert.NoError(t, err)
 		}
 		{
-			assert.FatalIf(t, record.ID != manifest.DiagnosticFor(entry.Named(), entry).String(), "substitution debug identity=%q", record.ID)
+			assert.FatalIf(
+				t,
+				record.ID != manifest.DiagnosticFor(entry.Named(), entry).String(),
+				"substitution debug identity=%q",
+				record.ID,
+			)
 		}
 		count++
 	}

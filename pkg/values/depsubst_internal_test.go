@@ -146,7 +146,12 @@ func testDependencySubstitutionsParsedDependsOnCase(
 		st.AddObject(target.WithNamespace(ns))
 		for ref := range manifest.References(resolved, manifest.ReferenceRelations) {
 			{
-				assert.FatalIf(t, ref.Use == "dependsOn" && st.GetObject(ref.NamedResource) == nil, "resolved dependency does not match target: %s", ref.NamedResource)
+				assert.FatalIf(
+					t,
+					ref.Use == "dependsOn" && st.GetObject(ref.NamedResource) == nil,
+					"resolved dependency does not match target: %s",
+					ref.NamedResource,
+				)
 			}
 		}
 	}

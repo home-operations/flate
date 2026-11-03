@@ -191,7 +191,12 @@ func TestRecordEmitted_Replacement(t *testing.T) {
 	accept(t, s, p, &progress)
 	_, _, retained := s.GetEmission(p)
 	{
-		assert.FatalIf(t, len(retained.Manifests) != 2, "inherited partial documents duplicated: %d", len(retained.Manifests))
+		assert.FatalIf(
+			t,
+			len(retained.Manifests) != 2,
+			"inherited partial documents duplicated: %d",
+			len(retained.Manifests),
+		)
 	}
 	progress.Finish()
 	for _, tc := range []struct {
@@ -531,7 +536,18 @@ func testRecordEmittedConcurrentSupportCase(t *testing.T, testCaseInput *int,
 			)
 		}
 	}
-	testRecordEmittedConcurrentSupportCaseCompletion(t, &testRecordEmittedConcurrentSupportCaseCompletionState{testCaseInput: testCaseInput, s: s, p: &p, covered: &covered, accepted: accepted, q: &q, captured: &captured})
+	testRecordEmittedConcurrentSupportCaseCompletion(
+		t,
+		&testRecordEmittedConcurrentSupportCaseCompletionState{
+			testCaseInput: testCaseInput,
+			s:             s,
+			p:             &p,
+			covered:       &covered,
+			accepted:      accepted,
+			q:             &q,
+			captured:      &captured,
+		},
+	)
 }
 
 type testRecordEmittedConcurrentSupportCaseCompletionState struct {
@@ -544,16 +560,26 @@ type testRecordEmittedConcurrentSupportCaseCompletionState struct {
 	captured      *[]manifest.Production
 }
 
-func testRecordEmittedConcurrentSupportCaseCompletion(t *testing.T, scope *testRecordEmittedConcurrentSupportCaseCompletionState) {
+func testRecordEmittedConcurrentSupportCaseCompletion(
+	t *testing.T,
+	scope *testRecordEmittedConcurrentSupportCaseCompletionState,
+) {
 	t.Helper()
 	assert.Diff(t, (*scope.captured), []manifest.Production{{Owner: (*scope.p)}, {Owner: (*scope.q)}})
-	scope.s.SetArtifact((*scope.covered).Obj.Named(), &SourceArtifact{Key: "covered"})
-	scope.s.UpdateStatus((*scope.covered).Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
+	scope.s.SetArtifact(scope.covered.Obj.Named(), &SourceArtifact{Key: "covered"})
+	scope.s.UpdateStatus(scope.covered.Obj.Named(), StatusInfo{Status: StatusReady, Reason: "", Message: ""})
 	accept(t, scope.s, (*scope.p), &Emission{Complete: true})
 	for _, child := range scope.accepted.Children {
 		parent, ok := scope.s.RenderedParent(child.Obj.Named(), nil)
 		{
-			assert.FatalIf(t, !ok || parent != (*scope.q), "withdrawal parent=%v/%t, want %v/true", parent, ok, (*scope.q))
+			assert.FatalIf(
+				t,
+				!ok || parent != (*scope.q),
+				"withdrawal parent=%v/%t, want %v/true",
+				parent,
+				ok,
+				(*scope.q),
+			)
 		}
 		{
 			got := scope.s.Productions(child.Obj.Named(), nil)
@@ -566,27 +592,28 @@ func testRecordEmittedConcurrentSupportCaseCompletion(t *testing.T, scope *testR
 		}
 	}
 	{
-		assert.FatalIf(t, scope.s.GetObject((*scope.covered).Obj.Named()) != (*scope.covered).Obj ||
+		assert.FatalIf(t, scope.s.GetObject(scope.covered.Obj.Named()) != scope.covered.Obj ||
 			scope.s.GetArtifact(
-				(*scope.covered).Obj.Named(),
+				scope.covered.Obj.Named(),
 				ArtifactContent,
 			) == nil, "%s", "surviving Q support lost frozen descendant")
 	}
 	{
-		info, ok := scope.s.GetStatus((*scope.covered).Obj.Named())
+		info, ok := scope.s.GetStatus(scope.covered.Obj.Named())
 		assert.FatalIf(t, !ok || info.Status != StatusReady, "%s", "surviving Q support lost Ready")
 	}
 	accept(t, scope.s, (*scope.q), &Emission{Complete: true})
 	{
 		assert.FatalIf(
 			t,
-			scope.s.GetObject((*scope.covered).Obj.Named()) != nil || scope.s.GetArtifact((*scope.covered).Obj.Named(), ArtifactContent) != nil,
+			scope.s.GetObject(scope.covered.Obj.Named()) != nil ||
+				scope.s.GetArtifact(scope.covered.Obj.Named(), ArtifactContent) != nil,
 			"%s",
 			"last boundary support left frozen descendant live",
 		)
 	}
 	{
-		_, ok := scope.s.GetStatus((*scope.covered).Obj.Named())
+		_, ok := scope.s.GetStatus(scope.covered.Obj.Named())
 		assert.FatalIf(t, ok, "%s", "last boundary support left frozen descendant Ready")
 	}
 	for _, labels := range []bool{false, true} {

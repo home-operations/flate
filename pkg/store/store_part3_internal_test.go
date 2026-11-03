@@ -104,7 +104,12 @@ func TestStore_AddObject_TypedDocumentFreeAllocations(t *testing.T) {
 		assert.FatalIf(t, got > 6, "changed typed object allocations=%v, want at most 6", got)
 	}
 	{
-		assert.FatalIf(t, s.GetObject(versions[0].Named()) != versions[i%2], "%v", "changed typed object was not admitted")
+		assert.FatalIf(
+			t,
+			s.GetObject(versions[0].Named()) != versions[i%2],
+			"%v",
+			"changed typed object was not admitted",
+		)
 	}
 }
 
@@ -162,7 +167,16 @@ func testStoreShardedConcurrentDifferentKindsCase(
 			}
 		}, false)
 	}
-	testStoreShardedConcurrentDifferentKindsCaseCompletion(t, &testStoreShardedConcurrentDifferentKindsCaseCompletionState{testCaseInput: testCaseInput, s: s, arrived: &arrived, release: &release, events: &events})
+	testStoreShardedConcurrentDifferentKindsCaseCompletion(
+		t,
+		&testStoreShardedConcurrentDifferentKindsCaseCompletionState{
+			testCaseInput: testCaseInput,
+			s:             s,
+			arrived:       &arrived,
+			release:       &release,
+			events:        &events,
+		},
+	)
 }
 
 type testStoreShardedConcurrentDifferentKindsCaseCompletionState struct {
@@ -173,7 +187,10 @@ type testStoreShardedConcurrentDifferentKindsCaseCompletionState struct {
 	events        *[4]sync.Map
 }
 
-func testStoreShardedConcurrentDifferentKindsCaseCompletion(t *testing.T, scope *testStoreShardedConcurrentDifferentKindsCaseCompletionState) {
+func testStoreShardedConcurrentDifferentKindsCaseCompletion(
+	t *testing.T,
+	scope *testStoreShardedConcurrentDifferentKindsCaseCompletionState,
+) {
 	t.Helper()
 	var wg sync.WaitGroup
 	for w := range *scope.testCaseInput {

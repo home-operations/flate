@@ -89,7 +89,10 @@ func TestRecordEmitted_SeedDocumentArrival(t *testing.T) {
 	_, _, accepted = s.GetEmission(p)
 	{
 		assert.FatalIf(t, len(accepted.Manifests) != 2 || !manifest.ValueEqual(accepted.Manifests[0].Document, next) ||
-			!manifest.ValueEqual(accepted.Manifests[1].Document, foreignDoc), "partial version update lost cross-group documents: %v", accepted.Manifests)
+			!manifest.ValueEqual(
+				accepted.Manifests[1].Document,
+				foreignDoc,
+			), "partial version update lost cross-group documents: %v", accepted.Manifests)
 	}
 	{
 		got := s.Productions(foreign.Named(), nil)
@@ -278,7 +281,12 @@ func TestRecordEmitted_IdenticalArtifactEmission(t *testing.T) {
 		assert.FatalIf(t, got != 0, "identical dynamic emission allocated %v times, want zero", got)
 	}
 	{
-		assert.FatalIf(t, s.GetArtifact(owner.Named(), ArtifactContent) != accepted, "%v", "identical emission replaced the accepted proposal")
+		assert.FatalIf(
+			t,
+			s.GetArtifact(owner.Named(), ArtifactContent) != accepted,
+			"%v",
+			"identical emission replaced the accepted proposal",
+		)
 	}
 	target := manifest.NamedResource{
 		Group:     manifest.SourceDomain,
@@ -494,7 +502,16 @@ func testRecordEmittedArtifactPredictionsCase(
 	if contribution := s.coverage[owner.Named()]; contribution != nil {
 		proposal.coverage = contribution.records
 	}
-	testRecordEmittedArtifactPredictionsCaseCompletion(t, &testRecordEmittedArtifactPredictionsCaseCompletionState{testCaseInput: testCaseInput, s: s, owner: owner, g: &g, proposal: proposal})
+	testRecordEmittedArtifactPredictionsCaseCompletion(
+		t,
+		&testRecordEmittedArtifactPredictionsCaseCompletionState{
+			testCaseInput: testCaseInput,
+			s:             s,
+			owner:         owner,
+			g:             &g,
+			proposal:      proposal,
+		},
+	)
 }
 
 type testRecordEmittedArtifactPredictionsReplacementAndPartialRetentionInputs struct {
@@ -609,7 +626,10 @@ type testRecordEmittedArtifactPredictionsCaseCompletionState struct {
 	proposal      *Emission
 }
 
-func testRecordEmittedArtifactPredictionsCaseCompletion(t *testing.T, scope *testRecordEmittedArtifactPredictionsCaseCompletionState) {
+func testRecordEmittedArtifactPredictionsCaseCompletion(
+	t *testing.T,
+	scope *testRecordEmittedArtifactPredictionsCaseCompletionState,
+) {
 	t.Helper()
 	if (*scope.testCaseInput.mode) == "other-pin" {
 		cloned := *scope.proposal.binding.artifact
@@ -634,8 +654,16 @@ func testRecordEmittedArtifactPredictionsCaseCompletion(t *testing.T, scope *tes
 		facts := scope.s.ReferenceFacts((*scope.testCaseInput.target), nil)
 		assert.Diff(t, facts.Productions, scope.s.Productions((*scope.testCaseInput.target), nil))
 		{
-			assert.FatalIf(t, facts.Data != nil || facts.Accepted || scope.s.GetObject((*scope.testCaseInput.target)) != nil ||
-				scope.s.GetArtifact((*scope.testCaseInput.target), ArtifactContent) != nil, "%s", "prediction supplied content")
+			assert.FatalIf(
+				t,
+				facts.Data != nil || facts.Accepted || scope.s.GetObject((*scope.testCaseInput.target)) != nil ||
+					scope.s.GetArtifact(
+						(*scope.testCaseInput.target),
+						ArtifactContent,
+					) != nil,
+				"%s",
+				"prediction supplied content",
+			)
 		}
 	}
 	check(want)

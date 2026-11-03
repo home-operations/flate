@@ -347,7 +347,19 @@ func testRecordEmittedWithdrawalVisibilityCase(
 			"hidden producer supplied bytes to the independently visible declaration",
 		)
 	}
-	testRecordEmittedWithdrawalVisibilityCaseCompletion(t, &testRecordEmittedWithdrawalVisibilityCaseCompletionState{testCaseInput: testCaseInput, s: s, k: &k, l: &l, data: &data, late: &late, payload: payload, hidden: &hidden})
+	testRecordEmittedWithdrawalVisibilityCaseCompletion(
+		t,
+		&testRecordEmittedWithdrawalVisibilityCaseCompletionState{
+			testCaseInput: testCaseInput,
+			s:             s,
+			k:             &k,
+			l:             &l,
+			data:          &data,
+			late:          &late,
+			payload:       payload,
+			hidden:        &hidden,
+		},
+	)
 }
 
 type testRecordEmittedContributionContextCaseInputs struct {
@@ -603,7 +615,10 @@ type testRecordEmittedWithdrawalVisibilityCaseCompletionState struct {
 	hidden        *[]manifest.NamedResource
 }
 
-func testRecordEmittedWithdrawalVisibilityCaseCompletion(t *testing.T, scope *testRecordEmittedWithdrawalVisibilityCaseCompletionState) {
+func testRecordEmittedWithdrawalVisibilityCaseCompletion(
+	t *testing.T,
+	scope *testRecordEmittedWithdrawalVisibilityCaseCompletionState,
+) {
 	t.Helper()
 	for _, id := range *scope.hidden {
 		scope.s.UpdateFailure(id, manifest.NewError(manifest.ErrInput, nil, "hidden successor"))
@@ -670,11 +685,12 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(t *testing.T, scope *te
 	{
 		assert.FatalIf(t, len(scope.s.Warnings()) != 0, "%s", "hidden payload contributed a conflict warning")
 	}
-	scope.s.AddObject(&manifest.Kustomization{Name: (*scope.k).Name, Namespace: (*scope.k).Namespace})
+	scope.s.AddObject(&manifest.Kustomization{Name: scope.k.Name, Namespace: scope.k.Namespace})
 	{
 		assert.FatalIf(
 			t,
-			scope.s.GetObject((*scope.k)) == nil || scope.s.GetObject((*scope.l)) == nil || scope.s.GetObject((*scope.late).Obj.Named()) == nil,
+			scope.s.GetObject((*scope.k)) == nil || scope.s.GetObject((*scope.l)) == nil ||
+				scope.s.GetObject(scope.late.Obj.Named()) == nil,
 			"%s",
 			"external anchor did not restore supported descendants",
 		)
@@ -682,7 +698,7 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(t *testing.T, scope *te
 	{
 		assert.FatalIf(
 			t,
-			scope.s.GetArtifact((*scope.late).Obj.Named(), ArtifactContent) != scope.payload,
+			scope.s.GetArtifact(scope.late.Obj.Named(), ArtifactContent) != scope.payload,
 			"%s",
 			"reanchoring lost privately completed generated payload",
 		)
@@ -702,7 +718,7 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(t *testing.T, scope *te
 				ArtifactContent,
 			)
 			assert.ErrorIf(t, artifact != nil &&
-				((id != (*scope.late).Obj.Named() && id != (*scope.data).Obj.Named()) || artifact != scope.payload), "%s", "reanchoring restored retained artifact")
+				((id != scope.late.Obj.Named() && id != scope.data.Obj.Named()) || artifact != scope.payload), "%s", "reanchoring restored retained artifact")
 		}
 		{
 			_, ok := scope.s.GetStatus(id)
@@ -725,7 +741,7 @@ func testRecordEmittedWithdrawalVisibilityCaseCompletion(t *testing.T, scope *te
 	{
 		assert.FatalIf(
 			t,
-			(*scope.testCaseInput.shared) && scope.s.GetObject((*scope.data).Obj.Named()) == nil,
+			(*scope.testCaseInput.shared) && scope.s.GetObject(scope.data.Obj.Named()) == nil,
 			"%s",
 			"removed cycle anchor lost surviving Q support",
 		)

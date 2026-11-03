@@ -975,6 +975,7 @@ const (
 	capturedProductions
 	capturedObjects
 )
+
 const (
 	allocationGrowthFactor = 2
 	maxLinearInputBlocks   = 2

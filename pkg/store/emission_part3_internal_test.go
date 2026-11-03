@@ -180,7 +180,18 @@ func testRecordEmittedCoverageAndStaticBoundaryCase(
 			productions = productions[1:]
 		}
 	}
-	testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(t, &testRecordEmittedCoverageAndStaticBoundaryCaseCompletionState{testCaseInput: testCaseInput, s: s, p: &p, seed: &seed, productions: &productions, provisional: &provisional, independent: &independent})
+	testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
+		t,
+		&testRecordEmittedCoverageAndStaticBoundaryCaseCompletionState{
+			testCaseInput: testCaseInput,
+			s:             s,
+			p:             &p,
+			seed:          &seed,
+			productions:   &productions,
+			provisional:   &provisional,
+			independent:   &independent,
+		},
+	)
 }
 
 func testRecordEmittedCoverageAndStaticBoundaryAnchoringReadOrder(t *testing.T) {
@@ -574,12 +585,15 @@ type testRecordEmittedCoverageAndStaticBoundaryCaseCompletionState struct {
 	independent   *bool
 }
 
-func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(t *testing.T, scope *testRecordEmittedCoverageAndStaticBoundaryCaseCompletionState) {
+func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(
+	t *testing.T,
+	scope *testRecordEmittedCoverageAndStaticBoundaryCaseCompletionState,
+) {
 	t.Helper()
 	scope.s.SetDiscoveryIndex(
 		&manifest.DiscoveryIndex{
 			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
-				(*scope.seed).Obj.Named(): {Productions: (*scope.productions)},
+				scope.seed.Obj.Named(): {Productions: (*scope.productions)},
 			},
 		},
 	)
@@ -593,20 +607,20 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(t *testing.T, scop
 	attempt.Complete = true
 	var events []manifest.BaseManifest
 	unsub := scope.s.AddListener(EventObjectAdded, func(id manifest.NamedResource, data any) {
-		if id == (*scope.seed).Obj.Named() {
+		if id == scope.seed.Obj.Named() {
 			obj, _ := data.(manifest.BaseManifest)
 			events = append(events, obj)
 		}
 	}, false)
 	scope.s.RecordEmitted((*scope.p), &attempt, nil)
 	unsub()
-	assert.Equal(t, scope.s.EmissionOwner((*scope.seed).Obj.Named()), (*scope.p))
-	checkEffectiveObject(t, scope.s, (*scope.seed).Obj.Named(), actual)
+	assert.Equal(t, scope.s.EmissionOwner(scope.seed.Obj.Named()), (*scope.p))
+	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), actual)
 	if *scope.independent {
 		{
 			assert.FatalIf(
 				t,
-				scope.s.GetObject((*scope.seed).Obj.Named()) != actual.Obj,
+				scope.s.GetObject(scope.seed.Obj.Named()) != actual.Obj,
 				"%s",
 				"accepted output did not replace independent static content",
 			)
@@ -616,14 +630,14 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(t *testing.T, scop
 		empty.Complete = true
 		accept(t, scope.s, (*scope.p), &empty)
 		empty.Finish()
-		assert.Equal(t, scope.s.EmissionOwner((*scope.seed).Obj.Named()), manifest.NamedResource{})
-		checkEffectiveObject(t, scope.s, (*scope.seed).Obj.Named(), (*scope.seed))
+		assert.Equal(t, scope.s.EmissionOwner(scope.seed.Obj.Named()), manifest.NamedResource{})
+		checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), (*scope.seed))
 		{
 			got := scope.s.Productions(
-				(*scope.seed).Obj.Named(),
+				scope.seed.Obj.Named(),
 				nil,
 			)
-			assert.FatalIf(t, scope.s.GetObject((*scope.seed).Obj.Named()) != (*scope.seed).Obj || len(got) != 1 ||
+			assert.FatalIf(t, scope.s.GetObject(scope.seed.Obj.Named()) != scope.seed.Obj || len(got) != 1 ||
 				got[0] != (*scope.productions)[len((*scope.productions))-1], "complete empty retired independent source/input anchor: %v", got)
 		}
 		return
@@ -631,13 +645,13 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(t *testing.T, scop
 	if *scope.provisional {
 		{
 			got := scope.s.GetObject(
-				(*scope.seed).Obj.Named(),
+				scope.seed.Obj.Named(),
 			)
 			assert.FatalIf(t, got != actual.Obj || len(events) != 1 ||
 				events[0] != actual.Obj, "bootstrap replacement not published: %v, events %v", got, events)
 		}
 		{
-			got := scope.s.Productions((*scope.seed).Obj.Named(), nil)
+			got := scope.s.Productions(scope.seed.Obj.Named(), nil)
 			assert.FatalIf(t, len(got) != 1 || got[0].Owner != (*scope.p), "retired bootstrap support: %v", got)
 		}
 	}
@@ -649,18 +663,19 @@ func testRecordEmittedCoverageAndStaticBoundaryCaseCompletion(t *testing.T, scop
 	{
 		assert.FatalIf(
 			t,
-			scope.s.GetObject((*scope.seed).Obj.Named()) != nil || len(scope.s.Productions((*scope.seed).Obj.Named(), nil)) != 0,
+			scope.s.GetObject(scope.seed.Obj.Named()) != nil ||
+				len(scope.s.Productions(scope.seed.Obj.Named(), nil)) != 0,
 			"%s",
 			"complete empty resurrected covered prediction",
 		)
 	}
-	checkEffectiveObject(t, scope.s, (*scope.seed).Obj.Named(), Child{})
-	scope.s.AddObject((*scope.seed).Obj)
-	checkEffectiveObject(t, scope.s, (*scope.seed).Obj.Named(), (*scope.seed))
+	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), Child{})
+	scope.s.AddObject(scope.seed.Obj)
+	checkEffectiveObject(t, scope.s, scope.seed.Obj.Named(), (*scope.seed))
 	{
 		assert.FatalIf(
 			t,
-			scope.s.GetObject((*scope.seed).Obj.Named()) == nil,
+			scope.s.GetObject(scope.seed.Obj.Named()) == nil,
 			"%s",
 			"explicit external anchor could not restore covered identity",
 		)

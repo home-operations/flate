@@ -517,11 +517,13 @@ func TestStore_UpdateStatus_Idempotent(
 		{"failed reset", StatusFailed, "", ReasonFailed, 6},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-
 			s.UpdateStatus(id, StatusInfo{Status: tc.status, Reason: tc.reason, Message: "same message"})
 			info, ok := s.GetStatus(id)
 			{
-				assert.FatalIf(t, !ok || info.Status != tc.status || info.Reason != tc.want || len(events) != tc.count, "status=%+v present=%v events=%d, want reason=%s events=%d",
+				assert.FatalIf(
+					t,
+					!ok || info.Status != tc.status || info.Reason != tc.want || len(events) != tc.count,
+					"status=%+v present=%v events=%d, want reason=%s events=%d",
 					info,
 					ok,
 					len(events),

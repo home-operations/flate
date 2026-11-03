@@ -101,7 +101,10 @@ func TestRecordEmitted_CrossGroupSeedDocumentArrival(t *testing.T) {
 	_, _, accepted = s.GetEmission(p)
 	{
 		assert.FatalIf(t, len(accepted.Manifests) != 2 || !manifest.ValueEqual(accepted.Manifests[0].Document, next) ||
-			!manifest.ValueEqual(accepted.Manifests[1].Document, foreignDoc), "partial version update lost cross-group documents: %v", accepted.Manifests)
+			!manifest.ValueEqual(
+				accepted.Manifests[1].Document,
+				foreignDoc,
+			), "partial version update lost cross-group documents: %v", accepted.Manifests)
 	}
 	{
 		got := s.Productions(foreign.Named(), nil)
@@ -528,7 +531,24 @@ func testRecordEmittedPayloadPrecedenceCase(t *testing.T, testCaseInput *struct 
 		slices.Reverse(payloads)
 		slices.Reverse(children)
 	}
-	testRecordEmittedPayloadPrecedenceCaseCompletion(t, &testRecordEmittedPayloadPrecedenceCaseCompletionState{s: &s, a: &a, z: &z, zz: &zz, declaration: &declaration, target: &target, err: &err, first: &first, last: &last, peer: &peer, owners: &owners, payloads: &payloads, children: &children})
+	testRecordEmittedPayloadPrecedenceCaseCompletion(
+		t,
+		&testRecordEmittedPayloadPrecedenceCaseCompletionState{
+			s:           &s,
+			a:           &a,
+			z:           &z,
+			zz:          &zz,
+			declaration: &declaration,
+			target:      &target,
+			err:         &err,
+			first:       &first,
+			last:        &last,
+			peer:        &peer,
+			owners:      &owners,
+			payloads:    &payloads,
+			children:    &children,
+		},
+	)
 }
 
 func testGetEmissionAuthoritativeDocumentCase(
@@ -654,7 +674,10 @@ type testRecordEmittedPayloadPrecedenceCaseCompletionState struct {
 	children    *[]Child
 }
 
-func testRecordEmittedPayloadPrecedenceCaseCompletion(t *testing.T, scope *testRecordEmittedPayloadPrecedenceCaseCompletionState) {
+func testRecordEmittedPayloadPrecedenceCaseCompletion(
+	t *testing.T,
+	scope *testRecordEmittedPayloadPrecedenceCaseCompletionState,
+) {
 	t.Helper()
 	var opened fs.File
 	start, done := make(chan struct{}), make(chan struct{})
@@ -689,7 +712,7 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(t *testing.T, scope *testR
 		(*scope.zz),
 		&Emission{
 			Children:  []Child{(*scope.declaration)},
-			Manifests: testutil.DocumentOccurrences([]map[string]any{(*scope.declaration).Doc}),
+			Manifests: testutil.DocumentOccurrences([]map[string]any{scope.declaration.Doc}),
 			Complete:  true,
 		},
 		nil,
@@ -704,8 +727,8 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(t *testing.T, scope *testR
 				Related:  []manifest.NamedResource{(*scope.a), (*scope.z), (*scope.zz), (*scope.zz)},
 				Category: manifest.WarnConflictingProducers,
 				Count:    1,
-				Message:  "conflicting producers; using " + (*scope.zz).String(),
-				Detail:   []string{(*scope.a).String(), (*scope.z).String(), (*scope.zz).String()},
+				Message:  "conflicting producers; using " + scope.zz.String(),
+				Detail:   []string{scope.a.String(), scope.z.String(), scope.zz.String()},
 			},
 		},
 	)
@@ -725,7 +748,8 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(t *testing.T, scope *testR
 	{
 		assert.FatalIf(
 			t,
-			(*scope.s).EmissionOwner((*scope.target)) != (*scope.zz) || (*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
+			(*scope.s).EmissionOwner((*scope.target)) != (*scope.zz) ||
+				(*scope.s).GetArtifact((*scope.target), ArtifactContent) != (*scope.last),
 			"%s",
 			"declaration winner suppressed greatest byte contributor",
 		)
@@ -734,12 +758,12 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(t *testing.T, scope *testR
 		t.Helper()
 		obj, doc, attempt := (*scope.s).GetEmission((*scope.target))
 		defer attempt.Finish()
-		assert.Equal(t, obj, (*scope.declaration).Obj)
-		assert.Diff(t, doc, (*scope.declaration).Doc)
+		assert.Equal(t, obj, scope.declaration.Obj)
+		assert.Diff(t, doc, scope.declaration.Doc)
 		assert.Equal(t, (*scope.s).EmissionOwner((*scope.target)), (*scope.zz))
 	}
 	checkDeclaration()
-	(*scope.s).AddObject((*scope.declaration).Obj, (*scope.declaration).Doc)
+	(*scope.s).AddObject(scope.declaration.Obj, scope.declaration.Doc)
 	assert.Equal(t, (*scope.s).DeleteObject((*scope.target)), true)
 	{
 		assert.FatalIf(
@@ -781,7 +805,8 @@ func testRecordEmittedPayloadPrecedenceCaseCompletion(t *testing.T, scope *testR
 	{
 		assert.FatalIf(
 			t,
-			(*scope.s).GetObject((*scope.target)) == nil || (*scope.s).GetArtifact((*scope.target), ArtifactContent) != nil,
+			(*scope.s).GetObject((*scope.target)) == nil ||
+				(*scope.s).GetArtifact((*scope.target), ArtifactContent) != nil,
 			"%s",
 			"declaration-only survivor retained byte authority",
 		)

@@ -113,7 +113,12 @@ func testRecordEmittedConflictingProducersSyntheticOwnersCase(
 		)
 	}
 	{
-		assert.FatalIf(t, len(warning.Related) < 2 || warning.Related[0] != owners[0] || warning.Related[1] != owners[1], "raw contributors=%v", warning.Related)
+		assert.FatalIf(
+			t,
+			len(warning.Related) < 2 || warning.Related[0] != owners[0] || warning.Related[1] != owners[1],
+			"raw contributors=%v",
+			warning.Related,
+		)
 	}
 	winner := chart.Named().String()
 	if *testCaseInput {

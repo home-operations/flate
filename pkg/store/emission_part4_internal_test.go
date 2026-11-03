@@ -484,10 +484,8 @@ func TestStore_ProductionsQueryAllocations(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestStore_RenderedParentAllocations(t *testing.T) {
-
 	for _, name := range []string{"thin", "frozen", "bridge", "missing"} {
 		t.Run(name, func(t *testing.T) {
-
 			testStoreRenderedParentAllocationsCase(t, &name)
 		},
 		)

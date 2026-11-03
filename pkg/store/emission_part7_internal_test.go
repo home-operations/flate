@@ -500,7 +500,16 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCase(
 	second.Close()
 	for range s.Sweep() {
 	}
-	testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(t, &testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletionState{testCaseInput: testCaseInput, s: s, parent: parent, declaration: &declaration, first: &first})
+	testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(
+		t,
+		&testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletionState{
+			testCaseInput: testCaseInput,
+			s:             s,
+			parent:        parent,
+			declaration:   &declaration,
+			first:         &first,
+		},
+	)
 }
 
 func testGetDeclarationCoveredAuthorityCase(t *testing.T, testCaseInput *string,
@@ -718,10 +727,13 @@ type testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletionState struct {
 	first         *ReadSet
 }
 
-func testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(t *testing.T, scope *testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletionState) {
+func testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(
+	t *testing.T,
+	scope *testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletionState,
+) {
 	t.Helper()
 	registrations := 0
-	for input := (*scope.first).inputs; input != nil; input = input.next {
+	for input := scope.first.inputs; input != nil; input = input.next {
 		for kind := objectFacet; kind <= bucketFacet; kind++ {
 			cell := input.cell(kind)
 			if cell == nil || cell.head == nil {
@@ -734,17 +746,17 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(t *testing.T, sco
 			}
 		}
 	}
-	if !(*scope.first).retired.Load() || registrations != 0 {
+	if !scope.first.retired.Load() || registrations != 0 {
 		t.Fatalf(
 			"cancelled successor left hidden borrower active: retired=%t registrations=%d",
-			(*scope.first).retired.Load(),
+			scope.first.retired.Load(),
 			registrations,
 		)
 	}
 	{
 		assert.FatalIf(
 			t,
-			(*scope.first).GetObject((*scope.declaration).Named()) != (*scope.declaration),
+			scope.first.GetObject((*scope.declaration).Named()) != (*scope.declaration),
 			"%s",
 			"closing discarded the accepted read snapshot",
 		)
@@ -752,7 +764,7 @@ func testReadSetCloseRetiresHiddenBorrowedOutputCaseCompletion(t *testing.T, sco
 	{
 		assert.FatalIf(
 			t,
-			!slices.Contains(slices.Collect((*scope.first).Required()), scope.parent.Named()),
+			!slices.Contains(slices.Collect(scope.first.Required()), scope.parent.Named()),
 			"%s",
 			"closing discarded the accepted required-input footprint",
 		)

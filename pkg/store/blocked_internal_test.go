@@ -54,7 +54,12 @@ func TestUpdateFailure_SnapshotIsolation(t *testing.T) {
 	}
 	st.UpdateStatus(id, StatusInfo{Status: StatusReady, Reason: "", Message: "done"})
 	{
-		assert.FatalIf(t, !slices.Equal(info.BlockedBy(), []manifest.NamedResource{a, b}), "%v", "later transition mutated the retained snapshot")
+		assert.FatalIf(
+			t,
+			!slices.Equal(info.BlockedBy(), []manifest.NamedResource{a, b}),
+			"%v",
+			"later transition mutated the retained snapshot",
+		)
 	}
 	current, _ := st.GetStatus(id)
 	{
@@ -309,7 +314,16 @@ func TestUpdateFailure_ConcurrentSnapshotsAndEvents(t *testing.T) {
 		}
 		t.Errorf("incoherent terminal snapshot: %+v, blockers = %v", info, info.BlockedBy())
 	}
-	testUpdateFailureConcurrentSnapshotsAndEventsCompletion(t, &testUpdateFailureConcurrentSnapshotsAndEventsCompletionState{st: st, obj: obj, id: &id, errs: &errs, check: &check})
+	testUpdateFailureConcurrentSnapshotsAndEventsCompletion(
+		t,
+		&testUpdateFailureConcurrentSnapshotsAndEventsCompletionState{
+			st:    st,
+			obj:   obj,
+			id:    &id,
+			errs:  &errs,
+			check: &check,
+		},
+	)
 }
 
 func TestUpdateFailure_NestedSyntheticSnapshots(t *testing.T) {
@@ -513,7 +527,10 @@ type testUpdateFailureConcurrentSnapshotsAndEventsCompletionState struct {
 	check *func(info StatusInfo)
 }
 
-func testUpdateFailureConcurrentSnapshotsAndEventsCompletion(t *testing.T, scope *testUpdateFailureConcurrentSnapshotsAndEventsCompletionState) {
+func testUpdateFailureConcurrentSnapshotsAndEventsCompletion(
+	t *testing.T,
+	scope *testUpdateFailureConcurrentSnapshotsAndEventsCompletionState,
+) {
 	t.Helper()
 	scope.st.AddListener(EventStatusUpdated, func(_ manifest.NamedResource, payload any) {
 		(*scope.check)(payload.(StatusInfo))
@@ -550,7 +567,10 @@ func testUpdateFailureConcurrentSnapshotsAndEventsCompletion(t *testing.T, scope
 	for _, info := range scope.st.FailedResources() {
 		(*scope.check)(info)
 	}
-	scope.st.UpdateStatus((*scope.id), StatusInfo{Status: StatusPending, Reason: "CustomPending", Message: "reassessing"})
+	scope.st.UpdateStatus(
+		(*scope.id),
+		StatusInfo{Status: StatusPending, Reason: "CustomPending", Message: "reassessing"},
+	)
 	(*scope.check)(first)
 	(*scope.check)(second)
 	info, _ = scope.st.GetStatus((*scope.id))

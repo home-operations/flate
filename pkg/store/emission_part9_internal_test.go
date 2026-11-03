@@ -192,7 +192,20 @@ func testRecordEmittedBorrowedPayloadOwnersCase(
 		}
 		return
 	}
-	testRecordEmittedBorrowedPayloadOwnersCaseCompletion(t, &testRecordEmittedBorrowedPayloadOwnersCaseCompletionState{testCaseInput: &testCaseInput, s: &s, owner: &owner, output: &output, first: &first, second: &second, third: &third, registrations: &registrations, accepted: &accepted})
+	testRecordEmittedBorrowedPayloadOwnersCaseCompletion(
+		t,
+		&testRecordEmittedBorrowedPayloadOwnersCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			s:             &s,
+			owner:         &owner,
+			output:        &output,
+			first:         &first,
+			second:        &second,
+			third:         &third,
+			registrations: &registrations,
+			accepted:      &accepted,
+		},
+	)
 }
 
 type testGetDeclarationIndependenceLifecycleCaseInputs struct {
@@ -271,7 +284,15 @@ func testGetDeclarationIndependenceLifecycleCase(
 			st.AddObjects([]manifest.BaseManifest{raw})
 		}
 	}
-	testGetDeclarationIndependenceLifecycleCaseCompletion(t, &testGetDeclarationIndependenceLifecycleCaseCompletionState{testCaseInput: &testCaseInput, st: &st, raw: &raw, independent: &independent})
+	testGetDeclarationIndependenceLifecycleCaseCompletion(
+		t,
+		&testGetDeclarationIndependenceLifecycleCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			st:            &st,
+			raw:           &raw,
+			independent:   &independent,
+		},
+	)
 }
 
 type testRecordEmittedIndependencePublicationCaseInputs struct {
@@ -344,7 +365,20 @@ func testRecordEmittedIndependencePublicationCase(
 	if (*testCaseInput.route) == "expanded_coverage" || (*testCaseInput.route) == "expanded_inventory" {
 		output.Children = []Child{{Obj: nested}}
 	}
-	testRecordEmittedIndependencePublicationCaseCompletion(t, &testRecordEmittedIndependencePublicationCaseCompletionState{testCaseInput: &testCaseInput, st: &st, owner: &owner, child: &child, id: &id, sh: &sh, absent: &absent, output: &output, nested: &nested})
+	testRecordEmittedIndependencePublicationCaseCompletion(
+		t,
+		&testRecordEmittedIndependencePublicationCaseCompletionState{
+			testCaseInput: &testCaseInput,
+			st:            &st,
+			owner:         &owner,
+			child:         &child,
+			id:            &id,
+			sh:            &sh,
+			absent:        &absent,
+			output:        &output,
+			nested:        &nested,
+		},
+	)
 }
 
 func testRecordEmittedAcceptedFootprintCase(t *testing.T, testCaseInput *string,
@@ -591,7 +625,10 @@ type testRecordEmittedBorrowedPayloadOwnersCaseCompletionState struct {
 	accepted      **Emission
 }
 
-func testRecordEmittedBorrowedPayloadOwnersCaseCompletion(t *testing.T, scope *testRecordEmittedBorrowedPayloadOwnersCaseCompletionState) {
+func testRecordEmittedBorrowedPayloadOwnersCaseCompletion(
+	t *testing.T,
+	scope *testRecordEmittedBorrowedPayloadOwnersCaseCompletionState,
+) {
 	t.Helper()
 	if (*(*scope.testCaseInput)) != "complete" {
 		var rejected ReadSet
@@ -649,7 +686,8 @@ func testRecordEmittedBorrowedPayloadOwnersCaseCompletion(t *testing.T, scope *t
 		{
 			assert.FatalIf(
 				t,
-				(*scope.accepted).OutputReads != &(*scope.output) || (*scope.accepted).payloadReads != &(*scope.first) || len((*scope.accepted).borrowed) != 2,
+				(*scope.accepted).OutputReads != &(*scope.output) || (*scope.accepted).payloadReads != &(*scope.first) ||
+					len((*scope.accepted).borrowed) != 2,
 				"%s",
 				"rejected proposal changed accepted output and payload provenance",
 			)
@@ -705,19 +743,19 @@ func testRecordEmittedBorrowedPayloadOwnersCaseCompletion(t *testing.T, scope *t
 		return
 	}
 	last := emissionChild("c", "c")
-	_, _, next := (*scope.third).GetEmission((*scope.owner).Named())
+	_, _, next := scope.third.GetEmission((*scope.owner).Named())
 	defer next.Finish()
 	next.Children, next.Manifests, next.Complete = []Child{
 		last,
 	}, testutil.DocumentOccurrences(
 		[]map[string]any{last.Doc},
 	), true
-	(*scope.third).Bind(&next)
+	scope.third.Bind(&next)
 	(*scope.s).RecordEmitted((*scope.owner).Named(), &next, nil)
 	{
 		assert.FatalIf(
 			t,
-			!(*scope.first).retired.Load() || !(*scope.second).retired.Load() || (*scope.third).retired.Load(),
+			!scope.first.retired.Load() || !scope.second.retired.Load() || scope.third.retired.Load(),
 			"%s",
 			"completion did not release exactly the superseded payload owners",
 		)
@@ -739,10 +777,14 @@ type testGetDeclarationIndependenceLifecycleCaseCompletionState struct {
 	independent   *bool
 }
 
-func testGetDeclarationIndependenceLifecycleCaseCompletion(t *testing.T, scope *testGetDeclarationIndependenceLifecycleCaseCompletionState) {
+func testGetDeclarationIndependenceLifecycleCaseCompletion(
+	t *testing.T,
+	scope *testGetDeclarationIndependenceLifecycleCaseCompletionState,
+) {
 	t.Helper()
 	var want manifest.BaseManifest
-	if (*scope.independent) || (*(*scope.testCaseInput).route) == "anchor" || (*(*scope.testCaseInput).route) == "batch_anchor" {
+	if (*scope.independent) || (*(*scope.testCaseInput).route) == "anchor" ||
+		(*(*scope.testCaseInput).route) == "batch_anchor" {
 		want = (*scope.raw)
 	}
 	assert.Equal(t, (*scope.st).GetObject((*scope.raw).Named()), manifest.BaseManifest((*scope.raw)))
@@ -823,17 +865,24 @@ type testRecordEmittedIndependencePublicationCaseCompletionState struct {
 	nested        **manifest.Kustomization
 }
 
-func testRecordEmittedIndependencePublicationCaseCompletion(t *testing.T, scope *testRecordEmittedIndependencePublicationCaseCompletionState) {
+func testRecordEmittedIndependencePublicationCaseCompletion(
+	t *testing.T,
+	scope *testRecordEmittedIndependencePublicationCaseCompletionState,
+) {
 	t.Helper()
 	(*scope.st).RecordEmitted((*scope.owner).Named(), &(*scope.output), nil)
 	if (*(*scope.testCaseInput).route) == "expanded_inventory" {
-		(*scope.st).RecordEmitted((*scope.nested).Named(), &Emission{Children: []Child{(*scope.child)}, Complete: true}, nil)
+		(*scope.st).RecordEmitted(
+			(*scope.nested).Named(),
+			&Emission{Children: []Child{(*scope.child)}, Complete: true},
+			nil,
+		)
 		(*scope.st).RecordEmitted((*scope.owner).Named(), &Emission{Complete: true}, nil)
 	}
 	{
 		assert.FatalIf(
 			t,
-			!slices.Contains(slices.Collect((*scope.st).Sweep()), (*scope.absent).ID()) || (*scope.absent).Valid(),
+			!slices.Contains(slices.Collect((*scope.st).Sweep()), scope.absent.ID()) || scope.absent.Valid(),
 			"%s",
 			"first publication missed the registered absence",
 		)
@@ -862,7 +911,7 @@ func testRecordEmittedIndependencePublicationCaseCompletion(t *testing.T, scope 
 		assert.Equal(t, (*scope.st).GetDeclaration((*scope.id)), nil)
 		assert.Equal(t, (*scope.st).GetObject((*scope.id)), nil)
 	} else if (*(*scope.testCaseInput).route) != "hidden_producer" {
-		assert.Equal(t, (*scope.st).GetDeclaration((*scope.id)), (*scope.child).Obj)
+		assert.Equal(t, (*scope.st).GetDeclaration((*scope.id)), scope.child.Obj)
 		var reads ReadSet
 		reads.Init((*scope.st), (*scope.owner).Named(), nil)
 		defer reads.Retire()
@@ -871,7 +920,7 @@ func testRecordEmittedIndependencePublicationCaseCompletion(t *testing.T, scope 
 		reads.Bind(&next)
 		var want manifest.BaseManifest
 		if *(*scope.testCaseInput).independent {
-			want = (*scope.child).Obj
+			want = scope.child.Obj
 		}
 		assert.Equal(t, reads.GetDeclaration((*scope.id)), want)
 	}

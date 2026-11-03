@@ -234,31 +234,35 @@ func (g *localView) localStat(name, abs string) (fs.FileInfo, error) {
 }
 
 func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
+	var listing *localObservation
 	if g.operation && name != "." {
 		if cached, ok := g.observations.Load(
 			filepath.Dir(abs),
 		); ok &&
 			cached.(*localObservation).listed.Load() { //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-			entries, err := cached.(*localObservation).list( //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-				func() ([]fs.DirEntry, error) {
-					return g.readDir(filepath.Dir(abs))
-				},
-			)
-			if err != nil {
-				return nil, err
-			}
-			i, found := slices.BinarySearchFunc(entries, path.Base(name), func(entry fs.DirEntry, base string) int {
-				return cmp.Compare(entry.Name(), base)
-			})
-			if !found {
-				if cached, ok := g.observations.Load(abs); ok {
-					observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
-					return observation.info, observation.err
-				}
-				return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
-			}
-			return entries[i].Info() //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+			listing = cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 		}
+	}
+	if listing != nil {
+		entries, err := listing.list(
+			func() ([]fs.DirEntry, error) {
+				return g.readDir(filepath.Dir(abs))
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		i, found := slices.BinarySearchFunc(entries, path.Base(name), func(entry fs.DirEntry, base string) int {
+			return cmp.Compare(entry.Name(), base)
+		})
+		if !found {
+			if cached, ok := g.observations.Load(abs); ok {
+				observation := cached.(*localObservation) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+				return observation.info, observation.err
+			}
+			return nil, &fs.PathError{Op: statOperation, Path: name, Err: fs.ErrNotExist}
+		}
+		return entries[i].Info() //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
 	}
 	if parent := path.Dir(name); parent != "." {
 		if err := g.admitDirectory(parent, filepath.Dir(abs)); err != nil {

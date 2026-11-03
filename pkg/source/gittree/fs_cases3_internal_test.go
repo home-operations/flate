@@ -326,7 +326,7 @@ func testGitViewSparseBodyReadsCase(t *testing.T, size *struct {
 		reads.Large.Load(),
 	)
 	reads.Reset()
-	assert.NoError(t, g.shape(t.Context(), ViewOptions{Mode: Source}, input))
+	assert.NoError(t, g.shape(t.Context(), new(ViewOptions{Mode: Source}), input))
 	count := 0
 	assert.NoError(t, fs.WalkDir(input, ".", func(_ string, entry fs.DirEntry, err error) error {
 		if err == nil && !entry.IsDir() {

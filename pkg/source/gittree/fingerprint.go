@@ -157,16 +157,16 @@ func (g *FS) SourcePolicy(ctx context.Context) (*sourceignore.Matcher, error) {
 	return g.snapshot.load(g)
 }
 
-func (content *contentFingerprint) initialize(ctx context.Context, g *FS) {
+func (c *contentFingerprint) initialize(ctx context.Context, g *FS) {
 	policy, err := g.SourcePolicy(ctx)
 	if err != nil {
-		content.err = err
+		c.err = err
 		return
 	}
 	v, native := g.view.(*gitView)
 	files, ignores, err := g.fingerprintFiles(ctx, v, native)
-	content.err = err
-	if content.err != nil {
+	c.err = err
+	if c.err != nil {
 		return
 	}
 
@@ -174,14 +174,14 @@ func (content *contentFingerprint) initialize(ctx context.Context, g *FS) {
 	if !selectedPolicy {
 		sourceignore.Select(policy, files, ignores)
 	}
-	if content.err = g.identifyFiles(ctx, files); content.err != nil {
+	if c.err = g.identifyFiles(ctx, files); c.err != nil {
 		return
 	}
-	content.key = manifest.Fingerprint(files)
+	c.key = manifest.Fingerprint(files)
 	if v, ok := g.view.(*gitView); ok && v.identity != "" {
-		content.key = v.identity
+		c.key = v.identity
 	}
-	content.files.Store(&files)
+	c.files.Store(&files)
 }
 
 func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (map[string]string, []string, error) {
@@ -212,6 +212,7 @@ func (g *FS) fingerprintFiles(ctx context.Context, v *gitView, native bool) (map
 	} else {
 		err = fs.WalkDir(g, ".", visit)
 	}
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return files, ignores, err
 }
 

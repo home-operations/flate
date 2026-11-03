@@ -191,8 +191,8 @@ func New(ctx context.Context, backing billy.Filesystem, commit plumbing.Hash, op
 	}
 	if direct && opts.Current == nil && opts.Worktree != nil {
 		root := opts.Worktree.Root()
-		if _, err := os.Stat(root); err != nil {
-			return nil, "", err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+		if _, statErr := os.Stat(root); statErr != nil {
+			return nil, "", statErr //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
 		}
 		input := newLocal(root, false, &localPolicy{})
 		input.location = opts.Location
@@ -471,18 +471,20 @@ func (g *gitView) Lstat(name string) (fs.FileInfo, error) {
 		return g.missingInfo(name)
 	}
 	if g.backing == nil && g.current != nil {
+		//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 		return fs.Lstat(
 			g.current,
 			name,
-		) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		)
 	}
 	if node.mode.IsDir() {
 		return gitInfo{gitNode: node}, nil
 	}
 	if g.worktree != nil {
+		//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 		return g.worktree.Lstat(
 			filepath.FromSlash(name),
-		) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		)
 	}
 	if info := node.info.Load(); info != nil {
 		return info, nil
@@ -602,9 +604,10 @@ func (f *gitFile) Read(p []byte) (int, error) {
 	if f.reader == nil {
 		return 0, fs.ErrInvalid
 	}
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return f.reader.Read(
 		p,
-	) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+	)
 }
 
 func (f *gitFile) ReadDir(n int) ([]fs.DirEntry, error) {
@@ -637,10 +640,10 @@ func (g *gitView) ReadFile(name string) ([]byte, error) {
 				if err != nil {
 					return nil, err
 				}
+				//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 				return os.ReadFile(
 					abs,
-				) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
-
+				)
 			}
 		}
 	}
@@ -676,10 +679,11 @@ func (g *gitView) ReadLink(name string) (string, error) {
 		}
 	}
 	if g.backing == nil && g.worktree == nil && g.current != nil {
+		//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 		return fs.ReadLink(
 			g.current,
 			name,
-		) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+		)
 	}
 	var target string
 	if g.worktree != nil {
@@ -751,29 +755,29 @@ func (o *ViewOptions) refreshCurrent(
 	return current, matcher, reuse, nil
 }
 
-func (input *FS) finishGitView(
+func (g *FS) finishGitView(
 	ctx context.Context,
 	commit plumbing.Hash,
 	opts *ViewOptions,
 	identity string,
 ) (*FS, string, error) {
-	g := input.view.(*gitView) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+	v := g.view.(*gitView) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
 	if commit != plumbing.ZeroHash {
 		identity = ""
 	}
 	if committed := commit != plumbing.ZeroHash &&
 		(opts.Worktree == nil || opts.Content != nil); committed ||
 		identity != "" {
-		g.identity = manifest.Fingerprint(struct {
+		v.identity = manifest.Fingerprint(struct {
 			Content         any
 			Commit, Current string
 			Mode            ViewMode
 			Sparse          []string `json:",omitempty"`
 			Ignore          string
 		}{opts.Content, commit.String(), identity, opts.Mode, opts.Sparse, opts.Ignore})
-		if g.identity == "" {
+		if v.identity == "" {
 			return warningOnly(
-					input,
+					g,
 				), "", manifest.NewError(
 					manifest.ErrInput,
 					nil,
@@ -781,10 +785,10 @@ func (input *FS) finishGitView(
 				)
 		}
 	}
-	if err := g.shape(ctx, *opts, input); err != nil {
-		return warningOnly(input), "", err
+	if err := v.shape(ctx, *opts, g); err != nil {
+		return warningOnly(g), "", err
 	}
-	return input, g.identity, nil
+	return g, v.identity, nil
 }
 
 func (g *gitView) populateCurrent(ctx context.Context, current *gitView, native bool) error {
@@ -807,11 +811,13 @@ func (g *gitView) populateCurrent(ctx context.Context, current *gitView, native 
 }
 
 func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return fs.WalkDir(g.current, prefix, func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
+			//nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 			return err
 		}
 		if entry.Name() == gitDirectory {
@@ -833,7 +839,7 @@ func (g *gitView) walkCurrent(ctx context.Context, prefix string) error {
 			parent.children = append(parent.children, gitEntry{g, name})
 		}
 		return nil
-	}) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+	})
 }
 
 func (g *gitView) missingInfo(name string) (fs.FileInfo, error) {

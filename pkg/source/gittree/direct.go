@@ -33,35 +33,41 @@ func Sub(input fs.FS, dir string) (fs.FS, error) {
 func (g *directView) Stat(
 	name string,
 ) (fs.FileInfo, error) {
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return fs.Stat(g.FS, name)
-} //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+}
 
 func (g *directView) Lstat(
 	name string,
 ) (fs.FileInfo, error) {
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return fs.Lstat(g.FS, name)
-} //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+}
 
 func (g *directView) ReadDir(
 	name string,
 ) ([]fs.DirEntry, error) {
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return fs.ReadDir(g.FS, name)
-} //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+}
 
 func (g *directView) ReadFile(
 	name string,
 ) ([]byte, error) {
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return fs.ReadFile(g.FS, name)
-} //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+}
 
 func (g *directView) ReadLink(
 	name string,
 ) (string, error) {
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return fs.ReadLink(g.FS, name)
-} //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+}
 
 func (g *directView) OpenRegular(
 	name string,
 ) (fs.File, error) {
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return g.Open(name)
-} //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+}

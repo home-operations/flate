@@ -93,9 +93,10 @@ func (g *localView) OpenRegular(name string) (fs.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return os.Open(
 		abs,
-	) //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	)
 }
 
 type localObservation struct {
@@ -171,9 +172,10 @@ func (g *localView) Open(name string) (fs.File, error) {
 		}
 		return &gitFile{info: info, input: g, entries: entries}, nil
 	}
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return os.Open(
 		abs,
-	) //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	)
 }
 
 func (g *localView) ReadLink(name string) (string, error) {
@@ -263,9 +265,10 @@ func (g *localView) statPath(name, abs string) (fs.FileInfo, error) {
 			return nil, err
 		}
 	}
+	//nolint:wrapcheck // Filesystem adapters preserve fs.PathError, I/O sentinel, and cancellation error contracts.
 	return os.Lstat(
 		abs,
-	) //nolint:wrapcheck // The filesystem view preserves upstream filesystem and cancellation error contracts.
+	)
 }
 
 func (g *localView) admitDirectory(name, abs string) error {

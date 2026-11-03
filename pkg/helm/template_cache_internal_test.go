@@ -194,7 +194,7 @@ data:
 		loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
 		_, err = cli.mergeChartValuesFiles(t.Context(), &loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		assert.NoError(t, err)
-		key := computeTemplateKey(loaded, map[string]any{}, Options{}, hr)
+		key := computeTemplateKey(&loaded, map[string]any{}, Options{}, hr)
 		t.Logf("chart fingerprint=%s template key=%s", loaded.fingerprint, key)
 		{
 			assert.FatalIf(t, key == "", "%s", "subchart fixture produced an empty completed-output key")
@@ -234,7 +234,7 @@ data:
 				writeTestRecordErr := writeTestRecord(
 					w,
 					key,
-					renderRecord{Output: encodedRender(t, data), Analysis: analysis},
+					&renderRecord{Output: encodedRender(t, data), Analysis: analysis},
 				)
 				return cache.ProducerResult{}, writeTestRecordErr
 			},
@@ -393,13 +393,13 @@ func TestComputeTemplateKey_StableSameInputs(t *testing.T) {
 	opts := Options{KubeVersion: "1.33"}
 
 	k1 := computeTemplateKey(
-		chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
+		&chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
 		values1,
 		opts,
 		hr,
 	)
 	k2 := computeTemplateKey(
-		chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
+		&chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
 		values2,
 		opts,
 		hr,
@@ -487,7 +487,7 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 				"render did not cache values under its effective fingerprint",
 			)
 		}
-		key := computeTemplateKey(loaded, merged.merged, opts, hr)
+		key := computeTemplateKey(&loaded, merged.merged, opts, hr)
 		repeated, receipt2, err := testutil.RenderMaps(
 			cli.Template(t.Context(), hr, nil, RenderOptions{Options: opts, Sources: cliSources}),
 		)

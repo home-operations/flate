@@ -534,7 +534,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 		true,
 	)
 	assert.NoError(t, initial.valuesErr)
-	key := computeTemplateKey(initial, map[string]any{}, Options{}, hr)
+	key := computeTemplateKey(&initial, map[string]any{}, Options{}, hr)
 	{
 		assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
 	}
@@ -562,7 +562,7 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 			writeTestRecordErr := writeTestRecord(
 				w,
 				cache.BlobKey{Content: key, Render: cache.RenderAccepted},
-				renderRecord{Output: encodedRender(t, cached), Analysis: initial.analyze()},
+				&renderRecord{Output: encodedRender(t, cached), Analysis: initial.analyze()},
 			)
 			return cache.ProducerResult{}, writeTestRecordErr
 		},
@@ -623,7 +623,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	assert.FatalIf(t, !hasRenderField(first, "marker", "packaged"), "%v", first)
 	initial, err := newClientCli2.describeChart(t.Context(), hr, newSourcesCliSources2)
 	assert.NoError(t, err)
-	key := computeTemplateKey(initial, map[string]any{}, Options{}, hr)
+	key := computeTemplateKey(&initial, map[string]any{}, Options{}, hr)
 	{
 		assert.FatalIf(t, key == "", "%s", "fixture has no completed-output key")
 	}
@@ -681,7 +681,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 		false,
 	)
 	assert.FatalIf(t, !errors.Is(missing.valuesErr, fs.ErrNotExist), "%v", missing.valuesErr)
-	assert.Equal(t, computeTemplateKey(missing, map[string]any{}, Options{}, sourceHR), key)
+	assert.Equal(t, computeTemplateKey(&missing, map[string]any{}, Options{}, sourceHR), key)
 }
 
 func testTemplateCacheStorageFailuresCaseLoop(t *testing.T, loopInputs struct {

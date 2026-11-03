@@ -166,7 +166,7 @@ func testTemplateCacheNonOCITrackingModeCase(
 		{
 			assert.NoError(t, err)
 		}
-		nextKey := computeTemplateKey(loaded, merged, opts, hr)
+		nextKey := computeTemplateKey(&loaded, merged, opts, hr)
 		if first != nil {
 			assert.Diff(t, out, first)
 			assert.Equal(t, nextKey, key)

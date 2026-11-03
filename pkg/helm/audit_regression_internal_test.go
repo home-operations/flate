@@ -32,7 +32,7 @@ func TestComputeTemplateKey_UnmarshalableInput(t *testing.T) {
 			assert.Equal(
 				t,
 				computeTemplateKey(
-					chartDescription{fingerprint: chartFixtureDescription(t, tc.chart).fingerprint, chart: tc.chart},
+					&chartDescription{fingerprint: chartFixtureDescription(t, tc.chart).fingerprint, chart: tc.chart},
 					tc.values,
 					Options{},
 					minimalHR(),
@@ -83,7 +83,7 @@ func TestTemplate_UnmarshalableValuesSkipCache(t *testing.T) {
 	}
 	values := map[string]any{"unused": func() {}}
 	opts := Options{}
-	assert.Equal(t, computeTemplateKey(loaded, values, opts, hr), "")
+	assert.Equal(t, computeTemplateKey(&loaded, values, opts, hr), "")
 	out, _, err := testutil.RenderMaps(
 		cli.Template(t.Context(), hr, values, RenderOptions{Options: opts, Sources: cliSources}),
 	)

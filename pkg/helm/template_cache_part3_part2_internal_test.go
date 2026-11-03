@@ -175,7 +175,7 @@ extra: {sequence: [{value: original}]}
 	)
 	assert.NoError(t, loaded.valuesErr)
 	key := cache.BlobKey{
-		Content: computeTemplateKey(loaded, values, Options{}, newHR()),
+		Content: computeTemplateKey(&loaded, values, Options{}, newHR()),
 		Render:  cache.RenderAccepted,
 	}
 	_, _, _, err = owner.Blob(
@@ -186,7 +186,7 @@ extra: {sequence: [{value: original}]}
 			writeTestRecordErr := writeTestRecord(
 				w,
 				key,
-				renderRecord{Output: encodedRender(t, first), Analysis: loaded.analyze()},
+				&renderRecord{Output: encodedRender(t, first), Analysis: loaded.analyze()},
 			)
 			return cache.ProducerResult{}, writeTestRecordErr
 		},
@@ -296,7 +296,7 @@ extra: {sequence: [{value: original}]}
 		)
 		assert.NoError(t, loaded.valuesErr)
 		alternateKey := cache.BlobKey{
-			Content: computeTemplateKey(loaded, alternate, Options{}, newHR()),
+			Content: computeTemplateKey(&loaded, alternate, Options{}, newHR()),
 			Render:  cache.RenderAccepted,
 		}
 		r, _, _, renderMapsErr := cli.cache.Blob(
@@ -304,7 +304,7 @@ extra: {sequence: [{value: original}]}
 			alternateKey,
 			cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				writeTestRecordErr2 := writeTestRecord(w, alternateKey, *initial.record)
+				writeTestRecordErr2 := writeTestRecord(w, alternateKey, initial.record)
 				return cache.ProducerResult{}, writeTestRecordErr2
 			},
 		)
@@ -354,13 +354,13 @@ extra: {sequence: [{value: original}]}
 						errResult = writeTestRecord(
 							w,
 							alternateKey,
-							renderRecord{Output: []byte("corrupt"), Analysis: loaded.analyze()},
+							&renderRecord{Output: []byte("corrupt"), Analysis: loaded.analyze()},
 						)
 					case "changed output":
 						errResult = writeTestRecord(
 							w,
 							alternateKey,
-							renderRecord{Output: encodedRender(t, replacementDocs), Analysis: loaded.analyze()},
+							&renderRecord{Output: encodedRender(t, replacementDocs), Analysis: loaded.analyze()},
 						)
 					default:
 						_, errResult = io.WriteString(w, replacement)
@@ -435,7 +435,7 @@ extra: {sequence: [{value: original}]}
 		}
 		recoveryValues := map[string]any{"greeting": "hi"}
 		recoveryKey := cache.BlobKey{
-			Content: computeTemplateKey(loaded, recoveryValues, Options{}, newHR()),
+			Content: computeTemplateKey(&loaded, recoveryValues, Options{}, newHR()),
 			Render:  cache.RenderAccepted,
 		}
 		_, _, _, renderMapsErr = cli.cache.Blob(
@@ -446,7 +446,7 @@ extra: {sequence: [{value: original}]}
 				writeTestRecordErr3 := writeTestRecord(
 					w,
 					recoveryKey,
-					renderRecord{Output: []byte("corrupt"), Analysis: loaded.analyze()},
+					&renderRecord{Output: []byte("corrupt"), Analysis: loaded.analyze()},
 				)
 				return cache.ProducerResult{}, writeTestRecordErr3
 			},

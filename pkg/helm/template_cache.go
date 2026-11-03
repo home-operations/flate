@@ -53,7 +53,7 @@ type ociChartContent struct {
 // CommonMetadata is stamped after the cached pre-stamp render. Unsupported
 // content returns an empty key, which MUST bypass lookup and publication.
 func computeTemplateKey(
-	loaded chartDescription,
+	loaded *chartDescription,
 	releaseValues map[string]any,
 	opts Options,
 	hr *manifest.HelmRelease,

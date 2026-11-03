@@ -603,12 +603,12 @@ func TestOCIChartContent_DistinctInputs(t *testing.T) {
 			assert.Equal(
 				t,
 				computeTemplateKey(
-					first,
+					&first,
 					nil,
 					Options{},
 					minimalHR(),
 				) != computeTemplateKey(
-					second,
+					&second,
 					nil,
 					Options{},
 					minimalHR(),

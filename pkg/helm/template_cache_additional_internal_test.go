@@ -19,7 +19,7 @@ func TestComputeTemplateKey_DifferingFieldsDiverge(t *testing.T) {
 	ch, hr := minimalChart(), minimalHR()
 	values := map[string]any{"k": "v"}
 	base := computeTemplateKey(
-		chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
+		&chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
 		values,
 		Options{},
 		hr,
@@ -77,7 +77,7 @@ func TestComputeTemplateKey_SelectedActionPolicy(t *testing.T) {
 		t.Parallel()
 		opts := Options{}
 		hr := minimalHR()
-		base := computeTemplateKey(loaded, nil, opts, hr)
+		base := computeTemplateKey(&loaded, nil, opts, hr)
 		for _, tc := range []struct {
 			name                   string
 			policy                 helmv2.CRDsPolicy
@@ -98,7 +98,7 @@ func TestComputeTemplateKey_SelectedActionPolicy(t *testing.T) {
 				} else {
 					changed.Install = &helmv2.Install{CRDs: tc.policy, DisableOpenAPIValidation: tc.openAPI}
 				}
-				key := computeTemplateKey(loaded, nil, opts, changed)
+				key := computeTemplateKey(&loaded, nil, opts, changed)
 				assert.Equal(t, key != "", true)
 				assert.Equal(t, key == base, tc.equal)
 			})
@@ -114,7 +114,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 	opts := Options{KubeVersion: "1.33"}
 	base := minimalHR()
 	baseKey := computeTemplateKey(
-		chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
+		&chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
 		values,
 		opts,
 		base,
@@ -129,7 +129,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 		}
 		{
 			got := computeTemplateKey(
-				chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
+				&chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
 				values,
 				opts,
 				&alt,
@@ -150,7 +150,7 @@ func TestComputeTemplateKey_CommonMetadataExcluded(t *testing.T) {
 		alt.PostRenderers = []helmv2.PostRenderer{{Kustomize: &helmv2.Kustomize{}}}
 		{
 			got := computeTemplateKey(
-				chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
+				&chartDescription{fingerprint: chartFixtureDescription(t, ch).fingerprint, chart: ch},
 				values,
 				opts,
 				&alt,
@@ -198,7 +198,7 @@ func computeTemplateKeyDifferingFieldsDivergeCase(
 		t.Fatalf("new option %s requires an explicit cache-key decision", (*field).Name)
 	}
 	key := computeTemplateKey(
-		chartDescription{
+		&chartDescription{
 			fingerprint: chartFixtureDescription(t, (*capturedInputs.ch)).fingerprint,
 			chart:       (*capturedInputs.ch),
 		},
@@ -246,7 +246,7 @@ func computeTemplateKeyDifferingFieldsDivergeCase2(
 		t.Fatalf("field %s requires an explicit cache-key decision", (*field))
 	}
 	key := computeTemplateKey(
-		chartDescription{
+		&chartDescription{
 			fingerprint: chartFixtureDescription(t, (*capturedInputs.ch)).fingerprint,
 			chart:       (*capturedInputs.ch),
 		},
@@ -275,7 +275,7 @@ func computeTemplateKeyDifferingFieldsDivergeChartContent(
 	assert.Equal(
 		t,
 		computeTemplateKey(
-			chartDescription{fingerprint: chartFixtureDescription(t, changed).fingerprint, chart: changed},
+			&chartDescription{fingerprint: chartFixtureDescription(t, changed).fingerprint, chart: changed},
 			(*values),
 			Options{},
 			(*hr),
@@ -295,7 +295,7 @@ func computeTemplateKeyDifferingFieldsDivergeValues(
 	assert.Equal(
 		t,
 		computeTemplateKey(
-			chartDescription{fingerprint: chartFixtureDescription(t, (*ch)).fingerprint, chart: (*ch)},
+			&chartDescription{fingerprint: chartFixtureDescription(t, (*ch)).fingerprint, chart: (*ch)},
 			map[string]any{"k": "different"},
 			Options{},
 			(*hr),

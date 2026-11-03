@@ -266,7 +266,7 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		_, _, _, err = owner.Blob(
 			t.Context(),
 			cache.BlobKey{
-				Content: computeTemplateKey(d, map[string]any{}, Options{}, hr),
+				Content: computeTemplateKey(&d, map[string]any{}, Options{}, hr),
 				Render:  cache.RenderAccepted,
 			},
 			cache.Policy{MaxAge: cache.Forever},

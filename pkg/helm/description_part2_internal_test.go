@@ -68,7 +68,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		_, _, _, err = owner.Blob(
 			t.Context(),
 			cache.BlobKey{
-				Content: computeTemplateKey(d, map[string]any{}, Options{}, hr),
+				Content: computeTemplateKey(&d, map[string]any{}, Options{}, hr),
 				Render:  cache.RenderAccepted,
 			},
 			cache.Policy{},
@@ -286,7 +286,7 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 	)
 	assert.NoError(t, d.valuesErr)
 	key := cache.BlobKey{
-		Content: computeTemplateKey(d, map[string]any{}, opts, hr),
+		Content: computeTemplateKey(&d, map[string]any{}, opts, hr),
 		Render:  cache.RenderAccepted,
 	}
 	_, _, _, err = owner.Blob(

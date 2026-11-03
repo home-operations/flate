@@ -172,9 +172,10 @@ func chartFixtureFS(hr *manifest.HelmRelease, input fs.FS) fs.FS {
 
 func emptyRenderInventory(func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {}
 
-func writeTestRecord(w io.Writer, key cache.BlobKey, record renderRecord) error {
+func writeTestRecord(w io.Writer, key cache.BlobKey, record *renderRecord) error {
+	output, analysis := record.Output, record.Analysis
 	identity, _ := key.Content.(string)
-	data, err := encodeFrame(renderHeader{Key: identity, Analysis: record.Analysis}, record.Output)
+	data, err := encodeFrame(renderHeader{Key: identity, Analysis: analysis}, output)
 	if err != nil {
 		return err
 	}

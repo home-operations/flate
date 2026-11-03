@@ -497,12 +497,12 @@ func testLoadChartInvalidatesOnFileMtimeChangeCase(
 	{
 		assert.FatalIf(t, after.chart == before.chart ||
 			computeTemplateKey(
-				after,
+				&after,
 				nil,
 				Options{},
 				(*testCaseInput.hr),
 			) == computeTemplateKey(
-				before,
+				&before,
 				nil,
 				Options{},
 				(*testCaseInput.hr),
@@ -575,7 +575,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	d.values, newErr = renderer.observeValuesFiles(t.Context(), &d, selected.ChartValuesFiles, false)
 	assert.NoError(t, newErr)
 	key := cache.BlobKey{
-		Content: computeTemplateKey(d, map[string]any{}, Options{}, selected),
+		Content: computeTemplateKey(&d, map[string]any{}, Options{}, selected),
 		Render:  cache.RenderAccepted,
 	}
 	witness := manifest.DeepCopyMap(first[0])
@@ -586,7 +586,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 		key,
 		cache.Policy{},
 		func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-			writeTestRecordErr := writeTestRecord(w, key, renderRecord{Output: output, Analysis: d.analyze()})
+			writeTestRecordErr := writeTestRecord(w, key, &renderRecord{Output: output, Analysis: d.analyze()})
 			return cache.ProducerResult{}, writeTestRecordErr
 		},
 	)

@@ -201,7 +201,7 @@ func testTemplateCacheTemplateIntegrationCase(
 		)
 		assert.NoError(t, loaded.valuesErr)
 		key := cache.BlobKey{
-			Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()),
+			Content: computeTemplateKey(&loaded, map[string]any{}, Options{}, newHR()),
 			Render:  cache.RenderAccepted,
 		}
 		if testCaseInput.invalid {
@@ -213,7 +213,7 @@ func testTemplateCacheTemplateIntegrationCase(
 				key,
 				cache.Policy{},
 				func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-					return cache.ProducerResult{}, writeTestRecord(w, key, record)
+					return cache.ProducerResult{}, writeTestRecord(w, key, &record)
 				},
 			)
 			assert.NoError(t, splitDocsErr)
@@ -229,13 +229,13 @@ func testTemplateCacheTemplateIntegrationCase(
 		assert.NoError(t, err)
 		assert.Diff(t, raw, wantRaw)
 		values := map[string]any{"fail": true}
-		key.Content = computeTemplateKey(loaded, values, Options{}, newHR())
+		key.Content = computeTemplateKey(&loaded, values, Options{}, newHR())
 		_, _, _, err = owner.Blob(
 			t.Context(),
 			key,
 			cache.Policy{},
 			func(_ context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				return cache.ProducerResult{}, writeTestRecord(w, key, record)
+				return cache.ProducerResult{}, writeTestRecord(w, key, &record)
 			},
 		)
 		assert.NoError(t, err)
@@ -426,7 +426,7 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 			)
 			assert.NoError(t, loaded.valuesErr)
 			key := cache.BlobKey{
-				Content: computeTemplateKey(loaded, map[string]any{}, Options{}, newHR()),
+				Content: computeTemplateKey(&loaded, map[string]any{}, Options{}, newHR()),
 				Render:  cache.RenderAccepted,
 			}
 			r, _, _, err := cli.cache.Blob(t.Context(), key, cache.Policy{MaxAge: cache.Forever}, nil)

@@ -132,7 +132,7 @@ func (c *Client) prepareTemplate(
 	if hrValues == nil {
 		hrValues = map[string]any{}
 	}
-	key := computeTemplateKey(loaded, hrValues, opts, hr)
+	key := computeTemplateKey(&loaded, hrValues, opts, hr)
 	binding := templateBinding{
 		Policy:       hr.HistoryPolicy(),
 		Source:       hr.ChartSource(),

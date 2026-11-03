@@ -495,7 +495,7 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 				err := writeTestRecord(
 					w,
 					sourcecache.BlobKey{Content: loaded.record.key, Render: sourcecache.RenderAccepted},
-					renderRecord{Output: output, Analysis: loaded.record.Analysis},
+					&renderRecord{Output: output, Analysis: loaded.record.Analysis},
 				)
 				return sourcecache.ProducerResult{}, err
 			},

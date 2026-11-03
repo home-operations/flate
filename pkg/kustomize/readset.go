@@ -279,6 +279,7 @@ func (rs readSetSnapshot) localsValid(ctx context.Context, lower fs.FS, immutabl
 	return ctx.Err() == nil, ctx.Err()
 }
 
+//nolint:gocritic // Task callbacks must observe the captured read-set value snapshot.
 func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache, input *treeFS) (bool, error) {
 	if len(rs.Remotes) == 0 {
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
@@ -289,10 +290,17 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return false, ctx.Err()
 	}
-	results := make([]struct {
-		done  chan struct{}
-		valid bool
-	}, len(rs.Remotes))
+	return rs.validateRemoteWaves(ctx, cache, input, waves)
+}
+
+//nolint:gocritic // Task callbacks must observe the captured read-set value snapshot.
+func (rs readSetSnapshot) validateRemoteWaves(
+	ctx context.Context,
+	cache *TreeCache,
+	input *treeFS,
+	waves [][]int,
+) (bool, error) {
+	results := make([]remoteValidationResult, len(rs.Remotes))
 	validationInput := *input
 	validationInput.slot = cache.tasks
 	valid := true
@@ -305,13 +313,7 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 			for _, index := range wave {
 				results[index].done = make(chan struct{})
 				cache.tasks.Go(context.WithoutCancel(ctx), "kustomize/validate-input", func(context.Context) {
-					defer close(results[index].done)
-					if ctx.Err() != nil {
-						return
-					}
-					remote := rs.Remotes[index]
-					_, identity, _ := remote.Input.acquire(ctx, cache, &validationInput)
-					results[index].valid = identity != (remoteIdentity{}) && identity == remote.Identity
+					results[index].validate(ctx, cache, &validationInput, &rs.Remotes[index])
 				})
 			}
 			for _, index := range wave {
@@ -330,6 +332,26 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 	}
 	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return valid && ctx.Err() == nil, ctx.Err()
+}
+
+type remoteValidationResult struct {
+	done  chan struct{}
+	valid bool
+}
+
+func (r *remoteValidationResult) validate(
+	ctx context.Context,
+	cache *TreeCache,
+	input *treeFS,
+	observed *remoteEntry,
+) {
+	defer close(r.done)
+	if ctx.Err() != nil {
+		return
+	}
+	remote := *observed
+	_, identity, _ := remote.Input.acquire(ctx, cache, input)
+	r.valid = identity != (remoteIdentity{}) && identity == remote.Identity
 }
 
 func remoteValidationWaves(remotes []remoteEntry) ([][]int, bool) {

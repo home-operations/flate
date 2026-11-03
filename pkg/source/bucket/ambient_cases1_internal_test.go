@@ -163,7 +163,7 @@ func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetche
 	assert.FatalIf(
 		t,
 		!ok || missing.RetryAmbient == nil || artifact != nil || captures.remote.Load() != 0 ||
-			(*captures.iam).Load() != 0,
+			captures.iam.Load() != 0,
 		"profile lookup ran before continuation: %v",
 		err,
 	)
@@ -219,10 +219,11 @@ func testFetcherMachineContinuationCase(t *testing.T, testCaseInput testFetcherM
 		t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", token)
 		t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/fixture")
 	}
-	if (*testCaseInput.tier) == "public" {
+	switch {
+	case (*testCaseInput.tier) == "public":
 		b.SecretRef = nil
 		(*testCaseInput.access) = ""
-	} else if (*testCaseInput.tier) != "machine" && (*testCaseInput.tier) != "STS rejected" {
+	case (*testCaseInput.tier) != "machine" && (*testCaseInput.tier) != "STS rejected":
 		(*testCaseInput.access) = "repository"
 		sec := &manifest.Secret{
 			Name:       "auth",
@@ -253,7 +254,7 @@ func testFetcherMachineContinuationCase(t *testing.T, testCaseInput testFetcherM
 				(*testCaseInput.access) = "supply"
 			}
 		}
-	} else {
+	default:
 		(*testCaseInput.access) = "machine-canary"
 	}
 	st.AddObject(b)
@@ -551,10 +552,10 @@ func testFetcherMachineSSOTransportCaseCompletion(
 			)
 			return true
 		})
-	if captures.calls.Load() != 1 || (*captures.traced).Load() != 1 ||
+	if captures.calls.Load() != 1 || captures.traced.Load() != 1 ||
 		(*(*captures.canceled)) && !errors.Is(err, context.Canceled) ||
 		!(*(*captures.canceled)) && err != nil {
-		t.Fatalf("SSO outcome: run calls=%d traced=%d: %v", captures.calls.Load(), (*captures.traced).Load(), err)
+		t.Fatalf("SSO outcome: run calls=%d traced=%d: %v", captures.calls.Load(), captures.traced.Load(), err)
 	}
 	if *(*captures.canceled) {
 		assert.Equal(t, captures.dataCalls.Load(), int32(0))
@@ -645,14 +646,16 @@ func testFetcherMachineProfilesCaseCompletionTail(
 	scope *testFetcherMachineProfilesCaseCompletionTailState,
 ) {
 	t.Helper()
-	if ((*scope.err) == nil) != ((*scope.success) || (*scope.unavailable)) || ((*scope.artifact) != nil) != ((*scope.success) || (*scope.unavailable)) ||
-		errors.Is((*scope.err), manifest.ErrMissingSecret) || (*scope.captures).remote.
-		Load() != (*scope.wantRemote) ||
+	if ((*scope.err) == nil) != ((*scope.success) || (*scope.unavailable)) ||
+		((*scope.artifact) != nil) != ((*scope.success) || (*scope.unavailable)) ||
+		errors.Is((*scope.err), manifest.ErrMissingSecret) ||
+		(*scope.captures).remote.
+			Load() != (*scope.wantRemote) ||
 		(*scope.captures).iam.
 			Load() != (*scope.wantIAM) {
 		t.Fatalf(
 			"profile selection: %v remote=%d IAM=%d",
-			(*scope.err), (*scope.captures).remote.Load(), (*(*scope.captures).iam).Load(),
+			(*scope.err), (*scope.captures).remote.Load(), (*scope.captures).iam.Load(),
 		)
 	}
 	_, markerErr := os.Stat((*(*scope.captures).marker))
@@ -716,7 +719,7 @@ func testFetcherMachineProfilesCaseCompletionTail(
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
-			rotated.Key == warm.Key || (*scope.captures).remote.Load() != 2 || (*(*scope.captures).iam).Load() != 0,
+			rotated.Key == warm.Key || (*scope.captures).remote.Load() != 2 || (*scope.captures).iam.Load() != 0,
 			"%s",
 			"rotated profile reused credential identity or skipped signing",
 		)

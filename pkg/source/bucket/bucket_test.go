@@ -734,14 +734,10 @@ func testFetcherArchiveIsolationAndWarmHitsCaseCallback2(
 				Error(err)
 			return
 		}
-		if art.Content == "" || art.Content != cache.AcquisitionIdentity(art.FS) {
-			(*testCaseInput.t).
-				Errorf("content generation = %q", art.Content)
-		}
-		if art.Key == "" || family != "" && art.Key != family {
-			(*testCaseInput.t).
-				Errorf("warm acquisition family = %q, first = %q", art.Key, family)
-		}
+		assert.ErrorIf((*testCaseInput.t), art.Content == "" || art.Content != cache.AcquisitionIdentity(art.FS),
+			"content generation = %q", art.Content)
+		assert.ErrorIf((*testCaseInput.t), art.Key == "" || family != "" && art.Key != family,
+			"warm acquisition family = %q, first = %q", art.Key, family)
 		family = art.Key
 		want := (*testCaseInput.namespace)
 		if (*testCaseInput.namespace) == "second" {
@@ -781,9 +777,7 @@ func testFetcherArchiveIsolationAndWarmHitsCaseCallback2(
 				err,
 			)
 		}
-		if art.Metadata["objectCount"] != "5" || art.Revision == "" {
-			(*testCaseInput.t).
-				Errorf("bucket metadata: %v", art.Metadata)
-		}
+		assert.ErrorIf((*testCaseInput.t), art.Metadata["objectCount"] != "5" || art.Revision == "",
+			"bucket metadata: %v", art.Metadata)
 	}
 }

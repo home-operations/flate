@@ -432,8 +432,8 @@ type testFetcherResolveTransportSnapshotRotationCaseInputs struct {
 func testFetcherResolveTransportSnapshotRotationCase(
 	t *testing.T, testCaseInputValue *testFetcherResolveTransportSnapshotRotationCaseInputs,
 ) {
-	testCaseInput := *testCaseInputValue
 	t.Helper()
+	testCaseInput := *testCaseInputValue
 	if (*testCaseInput.wave) == "password" {
 		(*testCaseInput.password) = "second"
 	}
@@ -535,16 +535,17 @@ func testFetcherProviderCredentialsCase(t *testing.T, tc *struct {
 	if err == nil {
 		client, err = minio.New(request.endpoint, &request.options)
 	}
-	if (*tc).missing {
+	switch {
+	case tc.missing:
 		assert.FatalIf(
 			t,
 			!errors.Is(err, manifest.ErrMissingSecret) || client != nil,
 			"unavailable provider: %v",
 			err,
 		)
-	} else if tc.malformed {
+	case tc.malformed:
 		assert.FatalIf(t, !errors.Is(err, manifest.ErrInput) || client != nil, "malformed credential: %v", err)
-	} else {
+	default:
 		assert.FatalIf(t, err != nil || client == nil, "static AWS credentials rejected: %v", err)
 	}
 }

@@ -161,10 +161,7 @@ func machineFilesConfigured() (bool, error) {
 			path,
 		)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			if err != nil {
-				return false, fmt.Errorf("inspect AWS credential files: %w", err)
-			}
-			return false, nil
+			return false, fmt.Errorf("inspect AWS credential files: %w", err)
 		}
 		configured = configured || err == nil
 	}

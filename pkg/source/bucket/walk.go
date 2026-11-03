@@ -266,7 +266,7 @@ func writeBucketChunks(ctx context.Context, tw *tar.Writer, chunks []*bucketChun
 		select {
 		case body = <-c.ready:
 		case <-ctx.Done():
-			return ctx.Err()
+			return ctx.Err() //nolint:wrapcheck // Chunk cancellation must preserve the caller context error identity.
 		}
 		if err := c.emit(tw, body); err != nil {
 			return err

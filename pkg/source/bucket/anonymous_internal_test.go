@@ -24,8 +24,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/ssrfguard"
 )
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_AnonymousBucketsShareIAM(t *testing.T) {
 	clearMachineEnvironment(t)
 	network := newTestNetwork(t)
@@ -82,8 +80,6 @@ func TestFetcher_MachineIAMCancellation(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_SharedIAMTransport(t *testing.T) {
 	clearMachineEnvironment(t)
 	var probes, leaked, acquisitions atomic.Int32
@@ -100,7 +96,10 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 	transport.TLSClientConfig = metadata.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
 	t.Cleanup(
-		func() { transport.CloseIdleConnections(); http.DefaultTransport = previous },
+		func() {
+			transport.CloseIdleConnections()
+			http.DefaultTransport = previous //nolint:reassign // The test must restore the process HTTP transport after offline acquisition.
+		},
 	)
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", metadata.URL)
 	network := newTestNetwork(t)
@@ -162,8 +161,6 @@ func TestFetcher_SharedIAMTransport(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_MachineWebIdentityTransport(t *testing.T) {
 	clearMachineEnvironment(t)
 	token := filepath.Join(t.TempDir(), "web-identity")

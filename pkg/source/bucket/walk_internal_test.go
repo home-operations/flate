@@ -117,7 +117,6 @@ func (w blockedArchiveWriter) Write(p []byte) (int, error) {
 func TestWalkBucket_ChunkBound(t *testing.T) {
 	t.Parallel()
 
-	const size = 8 << 20
 	requested := make(chan struct{}, 16)
 	completed := make(chan struct{}, 16)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -369,7 +368,9 @@ func timeoutBucketFetcher(t *testing.T, respond func(*http.Request) (*http.Respo
 	}
 	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
 	t.Cleanup(
-		func() { http.DefaultTransport = previous },
+		func() {
+			http.DefaultTransport = previous //nolint:reassign // The test must restore the process HTTP transport after offline acquisition.
+		},
 	)
 	f := &Fetcher{Cache: cachetest.New(t, "", cache.New), Network: newTestNetwork(t)}
 	t.Cleanup(func() { f.Network.Close(); workers.Wait() })

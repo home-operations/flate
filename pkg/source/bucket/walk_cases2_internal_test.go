@@ -58,10 +58,10 @@ func testWalkBucketPhaseTimeoutsCaseCallback(
 			data = "<ListBucketResult><Name>data</Name><IsTruncated>false</IsTruncated>"
 			var dataSb1088 strings.Builder
 			for i := range (*testCaseInput.tc).objects {
-				dataSb1088.WriteString(fmt.Sprintf(
+				fmt.Fprintf(&dataSb1088,
 					"<Contents><Key>file%02d</Key><Size>1</Size><ETag>\"x\"</ETag></Contents>",
 					i,
-				))
+				)
 			}
 			data += dataSb1088.String()
 			data += "</ListBucketResult>"

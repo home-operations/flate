@@ -273,7 +273,10 @@ func bucketPipe(t *testing.T, handle func(*http.Request) *http.Response) {
 	}
 	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
 	t.Cleanup(
-		func() { transport.CloseIdleConnections(); http.DefaultTransport = old },
+		func() {
+			transport.CloseIdleConnections()
+			http.DefaultTransport = old //nolint:reassign // The test must restore the process HTTP transport after offline acquisition.
+		},
 	)
 }
 
@@ -341,7 +344,10 @@ func bucketCredentialRoute(t *testing.T, hostname string, handle func(*http.Requ
 	}
 	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
 	t.Cleanup(
-		func() { transport.CloseIdleConnections(); http.DefaultTransport = previous },
+		func() {
+			transport.CloseIdleConnections()
+			http.DefaultTransport = previous //nolint:reassign // The test must restore the process HTTP transport after offline acquisition.
+		},
 	)
 }
 

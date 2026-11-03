@@ -110,7 +110,6 @@ func testWalkBucketArchiveNamesCase(t *testing.T, tc *struct {
 func testWalkBucketLargeListedSizeCase(t *testing.T, ranges *bool,
 ) {
 	t.Helper()
-	const size int64 = (1 << 30) + 1
 	const timeout = 10 * time.Second
 	cause := errors.New("large bucket body")
 	arrived := make(chan struct{}, downloads)
@@ -492,7 +491,7 @@ func testWalkBucketLargeListedSizeCaseCallback(
 	if err != nil || i < 0 || i >= len((*testCaseInput.gets)) {
 		return nil, fmt.Errorf("unexpected large bucket path: %s", req.URL.Path)
 	}
-	(*testCaseInput.gets)[i].Add(1)
+	testCaseInput.gets[i].Add(1)
 	n := testCaseInput.active.Add(1)
 	defer testCaseInput.active.Add(-1)
 	for old := testCaseInput.peak.Load(); old < n; old = testCaseInput.peak.Load() {
@@ -627,7 +626,7 @@ func testWalkBucketRangesCaseCallbackCompletion(captures *testWalkBucketRangesCa
 		return true
 	}
 	if (*captures.i) == 1 &&
-		((*(*captures.testCaseInput.behavior)) == "ignore_cancel" && (*captures.r).Header.Get("Range") == "" || (*(*(*captures.testCaseInput).behavior)) == "cancel" && (*captures.start) == captures.part) {
+		((*(*captures.testCaseInput.behavior)) == "ignore_cancel" && (*captures.r).Header.Get("Range") == "" || (*(*captures.testCaseInput.behavior)) == "cancel" && (*captures.start) == captures.part) {
 		{
 			got := (*captures.r).Header.Get("Range")
 			assert.ErrorIf(
@@ -720,18 +719,18 @@ type testWalkBucketRangesCaseCallbackTailState struct {
 
 func testWalkBucketRangesCaseCallbackTail(scope *testWalkBucketRangesCaseCallbackTailState) {
 	const part = 8388608
-	if (*(*(*scope.testCaseInput).behavior)) == "wrong_range" && (*scope.start) == part {
+	if (*(*scope.testCaseInput.behavior)) == "wrong_range" && (*scope.start) == part {
 		(*scope.w).Header().
-			Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", (*scope.start)+1, (*scope.end)+1, (*(*scope.testCaseInput).sizes)[(*scope.i)]))
+			Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", (*scope.start)+1, (*scope.end)+1, (*scope.testCaseInput.sizes)[(*scope.i)]))
 	}
-	if (*(*(*scope.testCaseInput).behavior)) == "changed" && (*scope.start) >= part {
+	if (*(*scope.testCaseInput.behavior)) == "changed" && (*scope.start) >= part {
 		http.Error((*scope.w), "changed object", http.StatusPreconditionFailed)
 		return
 	}
 	length := (*scope.end) - (*scope.start) + 1
 	if (*scope.i) == 1 &&
-		((*scope.start) == part || strings.HasPrefix((*(*(*scope.testCaseInput).behavior)), "ignore_")) {
-		switch strings.TrimPrefix((*(*(*scope.testCaseInput).behavior)), "ignore_") {
+		((*scope.start) == part || strings.HasPrefix((*(*scope.testCaseInput.behavior)), "ignore_")) {
+		switch strings.TrimPrefix((*(*scope.testCaseInput.behavior)), "ignore_") {
 		case "short":
 			length--
 		case "long":
@@ -740,13 +739,13 @@ func testWalkBucketRangesCaseCallbackTail(scope *testWalkBucketRangesCaseCallbac
 	}
 	shouldReturn := testWalkBucketRangesCaseCallbackCompletion(
 		&testWalkBucketRangesCaseCallbackCompletionInputs{
-			w:             &(*scope.w),
+			w:             scope.w,
 			length:        &length,
-			status:        &(*scope.status),
-			testCaseInput: &(*scope.testCaseInput),
+			status:        scope.status,
+			testCaseInput: scope.testCaseInput,
 			r:             scope.r,
-			i:             &(*scope.i),
-			start:         &(*scope.start),
+			i:             scope.i,
+			start:         scope.start,
 			part:          int64(part),
 		},
 	)
@@ -799,7 +798,7 @@ func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures **testWalkBuc
 		sha256.Sum256([]byte("prefix/file00 v1\nprefix/file01 v1\nprefix/file02 v1\n")),
 	)
 	if (*captures).desc.Annotations["flate.revision"] != revision ||
-		(*(*captures).desc).Annotations["flate.object-count"] != "3" {
+		(*captures).desc.Annotations["flate.object-count"] != "3" {
 		t.Fatalf("metadata=%v, want revision=%s count=3", (*captures).desc.Annotations, revision)
 	}
 	return false

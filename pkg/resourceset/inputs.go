@@ -90,17 +90,7 @@ type providerReader interface {
 // StoreResolver resolves named or selected providers from immutable query inputs.
 // References MUST remain immutable, and the resolver MUST be used sequentially.
 func StoreResolver(s providerReader) ProviderResolver {
-	type compilation struct {
-		matcher manifest.ReferenceMatcher
-		err     error
-	}
-	type query struct {
-		id       manifest.NamedResource
-		selector *metav1.LabelSelector
-	}
-	var firstQuery query
-	var firstCompilation compilation
-	var selectors map[query]compilation
+	var selectors providerSelectorCache
 	return func(ref fluxopv1.InputProviderReference, id manifest.NamedResource) ([]*manifest.ResourceSetInputProvider, error) {
 		if id.Name != "" {
 			obj, ok := s.GetObject(id).(*manifest.ResourceSetInputProvider)
@@ -112,23 +102,7 @@ func StoreResolver(s providerReader) ProviderResolver {
 		if ref.Selector == nil {
 			return nil, nil
 		}
-		key := query{id: id, selector: ref.Selector}
-		compiled := firstCompilation
-		if key != firstQuery {
-			var ok bool
-			compiled, ok = selectors[key]
-			if !ok {
-				compiled.matcher, compiled.err = id.Matcher(ref.Selector)
-				if firstQuery.selector == nil {
-					firstQuery, firstCompilation = key, compiled
-				} else {
-					if selectors == nil {
-						selectors = make(map[query]compilation)
-					}
-					selectors[key] = compiled
-				}
-			}
-		}
+		compiled := selectors.compile(id, ref.Selector)
 		if compiled.err != nil {
 			return nil, compiled.err
 		}
@@ -141,4 +115,41 @@ func StoreResolver(s providerReader) ProviderResolver {
 		}
 		return out, nil
 	}
+}
+
+type providerCompilation struct {
+	matcher manifest.ReferenceMatcher
+	err     error
+}
+
+type providerQuery struct {
+	id       manifest.NamedResource
+	selector *metav1.LabelSelector
+}
+
+type providerSelectorCache struct {
+	firstQuery       providerQuery
+	firstCompilation providerCompilation
+	selectors        map[providerQuery]providerCompilation
+}
+
+func (c *providerSelectorCache) compile(id manifest.NamedResource, selector *metav1.LabelSelector) providerCompilation {
+	key := providerQuery{id: id, selector: selector}
+	if key == c.firstQuery {
+		return c.firstCompilation
+	}
+	if compiled, ok := c.selectors[key]; ok {
+		return compiled
+	}
+	var compiled providerCompilation
+	compiled.matcher, compiled.err = id.Matcher(selector)
+	if c.firstQuery.selector == nil {
+		c.firstQuery, c.firstCompilation = key, compiled
+		return compiled
+	}
+	if c.selectors == nil {
+		c.selectors = make(map[providerQuery]providerCompilation)
+	}
+	c.selectors[key] = compiled
+	return compiled
 }

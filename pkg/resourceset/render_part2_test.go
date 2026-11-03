@@ -433,7 +433,13 @@ func TestRender_Steps(t *testing.T) {
 			docs, _, err := renderProviders(rs, nil, nil)
 			if tt.wantErr != "" {
 				{
-					assert.FatalIf(t, err == nil || !strings.Contains(err.Error(), tt.wantErr), "error = %v, want %q", err, tt.wantErr)
+					assert.FatalIf(
+						t,
+						err == nil || !strings.Contains(err.Error(), tt.wantErr),
+						"error = %v, want %q",
+						err,
+						tt.wantErr,
+					)
 				}
 				{
 					assert.FatalIf(t, strings.Contains(err.Error(), "ResourceSet default/steps") ||

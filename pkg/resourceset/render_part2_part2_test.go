@@ -72,7 +72,7 @@ func testStoreResolverSelectorInputsDistinctSelectorsAndLiveProviders(
 
 	st := store.New()
 	st.AddObject((*testCaseInput.db))
-	st.AddObject(&(*testCaseInput.web))
+	st.AddObject(testCaseInput.web)
 	resolve := resourceset.StoreResolver(st)
 	webSelector := &metav1.LabelSelector{MatchLabels: testCaseInput.web.Labels}
 	for _, tc := range []struct {

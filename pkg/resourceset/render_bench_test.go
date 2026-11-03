@@ -49,38 +49,7 @@ func BenchmarkRender_Matrix(b *testing.B) {
 func BenchmarkStoreResolver_SelectorCandidates(b *testing.B) {
 	for _, count := range []int{1, 1000} {
 		b.Run(fmt.Sprintf("candidates=%d", count), func(b *testing.B) {
-			st := store.New()
-			for i := range count {
-				role := "db"
-				if i%2 != 0 {
-					role = "web"
-				}
-				st.AddObject(
-					&manifest.ResourceSetInputProvider{
-						Name:      fmt.Sprintf("provider-%04d", i),
-						Namespace: "apps",
-						Labels:    map[string]string{"role": role},
-					},
-				)
-			}
-			ref := fluxopv1.InputProviderReference{
-				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}},
-			}
-			id := manifest.NamedResource{
-				Group:     manifest.FluxOperatorDomain,
-				Kind:      manifest.KindResourceSetInputProvider,
-				Namespace: "apps",
-			}
-			b.ReportAllocs()
-			for b.Loop() {
-				resolve := resourceset.StoreResolver(st)
-				for range 2 {
-					got, err := resolve(ref, id)
-					if err != nil || len(got) != (count+1)/2 {
-						b.Fatalf("matches=%d error=%v, want %d", len(got), err, (count+1)/2)
-					}
-				}
-			}
+			benchmarkStoreResolverCandidates(b, count)
 		})
 	}
 }
@@ -103,4 +72,40 @@ func benchmarkRenderMatrixCompletion(b *testing.B) {
 			}
 		}
 	})
+}
+
+func benchmarkStoreResolverCandidates(b *testing.B, count int) {
+	b.Helper()
+	st := store.New()
+	for i := range count {
+		role := "db"
+		if i%2 != 0 {
+			role = "web"
+		}
+		st.AddObject(
+			&manifest.ResourceSetInputProvider{
+				Name:      fmt.Sprintf("provider-%04d", i),
+				Namespace: "apps",
+				Labels:    map[string]string{"role": role},
+			},
+		)
+	}
+	ref := fluxopv1.InputProviderReference{
+		Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"role": "db"}},
+	}
+	id := manifest.NamedResource{
+		Group:     manifest.FluxOperatorDomain,
+		Kind:      manifest.KindResourceSetInputProvider,
+		Namespace: "apps",
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		resolve := resourceset.StoreResolver(st)
+		for range 2 {
+			got, err := resolve(ref, id)
+			if err != nil || len(got) != (count+1)/2 {
+				b.Fatalf("matches=%d error=%v, want %d", len(got), err, (count+1)/2)
+			}
+		}
+	}
 }

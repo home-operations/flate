@@ -56,9 +56,9 @@ func BenchmarkDiff_PreparedSubjects(b *testing.B) {
 // buildDiffCorpus generates two doc sets of size n. The first
 // changeCount entries differ in a single field; the rest are
 // identical.
-func buildDiffCorpus(n, changeCount int) (left, right []Doc) {
-	left = make([]Doc, 0, n)
-	right = make([]Doc, 0, n)
+func buildDiffCorpus(n, changeCount int) ([]Doc, []Doc) {
+	left := make([]Doc, 0, n)
+	right := make([]Doc, 0, n)
 	for i := range n {
 		name := fmt.Sprintf("cm-%d", i)
 		parent := Parent{NamedResource: testutil.HelmReleaseID("default", fmt.Sprintf("hr-%d", i/10))}

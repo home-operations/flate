@@ -59,8 +59,8 @@ func TestRenderDocs_DuplicateWarningOrder(t *testing.T) {
 	a := z
 	a.Name = "a"
 	left := []Doc{
-		cmDoc(parent, z, "old", ""), cmDoc(parent, z, "new", ""),
-		cmDoc(parent, a, "old", ""), cmDoc(parent, a, "new", ""),
+		cmDoc(new(parent), z, "old", ""), cmDoc(new(parent), z, "new", ""),
+		cmDoc(new(parent), a, "old", ""), cmDoc(new(parent), a, "new", ""),
 	}
 	want := make([]manifest.Warning, 0, 2)
 	for _, id := range []manifest.NamedResource{a, z} {
@@ -83,12 +83,12 @@ func TestRenderDocs_NormalizedDuplicatesOnce(t *testing.T) {
 	t.Parallel()
 	parent := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "apps"}
 	left := []Doc{
-		cmDoc(parent, manifest.NamedResource{Name: "shadow-orig"}, "shadowed", ""),
-		cmDoc(parent, manifest.NamedResource{Name: "last-orig"}, "old", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "shadow-orig"}, "shadowed", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "last-orig"}, "old", ""),
 	}
 	right := []Doc{
-		cmDoc(parent, manifest.NamedResource{Name: "shadow-current"}, "shadowed", ""),
-		cmDoc(parent, manifest.NamedResource{Name: "last-current"}, "new", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "shadow-current"}, "shadowed", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "last-current"}, "new", ""),
 	}
 	for _, format := range []Format{FormatHuman, FormatGitHub, FormatBrief, FormatGitLab, FormatGitea, FormatDiff, FormatHTML, FormatJSON, ""} {
 		t.Run(string(format), func(t *testing.T) {
@@ -155,10 +155,10 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	t.Helper()
 
 	parent := Parent{NamedResource: testutil.HelmReleaseID("ns", "a")}
-	left := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
+	left := cmDoc(new(parent), manifest.NamedResource{Name: "x", Namespace: "ns"}, "old", "")
 	left.Manifest["kind"], left.Manifest["apiVersion"] = "Deployment", "apps/v1"
 	parent.Group, parent.Kind, parent.Namespace, parent.Name = testCaseInput.parentGroup, testCaseInput.parentKind, testCaseInput.parentNamespace, testCaseInput.parentName
-	right := cmDoc(parent, manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
+	right := cmDoc(new(parent), manifest.NamedResource{Name: "x", Namespace: "ns"}, "new", "")
 	right.Manifest["kind"], right.Manifest["apiVersion"] = "Deployment", testCaseInput.apiVersion
 	l, r := []Doc{left}, []Doc{right}
 	if got := diffprep.Prepare(
@@ -178,28 +178,32 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	prepared := diffprep.Prepare(prepareDocs(l), prepareDocs(r), diffprep.Options{})
 	lines, err := output.PrepareLines(prepared)
 	assert.NoError(t, err)
-	for _, c := range lines {
-		count++
-		want := left
-		if c.Status != string(StatusRemoved) {
-			want = right
-		}
-		group := "apps"
-		if c.Status != string(StatusRemoved) {
-			group, _, _ = strings.Cut(testCaseInput.apiVersion, "/")
-			if !strings.Contains(testCaseInput.apiVersion, "/") {
-				group = ""
+	{
+		cValues := lines
+		for cIndex := range cValues {
+			c := cValues[cIndex]
+			count++
+			want := left
+			if c.Status != string(StatusRemoved) {
+				want = right
 			}
-		}
-		{
-			assert.ErrorIf(t, c.Parent.ID != want.Parent.NamedResource ||
-				c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}), "line change dropped identity: %+v", c)
+			group := "apps"
+			if c.Status != string(StatusRemoved) {
+				group, _, _ = strings.Cut(testCaseInput.apiVersion, "/")
+				if !strings.Contains(testCaseInput.apiVersion, "/") {
+					group = ""
+				}
+			}
+			{
+				assert.ErrorIf(t, c.Parent.ID != want.Parent.NamedResource ||
+					c.Resource.ID != (manifest.NamedResource{Group: group, Kind: "Deployment", Namespace: "ns", Name: "x"}), "line change dropped identity: %+v", c)
+			}
 		}
 	}
 	if count != testCaseInput.pairs {
 		t.Errorf("line changes = %d, want %d", count, testCaseInput.pairs)
 	}
-	native := renderDiff(t, l, r, Options{Format: FormatGitHub})
+	native := renderDiff(t, l, r, new(Options{Format: FormatGitHub}))
 	if testCaseInput.pairs == 2 {
 		{
 			assert.ErrorIf(t, strings.Count(native, "one document removed:") != 1 ||
@@ -218,7 +222,10 @@ func testPairDistinguishesByParentCase(t *testing.T, testCaseInput *struct {
 	}
 	{
 		assert.ErrorIf(
-			t, testCaseInput.pairs == 1 && (changes[0].Status != StatusChanged || changes[0].APIVersion != testCaseInput.apiVersion), "version change must retain the current authored version: %+v",
+			t,
+			testCaseInput.pairs == 1 &&
+				(changes[0].Status != StatusChanged || changes[0].APIVersion != testCaseInput.apiVersion),
+			"version change must retain the current authored version: %+v",
 			changes,
 		)
 	}
@@ -240,9 +247,9 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 	rightParent := (*testCaseInput.leftParent)
 	rightParent.Path = testCaseInput.tt.path
 	left := []Doc{
-		cmDoc((*testCaseInput.leftParent), manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", ""),
+		cmDoc(new((*testCaseInput.leftParent)), manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", ""),
 	}
-	right := []Doc{cmDoc(rightParent, manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}
+	right := []Doc{cmDoc(new(rightParent), manifest.NamedResource{Name: "shared", Namespace: "apps"}, "old", "")}
 	{
 		got, _ := Changes(left, right, Options{})
 		assert.FatalIf(t, len(got) != 0, "path-only move produced changes: %+v", got)
@@ -284,7 +291,8 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 				out,
 			)
 		}
-		if format == FormatDiff {
+		switch format {
+		case FormatDiff:
 			want := "--- " + testCaseInput.tt.resource + "\n+++ " + testCaseInput.tt.resource + "\n"
 			{
 				assert.ErrorIf(
@@ -295,7 +303,7 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 					out,
 				)
 			}
-		} else if format == FormatGitHub {
+		case FormatGitHub:
 			{
 				assert.ErrorIf(
 					t,
@@ -305,7 +313,7 @@ func testPairPathIsPresentationCase(t *testing.T, testCaseInput *testPairPathIsP
 					out,
 				)
 			}
-		} else {
+		case FormatHuman, FormatBrief, FormatGitLab, FormatGitea, FormatHTML, FormatJSON, "":
 			want := `<div class="rparent">` + testCaseInput.tt.parent + `</div>`
 			assert.ErrorIf(t, !strings.Contains(string(out), want), "HTML parent heading missing %q", want)
 		}

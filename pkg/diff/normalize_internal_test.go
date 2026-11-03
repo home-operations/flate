@@ -8,8 +8,9 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func renderDiff(t *testing.T, left, right []Doc, opts Options) string {
+func renderDiff(t *testing.T, left []Doc, right []Doc, optsValue *Options) string {
 	t.Helper()
+	opts := *optsValue
 	out, _, err := RenderDocs(left, right, opts)
 	{
 		assert.FatalIf(t, err != nil, "RenderDocs: %v", err)
@@ -47,13 +48,17 @@ func TestNormalize_StripAttrsRemovesNoise(t *testing.T) {
 		}}
 	}
 	{
-		s := renderDiff(t, mk("myapp-1.2.3"), mk("myapp-1.2.4"),
-			Options{Format: FormatDiff, StripAttrs: []string{"helm.sh/chart"}})
+		s := renderDiff(
+			t,
+			mk("myapp-1.2.3"),
+			mk("myapp-1.2.4"),
+			new(Options{Format: FormatDiff, StripAttrs: []string{"helm.sh/chart"}}),
+		)
 		assert.ErrorIf(t, s != "", "stripped annotation should produce no diff, got:\n%s", s)
 	}
 	// Control: without --strip-attr the same change DOES surface.
 	{
-		s := renderDiff(t, mk("myapp-1.2.3"), mk("myapp-1.2.4"), Options{Format: FormatDiff})
+		s := renderDiff(t, mk("myapp-1.2.3"), mk("myapp-1.2.4"), new(Options{Format: FormatDiff}))
 		assert.ErrorIf(t, s == "", "%s", "control: unstripped annotation change should surface as a diff")
 	}
 }
@@ -82,8 +87,12 @@ func TestNormalize_StripsChecksumPrefixOnPodTemplate(t *testing.T) {
 		}}
 	}
 	{
-		s := renderDiff(t, mk("105231a7"), mk("3d60fcd0"),
-			Options{Format: FormatDiff, StripAttrs: []string{"checksum/"}})
+		s := renderDiff(
+			t,
+			mk("105231a7"),
+			mk("3d60fcd0"),
+			new(Options{Format: FormatDiff, StripAttrs: []string{"checksum/"}}),
+		)
 		assert.ErrorIf(
 			t,
 			s != "",
@@ -93,7 +102,7 @@ func TestNormalize_StripsChecksumPrefixOnPodTemplate(t *testing.T) {
 	}
 	// Control: without the strip the same change DOES surface.
 	{
-		s := renderDiff(t, mk("105231a7"), mk("3d60fcd0"), Options{Format: FormatDiff})
+		s := renderDiff(t, mk("105231a7"), mk("3d60fcd0"), new(Options{Format: FormatDiff}))
 		assert.ErrorIf(t, s == "", "%s", "control: unstripped checksum/secrets change should surface as a diff")
 	}
 }
@@ -125,20 +134,32 @@ func TestNormalize_StripsSpecFieldPath(t *testing.T) {
 
 	// Only the {{ now }}-derived unlock rotated → stripped → no diff.
 	{
-		s := renderDiff(t, mk("20260606112230", "app-restic"), mk("20260606112233", "app-restic"),
-			Options{Format: FormatDiff, StripFields: fields})
+		s := renderDiff(
+			t,
+			mk("20260606112230", "app-restic"),
+			mk("20260606112233", "app-restic"),
+			new(Options{Format: FormatDiff, StripFields: fields}),
+		)
 		assert.ErrorIf(t, s != "", "rotated spec.restic.unlock should produce no diff under StripFields, got:\n%s", s)
 	}
 	// Control: without the strip, the rotated unlock DOES surface.
 	{
-		s := renderDiff(t, mk("20260606112230", "app-restic"), mk("20260606112233", "app-restic"),
-			Options{Format: FormatDiff})
+		s := renderDiff(
+			t,
+			mk("20260606112230", "app-restic"),
+			mk("20260606112233", "app-restic"),
+			new(Options{Format: FormatDiff}),
+		)
 		assert.ErrorIf(t, s == "", "%s", "control: unstripped spec.restic.unlock change should surface as a diff")
 	}
 	// A genuinely-changed sibling field still surfaces even with unlock stripped.
 	{
-		s := renderDiff(t, mk("20260606112230", "app-restic"), mk("20260606112233", "other-restic"),
-			Options{Format: FormatDiff, StripFields: fields})
+		s := renderDiff(
+			t,
+			mk("20260606112230", "app-restic"),
+			mk("20260606112233", "other-restic"),
+			new(Options{Format: FormatDiff, StripFields: fields}),
+		)
 		assert.ErrorIf(t, s == "", "%s", "a real spec.restic.repository change must still surface under StripFields")
 	}
 }
@@ -160,7 +181,7 @@ func TestNormalize_RedactsConfigMapBinaryData(t *testing.T) {
 		}}
 	}
 
-	s := renderDiff(t, mk("QUFBQQ==", "same"), mk("QkJCQg==", "same"), Options{Format: FormatDiff})
+	s := renderDiff(t, mk("QUFBQQ==", "same"), mk("QkJCQg==", "same"), new(Options{Format: FormatDiff}))
 	{
 		assert.FatalIf(t, s == "", "%s", "binaryData-only change should surface as a redacted diff")
 	}
@@ -176,7 +197,7 @@ func TestNormalize_RedactsConfigMapBinaryData(t *testing.T) {
 		)
 	}
 
-	s = renderDiff(t, mk("QUFBQQ==", "old"), mk("QkJCQg==", "new"), Options{Format: FormatDiff})
+	s = renderDiff(t, mk("QUFBQQ==", "old"), mk("QkJCQg==", "new"), new(Options{Format: FormatDiff}))
 	{
 		assert.ErrorIf(
 			t,
@@ -212,7 +233,7 @@ func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
 		assert.Equal(t, len(changes), 0)
 		assert.Equal(t, len(warnings), 0)
 	case "json":
-		got := jsonChanges(t, []Doc{left}, []Doc{right}, opts)
+		got := jsonChanges(t, []Doc{left}, []Doc{right}, new(opts))
 		{
 			assert.ErrorIf(
 				t,
@@ -224,7 +245,7 @@ func testRenderDocsNormalizeBeforePairCase(t *testing.T, testCaseInput *string,
 		}
 	default:
 		{
-			out := renderDiff(t, []Doc{left}, []Doc{right}, opts)
+			out := renderDiff(t, []Doc{left}, []Doc{right}, new(opts))
 			assert.ErrorIf(t, out != "", "normalized identities should pair without a diff, got:\n%s", out)
 		}
 	}

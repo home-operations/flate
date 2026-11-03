@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/home-operations/flate/internal/assert"
@@ -14,7 +15,8 @@ import (
 	"github.com/home-operations/flate/pkg/store"
 )
 
-func selectedSnapshot(parent Parent, docs []Doc, unavailable store.StatusInfo) Snapshot {
+func selectedSnapshot(parentValue *Parent, docs []Doc, unavailable store.StatusInfo) Snapshot {
+	parent := *parentValue
 	id := parent.NamedResource
 	var obj manifest.BaseManifest = &manifest.HelmRelease{Name: parent.Name, Namespace: parent.Namespace}
 	if parent.Kind == manifest.KindKustomization {
@@ -38,7 +40,7 @@ func selectedSnapshot(parent Parent, docs []Doc, unavailable store.StatusInfo) S
 func TestCompare_SelectedErrorsRetained(t *testing.T) {
 	t.Parallel()
 	selectedErr := errors.New("shared teardown failure")
-	valid := selectedSnapshot(helmReleaseParent(), hrDocs(1), store.StatusInfo{})
+	valid := selectedSnapshot(new(helmReleaseParent()), hrDocs(1), store.StatusInfo{})
 	for _, tc := range []struct {
 		name    string
 		orig    Snapshot
@@ -58,7 +60,11 @@ func TestCompare_SelectedErrorsRetained(t *testing.T) {
 			}
 		})
 	}
-	unavailable := selectedSnapshot(helmReleaseParent(), nil, store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
+	unavailable := selectedSnapshot(
+		new(helmReleaseParent()),
+		nil,
+		store.StatusInfo{Status: store.StatusFailed, Message: "failed"},
+	)
 	_, warnings, suppressed, err := Compare(valid, unavailable, selectedErr, Options{Format: "invalid"})
 	{
 		assert.ErrorIf(t, !errors.Is(err, selectedErr), "format error discarded selected error: %v", err)
@@ -344,15 +350,22 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 		t.Run(string(side), func(t *testing.T) {
 			t.Parallel()
 			left := selectedSnapshot(
-				kustomizationParent(),
-				[]Doc{cmDoc(kustomizationParent(), manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "")},
+				new(kustomizationParent()),
+				[]Doc{
+					cmDoc(
+						new(kustomizationParent()),
+						manifest.NamedResource{Name: "config", Namespace: "apps"},
+						"old",
+						"",
+					),
+				},
 				store.StatusInfo{},
 			)
 			moved := kustomizationParent()
 			moved.Path = "././apps/a"
 			right := selectedSnapshot(
-				moved,
-				[]Doc{cmDoc(moved, manifest.NamedResource{Name: "config", Namespace: "apps"}, "new", "")},
+				new(moved),
+				[]Doc{cmDoc(new(moved), manifest.NamedResource{Name: "config", Namespace: "apps"}, "new", "")},
 				store.StatusInfo{},
 			)
 			unavailable := map[manifest.NamedResource]store.StatusInfo{
@@ -389,7 +402,13 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 			moved.Path = "./apps/a"
 			want := Suppression{Parent: moved, Side: side, Count: 1, Reason: "failed"}
 			{
-				assert.ErrorIf(t, len(document.Suppressed) != 2 || document.Suppressed[0] != backing[0] || document.Suppressed[1] != want, "supplied or moved producer notes differ: %+v", document.Suppressed)
+				assert.ErrorIf(
+					t,
+					len(document.Suppressed) != 2 || document.Suppressed[0] != backing[0] ||
+						document.Suppressed[1] != want,
+					"supplied or moved producer notes differ: %+v",
+					document.Suppressed,
+				)
 			}
 			{
 				assert.ErrorIf(
@@ -439,8 +458,12 @@ func TestCompare_OptionsAndSnapshotsRemainImmutable(t *testing.T) {
 
 func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 	t.Parallel()
-	left := selectedSnapshot(helmReleaseParent(), hrDocs(2), store.StatusInfo{})
-	right := selectedSnapshot(helmReleaseParent(), hrDocs(1), store.StatusInfo{Status: store.StatusFailed, Message: "failed"})
+	left := selectedSnapshot(new(helmReleaseParent()), hrDocs(2), store.StatusInfo{})
+	right := selectedSnapshot(
+		new(helmReleaseParent()),
+		hrDocs(1),
+		store.StatusInfo{Status: store.StatusFailed, Message: "failed"},
+	)
 	left.Manifests[0].Documents[0]["spec"] = map[string]any{
 		"containers": []any{
 			map[string]any{"image": "ghcr.io/demo/shared:v1"},
@@ -491,7 +514,14 @@ func TestCompareImages_HealthyProducerContributionsAndCounts(t *testing.T) {
 			}
 			images, notes, err := CompareImages(orig, current, selectedErr, tc.includeRemoved)
 			{
-				assert.ErrorIf(t, !slices.Equal(images, tc.want) || !errors.Is(err, selectedErr), "images=%v err=%v; want %v and selected error", images, err, tc.want)
+				assert.ErrorIf(
+					t,
+					!slices.Equal(images, tc.want) || !errors.Is(err, selectedErr),
+					"images=%v err=%v; want %v and selected error",
+					images,
+					err,
+					tc.want,
+				)
 			}
 			wantSuppression := Suppression{Parent: helmReleaseParent(), Side: side, Count: 2, Reason: "failed"}
 			{
@@ -560,7 +590,15 @@ func TestCompareImages_DeclaredAndFullReferences(t *testing.T) {
 			}
 			images, notes, err := CompareImages(orig, current, nil, tc.includeRemoved)
 			{
-				assert.FatalIf(t, err != nil || !slices.Equal(images, tc.want) || len(notes) != 0, "images=%v notes=%v err=%v; want %v", images, notes, err, tc.want)
+				assert.FatalIf(
+					t,
+					err != nil || !slices.Equal(images, tc.want) || len(notes) != 0,
+					"images=%v notes=%v err=%v; want %v",
+					images,
+					notes,
+					err,
+					tc.want,
+				)
 			}
 		})
 	}
@@ -572,8 +610,8 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 		{Status: store.StatusFailed, Message: "failed"},
 		{Status: store.StatusReady, Reason: store.ReasonSkipped, Message: "missing source"},
 	} {
-		left := selectedSnapshot(helmReleaseParent(), nil, store.StatusInfo{})
-		right := selectedSnapshot(helmReleaseParent(), hrDocs(1), unavailable)
+		left := selectedSnapshot(new(helmReleaseParent()), nil, store.StatusInfo{})
+		right := selectedSnapshot(new(helmReleaseParent()), hrDocs(1), unavailable)
 		out, _, _, err := Compare(left, right, nil, Options{Format: FormatDiff})
 		{
 			assert.ErrorIf(
@@ -589,11 +627,15 @@ func TestCompare_EmptyOneSidedOutputDoesNotDisclose(t *testing.T) {
 
 func TestCompare_PreservesDocumentFormattingAndNormalization(t *testing.T) {
 	t.Parallel()
-	left := []Doc{cmDoc(helmReleaseParent(), manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "chart-1")}
-	right := []Doc{cmDoc(helmReleaseParent(), manifest.NamedResource{Name: "config", Namespace: "apps"}, "new", "chart-2")}
+	left := []Doc{
+		cmDoc(new(helmReleaseParent()), manifest.NamedResource{Name: "config", Namespace: "apps"}, "old", "chart-1"),
+	}
+	right := []Doc{
+		cmDoc(new(helmReleaseParent()), manifest.NamedResource{Name: "config", Namespace: "apps"}, "new", "chart-2"),
+	}
 	selected := []Snapshot{
-		selectedSnapshot(helmReleaseParent(), left, store.StatusInfo{}),
-		selectedSnapshot(helmReleaseParent(), right, store.StatusInfo{}),
+		selectedSnapshot(new(helmReleaseParent()), left, store.StatusInfo{}),
+		selectedSnapshot(new(helmReleaseParent()), right, store.StatusInfo{}),
 	}
 	before := manifest.DeepCopyMap(left[0].Manifest)
 	opts := Options{
@@ -643,12 +685,13 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 		},
 		ProducerKeys: map[manifest.NamedResource]manifest.NamedResource{root.Named(): key},
 	}
-	healthy := selectedSnapshot(helmReleaseParent(), hrDocs(1), store.StatusInfo{})
+	healthy := selectedSnapshot(new(helmReleaseParent()), hrDocs(1), store.StatusInfo{})
 	healthy.ProducerKeys = map[manifest.NamedResource]manifest.NamedResource{helmReleaseParent().NamedResource: key}
 	orig, current := healthy, failed
 	switch *testCaseInput.side {
 	case SideOrig:
 		orig, current = failed, healthy
+	case SideCurrent:
 	case SideBoth:
 		orig = failed
 	}
@@ -667,10 +710,12 @@ func testCompareSuppressionSubjectCase(t *testing.T, testCaseInput *testCompareS
 		wantParent, wantCount = Parent{NamedResource: key}, 0
 	}
 	if notes[0].Parent != wantParent || notes[0].Count != wantCount ||
-		bytes.Contains([]byte(notes[0].String()), []byte(subject.String())) {
+		strings.Contains(notes[0].String(), subject.String()) {
 		t.Fatalf("suppression changed execution identity or lost its label: %+v", notes[0])
 	}
-	var rendered struct{ Suppressed []Suppression }
+	var rendered struct {
+		Suppressed []Suppression `json:"Suppressed"`
+	}
 	{
 		unmarshalErr := json.Unmarshal(
 			out,

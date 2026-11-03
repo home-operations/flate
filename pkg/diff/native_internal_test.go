@@ -121,7 +121,14 @@ func TestRenderDocs_UnsupportedFormat(t *testing.T) {
 			}
 			assert.Diff(t, categories, map[string]bool{manifest.WarnDuplicateDocument: true})
 			{
-				assert.FatalIf(t, err == nil || !strings.HasPrefix(err.Error(), tc.prefix) || out != nil, "RenderDocs = %q, %v; want nil bytes and %s error", out, err, tc.prefix)
+				assert.FatalIf(
+					t,
+					err == nil || !strings.HasPrefix(err.Error(), tc.prefix) || out != nil,
+					"RenderDocs = %q, %v; want nil bytes and %s error",
+					out,
+					err,
+					tc.prefix,
+				)
 			}
 		})
 	}

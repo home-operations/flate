@@ -222,10 +222,10 @@ func TestRenderHTML_PreparedSubjects(t *testing.T) {
 				maps.Clone(subjects[1]),
 			}
 			left := []Doc{
-				cmDoc(shared, manifest.NamedResource{Name: "shared"}, "before", ""),
-				cmDoc(removed, manifest.NamedResource{Name: "removed"}, "before", ""),
+				cmDoc(new(shared), manifest.NamedResource{Name: "shared"}, "before", ""),
+				cmDoc(new(removed), manifest.NamedResource{Name: "removed"}, "before", ""),
 			}
-			right := []Doc{cmDoc(shared, manifest.NamedResource{Name: "shared"}, "after", "")}
+			right := []Doc{cmDoc(new(shared), manifest.NamedResource{Name: "shared"}, "after", "")}
 			out, _, err := RenderDocs(left, right, Options{Format: FormatHTML, subjects: subjects})
 			assert.NoError(t, err)
 			for _, label := range []string{tc.shared, tc.removed} {

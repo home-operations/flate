@@ -11,7 +11,8 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
-func cmDoc(parent Parent, id manifest.NamedResource, dataVal, chart string) Doc {
+func cmDoc(parentValue *Parent, id manifest.NamedResource, dataVal string, chart string) Doc {
+	parent := *parentValue
 	meta := map[string]any{"name": id.Name}
 	if id.Namespace != "" {
 		meta["namespace"] = id.Namespace
@@ -29,8 +30,9 @@ func cmDoc(parent Parent, id manifest.NamedResource, dataVal, chart string) Doc 
 	}
 }
 
-func jsonChanges(t *testing.T, left, right []Doc, opts Options) []Change {
+func jsonChanges(t *testing.T, left []Doc, right []Doc, optsValue *Options) []Change {
 	t.Helper()
+	opts := *optsValue
 	opts.Format = FormatJSON
 	out, _, err := RenderDocs(left, right, opts)
 	assert.NoError(t, err)
@@ -45,14 +47,14 @@ func TestChanges_Classification(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.KustomizationID("flux-system", "apps")}
 	left := []Doc{
-		cmDoc(p, manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
-		cmDoc(p, manifest.NamedResource{Name: "edit", Namespace: "ns"}, "old", ""),
-		cmDoc(p, manifest.NamedResource{Name: "gone", Namespace: "ns"}, "x", "gone-1"),
+		cmDoc(new(p), manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
+		cmDoc(new(p), manifest.NamedResource{Name: "edit", Namespace: "ns"}, "old", ""),
+		cmDoc(new(p), manifest.NamedResource{Name: "gone", Namespace: "ns"}, "x", "gone-1"),
 	}
 	right := []Doc{
-		cmDoc(p, manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
-		cmDoc(p, manifest.NamedResource{Name: "edit", Namespace: "ns"}, "new", ""),
-		cmDoc(p, manifest.NamedResource{Name: "fresh", Namespace: "ns"}, "y", "fresh-2"),
+		cmDoc(new(p), manifest.NamedResource{Name: "keep", Namespace: "ns"}, "same", ""),
+		cmDoc(new(p), manifest.NamedResource{Name: "edit", Namespace: "ns"}, "new", ""),
+		cmDoc(new(p), manifest.NamedResource{Name: "fresh", Namespace: "ns"}, "y", "fresh-2"),
 	}
 	opts := Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
 		m["apiVersion"] = "v2"
@@ -61,7 +63,7 @@ func TestChanges_Classification(t *testing.T) {
 		meta["namespace"] = "normalized-ns"
 	}}
 	changes, _ := Changes(left, right, opts)
-	assert.Diff(t, jsonChanges(t, left, right, opts), changes)
+	assert.Diff(t, jsonChanges(t, left, right, new(opts)), changes)
 	got := map[string]ChangeStatus{}
 	for _, c := range changes {
 		got[c.Name] = c.Status
@@ -141,13 +143,13 @@ func TestChanges_ReturnedManifestsIndependent(t *testing.T) {
 func TestChanges_StripDropsNoiseOnlyChange(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.HelmReleaseID("ns", "app")}
-	left := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-1.0.0")}
-	right := []Doc{cmDoc(p, manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-2.0.0")}
+	left := []Doc{cmDoc(new(p), manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-1.0.0")}
+	right := []Doc{cmDoc(new(p), manifest.NamedResource{Name: "x", Namespace: "ns"}, "same", "app-2.0.0")}
 	opts := Options{StripAttrs: DefaultStripAttrs}
 	changes, warnings := Changes(left, right, opts)
 	assert.Equal(t, len(changes), 0)
 	assert.Equal(t, len(warnings), 0)
-	assert.Equal(t, len(jsonChanges(t, left, right, opts)), 0)
+	assert.Equal(t, len(jsonChanges(t, left, right, new(opts))), 0)
 }
 
 func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
@@ -156,8 +158,8 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 		t.Run("replacement="+replacement, func(t *testing.T) {
 			t.Parallel()
 			p := Parent{NamedResource: testutil.HelmReleaseID("ns", "app")}
-			left := []Doc{cmDoc(p, manifest.NamedResource{Name: "old", Namespace: "ns"}, "old", "app-1.0.0")}
-			right := []Doc{cmDoc(p, manifest.NamedResource{Name: "new", Namespace: "ns"}, "new", "app-2.0.0")}
+			left := []Doc{cmDoc(new(p), manifest.NamedResource{Name: "old", Namespace: "ns"}, "old", "app-1.0.0")}
+			right := []Doc{cmDoc(new(p), manifest.NamedResource{Name: "new", Namespace: "ns"}, "new", "app-2.0.0")}
 			opts := Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
 				meta := m["metadata"].(map[string]any)
 				meta["name"] = "normalized"
@@ -169,7 +171,7 @@ func TestChanges_CapturesChartBeforeStrip(t *testing.T) {
 			{
 				assert.FatalIf(t, len(got) != 1, "want 1 change, got %d: %+v", len(got), got)
 			}
-			assert.Diff(t, jsonChanges(t, left, right, opts), got)
+			assert.Diff(t, jsonChanges(t, left, right, new(opts)), got)
 			c := got[0]
 			assert.Equal(t, c.Status, StatusChanged)
 			assert.Equal(t, c.Name, "normalized")
@@ -231,15 +233,16 @@ func TestChanges_Sorted(t *testing.T) {
 	t.Parallel()
 	pa := Parent{NamedResource: testutil.KustomizationID("ns", "a")}
 	pb := Parent{NamedResource: testutil.KustomizationID("ns", "b")}
-	left := []Doc{
-		cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "1", ""),
-		cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "1", ""),
-	}
+	left := make([]Doc, 0, 3)
+	left = append(left,
+		cmDoc(new(pb), manifest.NamedResource{Name: "z", Namespace: "ns"}, "1", ""),
+		cmDoc(new(pa), manifest.NamedResource{Name: "y", Namespace: "ns"}, "1", ""),
+	)
 	right := []Doc{
-		cmDoc(pb, manifest.NamedResource{Name: "z", Namespace: "ns"}, "2", ""),
-		cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "2", ""),
+		cmDoc(new(pb), manifest.NamedResource{Name: "z", Namespace: "ns"}, "2", ""),
+		cmDoc(new(pa), manifest.NamedResource{Name: "y", Namespace: "ns"}, "2", ""),
 	}
-	foreign := cmDoc(pa, manifest.NamedResource{Name: "y", Namespace: "ns"}, "3", "")
+	foreign := cmDoc(new(pa), manifest.NamedResource{Name: "y", Namespace: "ns"}, "3", "")
 	foreign.Manifest["apiVersion"] = "example.test/v1"
 	left = append(left, foreign)
 	opts := Options{Normalize: func(m map[string]any) {
@@ -265,8 +268,8 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 	t.Parallel()
 	p := Parent{NamedResource: testutil.KustomizationID("ns", "apps")}
 	left := []Doc{
-		cmDoc(p, manifest.NamedResource{Name: "first-left", Namespace: "ns"}, "shadowed", "shadowed-1"),
-		cmDoc(p, manifest.NamedResource{Name: "last-left", Namespace: "ns"}, "retained", "retained-1"),
+		cmDoc(new(p), manifest.NamedResource{Name: "first-left", Namespace: "ns"}, "shadowed", "shadowed-1"),
+		cmDoc(new(p), manifest.NamedResource{Name: "last-left", Namespace: "ns"}, "retained", "retained-1"),
 	}
 	for _, tt := range []struct {
 		name string
@@ -279,13 +282,11 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			right := []Doc{
-				cmDoc(
-					p,
-					manifest.NamedResource{Name: "first-right", Namespace: "ns"},
+				cmDoc(new(p), manifest.NamedResource{Name: "first-right", Namespace: "ns"},
 					"changed-shadowed",
 					"shadowed-2",
 				),
-				cmDoc(p, manifest.NamedResource{Name: "last-right", Namespace: "ns"}, tt.last, "retained-2"),
+				cmDoc(new(p), manifest.NamedResource{Name: "last-right", Namespace: "ns"}, tt.last, "retained-2"),
 			}
 			calls := map[string]int{}
 			opts := Options{StripAttrs: DefaultStripAttrs, Normalize: func(m map[string]any) {
@@ -301,10 +302,10 @@ func TestChanges_DuplicateDocumentsLastWins(t *testing.T) {
 			wantCalls := map[string]int{"first-left": 1, "last-left": 1, "first-right": 1, "last-right": 1}
 			assert.Diff(t, calls, wantCalls)
 			calls = map[string]int{}
-			assert.Diff(t, jsonChanges(t, left, right, opts), got)
+			assert.Diff(t, jsonChanges(t, left, right, new(opts)), got)
 			assert.Diff(t, calls, wantCalls)
 			calls = map[string]int{}
-			prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(opts))
+			prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(new(opts)))
 			lines, err := output.PrepareLines(prepared)
 			assert.NoError(t, err)
 			assert.Equal(t, len(lines), tt.want)
@@ -360,16 +361,17 @@ func testRenderJSONSubjectSidesCase(t *testing.T, testCaseInput *struct {
 		current = parent
 	}
 	left := []Doc{
-		cmDoc(parent, manifest.NamedResource{Name: "removed"}, "before", ""),
-		cmDoc(parent, manifest.NamedResource{Name: "changed"}, "before", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "removed"}, "before", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "changed"}, "before", ""),
 	}
 	right := []Doc{
-		cmDoc(parent, manifest.NamedResource{Name: "added"}, "after", ""),
-		cmDoc(parent, manifest.NamedResource{Name: "changed"}, "after", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "added"}, "after", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "changed"}, "after", ""),
 	}
-	changes := jsonChanges(t, left, right, Options{subjects: subjects})
+	changes := jsonChanges(t, left, right, new(Options{subjects: subjects}))
 	assert.Equal(t, len(changes), 3)
-	for _, change := range changes {
+	for changeIndex := range changes {
+		change := changes[changeIndex]
 		want := current
 		status := StatusChanged
 		switch change.Name {
@@ -400,7 +402,7 @@ func testChangesReturnedManifestsIndependentCase(
 
 	p := Parent{NamedResource: testutil.KustomizationID("ns", "apps")}
 	doc := func(name, value string, binary bool) Doc {
-		d := cmDoc(p, manifest.NamedResource{Name: name, Namespace: "ns"}, value, "")
+		d := cmDoc(new(p), manifest.NamedResource{Name: name, Namespace: "ns"}, value, "")
 		d.Manifest["metadata"].(map[string]any)["ownerReferences"] = []any{
 			map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "name": "first", "uid": "first"},
 			map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "name": "second", "uid": "second"},

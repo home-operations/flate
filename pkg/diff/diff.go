@@ -71,13 +71,16 @@ type Options struct {
 // Native formats use dyff for content comparison and Kubernetes resource labels;
 // unified, HTML and JSON formats present the same canonical pairs.
 // Discovered warnings are returned even when formatting fails.
+//
+//nolint:gocritic // The SDK takes a value snapshot of rendering options.
 func RenderDocs(left, right []Doc, opts Options) ([]byte, []manifest.Warning, error) {
-	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(opts))
-	out, err := renderPrepared(prepared, opts)
+	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(new(opts)))
+	out, err := renderPrepared(prepared, new(opts))
 	return out, prepared.Warnings, err
 }
 
-func renderPrepared(prepared diffprep.Prepared, opts Options) ([]byte, error) {
+func renderPrepared(prepared diffprep.Prepared, optsValue *Options) ([]byte, error) {
+	opts := *optsValue
 	opts.Format = cmp.Or(opts.Format, FormatHuman)
 	var out []byte
 	var err error
@@ -132,7 +135,8 @@ func prepareDocs(docs []Doc) []diffprep.Doc {
 	return out
 }
 
-func prepareOptions(opts Options) diffprep.Options {
+func prepareOptions(optsValue *Options) diffprep.Options {
+	opts := *optsValue
 	return diffprep.Options{
 		StripAttrs:  opts.StripAttrs,
 		StripFields: opts.StripFields,

@@ -1,8 +1,6 @@
 package diff
 
 import (
-	"github.com/home-operations/flate/internal/assert"
-
 	"bytes"
 	"encoding/json"
 	"html"
@@ -11,6 +9,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/home-operations/flate/internal/assert"
+
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -18,10 +18,8 @@ import (
 func TestCompare_OwnerlessDocuments(t *testing.T) {
 	t.Parallel()
 	owner := &manifest.Kustomization{Name: "actual", Namespace: "apps"}
-	left := selectedSnapshot(Parent{NamedResource: owner.Named()}, nil, store.StatusInfo{})
-	right := selectedSnapshot(
-		Parent{NamedResource: owner.Named()},
-		nil,
+	left := selectedSnapshot(new(Parent{NamedResource: owner.Named()}), nil, store.StatusInfo{})
+	right := selectedSnapshot(new(Parent{NamedResource: owner.Named()}), nil,
 		store.StatusInfo{Status: store.StatusFailed, Message: "real driver failed"},
 	)
 	makeDoc := func(name, image string) map[string]any {
@@ -61,16 +59,26 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 		Suppressed []Suppression `json:"suppressed"`
 	}
 	{
-		err := json.Unmarshal(out, &result)
-		assert.FatalIf(t, err != nil, "%v", err)
+		unmarshalErr := json.Unmarshal(out, &result)
+		assert.FatalIf(t, unmarshalErr != nil, "%v", unmarshalErr)
 	}
 	{
-		assert.FatalIf(t, len(result.Changes) != 3 || len(result.Suppressed) != 0, "ownerless changes suppressed: %s", out)
+		assert.FatalIf(
+			t,
+			len(result.Changes) != 3 || len(result.Suppressed) != 0,
+			"ownerless changes suppressed: %s",
+			out,
+		)
 	}
 	statuses := map[string]ChangeStatus{}
 	for _, changed := range result.Changes {
 		{
-			assert.FatalIf(t, changed.Parent != (Parent{}) || changed.Kind != "Deployment" || changed.Namespace != "apps", "ownerless identity changed: %+v", changed)
+			assert.FatalIf(
+				t,
+				changed.Parent != (Parent{}) || changed.Kind != "Deployment" || changed.Namespace != "apps",
+				"ownerless identity changed: %+v",
+				changed,
+			)
 		}
 		statuses[changed.Name] = changed.Status
 	}
@@ -83,7 +91,12 @@ func TestCompare_OwnerlessDocuments(t *testing.T) {
 		assert.FatalIf(t, err != nil || len(notes) != 0 ||
 			!slices.Equal(
 				images,
-				[]string{"example.test/added:v1", "example.test/app:v1", "example.test/app:v2", "example.test/removed:v1"},
+				[]string{
+					"example.test/added:v1",
+					"example.test/app:v1",
+					"example.test/app:v2",
+					"example.test/removed:v1",
+				},
 			), "images = %v, notes = %v, err = %v", images, notes, err)
 	}
 	out, _, _, err = Compare(left, right, nil, Options{Format: FormatDiff})
@@ -101,10 +114,20 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 			root := manifest.NewEntryKustomization(manifest.BootstrapSourceID, "cluster", applier)
 			subject := manifest.DiagnosticFor(root.Named(), root)
 			parent := Parent{NamedResource: root.Named(), Path: "cluster"}
-			before := cmDoc(parent, manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "changed"}, "before", "")
-			after := cmDoc(parent, manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "changed"}, "after", "")
-			left := selectedSnapshot(parent, []Doc{before, before}, store.StatusInfo{})
-			right := selectedSnapshot(parent, []Doc{after, after}, store.StatusInfo{})
+			before := cmDoc(
+				new(parent),
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "changed"},
+				"before",
+				"",
+			)
+			after := cmDoc(
+				new(parent),
+				manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "changed"},
+				"after",
+				"",
+			)
+			left := selectedSnapshot(new(parent), []Doc{before, before}, store.StatusInfo{})
+			right := selectedSnapshot(new(parent), []Doc{after, after}, store.StatusInfo{})
 			left.Subjects = map[manifest.NamedResource]manifest.DiagnosticIdentity{root.Named(): subject}
 			right.Subjects = maps.Clone(left.Subjects)
 			originalLeft := manifest.DeepCopyMap(before.Manifest)
@@ -114,7 +137,9 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 			{
 				assert.FatalIf(t, err != nil, "%v", err)
 			}
-			var result struct{ Changes []Change }
+			var result struct {
+				Changes []Change `json:"Changes"`
+			}
 			{
 				err := json.Unmarshal(out, &result)
 				assert.FatalIf(t, err != nil, "%v", err)
@@ -129,7 +154,12 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 			}
 			for _, warning := range warnings {
 				{
-					assert.FatalIf(t, !slices.Contains(warning.Detail, "parent: "+subject.String()), "warning lost captured parent: %+v", warning)
+					assert.FatalIf(
+						t,
+						!slices.Contains(warning.Detail, "parent: "+subject.String()),
+						"warning lost captured parent: %+v",
+						warning,
+					)
 				}
 			}
 			for _, format := range []Format{FormatHTML, FormatDiff} {
@@ -151,13 +181,27 @@ func TestCompare_EntryParentDisplay(t *testing.T) {
 			}
 			{
 				assert.ErrorIf(t, !reflect.DeepEqual(left.Manifests[0].Documents[0], originalLeft) ||
-					!reflect.DeepEqual(right.Manifests[0].Documents[0], originalRight), "%v", "display projection changed snapshot documents")
+					!reflect.DeepEqual(
+						right.Manifests[0].Documents[0],
+						originalRight,
+					), "%v", "display projection changed snapshot documents")
 			}
 			{
-				assert.ErrorIf(t, !maps.Equal(left.Subjects, originalSubjects) || !maps.Equal(right.Subjects, originalSubjects), "%v", "display projection changed snapshot subjects")
+				assert.ErrorIf(
+					t,
+					!maps.Equal(left.Subjects, originalSubjects) || !maps.Equal(right.Subjects, originalSubjects),
+					"%v",
+					"display projection changed snapshot subjects",
+				)
 			}
 			{
-				assert.FatalIf(t, left.Manifests[0].Parent.Named() != root.Named() || right.Manifests[0].Parent.Named() != root.Named(), "%v", "display projection changed raw snapshot parents")
+				assert.FatalIf(
+					t,
+					left.Manifests[0].Parent.Named() != root.Named() ||
+						right.Manifests[0].Parent.Named() != root.Named(),
+					"%v",
+					"display projection changed raw snapshot parents",
+				)
 			}
 		})
 	}

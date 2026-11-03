@@ -106,9 +106,9 @@ func TestRenderDocs_NativePresentation(t *testing.T) {
 		t.Run(string(tc.format), func(t *testing.T) {
 			t.Parallel()
 			opts := Options{Format: tc.format, Suppressed: []Suppression{note}}
-			first := renderDiff(t, left, right, opts)
+			first := renderDiff(t, left, right, new(opts))
 			assert.Equal(t, first, tc.want)
-			assert.Equal(t, renderDiff(t, left, right, opts), first)
+			assert.Equal(t, renderDiff(t, left, right, new(opts)), first)
 		})
 	}
 }
@@ -169,12 +169,11 @@ func testRenderDocsParentQualifiedMatchingCase(
 	out := renderDiff(
 		t,
 		[]Doc{(*testCaseInput.left)},
-		[]Doc{(*testCaseInput.right)},
-		Options{Format: (*testCaseInput.format)},
+		[]Doc{(*testCaseInput.right)}, new(Options{Format: (*testCaseInput.format)}),
 	)
 	switch *testCaseInput.format {
 	case FormatJSON:
-		changes := jsonChanges(t, []Doc{(*testCaseInput.left)}, []Doc{(*testCaseInput.right)}, Options{})
+		changes := jsonChanges(t, []Doc{(*testCaseInput.left)}, []Doc{(*testCaseInput.right)}, new(Options{}))
 		{
 			assert.FatalIf(t, len(changes) != 2, "changes = %+v", changes)
 		}
@@ -189,7 +188,8 @@ func testRenderDocsParentQualifiedMatchingCase(
 			assert.FatalIf(t, !strings.Contains(out, "two changes detected"), "want two changes, got %q", out)
 		}
 	case FormatHTML:
-		cells := regexp.MustCompile(`(?s)<td class="diff-code diff-(del|add)">(.*?)</td>`).FindAllStringSubmatch(out, -1)
+		cells := regexp.MustCompile(`(?s)<td class="diff-code diff-(del|add)">(.*?)</td>`).
+			FindAllStringSubmatch(out, -1)
 		bodies := map[string]string{}
 		tags := regexp.MustCompile(`<[^>]*>`)
 		for _, cell := range cells {
@@ -203,7 +203,7 @@ func testRenderDocsParentQualifiedMatchingCase(
 				assert.ErrorIf(t, !strings.Contains(out, want), "missing %q in %s", want, out)
 			}
 		}
-	default:
+	case FormatHuman, FormatGitHub, FormatGitLab, FormatGitea, FormatDiff, "":
 		for _, want := range []string{"apiVersion: v1", "kind: ConfigMap", "name: hello", "namespace: apps", "greeting: same"} {
 			{
 				assert.ErrorIf(
@@ -251,8 +251,7 @@ func testRenderDocsParentQualifiedMatchingSharedNativeLabel(
 	out := renderDiff(
 		t,
 		[]Doc{old, (*testCaseInput.right)},
-		[]Doc{current, (*testCaseInput.right)},
-		Options{Format: FormatGitHub},
+		[]Doc{current, (*testCaseInput.right)}, new(Options{Format: FormatGitHub}),
 	)
 	{
 		assert.FatalIf(t, strings.Count(out, "@@ data.greeting @@") != 1 || !strings.Contains(out, "- old") ||
@@ -281,7 +280,8 @@ func testRenderDocsNativeCanonicalEdgesNamespacePresence(t *testing.T) {
 					md["namespace"] = ""
 				}
 			}
-			report, err := diffprep.Prepare(prepareDocs([]Doc{left}), prepareDocs([]Doc{right}), prepareOptions(Options{})).Native()
+			report, err := diffprep.Prepare(prepareDocs([]Doc{left}), prepareDocs([]Doc{right}), prepareOptions(new(Options{}))).
+				Native()
 			assert.NoError(t, err)
 			assert.Diff(t, report.From.Names, []string{tc.want})
 			assert.Diff(t, report.To.Names, []string{tc.want})
@@ -295,10 +295,10 @@ func testRenderDocsNativeCanonicalEdgesSameGroupVersion(t *testing.T) {
 
 	left, right := ncm("hello", "greeting", "same"), ncm("hello", "greeting", "same")
 	left.Manifest["apiVersion"], right.Manifest["apiVersion"] = "example.test/v1", "example.test/v2"
-	out := renderDiff(t, []Doc{left}, []Doc{right}, Options{Format: FormatGitHub})
+	out := renderDiff(t, []Doc{left}, []Doc{right}, new(Options{Format: FormatGitHub}))
 	const want = "\n@@ apiVersion @@\n! ± value change\n- example.test/v1\n+ example.test/v2\n\n"
 	assert.Equal(t, out, want)
-	changes := jsonChanges(t, []Doc{left}, []Doc{right}, Options{})
+	changes := jsonChanges(t, []Doc{left}, []Doc{right}, new(Options{}))
 	{
 		assert.FatalIf(t, len(changes) != 1 || changes[0].Status != StatusChanged, "version change: %+v", changes)
 	}
@@ -319,15 +319,21 @@ func testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			opts := Options{Format: FormatGitHub, Normalize: func(m map[string]any) { delete(m, "apiVersion") }}
-			report, err := diffprep.Prepare(prepareDocs(tc.left), prepareDocs(tc.right), prepareOptions(opts)).Native()
+			report, err := diffprep.Prepare(prepareDocs(tc.left), prepareDocs(tc.right), prepareOptions(new(opts))).
+				Native()
 			assert.NoError(t, err)
 			{
-				assert.FatalIf(t, len(report.Diffs) != len(tc.wantKinds), "wrong canonical operations: %+v", report.Diffs)
+				assert.FatalIf(
+					t,
+					len(report.Diffs) != len(tc.wantKinds),
+					"wrong canonical operations: %+v",
+					report.Diffs,
+				)
 			}
 			for i, kind := range tc.wantKinds {
 				assert.Equal(t, report.Diffs[i].Details[0].Kind, kind)
 			}
-			out := renderDiff(t, tc.left, tc.right, opts)
+			out := renderDiff(t, tc.left, tc.right, new(opts))
 			{
 				assert.FatalIf(
 					t,
@@ -336,7 +342,7 @@ func testRenderDocsNativeCanonicalEdgesIncompleteNormalizedIdentity(t *testing.T
 					out,
 				)
 			}
-			changes := jsonChanges(t, tc.left, tc.right, opts)
+			changes := jsonChanges(t, tc.left, tc.right, new(opts))
 			{
 				assert.FatalIf(t, len(changes) != len(tc.wantKinds), "native and JSON differ: %+v", changes)
 			}
@@ -369,7 +375,14 @@ func testRenderDocsNativeCanonicalEdgesValidationBeforeEquality(t *testing.T) {
 				},
 			)
 			{
-				assert.FatalIf(t, out != nil || err == nil || !strings.HasPrefix(err.Error(), tc.prefix), "RenderDocs = %q, %v; want nil and %s", out, err, tc.prefix)
+				assert.FatalIf(
+					t,
+					out != nil || err == nil || !strings.HasPrefix(err.Error(), tc.prefix),
+					"RenderDocs = %q, %v; want nil and %s",
+					out,
+					err,
+					tc.prefix,
+				)
 			}
 		})
 	}
@@ -378,7 +391,7 @@ func testRenderDocsNativeCanonicalEdgesValidationBeforeEquality(t *testing.T) {
 func testRenderDocsNativeCanonicalEdgesEmptyDocuments(t *testing.T) {
 	t.Helper()
 
-	assert.Equal(t, renderDiff(t, []Doc{{}}, []Doc{{}}, Options{Format: FormatGitHub}), "")
+	assert.Equal(t, renderDiff(t, []Doc{{}}, []Doc{{}}, new(Options{Format: FormatGitHub})), "")
 }
 
 type testRenderDocsNativeDuplicateEdgesCaseInputs struct {
@@ -411,7 +424,7 @@ func testRenderDocsNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testRen
 	if (*testCaseInput.side) == "right" {
 		left, right = right, left
 	}
-	out := renderDiff(t, left, right, opts)
+	out := renderDiff(t, left, right, new(opts))
 	{
 		assert.FatalIf(
 			t,
@@ -429,7 +442,11 @@ func testRenderDocsNativeDuplicateEdgesCase(t *testing.T, testCaseInput *testRen
 	if (*testCaseInput.side) == "right" {
 		warningSide = SideCurrent
 	}
-	for _, warning := range warnings {
-		assert.Equal(t, warning.Detail[0], "side: "+string(warningSide))
+	{
+		warningValues := warnings
+		for warningIndex := range warningValues {
+			warning := warningValues[warningIndex]
+			assert.Equal(t, warning.Detail[0], "side: "+string(warningSide))
+		}
 	}
 }

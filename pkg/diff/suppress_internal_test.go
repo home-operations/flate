@@ -16,7 +16,7 @@ func hrDocs(n int) []Doc {
 		out = append(
 			out,
 			cmDoc(
-				helmReleaseParent(),
+				new(helmReleaseParent()),
 				manifest.NamedResource{Name: "cm-" + string(rune('a'+i)), Namespace: "monitoring"},
 				"v",
 				"",
@@ -97,12 +97,12 @@ func TestRenderDocs_SuppressionHeader(t *testing.T) {
 	parent := kustomizationParent()
 	parent.Path = "apps/<path>"
 	l := []Doc{
-		cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "old", ""),
-		cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "before", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "keep", Namespace: "apps"}, "old", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "other", Namespace: "apps"}, "before", ""),
 	}
 	r := []Doc{
-		cmDoc(parent, manifest.NamedResource{Name: "keep", Namespace: "apps"}, "new", ""),
-		cmDoc(parent, manifest.NamedResource{Name: "other", Namespace: "apps"}, "after", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "keep", Namespace: "apps"}, "new", ""),
+		cmDoc(new(parent), manifest.NamedResource{Name: "other", Namespace: "apps"}, "after", ""),
 	}
 	suppressed := []Suppression{
 		{Parent: helmReleaseParent(), Side: SideCurrent, Count: 2, Reason: "chart not ready"},
@@ -257,6 +257,7 @@ data.k  (v1/ConfigMap/apps/other)
 func helmReleaseParent() Parent {
 	return Parent{NamedResource: testutil.HelmReleaseID("monitoring", "grafana-operator")}
 }
+
 func kustomizationParent() Parent {
 	return Parent{NamedResource: testutil.KustomizationID("flux-system", "apps"), Path: "apps"}
 }

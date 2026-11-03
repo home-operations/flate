@@ -33,8 +33,8 @@ func Compare(
 	left, right, suppressed := diffprep.Suppress(diffprep.Snapshot(orig), diffprep.Snapshot(current))
 	opts.subjects = [2]map[manifest.NamedResource]manifest.DiagnosticIdentity{orig.Subjects, current.Subjects}
 	opts.Suppressed = append(slices.Clone(opts.Suppressed), publicSuppressions(suppressed)...)
-	prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), prepareOptions(opts))
-	out, err := renderPrepared(prepared, opts)
+	prepared := diffprep.Prepare(diffprep.Documents(left), diffprep.Documents(right), prepareOptions(new(opts)))
+	out, err := renderPrepared(prepared, new(opts))
 	warnings := prepared.Warnings
 	return out, warnings, opts.Suppressed, errors.Join(err, selectedErr)
 }

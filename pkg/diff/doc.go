@@ -74,6 +74,4 @@
 // manifests. See the package Example for structured changes with chart metadata.
 //
 // [dyff]: https://github.com/homeport/dyff
-//
-// [orchestrator.RenderTrees]: https://pkg.go.dev/github.com/home-operations/flate/pkg/orchestrator#RenderTrees
 package diff

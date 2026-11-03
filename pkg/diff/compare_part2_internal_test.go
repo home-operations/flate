@@ -27,8 +27,8 @@ func testCompareUnavailableProducerPolicyCase(
 		}
 	}
 	selected := []Snapshot{
-		selectedSnapshot(helmReleaseParent(), left, testCaseInput.tc.left),
-		selectedSnapshot(helmReleaseParent(), right, testCaseInput.tc.right),
+		selectedSnapshot(new(helmReleaseParent()), left, testCaseInput.tc.left),
+		selectedSnapshot(new(helmReleaseParent()), right, testCaseInput.tc.right),
 	}
 	var runErr error
 	if testCaseInput.tc.keepError {

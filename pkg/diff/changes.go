@@ -57,8 +57,10 @@ type Change struct {
 // Returned manifests are independent of the input documents.
 // Warnings identify shadowed documents.
 // opts.Format is ignored.
+//
+//nolint:gocritic // The SDK takes a value snapshot of normalization options.
 func Changes(left, right []Doc, opts Options) ([]Change, []manifest.Warning) {
-	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(opts))
+	prepared := diffprep.Prepare(prepareDocs(left), prepareDocs(right), prepareOptions(new(opts)))
 	return publicChanges(prepared), prepared.Warnings
 }
 

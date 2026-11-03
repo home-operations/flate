@@ -84,8 +84,12 @@ func TestDependencies_Kustomization_SubstitutionProducers(t *testing.T) {
 				Namespace: consumer.Namespace,
 				PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{tc.ref}},
 			}
+			deps := c.dependenciesForTest(ks)
 			var got []manifest.NamedResource
-			for _, dep := range c.dependenciesForTest(ks) {
+			if len(deps) != 0 {
+				got = make([]manifest.NamedResource, 0, len(deps))
+			}
+			for _, dep := range deps {
 				got = append(got, dep.NamedResource)
 			}
 			{
@@ -498,7 +502,8 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 			want = append(want, supplier)
 		}
 	}
-	if len(want) > 0 {
+	switch {
+	case len(want) > 0:
 		{
 			assert.FatalIf(t, !waiting, "supplier was not bound: %v", err)
 		}
@@ -507,7 +512,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 				t.Fatalf("suppliers=%v want=%v", blocked.Deps, want)
 			}
 		}
-	} else if (testCaseInput.tc.ref.Kind == manifest.KindConfigMap || testCaseInput.tc.ref.Kind == manifest.KindSecret) && testCaseInput.tc.ref.Name != "" && !testCaseInput.tc.ref.Optional && !slices.Contains(testCaseInput.tc.producers, (*testCaseInput.consumer)) {
+	case (testCaseInput.tc.ref.Kind == manifest.KindConfigMap || testCaseInput.tc.ref.Kind == manifest.KindSecret) && testCaseInput.tc.ref.Name != "" && !testCaseInput.tc.ref.Optional && !slices.Contains(testCaseInput.tc.producers, (*testCaseInput.consumer)):
 		{
 			assert.FatalIf(
 				t,
@@ -516,7 +521,7 @@ func testResolveSubstitutionProducersCase(t *testing.T, testCaseInput testResolv
 				err,
 			)
 		}
-	} else {
+	default:
 		assert.FatalIf(t, err != nil, "%v", err)
 	}
 }

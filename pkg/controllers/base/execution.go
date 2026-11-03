@@ -306,11 +306,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 	}
 
 	if ok && e.preGate(obj) {
-		if err := e.withdrawInvalid(ctx); err != nil {
-			e.finish(ctx, err)
-			return
-		}
-		e.Reads.Accept()
+		e.acceptReads(ctx)
 		return
 	}
 	if err := e.Checkpoint(); err != nil {
@@ -327,11 +323,7 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 			id,
 			store.StatusInfo{Status: store.StatusReady, Reason: store.ReasonUnchanged, Message: "unchanged"},
 		)
-		if err := e.withdrawInvalid(ctx); err != nil {
-			e.finish(ctx, err)
-			return
-		}
-		e.Reads.Accept()
+		e.acceptReads(ctx)
 		return
 	}
 	if !ok {
@@ -353,6 +345,14 @@ func (e *Execution) Dispatch[T manifest.BaseManifest, S any](
 		}
 	}
 	e.finish(ctx, err)
+}
+
+func (e *Execution) acceptReads(ctx context.Context) {
+	if err := e.withdrawInvalid(ctx); err != nil {
+		e.finish(ctx, err)
+		return
+	}
+	e.Reads.Accept()
 }
 
 func (e *Execution) reconcile[T manifest.BaseManifest](
@@ -630,21 +630,7 @@ func (p *pendingDataError) Settle(ctx context.Context, level manifest.DrainLevel
 			case schedule.Blocked:
 				p.blocked = append(p.blocked, result.Blocked...)
 			case schedule.DependencyFailed:
-				if failed == nil {
-					failed = &manifest.DependencyFailedError{
-						Parent:  e.Reads.ID(),
-						Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
-						Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
-					}
-				}
-				causes := result.Failed
-				if len(causes) == 0 {
-					causes = []manifest.NamedResource{input.NamedResource}
-				}
-				for _, cause := range causes {
-					failed.Failed = append(failed.Failed, cause)
-					failed.Reasons[cause] = result.Reason
-				}
+				failed = p.addFailure(failed, result.Failed, &result.Reason, &input)
 			case schedule.Terminal:
 				fallthrough
 			default:
@@ -724,4 +710,28 @@ func (e *Execution) dispatchMissing(ctx context.Context, level manifest.DrainLev
 		}
 		e.Reads.Accept()
 	}
+}
+
+func (p *pendingDataError) addFailure(
+	failed *manifest.DependencyFailedError,
+	causes []manifest.NamedResource,
+	reason *manifest.DiagnosticReason,
+	input *depwait.DataDependency,
+) *manifest.DependencyFailedError {
+	e := p.execution
+	if failed == nil {
+		failed = &manifest.DependencyFailedError{
+			Parent:  e.Reads.ID(),
+			Subject: manifest.DiagnosticFor(e.Reads.ID(), e.Reads.GetObject(e.Reads.ID())),
+			Reasons: make(map[manifest.NamedResource]manifest.DiagnosticReason),
+		}
+	}
+	if len(causes) == 0 {
+		causes = []manifest.NamedResource{input.NamedResource}
+	}
+	for _, cause := range causes {
+		failed.Failed = append(failed.Failed, cause)
+		failed.Reasons[cause] = *reason
+	}
+	return failed
 }

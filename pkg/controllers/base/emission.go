@@ -38,22 +38,23 @@ func (c *Controller) admitChildren(
 ) ([]store.Child, bool, error) {
 	children := next.Children
 	cloned := false
-	if next.Reads.Valid() {
-		for i, child := range next.Children {
-			if child.Obj == nil || child.Obj.Named() == id {
-				continue
+	if !next.Reads.Valid() {
+		return children, cloned, nil
+	}
+	for i, child := range next.Children {
+		if child.Obj == nil || child.Obj.Named() == id {
+			continue
+		}
+		obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
+		if obj != child.Obj {
+			if !cloned {
+				next.Children = slices.Clone(children)
+				cloned = true
 			}
-			obj := manifest.MapDependsOn(child.Obj, c.DependencySubstitutions.Resolve, nil)
-			if obj != child.Obj {
-				if !cloned {
-					next.Children = slices.Clone(children)
-					cloned = true
-				}
-				next.Children[i].Obj = obj
-			}
-			if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
-				return nil, false, err
-			}
+			next.Children[i].Obj = obj
+		}
+		if _, err := c.KeepEmitted(ctx, id, next.Children[i], next.Reads); err != nil {
+			return nil, false, err
 		}
 	}
 	return children, cloned, nil

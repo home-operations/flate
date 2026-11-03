@@ -170,7 +170,6 @@ func TestFingerprint_Concurrent(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestFingerprint_ChartAllocatedBytes(t *testing.T) {
-
 	files := make([][]byte, 128)
 	for i := range files {
 		files[i] = bytes.Repeat([]byte{byte(i)}, 64<<10)

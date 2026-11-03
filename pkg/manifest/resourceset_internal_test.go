@@ -164,7 +164,13 @@ func TestResourceSetInputProvider_SelectTagsInvalidFilter(t *testing.T) {
 			t.Parallel()
 			_, err := (&ResourceSetInputProvider{Filter: &tc.filter}).SelectTags(nil)
 			{
-				assert.FatalIf(t, !errors.Is(err, ErrInput) || !strings.Contains(err.Error(), tc.message), "got %v, want input error containing %q", err, tc.message)
+				assert.FatalIf(
+					t,
+					!errors.Is(err, ErrInput) || !strings.Contains(err.Error(), tc.message),
+					"got %v, want input error containing %q",
+					err,
+					tc.message,
+				)
 			}
 		})
 	}

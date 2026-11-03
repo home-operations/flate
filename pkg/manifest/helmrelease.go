@@ -27,6 +27,8 @@ type HelmChart struct {
 }
 
 // ChartLocation validates the source kind and selects a source path or automatic archive input.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) ChartLocation() (string, bool, error) {
 	if h.hasSourceChartPath() {
 		return path.Clean(h.Name), false, nil
@@ -44,11 +46,14 @@ func (h HelmChart) ChartLocation() (string, bool, error) {
 	}
 }
 
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) hasSourceChartPath() bool {
 	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket || h.Source.Kind == KindExternalArtifact
 }
 
 // UsesSourceValuesFiles reports whether values files are relative to the source artifact root.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) UsesSourceValuesFiles() bool {
 	return h.Source.Kind == KindGitRepository || h.Source.Kind == KindBucket
 }
@@ -81,6 +86,8 @@ func (h *HelmChart) sourceInputs(files []string) (string, []string) {
 }
 
 // RepoFullName returns the source name prefixed by its namespace when present.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) RepoFullName() string {
 	if h.Source.Namespace == "" {
 		return h.Source.Name
@@ -89,6 +96,8 @@ func (h HelmChart) RepoFullName() string {
 }
 
 // ChartName is "<repoFullName>/<chartName>" — used as the helm chart ref.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (h HelmChart) ChartName() string {
 	return h.RepoFullName() + "/" + h.Name
 }
@@ -292,6 +301,8 @@ func (h *HelmRelease) HistoryPolicy() HelmReleaseHistoryPolicy {
 }
 
 // Equal reports whether two frozen policies admit the same accepted history.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p HelmReleaseHistoryPolicy) Equal(other HelmReleaseHistoryPolicy) bool {
 	return p.DeclaredChart == other.DeclaredChart && equalChartTemplate(p.Template, other.Template) &&
 		p.Suspend == other.Suspend &&

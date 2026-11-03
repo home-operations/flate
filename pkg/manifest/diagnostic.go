@@ -39,6 +39,8 @@ func (d DiagnosticIdentity) String() string {
 }
 
 // Label formats a source label with its optional entry path.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (d DiagnosticIdentity) Label() string {
 	if d.Resource == (NamedResource{}) || d.Path != "" {
 		return d.String()
@@ -71,6 +73,8 @@ func (r DiagnosticReason) String() string {
 }
 
 // Clone detaches all mutable cause slices.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r DiagnosticReason) Clone() DiagnosticReason {
 	r.Causes = slices.Clone(r.Causes)
 	for i := range r.Causes {
@@ -80,6 +84,8 @@ func (r DiagnosticReason) Clone() DiagnosticReason {
 }
 
 // Compare orders semantic reasons by raw identity, message and nested causes.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r DiagnosticReason) Compare(other DiagnosticReason) int {
 	return cmp.Or(
 		r.Subject.ID.Compare(other.Subject.ID),

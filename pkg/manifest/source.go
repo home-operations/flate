@@ -22,6 +22,8 @@ type GitRepository struct {
 }
 
 // NewGitRepository normalizes an owned typed GitRepository declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewGitRepository(cr sourcev1.GitRepository) *GitRepository {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GitProviderGeneric)
 	return &GitRepository{
@@ -68,6 +70,8 @@ func (g *GitRepository) BootstrapAlias(root string) (BaseManifest, *GitRepositor
 }
 
 // Content returns the source inputs that define the selected Git content.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (g *GitRepository) Content(ref sourcev1.GitRepositoryRef) any {
 	var auth []NamedResource
 	g.references(func(ref Reference) bool {
@@ -329,6 +333,8 @@ type ExternalArtifact struct {
 }
 
 // NewExternalArtifact constructs an owned typed ExternalArtifact declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewExternalArtifact(cr sourcev1.ExternalArtifact) *ExternalArtifact {
 	return &ExternalArtifact{
 		Name:                 cr.Name,

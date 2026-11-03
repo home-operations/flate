@@ -28,6 +28,8 @@ type Bucket struct {
 }
 
 // NewBucket normalizes an owned typed Bucket declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewBucket(cr sourcev1.Bucket) *Bucket {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.BucketProviderGeneric)
 	return &Bucket{

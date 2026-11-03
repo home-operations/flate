@@ -429,7 +429,6 @@ func TestReferences_ActiveCredentials(t *testing.T) {
 
 //nolint:paralleltest // The test calls a helper that changes process-global state.
 func TestReferences_NoAllocations(t *testing.T) {
-
 	var kinds []string
 	for info := range Kinds() {
 		if info.Test {
@@ -458,7 +457,6 @@ func TestReferences_NoAllocations(t *testing.T) {
 	KindOf(&RawObject{APIVersion: "v1", Kind: KindConfigMap}).Namespaced()
 	for _, obj := range []BaseManifest{&Kustomization{DependsOn: []kustomizev1.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, SourceRef: kustomizev1.CrossNamespaceSourceReference{Name: "source"}, PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []SubstituteReference{{Kind: KindConfigMap, Name: "values"}}}}, &HelmRelease{Name: "release", Namespace: "apps", ChartRef: &helmv2.CrossNamespaceSourceReference{Kind: KindOCIRepository, Name: "chart"}, DependsOn: []helmv2.DependencyReference{{Name: "dependency", ReadyExpr: "true"}}, ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmRelease{Name: "values-only", Namespace: "apps", ValuesFrom: []ValuesReference{{Name: "values"}}}, &HelmChartSource{Chart: "./charts/demo", SourceRef: sourcev1.LocalHelmChartSourceReference{Kind: KindBucket, Name: "source"}, ValuesFiles: []string{"config/prod.yaml"}}, &ResourceSet{DependsOn: []fluxopv1.Dependency{{APIVersion: "v1", Kind: KindConfigMap, Name: "dependency", ReadyExpr: "true"}}, InputsFrom: []fluxopv1.InputProviderReference{{Name: "input"}}}, &GitRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &OCIRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &HelmRepository{SecretRef: &LocalObjectReference{Name: "auth"}}, &Bucket{SecretRef: &LocalObjectReference{Name: "auth"}}, &RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Spec: map[string]any{"sources": []any{map[string]any{"kind": KindGitRepository, "name": "input"}}}}} {
 		t.Run(obj.Named().Kind, func(t *testing.T) {
-
 			testReferencesNoAllocationsCase(t, &obj)
 		},
 		)
@@ -474,7 +472,6 @@ func TestReferences_NoAllocations(t *testing.T) {
 		{"unsupported", fluxopv1.InputProviderGitHubTag, nil, 0},
 	} {
 		t.Run("provider/"+tc.name, func(t *testing.T) {
-
 			testReferencesNoAllocationsCase2(t, &tc)
 		},
 		)
@@ -488,7 +485,6 @@ func TestReferences_NoAllocations(t *testing.T) {
 		{"invalid_selector", fluxopv1.InputProviderReference{Selector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{Key: "role", Operator: "invalid"}}}}},
 	} {
 		t.Run("input/"+tc.name, func(t *testing.T) {
-
 			testReferencesNoAllocationsCase3(t, &tc)
 		},
 		)

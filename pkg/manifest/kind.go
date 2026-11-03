@@ -83,7 +83,6 @@ var (
 
 // Decoders initialize after package variables because parsing reads this registry.
 func init() {
-	//nolint:gochecknoglobals // Kind metadata forms an immutable shared inventory.
 	kindTable = [...]kindEntry{
 		kindKustomization: {
 			KindInfo: KindInfo{
@@ -271,7 +270,6 @@ func init() {
 		)
 	}
 
-	//nolint:gochecknoglobals // The immutable index shares the kind inventory.
 	kindIndex = make(map[string]int, len(kindTable))
 	for i := range kindTable {
 		entry := &kindTable[i]

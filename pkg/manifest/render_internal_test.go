@@ -168,7 +168,6 @@ func TestRenderCodec_Corruption(t *testing.T) {
 
 //nolint:paralleltest // The test measures process-wide allocation counters.
 func TestRenderCodec_AllocationBound(t *testing.T) {
-
 	const depth, count, padding = 64, 2048, 4096
 	for _, tc := range []struct {
 		name string
@@ -179,7 +178,6 @@ func TestRenderCodec_AllocationBound(t *testing.T) {
 		{name: "any map", tag: renderAnyMap},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-
 			payload := []byte{1, 0, renderStringMap, 1, 1, 'x'}
 			for range depth {
 				payload = binary.AppendUvarint(append(payload, tc.tag), count)

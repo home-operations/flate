@@ -25,6 +25,8 @@ type HelmChartSource struct {
 }
 
 // NewHelmChartSource normalizes an owned typed HelmChart declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewHelmChartSource(cr sourcev1.HelmChart) *HelmChartSource {
 	cr.Spec.SourceRef.Kind = cmp.Or(cr.Spec.SourceRef.Kind, KindHelmRepository)
 	return &HelmChartSource{

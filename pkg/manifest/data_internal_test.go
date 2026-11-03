@@ -111,7 +111,13 @@ func TestDataValue_FieldErrors(t *testing.T) {
 				)
 			}
 			{
-				assert.FatalIf(t, !strings.HasPrefix(err.Error(), tc.field+": "), "error = %v, want field %s", err, tc.field)
+				assert.FatalIf(
+					t,
+					!strings.HasPrefix(err.Error(), tc.field+": "),
+					"error = %v, want field %s",
+					err,
+					tc.field,
+				)
 			}
 		})
 	}
@@ -163,7 +169,15 @@ func testParseDocAuthoritativeSanitationCase(
 	if testCaseInput.tc.metadata {
 		doc["sops"] = map[string]any{"version": "3.13.3"}
 	}
-	testParseDocAuthoritativeSanitationCaseCompletion(t, &testParseDocAuthoritativeSanitationCaseCompletionState{testCaseInput: testCaseInput, want: &want, clearValue: &clearValue, doc: &doc})
+	testParseDocAuthoritativeSanitationCaseCompletion(
+		t,
+		&testParseDocAuthoritativeSanitationCaseCompletionState{
+			testCaseInput: testCaseInput,
+			want:          &want,
+			clearValue:    &clearValue,
+			doc:           &doc,
+		},
+	)
 }
 
 type testParseDocAuthoritativeSanitationCaseCompletionState struct {
@@ -173,7 +187,10 @@ type testParseDocAuthoritativeSanitationCaseCompletionState struct {
 	doc           *map[string]any
 }
 
-func testParseDocAuthoritativeSanitationCaseCompletion(t *testing.T, scope *testParseDocAuthoritativeSanitationCaseCompletionState) {
+func testParseDocAuthoritativeSanitationCaseCompletion(
+	t *testing.T,
+	scope *testParseDocAuthoritativeSanitationCaseCompletionState,
+) {
 	t.Helper()
 	if *scope.testCaseInput.valid {
 		(*scope.doc)["metadata"] = map[string]any{"name": "app"}

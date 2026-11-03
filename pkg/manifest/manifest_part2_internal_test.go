@@ -468,7 +468,6 @@ spec: {path: ./p0}
 
 //nolint:paralleltest // The test replaces a package variable shared by other tests.
 func TestRenderDocument_BufferOwnership(t *testing.T) {
-
 	factory := kustomizationEncoders.New
 	t.Cleanup(func() { kustomizationEncoders = sync.Pool{New: factory} })
 	var encoder *kustomizationEncoder

@@ -1,7 +1,10 @@
 package manifest
 
-import "github.com/home-operations/flate/internal/assert"
-import "testing"
+import (
+	"testing"
+
+	"github.com/home-operations/flate/internal/assert"
+)
 
 func TestHasEnvsubstReference(t *testing.T) {
 	t.Parallel()

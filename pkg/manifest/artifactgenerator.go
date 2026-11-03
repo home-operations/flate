@@ -12,6 +12,8 @@ import (
 )
 
 // ExternalArtifact constructs a declaration after evaluation resolves its output metadata.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *RawObject) ExternalArtifact(metadata metav1.ObjectMeta) *ExternalArtifact {
 	return NewExternalArtifact(sourcev1.ExternalArtifact{ObjectMeta: metadata, Spec: sourcev1.ExternalArtifactSpec{
 		SourceRef: &meta.NamespacedObjectKindReference{

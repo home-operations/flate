@@ -80,7 +80,13 @@ func TestParseHelmRelease_ChartTemplateAdmission(t *testing.T) {
 				return
 			}
 			{
-				assert.FatalIf(t, !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), tc.field), "error = %v, want classified input error identifying %s", err, tc.field)
+				assert.FatalIf(
+					t,
+					!errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) || !strings.Contains(err.Error(), tc.field),
+					"error = %v, want classified input error identifying %s",
+					err,
+					tc.field,
+				)
 			}
 		})
 	}

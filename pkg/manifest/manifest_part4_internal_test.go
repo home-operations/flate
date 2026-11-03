@@ -246,7 +246,13 @@ func TestCheckAPIVersion_ExactGroup(t *testing.T) {
 			t.Parallel()
 			err := checkAPIVersion(map[string]any{"apiVersion": tc.version}, SourceDomain)
 			{
-				assert.ErrorIf(t, !errors.Is(err, tc.wantErr) || (tc.wantErr != nil && !errors.Is(err, ErrFlux)), "error = %v, want %v", err, tc.wantErr)
+				assert.ErrorIf(
+					t,
+					!errors.Is(err, tc.wantErr) || (tc.wantErr != nil && !errors.Is(err, ErrFlux)),
+					"error = %v, want %v",
+					err,
+					tc.wantErr,
+				)
 			}
 			_, invalid := errors.AsType[*field.Error](err)
 			assert.Equal(t, invalid, tc.invalid)

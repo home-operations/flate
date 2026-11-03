@@ -188,6 +188,8 @@ type Reference struct {
 }
 
 // Clone owns the mutable containers borrowed by a reference.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) Clone() Reference {
 	r.Files = slices.Clone(r.Files)
 	r.Selector = r.Selector.DeepCopy()
@@ -199,13 +201,18 @@ func (r Reference) Clone() Reference {
 }
 
 // ContentInput reports whether a reference carries affected or required input content.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) ContentInput() bool {
 	return r.Content || r.Use == substituteFromKey && r.Name != ""
 }
 
 // AffectedInput reports whether changed content can affect the consumer.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r Reference) AffectedInput() bool {
-	return r.ContentInput() || r.Use == sourceKey || r.Use == "artifact" || r.Use == chartKey || r.Use == "valuesFrom" ||
+	return r.ContentInput() || r.Use == sourceKey || r.Use == "artifact" || r.Use == chartKey ||
+		r.Use == "valuesFrom" ||
 		r.Use == "inputsFrom"
 }
 

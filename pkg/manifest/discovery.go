@@ -28,6 +28,8 @@ type ReferenceData struct {
 }
 
 // Materializer returns the owner that can supply the target through this contribution.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p Production) Materializer(target NamedResource) NamedResource {
 	if p.Declaration != (NamedResource{}) && p.File != "" && !filepath.IsLocal(p.File) {
 		return NamedResource{}
@@ -61,6 +63,8 @@ type DiscoveryRecord struct {
 }
 
 // Equal compares the record facts retained by accepted renders.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (r DiscoveryRecord) Equal(other DiscoveryRecord) bool {
 	if r.Application != other.Application || r.Authored != other.Authored || r.Path != other.Path ||
 		r.File != other.File {

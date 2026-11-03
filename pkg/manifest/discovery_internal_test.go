@@ -30,7 +30,10 @@ func TestDiscoveryIndex_CommittedClaimsExcludeCheckoutRoot(t *testing.T) {
 			t.Parallel()
 			owners, ancestors := index.OwnersOfFile(tc.file)
 			{
-				assert.FatalIf(t, !slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors), "ownership for %s = (%v, %v), want (%v, %v)",
+				assert.FatalIf(
+					t,
+					!slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors),
+					"ownership for %s = (%v, %v), want (%v, %v)",
 					tc.file,
 					owners,
 					ancestors,
@@ -122,7 +125,15 @@ func TestDiscoveryIndex_OwnersOfFilePrefixGroups(t *testing.T) {
 			for range 2 {
 				owners, ancestors := index.OwnersOfFile(tc.file)
 				{
-					assert.FatalIf(t, !slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors), "ownership = (%v, %v), want (%v, %v)", owners, ancestors, tc.owners, tc.ancestors)
+					assert.FatalIf(
+						t,
+						!slices.Equal(owners, tc.owners) || !slices.Equal(ancestors, tc.ancestors),
+						"ownership = (%v, %v), want (%v, %v)",
+						owners,
+						ancestors,
+						tc.owners,
+						tc.ancestors,
+					)
 				}
 				{
 					assert.FatalIf(

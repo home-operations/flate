@@ -85,7 +85,10 @@ func testParseDocMissingFieldsCase(t *testing.T, testCaseInput *struct {
 			} else {
 				{
 					assert.FatalIf(t, !errors.Is(err, ErrInput) || !errors.Is(err, ErrFlux) ||
-						!strings.Contains(err.Error(), admission.want), "error = %v, want %q with ErrInput/ErrFlux", err, admission.want)
+						!strings.Contains(
+							err.Error(),
+							admission.want,
+						), "error = %v, want %q with ErrInput/ErrFlux", err, admission.want)
 				}
 				assert.Equal(t, changed, false)
 				assert.Diff(t, authoritative, before)

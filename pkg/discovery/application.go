@@ -110,7 +110,10 @@ func (d *Session) qualifyEntry(ctx context.Context, admission *Admission) error 
 		}
 	}
 	slices.SortFunc(q.candidates, manifest.NamedResource.Compare)
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("context: %w", err)
+	}
+	return nil
 }
 
 // EntryProducers returns the next bounded acquisition or qualification work for an unknown applier.
@@ -155,20 +158,20 @@ func (a *Admission) captureApplication(
 		return q.receipt, nil
 	}
 	if !q.captureDocument(st, owner) {
-		return nil, nil
-	} //nolint:nilnil // Incomplete evidence grants no receipt.
+		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
+	}
 	document := q.documents[owner.Named()]
 	c := entryCapture{admission: a, store: st, qualification: q, seen: map[manifest.NamedResource]bool{}}
 	c.queue = slices.SortedFunc(maps.Keys(q.visited), manifest.NamedResource.Compare)
 	c.queue = append(c.queue, q.current)
 	if !c.collect() || !c.mapFiles() {
-		return nil, nil
-	} //nolint:nilnil // Incomplete evidence grants no receipt.
+		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
+	}
 	slices.Sort(c.files)
 	output, ok := st.GetArtifact(q.current, store.ArtifactContent).(*store.Emission)
 	if !ok {
-		return nil, nil
-	} //nolint:nilnil // Incomplete evidence grants no receipt.
+		return nil, nil //nolint:nilnil // Incomplete evidence grants no receipt.
+	}
 	return q.trees.ApplicationReceipt(ctx, a.input, kustomize.EntryEvidence{
 		Application: document, Owner: q.current, Inputs: c.inputs, Renders: c.renders,
 		Records: st.ChildFootprint(q.current, output.Children, q.loader.Index),
@@ -380,6 +383,9 @@ func (d *Session) applications() []manifest.BaseManifest {
 		add(obj)
 	}
 	var applications []manifest.BaseManifest
+	if len(objects) != 0 {
+		applications = make([]manifest.BaseManifest, 0, len(objects))
+	}
 	for _, id := range slices.SortedFunc(maps.Keys(objects), manifest.NamedResource.Compare) {
 		applications = append(applications, objects[id])
 	}
@@ -414,7 +420,7 @@ func (a *Admission) addApplication(st *store.Store, obj manifest.BaseManifest, h
 	evidence := &applicationEvidence{
 		object:      obj,
 		application: application,
-		source:      a.applicationSource(st, application),
+		source:      a.applicationSource(st, &application),
 		history:     history,
 	}
 	for {
@@ -426,6 +432,8 @@ func (a *Admission) addApplication(st *store.Store, obj manifest.BaseManifest, h
 }
 
 // AddHistory admits application evidence only from validated accepted render history.
+//
+//nolint:gocritic // Public history admission preserves its record value snapshot.
 func (a *Admission) AddHistory(st *store.Store, id manifest.NamedResource, record manifest.DiscoveryRecord) {
 	if record.Application == "" {
 		return
@@ -440,7 +448,7 @@ func (a *Admission) AddHistory(st *store.Store, id manifest.NamedResource, recor
 	}
 }
 
-func (a *Admission) applicationSource(st *store.Store, application manifest.EntryApplication) entryResolution {
+func (a *Admission) applicationSource(st *store.Store, application *manifest.EntryApplication) entryResolution {
 	resolved := entryResolution{object: st.GetObject(application.Source)}
 	resolved.artifact, _ = st.GetArtifact(application.Source, store.ArtifactContent).(*store.SourceArtifact)
 	if resolved.object == nil {
@@ -489,7 +497,7 @@ func (a *Admission) qualifyEntry(
 		}
 		application, valid := applier.EntryApplication()
 		if valid {
-			if err := qualify(obj, application, a.applicationSource(st, application)); err != nil {
+			if err := qualify(obj, application, a.applicationSource(st, &application)); err != nil {
 				return nil, err
 			}
 		}

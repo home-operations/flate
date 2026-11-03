@@ -185,13 +185,13 @@ func testFetcherMachineProfilesCaseCompletion(t *testing.T, captures *testFetche
 	testFetcherMachineProfilesCaseCompletionTail(
 		t,
 		&testFetcherMachineProfilesCaseCompletionTailState{
-			captures:     captures,
+			captures:     &captures,
 			ca:           &ca,
 			proxyAddress: &proxyAddress,
-			reads:        reads,
-			artifact:     artifact,
+			reads:        &reads,
+			artifact:     &artifact,
 			err:          &err,
-			missing:      missing,
+			missing:      &missing,
 			success:      &success,
 			unavailable:  &unavailable,
 			wantRemote:   &wantRemote,
@@ -627,13 +627,13 @@ type testFetcherMachineSSOTransportCaseCompletionInputs struct {
 }
 
 type testFetcherMachineProfilesCaseCompletionTailState struct {
-	captures     *testFetcherMachineProfilesCaseCompletionInputs
+	captures     **testFetcherMachineProfilesCaseCompletionInputs
 	ca           *string
 	proxyAddress *string
-	reads        *store.ReadSet
-	artifact     *store.SourceArtifact
+	reads        **store.ReadSet
+	artifact     **store.SourceArtifact
 	err          *error
-	missing      *source.MissingSecretError
+	missing      **source.MissingSecretError
 	success      *bool
 	unavailable  *bool
 	wantRemote   *int32
@@ -645,34 +645,31 @@ func testFetcherMachineProfilesCaseCompletionTail(
 	scope *testFetcherMachineProfilesCaseCompletionTailState,
 ) {
 	t.Helper()
-	if ((*scope.err) == nil) != ((*scope.success) || (*scope.unavailable)) || (scope.artifact != nil) != ((*scope.success) || (*scope.unavailable)) ||
-		errors.Is((*scope.err), manifest.ErrMissingSecret) ||
-		scope.captures.remote.
-			Load() != (*scope.wantRemote) ||
-		scope.captures.iam.
+	if ((*scope.err) == nil) != ((*scope.success) || (*scope.unavailable)) || ((*scope.artifact) != nil) != ((*scope.success) || (*scope.unavailable)) ||
+		errors.Is((*scope.err), manifest.ErrMissingSecret) || (*scope.captures).remote.
+		Load() != (*scope.wantRemote) ||
+		(*scope.captures).iam.
 			Load() != (*scope.wantIAM) {
 		t.Fatalf(
 			"profile selection: %v remote=%d IAM=%d",
-			(*scope.err),
-			scope.captures.remote.Load(),
-			(*scope.captures.iam).Load(),
+			(*scope.err), (*scope.captures).remote.Load(), (*(*scope.captures).iam).Load(),
 		)
 	}
-	_, markerErr := os.Stat((*scope.captures.marker))
+	_, markerErr := os.Stat((*(*scope.captures).marker))
 	assert.FatalIf(
 		t,
-		(markerErr == nil) != ((*(*scope.captures.shape)) == "process"),
+		(markerErr == nil) != ((*(*(*scope.captures).shape)) == "process"),
 		"credential_process precedence: %v",
 		markerErr,
 	)
-	if (*(*scope.captures.shape)) == "process" {
-		args, err := os.ReadFile(filepath.Join((*scope.captures.root), "args"))
+	if (*(*(*scope.captures).shape)) == "process" {
+		args, err := os.ReadFile(filepath.Join((*(*scope.captures).root), "args"))
 		assert.NoError(t, err)
 		assert.Equal(t, string(args), "argument\n")
-		stdin, err := os.ReadFile(filepath.Join((*scope.captures.root), "stdin"))
+		stdin, err := os.ReadFile(filepath.Join((*(*scope.captures).root), "stdin"))
 		assert.NoError(t, err)
 		assert.Equal(t, string(stdin), "")
-		environment, err := os.ReadFile(filepath.Join((*scope.captures.root), "environment"))
+		environment, err := os.ReadFile(filepath.Join((*(*scope.captures).root), "environment"))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
@@ -691,35 +688,35 @@ func testFetcherMachineProfilesCaseCompletionTail(
 		}
 	}
 	if *scope.success {
-		warm, err := scope.missing.RetryMachine(t.Context(), scope.reads)
+		warm, err := (*scope.missing).RetryMachine(t.Context(), (*scope.reads))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
-			warm.Key != scope.artifact.Key || scope.captures.remote.Load() != 1,
+			warm.Key != (*scope.artifact).Key || (*scope.captures).remote.Load() != 1,
 			"%s",
 			"unchanged profile missed warm content",
 		)
-		scope.captures.signer.
+		(*scope.captures).signer.
 			Store("rotated-canary")
-		if (*(*scope.captures.shape)) == "environment before files" {
+		if (*(*(*scope.captures).shape)) == "environment before files" {
 			t.Setenv("AWS_ACCESS_KEY_ID", "rotated-canary")
 		} else {
 			testutil.WriteFileAt(
 				t,
-				(*scope.captures.path),
-				strings.ReplaceAll((*scope.captures.profile), "file-canary", "rotated-canary"),
+				(*(*scope.captures).path),
+				strings.ReplaceAll((*(*scope.captures).profile), "file-canary", "rotated-canary"),
 			)
 			testutil.WriteFileAt(
 				t,
-				(*scope.captures.program),
-				strings.ReplaceAll((*scope.captures.script), "file-canary", "rotated-canary"),
+				(*(*scope.captures).program),
+				strings.ReplaceAll((*(*scope.captures).script), "file-canary", "rotated-canary"),
 			)
 		}
-		rotated, err := scope.missing.RetryMachine(t.Context(), scope.reads)
+		rotated, err := (*scope.missing).RetryMachine(t.Context(), (*scope.reads))
 		assert.NoError(t, err)
 		assert.FatalIf(
 			t,
-			rotated.Key == warm.Key || scope.captures.remote.Load() != 2 || (*scope.captures.iam).Load() != 0,
+			rotated.Key == warm.Key || (*scope.captures).remote.Load() != 2 || (*(*scope.captures).iam).Load() != 0,
 			"%s",
 			"rotated profile reused credential identity or skipped signing",
 		)

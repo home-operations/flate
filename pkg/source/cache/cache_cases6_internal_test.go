@@ -318,7 +318,7 @@ func testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletion(
 			live++
 		}
 	}
-	testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionTail(t, captures, &live)
+	testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionTail(t, &captures, &live)
 }
 
 type testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionInputs struct {
@@ -336,39 +336,39 @@ type testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionInputs str
 
 func testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionTail(
 	t *testing.T,
-	captures *testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionInputs,
+	captures **testAcquireConcurrentKeysAndCancellationDueCaseCallbackCompletionInputs,
 	live *int,
 ) {
 	t.Helper()
 	assert.FatalIf(
-		t, (*captures.calls) !=
-			1 || (*captures.cause) != nil && (*live) != 1, "due calls=%d, live results=%d", (*captures.calls), (*live),
+		t, (*(*captures).calls) !=
+			1 || (*(*captures).cause) != nil && (*live) != 1, "due calls=%d, live results=%d", (*(*captures).calls), (*live),
 	)
-	after, err := (*captures.c).store.Resolve(t.Context(), (*captures.id))
+	after, err := (*(*captures).c).store.Resolve(t.Context(), (*(*captures).id))
 	assert.NoError(t, err)
 
-	if (*captures.testCaseInput.testCaseInput.result) == "eligible" {
-		o, err := (*captures.c).readOutcome(t.Context(), &after)
+	if (*(*captures).testCaseInput.testCaseInput.result) == "eligible" {
+		o, err := (*(*captures).c).readOutcome(t.Context(), &after)
 		assert.FatalIf(t, err != nil || o == nil || o.record.Count != 2 ||
 			!o.record.Completed.Equal(time.Now()) ||
-			o.lastGood.Digest != captures.good.Digest, "due outcome=%+v, error=%v", o, err)
+			o.lastGood.Digest != (*captures).good.Digest, "due outcome=%+v, error=%v", o, err)
 	} else {
 		assert.FatalIf(
-			t, (*captures.cause) !=
-				nil && after.Digest != captures.before.Digest, "%s",
+			t, (*(*captures).cause) !=
+				nil && after.Digest != (*captures).before.Digest, "%s",
 			"unsupported/local failure changed the durable outcome",
 		)
 	}
 
-	if (*captures.testCaseInput.testCaseInput.result) != "eligible" {
-		if (*captures.testCaseInput.testCaseInput.result) == "publication" {
+	if (*(*captures).testCaseInput.testCaseInput.result) != "eligible" {
+		if (*(*captures).testCaseInput.testCaseInput.result) == "publication" {
 			{
-				err := (*captures.c).root.Remove("oci/index.json")
+				err := (*(*captures).c).root.Remove("oci/index.json")
 				assert.NoError(t, err)
 			}
 		}
-		r, _, _, err := (*captures.c).Blob(
-			t.Context(), (*captures.key), Policy{},
+		r, _, _, err := (*(*captures).c).Blob(
+			t.Context(), (*(*captures).key), Policy{},
 			producer([]byte("independent"), &ocispec.Descriptor{}),
 		)
 		assert.NoError(t, err)

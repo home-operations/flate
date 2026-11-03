@@ -325,7 +325,7 @@ func TestFetcher_InsecureRegistryConcurrent(t *testing.T) {
 			fail:           &fail,
 			requests:       &requests,
 			tlsConnections: &tlsConnections,
-			f:              f,
+			f:              &f,
 			done:           &done,
 			repos:          &repos,
 		},
@@ -526,7 +526,7 @@ type testFetcherInsecureRegistryConcurrentTailState struct {
 	fail           *atomic.Bool
 	requests       *atomic.Int32
 	tlsConnections *atomic.Int32
-	f              *Fetcher
+	f              **Fetcher
 	done           *chan insecureRegistryResult
 	repos          *map[string]*manifest.OCIRepository
 }
@@ -550,7 +550,7 @@ func testFetcherInsecureRegistryConcurrentTail(t *testing.T, scope *testFetcherI
 	}
 	(*scope.initial).Store(false)
 	(*scope.fail).Store(false)
-	recovered, err := scope.f.Fetch(
+	recovered, err := (*scope.f).Fetch(
 		t.Context(),
 		(*scope.repos)["bad"],
 		(testInputs{}).readSet((*scope.repos)["bad"]),
@@ -568,7 +568,7 @@ func testFetcherInsecureRegistryConcurrentTail(t *testing.T, scope *testFetcherI
 	before := (*scope.requests).Load()
 	secure := *(*scope.repos)["good"]
 	secure.Insecure = false
-	got, err := scope.f.Fetch(t.Context(), &secure, (testInputs{}).readSet(&secure), sourcecache.Policy{})
+	got, err := (*scope.f).Fetch(t.Context(), &secure, (testInputs{}).readSet(&secure), sourcecache.Policy{})
 	if got != nil || !errors.Is(err, http.ErrSchemeMismatch) || (*scope.requests).Load() != before ||
 		(*scope.tlsConnections).Load() != 4 {
 		t.Fatalf(

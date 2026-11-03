@@ -388,7 +388,7 @@ func testWalkBucketRangesCaseCompletion(t *testing.T, captures *testWalkBucketRa
 		}
 		return true
 	}
-	return testWalkBucketRangesCaseCompletionTail(t, captures)
+	return testWalkBucketRangesCaseCompletionTail(t, &captures)
 }
 
 type testWalkBucketLargeListedSizeCaseCallbackInputs struct {
@@ -596,7 +596,7 @@ func testWalkBucketRangesCaseCallback(
 	testWalkBucketRangesCaseCallbackTail(
 		&testWalkBucketRangesCaseCallbackTailState{
 			w:             &w,
-			r:             r,
+			r:             &r,
 			testCaseInput: &testCaseInput,
 			i:             &i,
 			start:         &start,
@@ -654,7 +654,7 @@ func testWalkBucketRangesCaseCallbackCompletion(captures *testWalkBucketRangesCa
 		<-(*captures.r).Context().Done()
 		return true
 	}
-	return testWalkBucketRangesCaseCallbackCompletionTail(captures)
+	return testWalkBucketRangesCaseCallbackCompletionTail(&captures)
 }
 
 type testWalkBucketRangesCaseCompletionInputs struct {
@@ -679,38 +679,38 @@ type testWalkBucketRangesCaseCallbackCompletionInputs struct {
 	part          int64
 }
 
-func testWalkBucketRangesCaseCallbackCompletionTail(captures *testWalkBucketRangesCaseCallbackCompletionInputs) bool {
-	if (*captures.testCaseInput.fault) != 0 && (*captures.i) == 0 && (*captures.r).Header.Get("Range") == "" {
-		_, _ = (*captures.w).Write(make([]byte, 64<<10))
-		(*captures.w).(http.Flusher).Flush()
-		close((*captures.testCaseInput.streamed))
-		<-(*captures.r).Context().Done()
+func testWalkBucketRangesCaseCallbackCompletionTail(captures **testWalkBucketRangesCaseCallbackCompletionInputs) bool {
+	if (*(*captures).testCaseInput.fault) != 0 && (*(*captures).i) == 0 && (*(*captures).r).Header.Get("Range") == "" {
+		_, _ = (*(*captures).w).Write(make([]byte, 64<<10))
+		(*(*captures).w).(http.Flusher).Flush()
+		close((*(*captures).testCaseInput.streamed))
+		<-(*(*captures).r).Context().Done()
 		return true
 	}
-	if (*(*captures.testCaseInput.behavior)) == "ordered" && (*captures.i) == 1 && (*captures.start) == 0 {
+	if (*(*(*captures).testCaseInput.behavior)) == "ordered" && (*(*captures).i) == 1 && (*(*captures).start) == 0 {
 		select {
-		case <-(*captures.testCaseInput.later):
-		case <-(*captures.r).Context().Done():
+		case <-(*(*captures).testCaseInput.later):
+		case <-(*(*captures).r).Context().Done():
 			return true
 		}
 	}
-	for sent := int64(0); sent < (*captures.length); {
-		n := min(int64(64<<10), (*captures.length)-sent)
-		buf := bytes.Repeat([]byte{byte(((*captures.start)+sent)/(1<<20) + int64((*captures.i)))}, int(n))
-		if _, err := (*captures.w).Write(buf); err != nil {
+	for sent := int64(0); sent < (*(*captures).length); {
+		n := min(int64(64<<10), (*(*captures).length)-sent)
+		buf := bytes.Repeat([]byte{byte(((*(*captures).start)+sent)/(1<<20) + int64((*(*captures).i)))}, int(n))
+		if _, err := (*(*captures).w).Write(buf); err != nil {
 			return true
 		}
 		sent += n
 	}
-	if (*captures.i) == 1 && (*captures.start) == captures.part {
-		(*captures.testCaseInput.completeLater)()
+	if (*(*captures).i) == 1 && (*(*captures).start) == (*captures).part {
+		(*(*captures).testCaseInput.completeLater)()
 	}
 	return false
 }
 
 type testWalkBucketRangesCaseCallbackTailState struct {
 	w             *http.ResponseWriter
-	r             *http.Request
+	r             **http.Request
 	testCaseInput *testWalkBucketRangesCaseCallbackInputs
 	i             *int
 	start         *int64
@@ -744,7 +744,7 @@ func testWalkBucketRangesCaseCallbackTail(scope *testWalkBucketRangesCaseCallbac
 			length:        &length,
 			status:        &(*scope.status),
 			testCaseInput: &(*scope.testCaseInput),
-			r:             &scope.r,
+			r:             scope.r,
 			i:             &(*scope.i),
 			start:         &(*scope.start),
 			part:          int64(part),
@@ -755,20 +755,20 @@ func testWalkBucketRangesCaseCallbackTail(scope *testWalkBucketRangesCaseCallbac
 	}
 }
 
-func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures *testWalkBucketRangesCaseCompletionInputs) bool {
+func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures **testWalkBucketRangesCaseCompletionInputs) bool {
 	t.Helper()
-	assert.NoError(t, (*captures.err))
+	assert.NoError(t, (*(*captures).err))
 
 	wantGets := int32(8)
-	if (*(*captures.behavior)) == "ignore" || (*(*captures.behavior)) == "ignore_big" {
+	if (*(*(*captures).behavior)) == "ignore" || (*(*(*captures).behavior)) == "ignore_big" {
 		wantGets = 4
 	}
-	if captures.gets.Load() != wantGets {
-		t.Fatalf("GETs=%d, want %d", captures.gets.Load(), wantGets)
+	if (*captures).gets.Load() != wantGets {
+		t.Fatalf("GETs=%d, want %d", (*captures).gets.Load(), wantGets)
 	}
 	h := sha256.New()
 	tw := tar.NewWriter(h)
-	for i, size := range *captures.sizes {
+	for i, size := range *(*captures).sizes {
 		{
 			err := tw.WriteHeader(
 				&tar.Header{Name: fmt.Sprintf("file%02d", i), Mode: 0o600, Size: size},
@@ -788,7 +788,7 @@ func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures *testWalkBuck
 	{
 		got, want := fmt.Sprintf(
 			"%x",
-			sha256.Sum256(captures.data.Bytes()),
+			sha256.Sum256((*captures).data.Bytes()),
 		), hex.EncodeToString(
 			h.Sum(nil),
 		)
@@ -798,9 +798,9 @@ func testWalkBucketRangesCaseCompletionTail(t *testing.T, captures *testWalkBuck
 		"sha256:%x",
 		sha256.Sum256([]byte("prefix/file00 v1\nprefix/file01 v1\nprefix/file02 v1\n")),
 	)
-	if captures.desc.Annotations["flate.revision"] != revision ||
-		(*captures.desc).Annotations["flate.object-count"] != "3" {
-		t.Fatalf("metadata=%v, want revision=%s count=3", captures.desc.Annotations, revision)
+	if (*captures).desc.Annotations["flate.revision"] != revision ||
+		(*(*captures).desc).Annotations["flate.object-count"] != "3" {
+		t.Fatalf("metadata=%v, want revision=%s count=3", (*captures).desc.Annotations, revision)
 	}
 	return false
 }

@@ -303,17 +303,17 @@ func testFetcherFreshnessCase(t *testing.T, tc *struct {
 	testFetcherFreshnessCaseTail(
 		t,
 		&testFetcherFreshnessCaseTailState{
-			tc:             tc,
+			tc:             &tc,
 			src:            &src,
 			initial:        &initial,
 			advertisements: &advertisements,
 			uploads:        &uploads,
 			connections:    &connections,
-			srv:            srv,
+			srv:            &srv,
 			cacheDir:       &cacheDir,
-			f:              f,
-			repo:           repo,
-			first:          first,
+			f:              &f,
+			repo:           &repo,
+			first:          &first,
 			err:            &err,
 		},
 	)
@@ -554,7 +554,7 @@ type testFetcherFreshnessCaseCompletionInputs struct {
 }
 
 type testFetcherFreshnessCaseTailState struct {
-	tc *struct {
+	tc **struct {
 		name     string
 		interval time.Duration
 		depth    int
@@ -569,11 +569,11 @@ type testFetcherFreshnessCaseTailState struct {
 	advertisements *atomic.Int32
 	uploads        *atomic.Int32
 	connections    *atomic.Int32
-	srv            *httptest.Server
+	srv            **httptest.Server
 	cacheDir       *string
-	f              *Fetcher
-	repo           *manifest.GitRepository
-	first          *store.SourceArtifact
+	f              **Fetcher
+	repo           **manifest.GitRepository
+	first          **store.SourceArtifact
 	err            *error
 }
 
@@ -581,38 +581,34 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	t.Helper()
 	var second *store.SourceArtifact
 	beforeAdvertisements, beforeUploads, beforeConnections := (*scope.advertisements).Load(), (*scope.uploads).Load(), (*scope.connections).Load()
-	if scope.tc.fail {
-		scope.srv.Close()
+	if (*scope.tc).fail {
+		(*scope.srv).Close()
 		{
-			_, fetchErr := scope.f.Fetch(
-				t.Context(),
-				scope.repo,
-				(testInputs{}).readSet(scope.repo),
-				sourcecache.Policy{MaxAge: scope.repo.SourceInterval()},
+			_, fetchErr := (*scope.f).Fetch(
+				t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
+				sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
 			)
 			assert.FatalIf(t, fetchErr == nil, "%s", "expected refresh to fail after upstream shutdown")
 		}
 
 		{
-			_, statErr3 := fs.Stat(scope.first.FS, "hello.txt")
+			_, statErr3 := fs.Stat((*scope.first).FS, "hello.txt")
 			assert.FatalIf(t, statErr3 != nil, "failed refresh removed held generation: %v", statErr3)
 		}
-		data, readFileErr := fs.ReadFile(scope.first.FS, "hello.txt")
+		data, readFileErr := fs.ReadFile((*scope.first).FS, "hello.txt")
 		assert.NoError(t, readFileErr)
 		assert.Equal(t, string(data), "hi")
 		return
 	}
 
-	if scope.tc.commit {
-		scope.srv.Close()
+	if (*scope.tc).commit {
+		(*scope.srv).Close()
 		assert.NoError(t, os.RemoveAll((*scope.src)))
-		second, fetchErr2 := scope.f.Fetch(
-			t.Context(),
-			scope.repo,
-			(testInputs{}).readSet(scope.repo),
-			sourcecache.Policy{MaxAge: scope.tc.interval},
+		second, fetchErr2 := (*scope.f).Fetch(
+			t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
+			sourcecache.Policy{MaxAge: (*scope.tc).interval},
 		)
-		if scope.tc.mixed {
+		if (*scope.tc).mixed {
 			assert.FatalIf(t, fetchErr2 == nil || second != nil, "%s", "mixed commit unexpectedly retained forever")
 		} else {
 			assert.NoError(t, fetchErr2)
@@ -625,11 +621,9 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	tip := mustCommitFile(t, (*scope.src), "later.txt", "new content")
 	assert.FatalIf(t, tip == (*scope.initial), "%s", "tip did not move")
 
-	second, (*scope.err) = scope.f.Fetch(
-		t.Context(),
-		scope.repo,
-		(testInputs{}).readSet(scope.repo),
-		sourcecache.Policy{MaxAge: scope.repo.SourceInterval()},
+	second, (*scope.err) = (*scope.f).Fetch(
+		t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
+		sourcecache.Policy{MaxAge: (*scope.repo).SourceInterval()},
 	)
 	assert.NoError(t, (*scope.err))
 	t.Logf(
@@ -638,7 +632,7 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 		(*scope.uploads).Load()-beforeUploads,
 		(*scope.connections).Load()-beforeConnections,
 	)
-	if scope.tc.interval != 0 || scope.tc.pinned {
+	if (*scope.tc).interval != 0 || (*scope.tc).pinned {
 		if (*scope.advertisements).Load() != beforeAdvertisements || (*scope.uploads).Load() != beforeUploads ||
 			(*scope.connections).Load() != beforeConnections {
 			t.Error("fresh interval or commit-only pin performed network work")
@@ -647,7 +641,7 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	testFetcherFreshnessCaseCompletion(
 		t,
 		&testFetcherFreshnessCaseCompletionInputs{
-			tc:                   &scope.tc,
+			tc:                   scope.tc,
 			advertisements:       &(*scope.advertisements),
 			beforeAdvertisements: &beforeAdvertisements,
 			uploads:              &(*scope.uploads),
@@ -655,12 +649,12 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 			tip:                  &tip,
 			initial:              &(*scope.initial),
 			second:               &second,
-			first:                &scope.first,
+			first:                scope.first,
 			err:                  &(*scope.err),
-			repo:                 &scope.repo,
+			repo:                 scope.repo,
 			beforeConnections:    &beforeConnections,
 			connections:          &(*scope.connections),
-			f:                    &scope.f,
+			f:                    scope.f,
 			cacheDir:             &(*scope.cacheDir),
 		},
 	)

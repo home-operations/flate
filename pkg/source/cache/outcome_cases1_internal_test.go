@@ -432,7 +432,7 @@ func testOutcomeTypedRoundTripCase(t *testing.T, u **url.Error,
 	)
 	testOutcomeTypedRoundTripCaseTail(
 		t,
-		&testOutcomeTypedRoundTripCaseTailState{u: u, tc: tc, live: &live, o: o, got: got, replay: &replay},
+		&testOutcomeTypedRoundTripCaseTailState{u: &u, tc: &tc, live: &live, o: &o, got: &got, replay: &replay},
 	)
 }
 
@@ -551,8 +551,8 @@ type testOutcomeTypedRoundTripCaseCompletionInputs struct {
 }
 
 type testOutcomeTypedRoundTripCaseTailState struct {
-	u  **url.Error
-	tc *struct {
+	u  ***url.Error
+	tc **struct {
 		name        string
 		cause       error
 		sentinel    error
@@ -562,20 +562,20 @@ type testOutcomeTypedRoundTripCaseTailState struct {
 		diagnostic  string
 	}
 	live   *error
-	o      *outcome
-	got    *outcome
+	o      **outcome
+	got    **outcome
 	replay *error
 }
 
 func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoundTripCaseTailState) {
 	t.Helper()
-	if scope.tc.shape.Kind != "" {
+	if (*scope.tc).shape.Kind != "" {
 		want := outcomeCause{
 			Kind:     "terminal",
-			Children: []outcomeCause{{Kind: "producer", Children: []outcomeCause{scope.tc.shape}}},
+			Children: []outcomeCause{{Kind: "producer", Children: []outcomeCause{(*scope.tc).shape}}},
 		}
 		{
-			diff := cmp.Diff(want, scope.got.record.Cause)
+			diff := cmp.Diff(want, (*scope.got).record.Cause)
 			assert.FatalIf(t, diff != "", "persisted cause (-want +got):\n%s", diff)
 		}
 		terminal, ok := (*scope.replay).(*TerminalError)
@@ -584,8 +584,8 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 		if !ok {
 			t.Fatalf("terminal child: %T", terminal.Err)
 		}
-		node, shape := producer.error, scope.tc.shape
-		for _, index := range scope.tc.machinePath {
+		node, shape := producer.error, (*scope.tc).shape
+		for _, index := range (*scope.tc).machinePath {
 			assert.FatalIf(t, shape.Kind == "wrap" && reflect.TypeOf(node) != fmtWrapType ||
 				shape.Kind == "join" && reflect.TypeOf(node) != joinType, "machine parent identity: %T", node)
 			switch parent := node.(type) {
@@ -600,7 +600,7 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 		}
 		machine, ok := node.(*machineError)
 		assert.FatalIf(t, !ok || machine.Error() != "machine credential acquisition failed" ||
-			(*scope.replay).Error() != scope.tc.diagnostic, "machine masking or position: %T, %v", node, (*scope.replay))
+			(*scope.replay).Error() != (*scope.tc).diagnostic, "machine masking or position: %T, %v", node, (*scope.replay))
 		child := machine.Unwrap()
 		if shape.Children[0].Kind == "terminal" {
 			terminal, ok := child.(*TerminalError)
@@ -631,10 +631,10 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 	testOutcomeTypedRoundTripCaseCompletion(
 		t,
 		&testOutcomeTypedRoundTripCaseCompletionInputs{
-			tc:     &scope.tc,
+			tc:     scope.tc,
 			replay: &(*scope.replay),
-			o:      &scope.o,
-			u:      &scope.u,
+			o:      scope.o,
+			u:      scope.u,
 			live:   &(*scope.live),
 		},
 	)

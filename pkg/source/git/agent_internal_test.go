@@ -316,12 +316,12 @@ func testFetcherAmbientAcquisitionCaseCompletion(
 	testFetcherAmbientAcquisitionCaseCompletionTail(
 		t,
 		&testFetcherAmbientAcquisitionCaseCompletionTailState{
-			captures: captures,
+			captures: &captures,
 			cacheDir: &cacheDir,
-			f:        f,
-			reads:    reads,
-			artifact: artifact,
-			missing:  missing,
+			f:        &f,
+			reads:    &reads,
+			artifact: &artifact,
+			missing:  &missing,
 			success:  &success,
 		},
 	)
@@ -570,12 +570,12 @@ type testFetcherStalledAgentCaseCompletionInputs struct {
 }
 
 type testFetcherAmbientAcquisitionCaseCompletionTailState struct {
-	captures *testFetcherAmbientAcquisitionCaseCompletionInputs
+	captures **testFetcherAmbientAcquisitionCaseCompletionInputs
 	cacheDir *string
-	f        *Fetcher
-	reads    *store.ReadSet
-	artifact *store.SourceArtifact
-	missing  *source.MissingSecretError
+	f        **Fetcher
+	reads    **store.ReadSet
+	artifact **store.SourceArtifact
+	missing  **source.MissingSecretError
 	success  *bool
 }
 
@@ -584,72 +584,71 @@ func testFetcherAmbientAcquisitionCaseCompletionTail(
 	scope *testFetcherAmbientAcquisitionCaseCompletionTailState,
 ) {
 	t.Helper()
-	if (*scope.captures.opened) != nil {
-		<-(*scope.captures.closed)
-		assert.Equal(t, (*scope.captures.opened).Load(), int32(1))
+	if (*(*scope.captures).opened) != nil {
+		<-(*(*scope.captures).closed)
+		assert.Equal(t, (*(*scope.captures).opened).Load(), int32(1))
 	}
-	if (*(*scope.captures.shape)) == "fallback" &&
-		((*scope.captures.tr).authenticated.Load() != 2 || strings.Contains(scope.captures.diagnostic.String(), "diagnostic-canary")) {
+	if (*(*(*scope.captures).shape)) == "fallback" &&
+		((*(*scope.captures).tr).authenticated.Load() != 2 || strings.Contains((*scope.captures).diagnostic.String(), "diagnostic-canary")) {
 		t.Fatalf(
 			"fallback diagnostics/selection: calls=%d %s",
-			(*scope.captures.tr).authenticated.Load(),
-			scope.captures.diagnostic.String(),
+			(*(*scope.captures).tr).authenticated.Load(), (*scope.captures).diagnostic.String(),
 		)
 	}
 	assert.FatalIf(
 		t,
-		(*(*scope.captures.shape)) == "bad ref" && (*scope.captures.tr).authenticated.Load() == 0,
+		(*(*(*scope.captures).shape)) == "bad ref" && (*(*scope.captures).tr).authenticated.Load() == 0,
 		"%s",
 		"bad ref did not reach authenticated acquisition",
 	)
 
 	if *scope.success {
-		assert.NoError(t, scope.f.Cache.Close())
-		scope.f.Cache = cachetest.New(t, (*scope.cacheDir), sourcecache.New)
-		before := (*scope.captures.opened).Load()
-		warm, err := scope.missing.RetryAmbient(t.Context())
+		assert.NoError(t, (*scope.f).Cache.Close())
+		(*scope.f).Cache = cachetest.New(t, (*scope.cacheDir), sourcecache.New)
+		before := (*(*scope.captures).opened).Load()
+		warm, err := (*scope.missing).RetryAmbient(t.Context())
 		assert.NoError(t, err)
-		<-(*scope.captures.closed)
+		<-(*(*scope.captures).closed)
 		assert.FatalIf(
 			t,
-			warm == nil || warm.Key != scope.artifact.Key || (*scope.captures.opened).Load() != before+1,
+			warm == nil || warm.Key != (*scope.artifact).Key || (*(*scope.captures).opened).Load() != before+1,
 			"disk reuse asserted fresh authentication: %+v",
 			warm,
 		)
-		if (*(*scope.captures.shape)) == "accepted" {
-			mustCommitFile(t, (*scope.captures.root), "hello.txt", "refreshed")
-			_, err := scope.f.Fetch(t.Context(), (*scope.captures.repo), scope.reads, sourcecache.Policy{})
+		if (*(*(*scope.captures).shape)) == "accepted" {
+			mustCommitFile(t, (*(*scope.captures).root), "hello.txt", "refreshed")
+			_, err := (*scope.f).Fetch(t.Context(), (*(*scope.captures).repo), (*scope.reads), sourcecache.Policy{})
 			refresh, ok := errors.AsType[*source.MissingSecretError](err)
 			assert.FatalIf(t, !ok || refresh.RetryAmbient == nil, "refresh preparation = %v", err)
 			fresh, err := refresh.RetryAmbient(t.Context())
 			assert.NoError(t, err)
-			<-(*scope.captures.closed)
+			<-(*(*scope.captures).closed)
 			data, err := fs.ReadFile(fresh.FS, "hello.txt")
 			assert.NoError(t, err)
 			assert.FatalIf(t, string(data) != "refreshed" || fresh.Content == warm.Content ||
-				fresh.Revision == warm.Revision || (*scope.captures.opened).
+				fresh.Revision == warm.Revision || (*(*scope.captures).opened).
 				Load() != before+2, "%s", "refreshed acquisition reused stale content or attempt credentials")
 
 			rotatedIdentity, rotatedSigner := testSSHIdentity(t)
 			raw, err := ssh.ParseRawPrivateKey([]byte(rotatedIdentity))
 			assert.NoError(t, err)
-			assert.NoError(t, (*scope.captures.keyring).RemoveAll())
-			assert.NoError(t, (*scope.captures.keyring).Add(agent.AddedKey{PrivateKey: raw}))
-			(*scope.captures.tr).
+			assert.NoError(t, (*(*scope.captures).keyring).RemoveAll())
+			assert.NoError(t, (*(*scope.captures).keyring).Add(agent.AddedKey{PrivateKey: raw}))
+			(*(*scope.captures).tr).
 				allowed = rotatedSigner.PublicKey()
-			authenticated := (*scope.captures.tr).authenticated.Load()
-			rotated, err := scope.missing.RetryAmbient(t.Context())
+			authenticated := (*(*scope.captures).tr).authenticated.Load()
+			rotated, err := (*scope.missing).RetryAmbient(t.Context())
 			assert.NoError(t, err)
-			<-(*scope.captures.closed)
+			<-(*(*scope.captures).closed)
 			assert.FatalIf(
 				t,
-				rotated.Key == warm.Key || (*scope.captures.tr).authenticated.Load() != authenticated+1 ||
-					(*scope.captures.opened).
+				rotated.Key == warm.Key || (*(*scope.captures).tr).authenticated.Load() != authenticated+1 ||
+					(*(*scope.captures).opened).
 						Load() != before+3,
 				"%s",
 				"signer rotation reused cache identity or agent selection",
 			)
 		}
 	}
-	t.Logf("authenticated sessions=%d; success=%t", (*scope.captures.tr).authenticated.Load(), (*scope.success))
+	t.Logf("authenticated sessions=%d; success=%t", (*(*scope.captures).tr).authenticated.Load(), (*scope.success))
 }

@@ -177,7 +177,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 				crossCtx,
 				&sharedContentAfterCancellation{
 					concurrency: &concurrency,
-					c:           c,
+					c:           &c,
 					content:     &content,
 					release:     &release,
 					ids:         &ids,
@@ -599,7 +599,7 @@ func TestAcquire_CancelStopsContextIgnoringProducer(t *testing.T) {
 
 type sharedContentAfterCancellation struct {
 	concurrency *int
-	c           *Cache
+	c           **Cache
 	content     *struct{ URL string }
 	release     *chan struct{}
 	ids         *chan string
@@ -613,7 +613,7 @@ func testAcquireSharedContentAfterCancellation(
 	scope *sharedContentAfterCancellation,
 ) {
 	t.Helper()
-	r, _, blobID, err := scope.c.Blob(
+	r, _, blobID, err := (*scope.c).Blob(
 		crossCtx,
 		BlobKey{Content: (*scope.content)},
 		Policy{MaxAge: time.Hour},
@@ -626,7 +626,7 @@ func testAcquireSharedContentAfterCancellation(
 	}
 	_, _ = fs.ReadFile(r, "content")
 
-	g, gitID, err := scope.c.Git(
+	g, gitID, err := (*scope.c).Git(
 		crossCtx,
 		GitKey{Content: (*scope.content)},
 		Policy{MaxAge: time.Hour},

@@ -46,9 +46,10 @@ func (n *Network) RoundTrip(r *http.Request) (*http.Response, error) {
 	n.defaultOnce.Do(func() {
 		n.defaultHTTP, _ = n.HTTPTransport(HTTPTransportConfig{})
 	})
+	//nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
 	return n.defaultHTTP.RoundTrip(
 		r,
-	) //nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
+	)
 }
 
 type networkTransports map[string]*networkTransport
@@ -139,9 +140,10 @@ func (t *networkTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err := t.network.endpoint(request.endpoint).Load(); err != nil {
 		return nil, &cache.TerminalError{Err: *err}
 	}
+	//nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
 	return t.transport.RoundTrip(
 		r.WithContext(context.WithValue(r.Context(), networkRequestKey{}, request)),
-	) //nolint:wrapcheck // HTTP transport adapters preserve net.Error behavior and upstream protocol classification.
+	)
 }
 
 func (n *Network) endpoint(key networkEndpoint) *atomic.Pointer[error] {

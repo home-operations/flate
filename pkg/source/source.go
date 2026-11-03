@@ -56,6 +56,8 @@ type TypedFetcher[T manifest.BaseManifest] interface {
 // type-assertion site is here — a mismatched payload returns
 // ErrInput rather than panicking. Embeds the Kind label so the
 // error message names the responsible fetcher.
+//
+//nolint:ireturn // The SDK dispatcher contract returns Fetcher; exposing its private adapter would change the public signature.
 func Wrap[T manifest.BaseManifest](kindLabel string, f TypedFetcher[T]) Fetcher {
 	return typedAdapter[T]{label: kindLabel, inner: f}
 }

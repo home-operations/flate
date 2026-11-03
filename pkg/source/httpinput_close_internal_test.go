@@ -52,19 +52,18 @@ func closeTestHTTPInputs(t *testing.T, h *HTTPInputs) {
 	}
 }
 
-//nolint:tparallel // The lazy-selection subtest mutates the process proxy environment.
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
+//nolint:paralleltest,tparallel // The lazy-selection child changes the process proxy environment.
 func TestHTTPInputs_Close(t *testing.T) {
 	t.Run("lazy-selection", func(t *testing.T) { testHTTPInputsCloseLazySelection(t) })
 	t.Run(
 		"borrowed-network",
-		func(t *testing.T) { ; testHTTPInputsCloseBorrowedNetwork(t) },
+		func(t *testing.T) { t.Parallel(); testHTTPInputsCloseBorrowedNetwork(t) },
 	) // Borrowed idle connections MUST survive owner teardown.
 
 	for _, concurrency := range []int{2, 4} {
 		for _, stage := range []string{"unused", "idle", "published", "admitted-before-launch", "retired"} {
 			t.Run(fmt.Sprintf("%d/%s", concurrency, stage), func(t *testing.T) {
+				t.Parallel()
 				testHTTPInputsCloseCase(t, &concurrency, &stage)
 			},
 
@@ -75,7 +74,7 @@ func TestHTTPInputs_Close(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Subtests share their parent acquisition fixture and observe its state in order.
+//nolint:paralleltest,tparallel // Subtests share their parent acquisition fixture and observe its state in order.
 func TestHTTPInputs_CloseDoesNotLeak(t *testing.T) {
 	t.Parallel()
 
@@ -101,6 +100,7 @@ func TestHTTPInputs_CloseDoesNotLeak(t *testing.T) {
 	}
 	baseline := stacks()
 	check := func(t *testing.T) {
+		t.Helper()
 		testHTTPInputsCloseDoesNotLeakCallback(
 			t,
 			testHTTPInputsCloseDoesNotLeakCallbackInputs{stacks: &stacks, owned: &owned, baseline: &baseline},
@@ -522,7 +522,7 @@ func testHTTPInputsCloseCaseCallbackCompletion(
 	}
 	(*captures.cancel)()
 	{
-		_, err := (*captures.c).Acquire((*captures.ctx), captures.key.url, (*captures.key).retry, nil)
+		_, err := (*captures.c).Acquire((*captures.ctx), captures.key.url, captures.key.retry, nil)
 		assert.FatalIf(t, !errors.Is(err, context.Canceled), "already canceled waiter: %v", err)
 	}
 	(*captures.c).

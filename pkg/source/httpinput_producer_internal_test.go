@@ -152,9 +152,6 @@ func testHTTPGetURLRequestLifetimeCase(t *testing.T, stage *string,
 	synctest.Test(t, func(t *testing.T) {
 		testHTTPGetURLRequestLifetimeCaseCallback(t, testHTTPGetURLRequestLifetimeCaseCallbackInputs{stage: &stage})
 	},
-
-	//nolint:fatcontext // The callback records the context for later lifetime assertions.
-
 	)
 }
 
@@ -220,7 +217,7 @@ type testHTTPGetURLBodyCloseErrorsCaseCallbackInputs struct {
 }
 
 func testHTTPGetURLBodyCloseErrorsCaseCallback(
-	callbackArg1 *http.Request,
+	_ *http.Request,
 	testCaseInput testHTTPGetURLBodyCloseErrorsCaseCallbackInputs,
 ) (*http.Response, error) {
 	var reader io.Reader = strings.NewReader("complete")

@@ -138,7 +138,6 @@ func testAcquireConditionalValidationCase3(t *testing.T, scenario *string,
 
 	root := t.TempDir()
 	const url = "https://reader:owner-cache-test-password@example.invalid/input"
-	const modified = "Mon, 01 Jun 2026 12:00:00 GMT"
 	etag := `W/"opaque-tag"`
 	closeErr := errors.New("304 close failed")
 	var firstIdentity string
@@ -176,11 +175,13 @@ func testAcquireConditionalValidationCase3(t *testing.T, scenario *string,
 		assert.NoError(t, err)
 
 		identity := sourcecache.AcquisitionIdentity(input)
-		if phase == 0 {
+		switch {
+		case phase == 0:
 			firstIdentity = identity
-		} else if (*scenario) == "clear" {
+		case (*scenario) == "clear":
 			assert.FatalIf(t, identity == firstIdentity, "%s", "changed bytes retained identity")
-		} else {
+		default:
+
 			assert.FatalIf(t, identity != firstIdentity, "%s", "unchanged bytes changed identity")
 		}
 
@@ -442,21 +443,21 @@ func testAcquireConditionalValidationCase3CallbackCompletion(
 	if (*captures.testCaseInput.phase) != 0 && ((*captures.wantETag) != "" || (*captures.wantModified) != "") {
 		(*captures.status), (*captures.body) = http.StatusNotModified, ""
 	}
-	if (*captures.testCaseInput.phase) != 0 && (*(*(*captures.testCaseInput).scenario)) == "clear" {
+	if (*captures.testCaseInput.phase) != 0 && (*(*captures.testCaseInput.scenario)) == "clear" {
 		(*captures.status), (*captures.body), (*captures.headers) = http.StatusOK, "changed", make(http.Header)
 	}
-	if (*captures.testCaseInput.phase) == 1 && (*(*(*captures.testCaseInput).scenario)) == "update-304" {
+	if (*captures.testCaseInput.phase) == 1 && (*(*captures.testCaseInput.scenario)) == "update-304" {
 		(*captures.headers) = http.Header{"Etag": {`"rotated"`}}
 	}
-	if (*(*captures.testCaseInput.scenario)) == "unsolicited-304" || (*(*captures.testCaseInput).phase) !=
+	if (*(*captures.testCaseInput.scenario)) == "unsolicited-304" || (*captures.testCaseInput.phase) !=
 		0 && (*(*captures.testCaseInput.scenario)) == "unvalidated-304" {
 		(*captures.status), (*captures.body) = http.StatusNotModified, ""
 	}
-	if (*captures.testCaseInput.phase) == 1 && (*(*(*captures.testCaseInput).scenario)) == "unauthorized" {
+	if (*captures.testCaseInput.phase) == 1 && (*(*captures.testCaseInput.scenario)) == "unauthorized" {
 		(*captures.status), (*captures.body) = http.StatusUnauthorized, ""
 	}
 	var closer error
-	if (*captures.testCaseInput.phase) == 1 && (*(*(*captures.testCaseInput).scenario)) == "close-304" {
+	if (*captures.testCaseInput.phase) == 1 && (*(*captures.testCaseInput.scenario)) == "close-304" {
 		closer = (*captures.testCaseInput.closeErr)
 	}
 	return &http.Response{

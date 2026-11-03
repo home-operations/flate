@@ -9,8 +9,6 @@ import (
 	"github.com/home-operations/flate/internal/testutil"
 )
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestNetwork_RegistryStoresOpenOnce(t *testing.T) {
 	docker, helm := t.TempDir(), filepath.Join(t.TempDir(), "registry.json")
 	t.Setenv("PATH", t.TempDir())

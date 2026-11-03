@@ -50,8 +50,6 @@ func TestResolveTransport_Identity(t *testing.T) {
 	assert.Equal(t, firstTransport, secondTransport)
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestResolveTransport_ProxySnapshot(t *testing.T) {
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "REQUEST_METHOD"} {
 		t.Setenv(key, "")
@@ -245,7 +243,7 @@ func testResolveTransportUnavailableMaterialCase(
 	)
 	assert.FatalIf(
 		t,
-		(tc.cert || tc.encodedData != nil || tc.name == "wiped username bad password scalar" || (*tc).name == "invalid address wiped password") &&
+		(tc.cert || tc.encodedData != nil || tc.name == "wiped username bad password scalar" || tc.name == "invalid address wiped password") &&
 			strings.Contains(err.Error(), "OCIRepository"),
 		"repeated owner: %v",
 		err,

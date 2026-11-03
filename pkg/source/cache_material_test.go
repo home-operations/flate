@@ -24,7 +24,7 @@ import (
 	"github.com/home-operations/flate/pkg/source/cache"
 )
 
-//nolint:paralleltest // Subtests share their parent acquisition fixture and observe its state in order.
+//nolint:paralleltest,tparallel // Subtests share their parent acquisition fixture and observe its state in order.
 func TestFetcher_TransportMaterialAbsentFromCache(t *testing.T) {
 	t.Parallel()
 

@@ -171,6 +171,7 @@ func (h *HTTPInputs) Acquire(
 	return input, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 }
 
+//nolint:nonamedreturns // Deferred body Close must join the returned error, including during panic unwinding.
 func (h *HTTPInputs) httpGetURL(
 	ctx context.Context,
 	urlStr string,
@@ -246,12 +247,12 @@ func (rf *remoteFetch) acquire(ctx context.Context, h *HTTPInputs, key *remoteKe
 	}
 }
 
-func (key *remoteKey) normalize() {
+func (k *remoteKey) normalize() {
 	// NaN cannot be a comparable dictionary key value.
-	if math.IsNaN(key.retry.Jitter) || math.IsInf(key.retry.Jitter, 0) {
-		key.retry.Jitter = 0
+	if math.IsNaN(k.retry.Jitter) || math.IsInf(k.retry.Jitter, 0) {
+		k.retry.Jitter = 0
 	} else {
-		key.retry.Jitter = max(0, min(1, key.retry.Jitter))
+		k.retry.Jitter = max(0, min(1, k.retry.Jitter))
 	}
 }
 
@@ -261,13 +262,15 @@ func httpResponseMetadata(
 	previous *ocispec.Descriptor,
 ) (cache.ProducerResult, error) {
 	var result cache.ProducerResult
-	if resp.StatusCode == http.StatusNotModified && previous != nil &&
-		(resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != "") {
+	switch {
+	case resp.StatusCode == http.StatusNotModified && previous != nil &&
+		(resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != ""):
 		result.Descriptor, result.Unchanged = *previous, true
-	} else if resp.StatusCode < 200 ||
-		resp.StatusCode > 299 {
+	case resp.StatusCode < 200 ||
+		resp.StatusCode > 299:
 		return cache.ProducerResult{}, &fetcherr.ResponseError{StatusCode: resp.StatusCode, Op: http.MethodGet}
-	} else {
+	default:
+
 		result.Annotations = make(map[string]string)
 		requestURL, responseURL := *req.URL, *resp.Request.URL
 		if requestURL.User != nil && responseURL.User != nil && *requestURL.User == *responseURL.User {
@@ -277,6 +280,7 @@ func httpResponseMetadata(
 			result.Annotations[httpOriginalURLAnnotation] = "true"
 		}
 	}
+
 	for _, validator := range [...]struct{ header, annotation string }{{"ETag", httpETagAnnotation}, {"Last-Modified", httpLastModifiedAnnotation}} {
 		if _, supplied := resp.Header[http.CanonicalHeaderKey(validator.header)]; supplied {
 			result.Annotations[validator.annotation] = resp.Header.Get(validator.header)

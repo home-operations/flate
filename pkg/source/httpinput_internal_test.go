@@ -461,8 +461,6 @@ func testAcquireConditionalValidationCase(t *testing.T, validator *string,
 ) {
 	t.Helper()
 
-	const etag = `"colliding-target-tag"`
-	const modified = "Mon, 01 Jun 2026 12:00:00 GMT"
 	older := time.Date(2020, time.June, 1, 12, 0, 0, 0, time.UTC)
 	var phase atomic.Int32
 	var trace remoteHTTPTrace
@@ -522,8 +520,6 @@ func testAcquireConditionalValidationCase2(t *testing.T, scenario *string,
 ) {
 	t.Helper()
 
-	const etag = `"target-local-tag"`
-	const modified = "Mon, 01 Jun 2026 12:00:00 GMT"
 	var phase, requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		testAcquireConditionalValidationCase2Callback(
@@ -625,13 +621,16 @@ func testAcquireConditionalValidationCaseCallback(
 		http.Redirect(w, r, target, record.Status)
 		return
 	}
-	if (*(*testCaseInput.validator)) == "etag" {
+	switch {
+	case (*(*testCaseInput.validator)) == "etag":
 		w.Header().Set("ETag", etag)
-	} else if r.URL.Path == "/v2.yaml" {
+	case r.URL.Path == "/v2.yaml":
 		w.Header().Set("Last-Modified", modified)
-	} else {
+	default:
+
 		w.Header().Set("Last-Modified", testCaseInput.older.Format(http.TimeFormat))
 	}
+
 	record.Bytes, _ = fmt.Fprintf(
 		w,
 		"version: %s\n",

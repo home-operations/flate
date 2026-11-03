@@ -156,8 +156,12 @@ func TestDecodeDocs_CumulativeSkippedAliasBudget(t *testing.T) {
 	}
 	docs, err := DecodeDocs(strings.NewReader(prefix+tail), IncidentalDocuments)
 	assert.NoError(t, err)
-	if len(docs) >= 800 || len(docs) == 0 || !strings.Contains(docs[len(docs)-1].Err.Error(), "alias") {
+	if len(docs) >= 800 || len(docs) == 0 || docs[len(docs)-1].Err == nil {
 		t.Fatalf("skipped documents reset stream budget: %d documents, %v", len(docs), DocumentFailure(docs))
+	}
+	failure := docs[len(docs)-1].Err
+	if !errors.Is(failure, ErrInput) || !errors.Is(failure, ErrFlux) || !strings.Contains(failure.Error(), "alias") {
+		t.Fatalf("invalid stream budget failure: %v", failure)
 	}
 }
 

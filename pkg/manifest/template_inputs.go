@@ -203,77 +203,18 @@ func (r *ResourceSet) templateProjection() TemplateProjection {
 	if len(r.Resources) == 0 && r.ResourcesTemplate == "" && len(r.Steps) == 0 {
 		return projection
 	}
-	type child struct {
-		object    BaseManifest
-		namespace string
-		evaluated bool
-	}
-	var children []child
-	winners := map[NamedResource]int{}
-	collect := func(data []byte, evaluated bool) {
-		projectTemplate(data, r.Namespace, false, func(object BaseManifest, namespace string) {
-			id := object.Named()
-			if i, known := winners[id]; known {
-				if evaluated && !children[i].evaluated {
-					children[i] = child{object, namespace, true}
-				}
-				return
-			}
-			winners[id] = len(children)
-			children = append(children, child{object, namespace, evaluated})
-		})
-	}
-	var inputs []map[string]any
-	inputsKnown := false
-	visit := func(data []byte, jsonDocument bool) {
-		collect(data, false)
-		if jsonDocument {
-			converted, err := yaml.JSONToYAML(data)
-			if err != nil {
-				return
-			}
-			data = converted
-		}
-		if !strings.Contains(string(data), "<<") {
-			return
-		}
-		if !inputsKnown {
-			inputsKnown = true
-			var err error
-			inputs, err = resourcesetinput.Combine(
-				[]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)},
-				r.InputStrategy,
-			)
-			if err != nil {
-				return
-			}
-			if len(inputs) == 0 {
-				inputs = []map[string]any{nil}
-			}
-		}
-		template, err := resourcesetinput.Parse(string(data))
-		if err != nil {
-			return
-		}
-		for _, input := range inputs {
-			rendered, err := template.Execute(input)
-			if err != nil {
-				continue
-			}
-			collect(rendered, true)
-		}
-	}
+	templates := resourceSetTemplates{winners: map[NamedResource]int{}}
 	for _, resource := range r.Resources {
-		visit(resource.Raw, true)
+		templates.visit(r, resource.Raw, true)
 	}
-	visit([]byte(r.ResourcesTemplate), false)
+	templates.visit(r, []byte(r.ResourcesTemplate), false)
 	for _, step := range r.Steps {
 		for _, resource := range step.Resources {
-			visit(resource.Raw, true)
+			templates.visit(r, resource.Raw, true)
 		}
-		visit([]byte(step.ResourcesTemplate), false)
+		templates.visit(r, []byte(step.ResourcesTemplate), false)
 	}
-	for _, child := range children {
+	for _, child := range templates.children {
 		projection.addObject(child.object, child.namespace, true)
 	}
 	return projection
@@ -368,4 +309,70 @@ func projectTemplateNode(node *kyaml.RNode, namespace string, projected bool, yi
 		return
 	}
 	yield(object, authoredNamespace)
+}
+
+type projectedTemplateChild struct {
+	object    BaseManifest
+	namespace string
+	evaluated bool
+}
+
+type resourceSetTemplates struct {
+	children    []projectedTemplateChild
+	winners     map[NamedResource]int
+	inputs      []map[string]any
+	inputsKnown bool
+}
+
+func (p *resourceSetTemplates) collect(data []byte, defaultNamespace string, evaluated bool) {
+	projectTemplate(data, defaultNamespace, false, func(object BaseManifest, namespace string) {
+		id := object.Named()
+		if i, known := p.winners[id]; known {
+			if evaluated && !p.children[i].evaluated {
+				p.children[i] = projectedTemplateChild{object, namespace, true}
+			}
+			return
+		}
+		p.winners[id] = len(p.children)
+		p.children = append(p.children, projectedTemplateChild{object, namespace, evaluated})
+	})
+}
+
+func (p *resourceSetTemplates) visit(r *ResourceSet, data []byte, jsonDocument bool) {
+	p.collect(data, r.Namespace, false)
+	if jsonDocument {
+		converted, err := yaml.JSONToYAML(data)
+		if err != nil {
+			return
+		}
+		data = converted
+	}
+	if !strings.Contains(string(data), "<<") {
+		return
+	}
+	if !p.inputsKnown {
+		p.inputsKnown = true
+		var err error
+		p.inputs, err = resourcesetinput.Combine(
+			[]resourcesetinput.Group{resourcesetinput.Inline(r.Name, r.Namespace, r.Inputs)},
+			r.InputStrategy,
+		)
+		if err != nil {
+			return
+		}
+		if len(p.inputs) == 0 {
+			p.inputs = []map[string]any{nil}
+		}
+	}
+	template, err := resourcesetinput.Parse(string(data))
+	if err != nil {
+		return
+	}
+	for _, input := range p.inputs {
+		rendered, err := template.Execute(input)
+		if err != nil {
+			continue
+		}
+		p.collect(rendered, r.Namespace, true)
+	}
 }

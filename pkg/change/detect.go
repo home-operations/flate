@@ -275,29 +275,7 @@ func Detect(ctx context.Context, before, after *store.SourceArtifact) (*Set, err
 	if err != nil {
 		return nil, err
 	}
-	paths := make(map[string]struct{}, len(aft)/changeCapacityDivisor)
-
-	var jobs []hashJob
-	var oneSided []string
-	for name, right := range aft {
-		left, ok := bef[name]
-		if !ok || left.size != right.size || digests[0] != nil && digests[0][name] != digests[1][name] {
-			paths[name] = struct{}{}
-			if !ok {
-				oneSided = append(oneSided, name)
-			}
-			continue
-		}
-		if digests[0] == nil {
-			jobs = append(jobs, hashJob{name: name})
-		}
-	}
-	for name := range bef {
-		if _, ok := aft[name]; !ok {
-			paths[name] = struct{}{}
-			oneSided = append(oneSided, name)
-		}
-	}
+	paths, jobs, oneSided := compareScannedFiles(bef, aft, digests)
 	if err := hashJobs(ctx, before, after, jobs); err != nil {
 		return nil, err
 	}
@@ -411,7 +389,6 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 }
 
 func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.NamedResource]string, error) {
-	var declared map[manifest.NamedResource]string
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".yaml", ".yml", ".json":
 	default:
@@ -446,24 +423,8 @@ func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.N
 		}
 		return nil, nil //nolint:nilnil // A nil result denotes successful absence.
 	}
-	for _, occurrence := range docs {
-		doc := occurrence.Document
-		id := manifest.DocIdentity(doc)
-		if id.Kind != "" && id.Name != "" && manifest.DocAPIVersion(doc) != "" &&
-			!manifest.HasEnvsubstReference(id.Name) &&
-			!manifest.HasEnvsubstReference(id.Namespace) {
-			if declared == nil {
-				declared = map[manifest.NamedResource]string{}
-			}
-			fingerprint := manifest.Fingerprint(manifest.WithoutOwnershipLabels(doc))
-			if previous, present := declared[id]; present && previous != fingerprint {
-				fingerprint = ""
-			}
-			declared[id] = fingerprint
-		}
-		manifest.ReleaseDoc(doc)
-	}
-	return declared, ctx.Err()
+	declared := inputDeclarations(docs)
+	return declared, ctx.Err() //nolint:wrapcheck // Preserve this final cancellation identity and diagnostic.
 }
 
 func checkedInputReader(ctx context.Context, f fs.File, terminal, readErr *error) inputReader {
@@ -478,11 +439,11 @@ func checkedInputReader(ctx context.Context, f fs.File, terminal, readErr *error
 			localErr != io.EOF { //nolint:errorlint // io.Reader requires an unwrapped EOF; preserve other read errors.
 			*readErr = localErr
 		}
-		if localErr := ctx.Err(); localErr != nil {
-			*terminal = localErr
-			return 0, fmt.Errorf("context: %w", localErr)
+		if cancelErr := ctx.Err(); cancelErr != nil {
+			*terminal = cancelErr
+			return 0, fmt.Errorf("context: %w", cancelErr)
 		}
-		return n, localErr
+		return n, localErr //nolint:wrapcheck // Keep io.Reader EOF exact and other read errors unchanged.
 	})
 }
 
@@ -539,4 +500,56 @@ type readerComparison struct {
 	inputs    [2]map[manifest.NamedResource]inputprojection.Projection
 	source    manifest.NamedResource
 	artifacts [2]*store.SourceArtifact
+}
+
+func compareScannedFiles(
+	before, after map[string]fileMeta,
+	digests [2]map[string]string,
+) (map[string]struct{}, []hashJob, []string) {
+	paths := make(map[string]struct{}, len(after)/changeCapacityDivisor)
+
+	var jobs []hashJob
+	var oneSided []string
+	for name, right := range after {
+		left, ok := before[name]
+		if !ok || left.size != right.size || digests[0] != nil && digests[0][name] != digests[1][name] {
+			paths[name] = struct{}{}
+			if !ok {
+				oneSided = append(oneSided, name)
+			}
+			continue
+		}
+		if digests[0] == nil {
+			jobs = append(jobs, hashJob{name: name})
+		}
+	}
+	for name := range before {
+		if _, ok := after[name]; !ok {
+			paths[name] = struct{}{}
+			oneSided = append(oneSided, name)
+		}
+	}
+	return paths, jobs, oneSided
+}
+
+func inputDeclarations(docs []manifest.DocOccurrence) map[manifest.NamedResource]string {
+	var declared map[manifest.NamedResource]string
+	for _, occurrence := range docs {
+		doc := occurrence.Document
+		id := manifest.DocIdentity(doc)
+		if id.Kind != "" && id.Name != "" && manifest.DocAPIVersion(doc) != "" &&
+			!manifest.HasEnvsubstReference(id.Name) &&
+			!manifest.HasEnvsubstReference(id.Namespace) {
+			if declared == nil {
+				declared = map[manifest.NamedResource]string{}
+			}
+			fingerprint := manifest.Fingerprint(manifest.WithoutOwnershipLabels(doc))
+			if previous, present := declared[id]; present && previous != fingerprint {
+				fingerprint = ""
+			}
+			declared[id] = fingerprint
+		}
+		manifest.ReleaseDoc(doc)
+	}
+	return declared
 }

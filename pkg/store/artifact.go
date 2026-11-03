@@ -87,11 +87,18 @@ const (
 
 // ArtifactInput is the comparable projection of selected source facts.
 type ArtifactInput struct {
-	Present, Readable                                bool
-	Kind, Key, Content, Digest, LocalRoot, LocalPath string
-	InputAlias                                       bool
-	Revision, Origin                                 string
-	OriginPresent                                    bool
+	Present       bool   `json:"Present"`
+	Readable      bool   `json:"Readable"`
+	Kind          string `json:"Kind"`
+	Key           string `json:"Key"`
+	Content       string `json:"Content"`
+	Digest        string `json:"Digest"`
+	LocalRoot     string `json:"LocalRoot"`
+	LocalPath     string `json:"LocalPath"`
+	InputAlias    bool   `json:"InputAlias"`
+	Revision      string `json:"Revision"`
+	Origin        string `json:"Origin"`
+	OriginPresent bool   `json:"OriginPresent"`
 }
 
 // Input returns the selected facts without retaining filesystem handles or metadata maps.

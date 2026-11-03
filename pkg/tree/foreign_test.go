@@ -176,13 +176,28 @@ func assertMountView(t *testing.T, tr *tree.Tree, contract mountContract) {
 				}
 			}
 			{
-				assert.ErrorIf(t, !slices.Equal(names, wantNames), "ReadDir(%q) = %v, want %v", want.name, names, wantNames)
+				assert.ErrorIf(
+					t,
+					!slices.Equal(names, wantNames),
+					"ReadDir(%q) = %v, want %v",
+					want.name,
+					names,
+					wantNames,
+				)
 			}
 			continue
 		}
 		data, err := fs.ReadFile(tr, want.name)
 		{
-			assert.ErrorIf(t, err != nil || string(data) != want.data, "ReadFile(%q) = %q, %v; want %q", want.name, data, err, want.data)
+			assert.ErrorIf(
+				t,
+				err != nil || string(data) != want.data,
+				"ReadFile(%q) = %q, %v; want %q",
+				want.name,
+				data,
+				err,
+				want.data,
+			)
 		}
 		file, err := tr.Open(want.name)
 		if err != nil {
@@ -495,7 +510,15 @@ func assertMountViewCompletion(t *testing.T, tr *tree.Tree, contract *mountContr
 				return err
 			})
 			{
-				assert.ErrorIf(t, err != nil || !slices.Equal(visited, (*wantWalk)), "%s = %v, %v; want %v", walk.name, visited, err, (*wantWalk))
+				assert.ErrorIf(
+					t,
+					err != nil || !slices.Equal(visited, (*wantWalk)),
+					"%s = %v, %v; want %v",
+					walk.name,
+					visited,
+					err,
+					(*wantWalk),
+				)
 			}
 		}
 	}

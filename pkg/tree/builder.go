@@ -63,19 +63,7 @@ func (b *Builder) directory(name string) (*node, error) {
 		if !lower.IsDir() {
 			return nil, ErrConflict
 		}
-		*n = *lower
-		if lower.foreign != nil {
-			if lower.foreign.mount != "" {
-				foreign := *lower.foreign
-				foreign.info, foreign.upper = lower, true
-				n.foreign = &foreign
-			} else {
-				n.foreign = &foreignNode{source: b.input.lower, path: name, info: lower, upper: true}
-			}
-			n.children = nil
-		} else {
-			n.children = slices.Clone(lower.children)
-		}
+		b.copyDirectory(name, n, lower)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
@@ -203,6 +191,7 @@ func (b *Builder) Mount(name string, input fs.FS) error {
 	}
 	info, err := fs.Stat(input, ".")
 	if err != nil {
+		//nolint:wrapcheck // The io/fs adapter preserves upstream errors and their PathError structure.
 		return err
 	}
 	n := &node{
@@ -233,3 +222,19 @@ const (
 	defaultDirectoryMode = 0o755
 	symbolicLinkMode     = 0o777
 )
+
+func (b *Builder) copyDirectory(name string, n, lower *node) {
+	*n = *lower
+	if lower.foreign != nil {
+		if lower.foreign.mount != "" {
+			foreign := *lower.foreign
+			foreign.info, foreign.upper = lower, true
+			n.foreign = &foreign
+		} else {
+			n.foreign = &foreignNode{source: b.input.lower, path: name, info: lower, upper: true}
+		}
+		n.children = nil
+	} else {
+		n.children = slices.Clone(lower.children)
+	}
+}

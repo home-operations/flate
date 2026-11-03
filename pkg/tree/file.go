@@ -29,6 +29,7 @@ func (f *file) Read(p []byte) (int, error) {
 	if f.node.IsDir() {
 		return 0, &fs.PathError{Op: "read", Path: f.name, Err: fs.ErrInvalid}
 	}
+	//nolint:wrapcheck // io.Reader requires the unchanged EOF sentinel.
 	return f.reader.Read(p)
 }
 

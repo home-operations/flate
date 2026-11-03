@@ -687,7 +687,7 @@ func TestResolve_RetainedConfiguration(t *testing.T) {
 			assert.NoError(t, err)
 			location := input.FS.(*gittree.FS).Location()
 			assert.NoError(t, os.Remove(filepath.Join(root, ".git", "config")))
-			resolved, err := resolve(t.Context(), location, explicit, cachetest.New(t, "", sourcecache.New))
+			resolved, err := (selection{repo: location.Repository, owner: cachetest.New(t, "", sourcecache.New)}).resolve(t.Context(), location, explicit)
 			assert.NoError(t, err)
 			assert.Equal(t, resolved.Hash, base)
 			if route == "upstream" {
@@ -773,7 +773,7 @@ func TestResolve_InputErrors(t *testing.T) {
 			} else {
 				assert.NoError(t, storer.SetReference(plumbing.NewHashReference(plumbing.HEAD, plumbing.NewHash(strings.Repeat("a", 40)))))
 			}
-			_, err := resolve(t.Context(), &gitrepo.Location{Repository: &git.Repository{Storer: storer}}, "", nil)
+			_, err := (selection{repo: &git.Repository{Storer: storer}}).resolve(t.Context(), &gitrepo.Location{}, "")
 			assert.Equal(t, errors.Is(err, manifest.ErrInput), true)
 			assert.Equal(t, errors.Is(err, manifest.ErrFlux), true)
 			assert.Equal(t, errors.Is(err, tc.cause), true)

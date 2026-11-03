@@ -351,7 +351,7 @@ func BenchmarkMergeChartValuesFiles(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if _, err := cli.mergeChartValuesFiles(b.Context(), chartDescription{chart: ch}, names, false); err != nil {
+		if _, err := cli.mergeChartValuesFiles(b.Context(), &chartDescription{chart: ch}, names, false); err != nil {
 			b.Fatalf("mergeChartValuesFiles: %v", err)
 		}
 	}

@@ -192,7 +192,7 @@ data:
 		loaded, err := loadDecodedChart(t.Context(), cli, hr, cliSources)
 		assert.NoError(t, err)
 		loaded.oci = &ociChartContent{Digest: digest, Revision: "6.15.0@" + digest}
-		_, err = cli.mergeChartValuesFiles(t.Context(), loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		_, err = cli.mergeChartValuesFiles(t.Context(), &loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
 		assert.NoError(t, err)
 		key := computeTemplateKey(loaded, map[string]any{}, Options{}, hr)
 		t.Logf("chart fingerprint=%s template key=%s", loaded.fingerprint, key)
@@ -477,7 +477,7 @@ func testTemplateCacheOCIIdentityCase(t *testing.T, testCaseInput *testTemplateC
 			Revision:        identity.Revision,
 			DisableTracking: (*testCaseInput.disable),
 		}
-		valuesKey := chartValuesCacheKey(loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, "")
+		valuesKey := chartValuesCacheKey(&loaded, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles, "")
 		merged, ok := cli.chartValuesCache[valuesKey]
 		{
 			assert.FatalIf(

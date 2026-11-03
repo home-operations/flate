@@ -48,7 +48,7 @@ func TestTemplate_AcceptedHistory(t *testing.T) {
 	}
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
-	frame.header.Analysis = (chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
+	frame.header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
 	frame.encoded, err = encodeFrame(frame.header, frame.output)
 	assert.NoError(t, err)
 	frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])

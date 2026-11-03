@@ -132,7 +132,7 @@ func TestUnreferencedValuePaths(t *testing.T) {
 			if tc.src != "" {
 				ch.Templates = []*chartcommon.File{{Data: []byte(tc.src)}}
 			}
-			analysis := (chartDescription{chart: ch}).analyze()
+			analysis := (&chartDescription{chart: ch}).analyze()
 			analysis.Allowed = al
 			got := analysis.unreferencedValuePaths(tc.values)
 			assert.FatalIf(t, !slices.Equal(got, tc.want), "unreferencedValuePaths = %v, want %v", got, tc.want)

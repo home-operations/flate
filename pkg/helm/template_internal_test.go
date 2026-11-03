@@ -369,7 +369,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	loaded := chartDescription{chart: ch, fingerprint: chartFixtureDescription(t, ch).fingerprint}
 	names := []string{"values.yaml", "values-prod.yaml"}
 
-	first, err := cli.mergeChartValuesFiles(t.Context(), loaded, names, false)
+	first, err := cli.mergeChartValuesFiles(t.Context(), &loaded, names, false)
 	{
 		assert.FatalIf(t, err != nil, "first call: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	}
 
 	loaded.chart.Files = nil
-	second, err := cli.mergeChartValuesFiles(t.Context(), loaded, names, false)
+	second, err := cli.mergeChartValuesFiles(t.Context(), &loaded, names, false)
 	{
 		assert.FatalIf(t, err != nil, "second call (cache hit expected): %v", err)
 	}
@@ -390,7 +390,7 @@ func TestMergeChartValuesFiles_Cached(t *testing.T) {
 	// affect the second (defensive deep-clone on cache read).
 	first["replicaCount"] = "stomped"
 	first["image"].(map[string]any)["tag"] = "stomped"
-	third, err := cli.mergeChartValuesFiles(t.Context(), loaded, names, false)
+	third, err := cli.mergeChartValuesFiles(t.Context(), &loaded, names, false)
 	{
 		assert.FatalIf(t, err != nil, "third call: %v", err)
 	}
@@ -425,7 +425,7 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 
 	a, err := cli.mergeChartValuesFiles(
 		t.Context(),
-		chartDescription{chart: chA, fingerprint: chartFixtureDescription(t, chA).fingerprint},
+		&chartDescription{chart: chA, fingerprint: chartFixtureDescription(t, chA).fingerprint},
 		[]string{"prod.yaml"},
 		false,
 	)
@@ -434,7 +434,7 @@ func TestMergeChartValuesFiles_DifferentKeysDontShare(t *testing.T) {
 	}
 	b, err := cli.mergeChartValuesFiles(
 		t.Context(),
-		chartDescription{chart: chB, fingerprint: chartFixtureDescription(t, chB).fingerprint},
+		&chartDescription{chart: chB, fingerprint: chartFixtureDescription(t, chB).fingerprint},
 		[]string{"prod.yaml"},
 		false,
 	)
@@ -466,8 +466,8 @@ func TestMergeChartValuesFiles_UnfingerprintedChartsDontShare(t *testing.T) {
 				},
 			}
 			loaded := chartDescription{chart: ch, fingerprint: ""}
-			assert.Equal(t, chartValuesCacheKey(loaded, []string{"prod.yaml"}, false, ""), "")
-			values, err := cli.mergeChartValuesFiles(t.Context(), loaded, []string{"prod.yaml"}, false)
+			assert.Equal(t, chartValuesCacheKey(&loaded, []string{"prod.yaml"}, false, ""), "")
+			values, err := cli.mergeChartValuesFiles(t.Context(), &loaded, []string{"prod.yaml"}, false)
 			{
 				assert.NoError(t, err)
 			}
@@ -497,7 +497,7 @@ func TestMergeChartValuesFiles_OrderedPolicy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			merged, err := cli.mergeChartValuesFiles(t.Context(), loaded, tc.files, tc.ignore)
+			merged, err := cli.mergeChartValuesFiles(t.Context(), &loaded, tc.files, tc.ignore)
 			if tc.want == "" {
 				{
 					assert.FatalIf(t, err == nil, "%s", "required missing file was served from cache")
@@ -531,48 +531,48 @@ func TestChartValuesCacheKey_DistinctInputs(t *testing.T) {
 	}{
 		{
 			"name boundaries",
-			chartValuesCacheKey(loaded, []string{"ab"}, false, ""),
-			chartValuesCacheKey(loaded, []string{"a", "b"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"ab"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"a", "b"}, false, ""),
 		},
 		{
 			"empty trailing name",
-			chartValuesCacheKey(loaded, []string{"a", ""}, false, ""),
-			chartValuesCacheKey(loaded, []string{"a"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"a", ""}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"a"}, false, ""),
 		},
 		{
 			"missing file policy",
-			chartValuesCacheKey(loaded, []string{"a"}, true, ""),
-			chartValuesCacheKey(loaded, []string{"a"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"a"}, true, ""),
+			chartValuesCacheKey(&loaded, []string{"a"}, false, ""),
 		},
 		{
 			"name order",
-			chartValuesCacheKey(loaded, []string{"a", "b"}, false, ""),
-			chartValuesCacheKey(loaded, []string{"b", "a"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"a", "b"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"b", "a"}, false, ""),
 		},
 		{
 			"lookup domain",
-			chartValuesCacheKey(loaded, []string{"a"}, false, ""),
-			chartValuesCacheKey(unpinned, []string{"a"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"a"}, false, ""),
+			chartValuesCacheKey(&unpinned, []string{"a"}, false, ""),
 		},
 		{
 			"acquired source pin",
-			chartValuesCacheKey(source, []string{"a"}, false, ""),
-			chartValuesCacheKey(otherSource, []string{"a"}, false, ""),
+			chartValuesCacheKey(&source, []string{"a"}, false, ""),
+			chartValuesCacheKey(&otherSource, []string{"a"}, false, ""),
 		},
 		{
 			"missing versus empty source file",
-			chartValuesCacheKey(unpinned, []string{"a"}, true, manifest.Fingerprint([]chartValuesFile{{Missing: true}})),
-			chartValuesCacheKey(unpinned, []string{"a"}, true, manifest.Fingerprint([]chartValuesFile{{}})),
+			chartValuesCacheKey(&unpinned, []string{"a"}, true, manifest.Fingerprint([]chartValuesFile{{Missing: true}})),
+			chartValuesCacheKey(&unpinned, []string{"a"}, true, manifest.Fingerprint([]chartValuesFile{{}})),
 		},
 		{
 			"mutable source bytes",
-			chartValuesCacheKey(unpinned, []string{"a"}, false, manifest.Fingerprint([]chartValuesFile{{Data: []byte("one")}})),
-			chartValuesCacheKey(unpinned, []string{"a"}, false, manifest.Fingerprint([]chartValuesFile{{Data: []byte("two")}})),
+			chartValuesCacheKey(&unpinned, []string{"a"}, false, manifest.Fingerprint([]chartValuesFile{{Data: []byte("one")}})),
+			chartValuesCacheKey(&unpinned, []string{"a"}, false, manifest.Fingerprint([]chartValuesFile{{Data: []byte("two")}})),
 		},
 		{
 			"chart fingerprint",
-			chartValuesCacheKey(loaded, []string{"a"}, false, ""),
-			chartValuesCacheKey(changed, []string{"a"}, false, ""),
+			chartValuesCacheKey(&loaded, []string{"a"}, false, ""),
+			chartValuesCacheKey(&changed, []string{"a"}, false, ""),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -617,14 +617,10 @@ func TestOCIChartContent_DistinctInputs(t *testing.T) {
 			)
 			assert.Equal(
 				t,
-				chartValuesCacheKey(
-					first,
-					[]string{"values.yaml"},
+				chartValuesCacheKey(&first, []string{"values.yaml"},
 					false,
 					"",
-				) != chartValuesCacheKey(
-					second,
-					[]string{"values.yaml"},
+				) != chartValuesCacheKey(&second, []string{"values.yaml"},
 					false,
 					"",
 				),

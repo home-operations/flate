@@ -170,9 +170,7 @@ extra: {sequence: [{value: original}]}
 	}
 	values := map[string]any{"greeting": "hi", "fail": true}
 	loaded.values, loaded.valuesErr = cli.observeValuesFiles(
-		t.Context(),
-		loaded,
-		newHR().ChartValuesFiles,
+		t.Context(), &loaded, newHR().ChartValuesFiles,
 		newHR().IgnoreMissingValuesFiles,
 	)
 	assert.NoError(t, loaded.valuesErr)
@@ -293,9 +291,7 @@ extra: {sequence: [{value: original}]}
 		alternate := maps.Clone(values)
 		alternate["variant"] = true
 		loaded.values, loaded.valuesErr = cli.observeValuesFiles(
-			t.Context(),
-			loaded,
-			newHR().ChartValuesFiles,
+			t.Context(), &loaded, newHR().ChartValuesFiles,
 			newHR().IgnoreMissingValuesFiles,
 		)
 		assert.NoError(t, loaded.valuesErr)

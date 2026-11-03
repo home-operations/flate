@@ -160,9 +160,7 @@ func testTemplateCacheNonOCITrackingModeCase(
 			assert.NoError(t, err)
 		}
 		merged, err := cli.mergeChartValuesFiles(
-			t.Context(),
-			loaded,
-			hr.ChartValuesFiles,
+			t.Context(), &loaded, hr.ChartValuesFiles,
 			hr.IgnoreMissingValuesFiles,
 		)
 		{

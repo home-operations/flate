@@ -51,8 +51,7 @@ func TestTemplate_ConcurrentUncacheableRender(t *testing.T) {
 			prepared, err := cli.prepareTemplate(
 				t.Context(),
 				hr,
-				map[string]any{"gate": gate},
-				RenderOptions{Sources: sources},
+				map[string]any{"gate": gate}, &RenderOptions{Sources: sources},
 			)
 			assert.FatalIf(t, err != nil ||
 				prepared.key == "", "render gate has no cache identity: %v", err)

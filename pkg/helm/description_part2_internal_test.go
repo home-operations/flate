@@ -63,7 +63,7 @@ func TestReview_ErrorPrecedenceDiagnostics(t *testing.T) {
 		cliSources := NewSources(st)
 		d, err := cli.describeChart(t.Context(), hr, cliSources)
 		assert.NoError(t, err)
-		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, true)
+		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), &d, hr.ChartValuesFiles, true)
 		assert.NoError(t, d.valuesErr)
 		_, _, _, err = owner.Blob(
 			t.Context(),
@@ -281,9 +281,7 @@ func testReviewErrorPrecedenceCase2(t *testing.T, testCaseInput *string,
 		}
 	}
 	d.values, d.valuesErr = cli.observeValuesFiles(
-		t.Context(),
-		d,
-		hr.ChartValuesFiles,
+		t.Context(), &d, hr.ChartValuesFiles,
 		hr.IgnoreMissingValuesFiles,
 	)
 	assert.NoError(t, d.valuesErr)

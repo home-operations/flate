@@ -514,9 +514,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 			"second.yaml": "b: from-second\nc: second-only\n",
 		})
 		got, err := cli.mergeChartValuesFiles(
-			t.Context(),
-			chartDescription{chart: c},
-			[]string{"first.yaml", "second.yaml"},
+			t.Context(), &chartDescription{chart: c}, []string{"first.yaml", "second.yaml"},
 			false,
 		)
 		{
@@ -536,9 +534,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
 		got, err := cli.mergeChartValuesFiles(
-			t.Context(),
-			chartDescription{chart: c},
-			[]string{"a.yaml", "missing.yaml"},
+			t.Context(), &chartDescription{chart: c}, []string{"a.yaml", "missing.yaml"},
 			true,
 		)
 		{
@@ -552,7 +548,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("MissingFileErrorsWhenStrict", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"missing.yaml"}, false)
+		_, err := cli.mergeChartValuesFiles(t.Context(), &chartDescription{chart: c}, []string{"missing.yaml"}, false)
 		{
 			assert.FatalIf(t, err == nil, "%s", "expected error for missing file when ignoreMissing=false")
 		}
@@ -569,7 +565,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("InvalidYAMLErrors", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"bad.yaml": "key: : not-yaml\n"})
-		_, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, []string{"bad.yaml"}, false)
+		_, err := cli.mergeChartValuesFiles(t.Context(), &chartDescription{chart: c}, []string{"bad.yaml"}, false)
 		{
 			assert.FatalIf(t, err == nil, "%s", "expected error for invalid YAML")
 		}
@@ -581,7 +577,7 @@ func TestMergeChartValuesFiles(t *testing.T) {
 	t.Run("EmptyNamesReturnsEmpty", func(t *testing.T) {
 		t.Parallel()
 		c := chartWith(map[string]string{"a.yaml": "k: v\n"})
-		got, err := cli.mergeChartValuesFiles(t.Context(), chartDescription{chart: c}, nil, false)
+		got, err := cli.mergeChartValuesFiles(t.Context(), &chartDescription{chart: c}, nil, false)
 		{
 			assert.FatalIf(t, err != nil, "merge: %v", err)
 		}

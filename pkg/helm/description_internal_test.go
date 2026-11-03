@@ -256,7 +256,12 @@ func assertDescriptionIneligible(t *testing.T, st *store.Store, hr *manifest.Hel
 		{
 			assert.FatalIf(t, validOutput && validChartTemplates(d.chart), "%s", "invalid template bytes were changed")
 		}
-		d.values, d.valuesErr = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, hr.IgnoreMissingValuesFiles)
+		d.values, d.valuesErr = cli.observeValuesFiles(
+			t.Context(),
+			&d,
+			hr.ChartValuesFiles,
+			hr.IgnoreMissingValuesFiles,
+		)
 		assert.NoError(t, d.valuesErr)
 		_, _, _, err = owner.Blob(
 			t.Context(),
@@ -334,7 +339,7 @@ func testDescriptionProjectionCase2(t *testing.T, testCaseInput *testDescription
 		target = ch.Dependencies()[0]
 	}
 	target.Templates = append(target.Templates, &chartcommon.File{Data: []byte("{{ toYaml .Values }}")})
-	analysis := (chartDescription{chart: ch}).analyze()
+	analysis := (&chartDescription{chart: ch}).analyze()
 	{
 		assert.FatalIf(t, analysis.Templates != "", "%s", "opaque chart retained unused template analysis")
 	}

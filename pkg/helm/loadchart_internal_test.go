@@ -308,10 +308,10 @@ func TestLoadChart_AcquiredGitWarmReuse(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, warm.chart == first.chart, true)
 		assert.Equal(t, backing.opens.Load(), reads)
-		values, err := cli.mergeChartValuesFiles(t.Context(), first, []string{"config/prod.yaml"}, false)
+		values, err := cli.mergeChartValuesFiles(t.Context(), &first, []string{"config/prod.yaml"}, false)
 		assert.NoError(t, err)
 		assert.Equal(t, values["marker"], any("acquired"))
-		values, err = cli.mergeChartValuesFiles(t.Context(), warm, []string{"config/prod.yaml"}, false)
+		values, err = cli.mergeChartValuesFiles(t.Context(), &warm, []string{"config/prod.yaml"}, false)
 		assert.NoError(t, err)
 		assert.Equal(t, values["marker"], any("acquired"))
 		other.Chart.Name = "two"
@@ -572,7 +572,7 @@ func testLoadChartAcquiredGitWarmReuseCase(t *testing.T, testCaseInput *testLoad
 	}
 	d, newErr := renderer.describeChart(t.Context(), selected, rendererSources)
 	assert.NoError(t, newErr)
-	d.values, newErr = renderer.observeValuesFiles(t.Context(), d, selected.ChartValuesFiles, false)
+	d.values, newErr = renderer.observeValuesFiles(t.Context(), &d, selected.ChartValuesFiles, false)
 	assert.NoError(t, newErr)
 	key := cache.BlobKey{
 		Content: computeTemplateKey(d, map[string]any{}, Options{}, selected),

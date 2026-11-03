@@ -46,7 +46,7 @@ func (c *Client) Template(
 	hrValues map[string]any,
 	input RenderOptions,
 ) ([]manifest.DocOccurrence, *manifest.RenderReceipt, error) {
-	prepared, err := c.prepareTemplate(ctx, hr, hrValues, input)
+	prepared, err := c.prepareTemplate(ctx, hr, hrValues, &input)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -104,7 +104,7 @@ func (c *Client) prepareTemplate(
 	ctx context.Context,
 	hr *manifest.HelmRelease,
 	hrValues map[string]any,
-	input RenderOptions,
+	input *RenderOptions,
 ) (templateRequest, error) {
 	opts := input.Options
 	if err := ctx.Err(); err != nil {
@@ -125,9 +125,7 @@ func (c *Client) prepareTemplate(
 	caps, capabilityErr := opts.capabilities()
 	if loaded.valuesFS != nil {
 		loaded.values, loaded.valuesErr = c.observeValuesFiles(
-			ctx,
-			loaded,
-			hr.ChartValuesFiles,
+			ctx, &loaded, hr.ChartValuesFiles,
 			hr.IgnoreMissingValuesFiles,
 		)
 	}
@@ -324,7 +322,7 @@ type chartValuesFile struct {
 	Missing  bool           `json:"Missing"`
 }
 
-func (l chartDescription) readValuesFile(ctx context.Context, name, clean string) (chartValuesFile, error) {
+func (l *chartDescription) readValuesFile(ctx context.Context, name, clean string) (chartValuesFile, error) {
 	if err := ctx.Err(); err != nil {
 		return chartValuesFile{}, manifest.NewError(
 			manifest.ErrInput,
@@ -335,7 +333,8 @@ func (l chartDescription) readValuesFile(ctx context.Context, name, clean string
 	var data []byte
 	var err error
 	var missing bool
-	if l.valuesFS != nil {
+	switch {
+	case l.valuesFS != nil:
 		var f fs.File
 		f, err = l.valuesFS.Open(clean)
 		missing = errors.Is(err, fs.ErrNotExist)
@@ -351,9 +350,9 @@ func (l chartDescription) readValuesFile(ctx context.Context, name, clean string
 			}
 			err = errors.Join(err, f.Close())
 		}
-	} else if clean == "values.yaml" {
+	case clean == "values.yaml":
 		return chartValuesFile{Defaults: l.chart.Values}, nil
-	} else {
+	default:
 		err, missing = fs.ErrNotExist, true
 		for _, file := range l.chart.Files {
 			if file != nil && file.Name == clean {
@@ -384,7 +383,7 @@ type chartValuesEntry struct {
 
 func (c *Client) observeValuesFiles(
 	ctx context.Context,
-	loaded chartDescription,
+	loaded *chartDescription,
 	names []string,
 	ignoreMissing bool,
 ) (chartValuesEntry, error) {
@@ -418,7 +417,7 @@ func (c *Client) observeValuesFiles(
 	if loaded.valuesFS == nil {
 		return entry, nil
 	}
-	if err := entry.observe(ctx, &loaded, names, ignoreMissing); err != nil {
+	if err := entry.observe(ctx, loaded, names, ignoreMissing); err != nil {
 		return chartValuesEntry{}, err
 	}
 	fingerprint := manifest.Fingerprint(entry.inputs)
@@ -442,7 +441,7 @@ func (c *Client) observeValuesFiles(
 
 func (c *Client) mergeChartValuesFiles(
 	ctx context.Context,
-	loaded chartDescription,
+	loaded *chartDescription,
 	names []string,
 	ignoreMissing bool,
 ) (map[string]any, error) {
@@ -466,7 +465,7 @@ func (c *Client) mergeChartValuesFiles(
 	if entry.merged != nil {
 		return manifest.DeepCopyMap(entry.merged), nil
 	}
-	merged, mergeErr := entry.merge(ctx, &loaded, names, ignoreMissing)
+	merged, mergeErr := entry.merge(ctx, loaded, names, ignoreMissing)
 	if mergeErr != nil {
 		return nil, mergeErr
 	}
@@ -488,7 +487,7 @@ func (c *Client) mergeChartValuesFiles(
 	return manifest.DeepCopyMap(merged), nil
 }
 
-func chartValuesCacheKey(loaded chartDescription, names []string, ignoreMissing bool, inputs string) string {
+func chartValuesCacheKey(loaded *chartDescription, names []string, ignoreMissing bool, inputs string) string {
 	if loaded.fingerprint == "" {
 		return ""
 	}
@@ -562,9 +561,7 @@ func (r *templateRequest) render(
 	finalValues := r.values
 	if len(r.release.ChartValuesFiles) > 0 {
 		base, mergeChartValuesFilesErr := c.mergeChartValuesFiles(
-			ctx,
-			r.loaded,
-			r.release.ChartValuesFiles,
+			ctx, &r.loaded, r.release.ChartValuesFiles,
 			r.release.IgnoreMissingValuesFiles,
 		)
 		if mergeChartValuesFilesErr != nil {
@@ -696,6 +693,7 @@ func (r *templateRequest) produce(
 			frame:    frame,
 		}
 	}
+	//nolint:wrapcheck // The cache owner classifies producer write failures without changing their cause.
 	return cache.ProducerResult{}, errResult2
 }
 
@@ -744,7 +742,7 @@ func (r *templateRequest) install(ctx context.Context, ch *chart.Chart, finalVal
 	return releaseManifest(relV1, disableHooks, skipTests), nil
 }
 
-func (r *templateRequest) cachedRecord(ctx context.Context, generation fs.FS, identity string) (*renderRecord, error) {
+func (r *templateRequest) cachedRecord(_ context.Context, generation fs.FS, identity string) (*renderRecord, error) {
 	record := r.loaded.record
 	if record == nil || record.key != r.key || record.identity != identity {
 		data, readFileErr := fs.ReadFile(generation, "content")

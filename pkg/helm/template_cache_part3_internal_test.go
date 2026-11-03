@@ -92,7 +92,7 @@ func testTemplateCacheTemplateIntegrationFreshAnalysisHandoff(t *testing.T) {
 		hr := newHR()
 		values := map[string]any{"marker": marker}
 		input := RenderOptions{Sources: sources}
-		prepared, err := cli.prepareTemplate(t.Context(), hr, values, input)
+		prepared, err := cli.prepareTemplate(t.Context(), hr, values, &input)
 		assert.NoError(t, err)
 		docs, receipt, err := testutil.RenderMaps(cli.Template(t.Context(), hr, values, input))
 		assert.NoError(t, err)
@@ -196,9 +196,7 @@ func testTemplateCacheTemplateIntegrationCase(
 		loaded, err := loadDecodedChart(t.Context(), cli, newHR(), sources)
 		assert.NoError(t, err)
 		loaded.values, loaded.valuesErr = cli.observeValuesFiles(
-			t.Context(),
-			loaded,
-			newHR().ChartValuesFiles,
+			t.Context(), &loaded, newHR().ChartValuesFiles,
 			newHR().IgnoreMissingValuesFiles,
 		)
 		assert.NoError(t, loaded.valuesErr)
@@ -423,9 +421,7 @@ func testTemplateCacheTemplateIntegrationEmptyStream(t *testing.T) {
 			loaded, err := cli.describeChart(t.Context(), newHR(), cliSources)
 			assert.NoError(t, err)
 			loaded.values, loaded.valuesErr = cli.observeValuesFiles(
-				t.Context(),
-				loaded,
-				newHR().ChartValuesFiles,
+				t.Context(), &loaded, newHR().ChartValuesFiles,
 				newHR().IgnoreMissingValuesFiles,
 			)
 			assert.NoError(t, loaded.valuesErr)

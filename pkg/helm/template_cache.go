@@ -444,7 +444,7 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 		frame.header.Binding = manifest.Fingerprint(frame.binding)
 	}
 	if frame.header.Analysis == nil {
-		frame.header.Analysis = (chartDescription{chart: frame.chart}).analyze()
+		frame.header.Analysis = (&chartDescription{chart: frame.chart}).analyze()
 	}
 	if frame.encoded == nil && frame.raw == "" {
 		frame.encoded, err = encodeFrame(frame.header, frame.output)
@@ -533,7 +533,7 @@ func (c *Client) PreviousRender(
 	if ctx.Err() != nil || !c.cache.CanPersistRenders() {
 		return nil, false
 	}
-	prepared, err := c.prepareTemplate(ctx, hr, hrValues, input)
+	prepared, err := c.prepareTemplate(ctx, hr, hrValues, &input)
 	if err != nil || prepared.key == "" || prepared.loaded.valuesErr != nil || prepared.capabilityErr != nil {
 		return nil, false
 	}

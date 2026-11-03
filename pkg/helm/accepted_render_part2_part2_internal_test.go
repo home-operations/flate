@@ -378,7 +378,7 @@ func testTemplateAcceptedHistoryDurableName(
 		t.Context(),
 		(*(*testCaseInput).hr),
 		nil,
-		(*(*testCaseInput).input),
+		(*testCaseInput).input,
 	)
 	assert.NoError(t, encodeFrameErr)
 	defer func() {
@@ -432,7 +432,7 @@ func testTemplateAcceptedHistoryDurableTypedRecordKey(
 		t.Context(),
 		(*(*testCaseInput).hr),
 		nil,
-		(*(*testCaseInput).input),
+		(*testCaseInput).input,
 	)
 	assert.NoError(t, prepareTemplateErr)
 	remembered, prepareTemplateErr := isolated.lookupRender(t.Context(), &prepared.loaded, prepared.key)

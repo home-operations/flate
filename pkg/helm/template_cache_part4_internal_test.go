@@ -527,7 +527,12 @@ func testTemplateCacheSourceRootValuesFilesPersistentReuse(t *testing.T) {
 	assert.NoError(t, err)
 	initial, err := loadDecodedChart(t.Context(), newClientCli, hr, newSourcesCliSources)
 	assert.NoError(t, err)
-	initial.values, initial.valuesErr = newClientCli.observeValuesFiles(t.Context(), initial, hr.ChartValuesFiles, true)
+	initial.values, initial.valuesErr = newClientCli.observeValuesFiles(
+		t.Context(),
+		&initial,
+		hr.ChartValuesFiles,
+		true,
+	)
 	assert.NoError(t, initial.valuesErr)
 	key := computeTemplateKey(initial, map[string]any{}, Options{}, hr)
 	{
@@ -672,9 +677,7 @@ func testTemplateCacheSourceRootValuesFilesPackagedCacheCannotMaskMissingSourceV
 	missing, err := fresh.describeChart(t.Context(), sourceHR, freshSources)
 	assert.NoError(t, err)
 	missing.values, missing.valuesErr = fresh.observeValuesFiles(
-		t.Context(),
-		missing,
-		sourceHR.ChartValuesFiles,
+		t.Context(), &missing, sourceHR.ChartValuesFiles,
 		false,
 	)
 	assert.FatalIf(t, !errors.Is(missing.valuesErr, fs.ErrNotExist), "%v", missing.valuesErr)

@@ -57,9 +57,7 @@ func TestMergeChartValuesFiles_EmptyArchiveFile(t *testing.T) {
 		assert.NoError(t, err)
 	}
 	values, err := cli.mergeChartValuesFiles(
-		t.Context(),
-		chartDescription{chart: loaded},
-		[]string{"empty.yaml"},
+		t.Context(), &chartDescription{chart: loaded}, []string{"empty.yaml"},
 		false,
 	)
 	{

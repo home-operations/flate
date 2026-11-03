@@ -210,7 +210,7 @@ func (c *Client) decodeChart(ctx context.Context, d *chartDescription) error {
 	return nil
 }
 
-func (d chartDescription) analyze() *chartAnalysis {
+func (d *chartDescription) analyze() *chartAnalysis {
 	if d.analysis != nil {
 		return d.analysis
 	}

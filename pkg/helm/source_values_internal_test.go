@@ -236,18 +236,18 @@ func TestObserveValuesFiles_UnpinnedChanges(t *testing.T) {
 		} else {
 			testutil.WriteFile(t, root, "config/prod.yaml", "marker: "+marker+"\n")
 		}
-		entry, err := cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, true)
+		entry, err := cli.observeValuesFiles(t.Context(), &d, hr.ChartValuesFiles, true)
 		assert.NoError(t, err)
 		assert.Equal(t, reads, before+1)
 		assert.Equal(t, *entry.fingerprint == previous, false)
 		previous = *entry.fingerprint
 		observed := d
 		observed.values = entry
-		merged, err := cli.mergeChartValuesFiles(t.Context(), observed, hr.ChartValuesFiles, true)
+		merged, err := cli.mergeChartValuesFiles(t.Context(), &observed, hr.ChartValuesFiles, true)
 		assert.NoError(t, err)
 		if marker == "" {
 			assert.Equal(t, len(merged), 0)
-			_, err = cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, false)
+			_, err = cli.observeValuesFiles(t.Context(), &d, hr.ChartValuesFiles, false)
 			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
 		} else {
 			assert.Equal(t, merged["marker"], any(marker))
@@ -288,12 +288,12 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 	}}
 	late := make(chan chartValuesEntry, 1)
 	go func() {
-		entry, observeValuesFilesErr2 := cli.observeValuesFiles(t.Context(), d, hr.ChartValuesFiles, false)
+		entry, observeValuesFilesErr2 := cli.observeValuesFiles(t.Context(), &d, hr.ChartValuesFiles, false)
 		assert.ErrorIf(t, observeValuesFilesErr2 != nil, "%v", observeValuesFilesErr2)
 		late <- entry
 	}()
 	<-blocked
-	merged, err := cli.mergeChartValuesFiles(t.Context(), d, hr.ChartValuesFiles, false)
+	merged, err := cli.mergeChartValuesFiles(t.Context(), &d, hr.ChartValuesFiles, false)
 	close(resume)
 	entry := <-late
 	assert.NoError(t, err)
@@ -308,7 +308,7 @@ func TestObserveValuesFiles_ConcurrentPublication(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			var err error
-			results[i], err = cli.mergeChartValuesFiles(t.Context(), d, hr.ChartValuesFiles, false)
+			results[i], err = cli.mergeChartValuesFiles(t.Context(), &d, hr.ChartValuesFiles, false)
 			if err != nil {
 				t.Error(err)
 				return
@@ -358,11 +358,11 @@ func TestObserveValuesFiles_AcquiredChanges(t *testing.T) {
 			reads++
 			return acquired.Open(name)
 		}}
-		merged, err := cli.mergeChartValuesFiles(t.Context(), d, hr.ChartValuesFiles, false)
+		merged, err := cli.mergeChartValuesFiles(t.Context(), &d, hr.ChartValuesFiles, false)
 		assert.Equal(t, reads, 1)
 		if marker == "" {
 			assert.Equal(t, errors.Is(err, fs.ErrNotExist), true)
-			omitted, mergeChartValuesFilesErr := cli.mergeChartValuesFiles(t.Context(), d, hr.ChartValuesFiles, true)
+			omitted, mergeChartValuesFilesErr := cli.mergeChartValuesFiles(t.Context(), &d, hr.ChartValuesFiles, true)
 			assert.NoError(t, mergeChartValuesFilesErr)
 			assert.Equal(t, len(omitted), 0)
 		} else {
@@ -581,13 +581,11 @@ func testTemplateValuesFilesFailuresCase(t *testing.T, testCaseInput *testTempla
 			cli := NewClient((*testCaseInput.owner))
 			ch := minimalChart()
 			_, err := cli.mergeChartValuesFiles(
-				t.Context(),
-				chartDescription{
+				t.Context(), &chartDescription{
 					chart:       ch,
 					fingerprint: chartFixtureDescription(t, ch).fingerprint,
 					valuesFS:    tc.input,
-				},
-				[]string{tc.path}, (*testCaseInput.ignore),
+				}, []string{tc.path}, (*testCaseInput.ignore),
 			)
 			assert.FatalIf(t, err == nil || !errors.Is(err, tc.want) || !errors.Is(err, manifest.ErrInput) ||
 				!errors.Is(err, manifest.ErrFlux) ||
@@ -635,7 +633,7 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	}}
 	names := []string{"./config/prod.yaml", "config/other.yaml", "config/prod.yaml"}
 	before := append([]string(nil), names...)
-	first, err := cli.observeValuesFiles(t.Context(), d, names, false)
+	first, err := cli.observeValuesFiles(t.Context(), &d, names, false)
 	assert.NoError(t, err)
 	assert.Diff(t, names, before)
 	assert.Equal(t, reads["config/prod.yaml"], 1)
@@ -643,7 +641,7 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	assert.Equal(t, len(first.inputs), 3)
 	assert.Equal(t, *first.fingerprint, manifest.Fingerprint(first.inputs))
 	normalized := []string{"config/prod.yaml", "./config/other.yaml", "./config/prod.yaml"}
-	second, err := cli.observeValuesFiles(t.Context(), d, normalized, false)
+	second, err := cli.observeValuesFiles(t.Context(), &d, normalized, false)
 	assert.NoError(t, err)
 	wantReads := 2
 	if *testCaseInput {
@@ -653,24 +651,22 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	assert.Equal(t, reads["config/prod.yaml"], wantReads)
 	assert.Equal(t, reads["config/other.yaml"], wantReads)
 	d.values = second
-	merged, err := cli.mergeChartValuesFiles(t.Context(), d, normalized, false)
+	merged, err := cli.mergeChartValuesFiles(t.Context(), &d, normalized, false)
 	assert.NoError(t, err)
 	assert.Equal(t, merged["marker"], any("first"))
 	merged["nested"].(map[string]any)["value"] = "release"
 	d.values = chartValuesEntry{}
-	repeated, err := cli.mergeChartValuesFiles(t.Context(), d, normalized, false)
+	repeated, err := cli.mergeChartValuesFiles(t.Context(), &d, normalized, false)
 	assert.NoError(t, err)
 	assert.Equal(t, repeated["nested"].(map[string]any)["value"], any("shared"))
 	reversed, err := cli.mergeChartValuesFiles(
-		t.Context(),
-		d,
-		[]string{"config/prod.yaml", "config/other.yaml"},
+		t.Context(), &d, []string{"config/prod.yaml", "config/other.yaml"},
 		false,
 	)
 	assert.NoError(t, err)
 	assert.Equal(t, reversed["marker"], any("other"))
 	for _, invalid := range []string{"", ".", "../config/prod.yaml", "/config/prod.yaml", "config/prod.yaml\x00"} {
-		_, observeValuesFilesErr := cli.observeValuesFiles(t.Context(), d, []string{invalid}, true)
+		_, observeValuesFilesErr := cli.observeValuesFiles(t.Context(), &d, []string{invalid}, true)
 		{
 			assert.FatalIf(
 				t,
@@ -684,10 +680,10 @@ func testObserveValuesFilesPinnedReuseCase(t *testing.T, testCaseInput *bool,
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = cli.observeValuesFiles(ctx, d, normalized, false)
+	_, err = cli.observeValuesFiles(ctx, &d, normalized, false)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
 	d.values = second
-	_, err = cli.mergeChartValuesFiles(ctx, d, normalized, false)
+	_, err = cli.mergeChartValuesFiles(ctx, &d, normalized, false)
 	assert.Equal(t, errors.Is(err, context.Canceled), true)
 }
 
@@ -733,13 +729,13 @@ func testObserveValuesFilesRetryFailuresCase(
 			return f, nil
 		}
 	}}
-	_, err = cli.observeValuesFiles(ctx, d, hr.ChartValuesFiles, false)
+	_, err = cli.observeValuesFiles(ctx, &d, hr.ChartValuesFiles, false)
 	if (*testCaseInput) == "cancel" {
 		fault = context.Canceled
 	}
 	assert.Equal(t, errors.Is(err, fault), true)
 	assert.Equal(t, len(cli.chartValuesCache), 0)
-	merged, err := cli.mergeChartValuesFiles(t.Context(), d, hr.ChartValuesFiles, false)
+	merged, err := cli.mergeChartValuesFiles(t.Context(), &d, hr.ChartValuesFiles, false)
 	assert.NoError(t, err)
 	assert.Equal(t, merged["marker"], any("first"))
 	assert.Equal(t, reads, 2)

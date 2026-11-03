@@ -51,7 +51,7 @@ func TestTemplate_OCIResidentGenerationValidation(t *testing.T) {
 			),
 		)
 	}
-	prepared, err := client.prepareTemplate(t.Context(), hr, nil, input)
+	prepared, err := client.prepareTemplate(t.Context(), hr, nil, &input)
 	assert.NoError(t, err)
 	resident := prepared.loaded.record
 	{
@@ -166,14 +166,14 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			objects.SetArtifact(changed.ChartSource(), &source)
 			current := input
 			current.Sources = NewSources(objects)
-			prepared, err := renderer.prepareTemplate(t.Context(), changed, nil, current)
+			prepared, err := renderer.prepareTemplate(t.Context(), changed, nil, &current)
 			assert.NoError(t, err)
 			frame := receipt.Value().(renderFrame)
 			binding := frame.binding
 			binding.Policy = prepared.binding.Policy
 			header := frame.header
 			header.Key, header.Binding = prepared.key, manifest.Fingerprint(binding)
-			header.Analysis = (chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
+			header.Analysis = (&chartDescription{chart: frame.chart, analysis: frame.header.Analysis}).analyze()
 			wire, err := encodeFrame(header, frame.output)
 			assert.NoError(t, err)
 			stored, err := decodeFrame(wire)

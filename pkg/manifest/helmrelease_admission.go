@@ -35,58 +35,10 @@ func normalizeChartTemplate(spec *helmv2.HelmReleaseSpec) error {
 		return inputf("spec.chart.kind must be HelmChart or OCIRepository")
 	}
 	s := &template.Spec
-	if kind == KindOCIRepository {
-		if !strings.HasPrefix(s.URL, sourcev1.OCIRepositoryPrefix) {
-			return inputf("spec.chart.spec.url must start with oci://")
-		}
-		if s.Chart != "" || s.SourceRef != nil || len(s.ValuesFiles) != 0 || s.IgnoreMissingValuesFiles ||
-			s.Version != "" && s.Version != "*" ||
-			s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion {
-			return inputf("spec.chart.spec contains HelmChart-only fields for an OCIRepository template")
-		}
-	} else {
-		if s.URL != "" {
-			return inputf("spec.chart.spec.url requires spec.chart.kind OCIRepository")
-		}
-		if s.Chart == "" || utf8.RuneCountInString(s.Chart) > 2048 {
-			return inputf("spec.chart.spec.chart must contain 1 to 2048 characters")
-		}
-		ref := s.SourceRef
-		if ref == nil || !slices.Contains([]string{KindHelmRepository, KindGitRepository, KindBucket}, ref.Kind) ||
-			ref.Name == "" ||
-			utf8.RuneCountInString(ref.Name) > 253 ||
-			utf8.RuneCountInString(ref.Namespace) > 63 {
-			return inputf("invalid spec.chart.spec.sourceRef kind, name or namespace")
-		}
+	if err := validateChartKind(kind, s); err != nil {
+		return err
 	}
-	if s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion &&
-		s.ReconcileStrategy != sourcev1.ReconcileStrategyRevision {
-		return inputf("invalid spec.chart.spec.reconcileStrategy")
-	}
-	if s.Provider != "" &&
-		!slices.Contains(
-			[]string{
-				sourcev1.GenericOCIProvider,
-				sourcev1.AmazonOCIProvider,
-				sourcev1.AzureOCIProvider,
-				sourcev1.GoogleOCIProvider,
-			},
-			s.Provider,
-		) {
-		return inputf("invalid spec.chart.spec.provider")
-	}
-	if selector := s.LayerSelector; selector != nil && selector.Operation != "" &&
-		selector.Operation != sourcev1.OCILayerCopy &&
-		selector.Operation != sourcev1.OCILayerExtract {
-		return inputf("invalid spec.chart.spec.layerSelector.operation")
-	}
-	if s.Verify != nil && s.Verify.Provider != "" && s.Verify.Provider != "cosign" && s.Verify.Provider != "notation" {
-		return inputf("invalid spec.chart.spec.verify.provider")
-	}
-	if s.Interval != nil && s.Interval.Duration < 0 || s.Timeout != nil && s.Timeout.Duration < 0 {
-		return inputf("spec.chart.spec interval and timeout cannot be negative")
-	}
-	return nil
+	return validateChartTemplateSpec(s)
 }
 
 func validateChartTemplateDocument(doc map[string]any, spec *helmv2.HelmReleaseSpec) error {
@@ -121,6 +73,73 @@ func validateChartTemplateDocument(doc map[string]any, spec *helmv2.HelmReleaseS
 	} else if raw["url"] != nil {
 		return inputf("spec.chart.spec.url requires spec.chart.kind OCIRepository")
 	}
+	if err := validateChartDocumentFields(raw); err != nil {
+		return err
+	}
+	verify, _ := raw["verify"].(map[string]any)
+	return validateChartDocumentVerification(verify)
+}
+
+func validateChartKind(kind string, s *helmv2.HelmChartTemplateSpec) error {
+	if kind == KindOCIRepository {
+		if !strings.HasPrefix(s.URL, sourcev1.OCIRepositoryPrefix) {
+			return inputf("spec.chart.spec.url must start with oci://")
+		}
+		if s.Chart != "" || s.SourceRef != nil || len(s.ValuesFiles) != 0 || s.IgnoreMissingValuesFiles ||
+			s.Version != "" && s.Version != "*" ||
+			s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion {
+			return inputf("spec.chart.spec contains HelmChart-only fields for an OCIRepository template")
+		}
+		return nil
+	}
+	if s.URL != "" {
+		return inputf("spec.chart.spec.url requires spec.chart.kind OCIRepository")
+	}
+	if s.Chart == "" || utf8.RuneCountInString(s.Chart) > 2048 {
+		return inputf("spec.chart.spec.chart must contain 1 to 2048 characters")
+	}
+	ref := s.SourceRef
+	if ref == nil || !slices.Contains([]string{KindHelmRepository, KindGitRepository, KindBucket}, ref.Kind) ||
+		ref.Name == "" ||
+		utf8.RuneCountInString(ref.Name) > 253 ||
+		utf8.RuneCountInString(ref.Namespace) > 63 {
+		return inputf("invalid spec.chart.spec.sourceRef kind, name or namespace")
+	}
+	return nil
+}
+
+func validateChartTemplateSpec(s *helmv2.HelmChartTemplateSpec) error {
+	if s.ReconcileStrategy != "" && s.ReconcileStrategy != sourcev1.ReconcileStrategyChartVersion &&
+		s.ReconcileStrategy != sourcev1.ReconcileStrategyRevision {
+		return inputf("invalid spec.chart.spec.reconcileStrategy")
+	}
+	if s.Provider != "" &&
+		!slices.Contains(
+			[]string{
+				sourcev1.GenericOCIProvider,
+				sourcev1.AmazonOCIProvider,
+				sourcev1.AzureOCIProvider,
+				sourcev1.GoogleOCIProvider,
+			},
+			s.Provider,
+		) {
+		return inputf("invalid spec.chart.spec.provider")
+	}
+	if selector := s.LayerSelector; selector != nil && selector.Operation != "" &&
+		selector.Operation != sourcev1.OCILayerCopy &&
+		selector.Operation != sourcev1.OCILayerExtract {
+		return inputf("invalid spec.chart.spec.layerSelector.operation")
+	}
+	if s.Verify != nil && s.Verify.Provider != "" && s.Verify.Provider != "cosign" && s.Verify.Provider != "notation" {
+		return inputf("invalid spec.chart.spec.verify.provider")
+	}
+	if s.Interval != nil && s.Interval.Duration < 0 || s.Timeout != nil && s.Timeout.Duration < 0 {
+		return inputf("spec.chart.spec interval and timeout cannot be negative")
+	}
+	return nil
+}
+
+func validateChartDocumentFields(raw map[string]any) error {
 	for _, key := range []string{"provider", "reconcileStrategy"} {
 		if raw[key] == "" {
 			return inputf("spec.chart.spec.%s cannot be empty", key)
@@ -145,21 +164,26 @@ func validateChartTemplateDocument(doc map[string]any, spec *helmv2.HelmReleaseS
 			return inputf("spec.chart.spec.%s.name is required", key)
 		}
 	}
-	if verify, _ := raw["verify"].(map[string]any); verify != nil {
-		if verify["provider"] == "" {
-			return inputf("spec.chart.spec.verify.provider cannot be empty")
+	return nil
+}
+
+func validateChartDocumentVerification(verify map[string]any) error {
+	if verify == nil {
+		return nil
+	}
+	if verify["provider"] == "" {
+		return inputf("spec.chart.spec.verify.provider cannot be empty")
+	}
+	for _, key := range []string{secretRefKey, "trustedRootSecretRef"} {
+		if ref, _ := verify[key].(map[string]any); ref != nil && ref[nameKey] == nil {
+			return inputf("spec.chart.spec.verify.%s.name is required", key)
 		}
-		for _, key := range []string{secretRefKey, "trustedRootSecretRef"} {
-			if ref, _ := verify[key].(map[string]any); ref != nil && ref[nameKey] == nil {
-				return inputf("spec.chart.spec.verify.%s.name is required", key)
-			}
-		}
-		identities, _ := verify["matchOIDCIdentity"].([]any)
-		for _, identity := range identities {
-			fields, _ := identity.(map[string]any)
-			if fields["issuer"] == nil || fields["subject"] == nil {
-				return inputf("spec.chart.spec.verify.matchOIDCIdentity requires issuer and subject")
-			}
+	}
+	identities, _ := verify["matchOIDCIdentity"].([]any)
+	for _, identity := range identities {
+		fields, _ := identity.(map[string]any)
+		if fields["issuer"] == nil || fields["subject"] == nil {
+			return inputf("spec.chart.spec.verify.matchOIDCIdentity requires issuer and subject")
 		}
 	}
 	return nil

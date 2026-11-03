@@ -187,129 +187,7 @@ func testGeneratedObjectsPublishBeforeSourceWaitCaseTail(
 ) bool {
 	t.Helper()
 	if (*tailCaseInput.testCaseInput).replacement != "failure" {
-		next := (*tailCaseInput.hr).Clone()
-		if (*tailCaseInput.testCaseInput).replacement == "chartRef" {
-			next.HelmReleaseSpec.Chart = nil
-			next.ChartRef = &helmv2.CrossNamespaceSourceReference{
-				Kind: manifest.KindOCIRepository,
-				Name: "replacement",
-			}
-		} else {
-			next.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{
-				Kind: manifest.KindOCIRepository,
-				Spec: helmv2.HelmChartTemplateSpec{URL: "oci://registry.example/charts/replacement"},
-			}
-		}
-		next = next.WithNamespace((*tailCaseInput.hr).Namespace).(*manifest.HelmRelease)
-		sibling := (*tailCaseInput.hr).Clone()
-		sibling.Name = "sibling"
-		(*tailCaseInput.st).
-			AddObject(sibling)
-		(*tailCaseInput.st).
-			AddObject(next)
-		replacement := next.ChartSource()
-		if (*tailCaseInput.testCaseInput).replacement == "chartRef" {
-			(*tailCaseInput.st).
-				AddObject(
-					manifest.NewOCIRepository(
-						sourcev1.OCIRepository{
-							Name:      replacement.Name,
-							Namespace: replacement.Namespace,
-							Spec:      sourcev1.OCIRepositorySpec{URL: "oci://registry.example/charts/replacement"},
-						},
-					),
-				)
-			(*tailCaseInput.st).
-				UpdateStatus(replacement, store.StatusInfo{Status: store.StatusPending})
-		}
-		withdrawn := make(chan struct{}, 1)
-		stopWithdrawal := (*tailCaseInput.st).AddListener(
-			store.EventObjectAdded,
-			func(got manifest.NamedResource, _ any) {
-				if got == (*tailCaseInput.id) && (*tailCaseInput.st).GetObject((*tailCaseInput.id)) == nil {
-					{
-						{
-							info, _ := (*tailCaseInput.st).GetStatus(
-								replacement,
-							)
-							assert.ErrorIf(t, info.Status == store.StatusReady || (*tailCaseInput.st).
-								GetArtifact(
-									replacement,
-									store.ArtifactContent,
-								) != nil, "%v", "obsolete source withdrew after replacement settled")
-						}
-					}
-					withdrawn <- struct{}{}
-				}
-			},
-			false,
-		)
-		defer stopWithdrawal()
-		blocked := (*tailCaseInput.reconcile)(manifest.DrainNone)
-		defer blocked.Close()
-		select {
-		case <-withdrawn:
-		default:
-			t.Fatal("obsolete generated source did not withdraw before the replacement wait")
-		}
-		if !blocked.Reads.Valid() {
-			blocked = (*tailCaseInput.reconcile)(manifest.DrainNone)
-			defer blocked.Close()
-		}
-		if blocked.Outcome() != schedule.Blocked {
-			info, _ := (*tailCaseInput.st).GetStatus((*tailCaseInput.hr).Named())
-			t.Fatalf(
-				"replacement outcome=%v status=%#v readsValid=%t admitted=%t source=%v",
-				blocked.Outcome(),
-				info,
-				blocked.Reads.Valid(),
-				blocked.Reads.Admitted(),
-				replacement,
-			)
-		}
-		assert.Diff(t, blocked.Blocked, []manifest.NamedResource{replacement})
-		assert.Equal(t, (*tailCaseInput.filter).ShouldReconcile(next.Named()), true)
-		assert.Equal(t, (*tailCaseInput.filter).ShouldReconcile(sibling.Named()), false)
-		_, _, waiting := (*tailCaseInput.st).GetEmission((*tailCaseInput.hr).Named())
-		defer waiting.Finish()
-		{
-			assert.FatalIf(
-				t,
-				waiting.Complete || len(waiting.Failures) != 0,
-				"%v",
-				"source transition forced completion or failure",
-			)
-		}
-		for _, child := range tailCaseInput.completed.Children {
-			if child.Generated {
-				continue
-			}
-			{
-				assert.FatalIf(t, !slices.ContainsFunc(
-					waiting.Children,
-					func(current store.Child) bool { return current.Obj.Named() == child.Obj.Named() },
-				) || (*tailCaseInput.st).
-					GetObject(
-						child.Obj.Named(),
-					) == nil, "%v", "blocked replacement discarded ordinary partial inventory")
-			}
-		}
-		assert.Diff(
-			t,
-			testutil.DocumentMaps(waiting.Manifests),
-			testutil.DocumentMaps(tailCaseInput.completed.Manifests),
-		)
-		{
-			assert.FatalIf(
-				t, (*tailCaseInput.st).
-					GetObject((*tailCaseInput.id)) != nil || (*tailCaseInput.st).
-					HasGeneratedObjects(
-						(*tailCaseInput.hr).Named(),
-					) != ((*tailCaseInput.testCaseInput).replacement != "chartRef"), "%v",
-				"blocked replacement retained obsolete generated membership",
-			)
-		}
-		return true
+		return checkGeneratedSourceReplacement(t, tailCaseInput)
 	}
 	(*tailCaseInput.st).
 		UpdateStatus((*tailCaseInput.id), store.StatusInfo{Status: store.StatusFailed, Message: "source failed"})
@@ -348,4 +226,134 @@ type testGeneratedObjectsPublishBeforeSourceWaitCaseTailInputs struct {
 	reconcile *func(level manifest.DrainLevel) *base.Execution
 	filter    **change.Filter
 	completed *store.Emission
+}
+
+func checkGeneratedSourceReplacement(
+	t *testing.T,
+	tailCaseInput *testGeneratedObjectsPublishBeforeSourceWaitCaseTailInputs,
+) bool {
+	t.Helper()
+	next := (*tailCaseInput.hr).Clone()
+	if (*tailCaseInput.testCaseInput).replacement == "chartRef" {
+		next.HelmReleaseSpec.Chart = nil
+		next.ChartRef = &helmv2.CrossNamespaceSourceReference{
+			Kind: manifest.KindOCIRepository,
+			Name: "replacement",
+		}
+	} else {
+		next.HelmReleaseSpec.Chart = &helmv2.HelmChartTemplate{
+			Kind: manifest.KindOCIRepository,
+			Spec: helmv2.HelmChartTemplateSpec{URL: "oci://registry.example/charts/replacement"},
+		}
+	}
+	next = next.WithNamespace((*tailCaseInput.hr).Namespace).(*manifest.HelmRelease)
+	sibling := (*tailCaseInput.hr).Clone()
+	sibling.Name = "sibling"
+	(*tailCaseInput.st).
+		AddObject(sibling)
+	(*tailCaseInput.st).
+		AddObject(next)
+	replacement := next.ChartSource()
+	if (*tailCaseInput.testCaseInput).replacement == "chartRef" {
+		(*tailCaseInput.st).
+			AddObject(
+				manifest.NewOCIRepository(
+					sourcev1.OCIRepository{
+						Name:      replacement.Name,
+						Namespace: replacement.Namespace,
+						Spec:      sourcev1.OCIRepositorySpec{URL: "oci://registry.example/charts/replacement"},
+					},
+				),
+			)
+		(*tailCaseInput.st).
+			UpdateStatus(replacement, store.StatusInfo{Status: store.StatusPending})
+	}
+	withdrawn := make(chan struct{}, 1)
+	stopWithdrawal := (*tailCaseInput.st).AddListener(
+		store.EventObjectAdded,
+		func(got manifest.NamedResource, _ any) {
+			if got == (*tailCaseInput.id) && (*tailCaseInput.st).GetObject((*tailCaseInput.id)) == nil {
+				{
+					{
+						info, _ := (*tailCaseInput.st).GetStatus(
+							replacement,
+						)
+						assert.ErrorIf(t, info.Status == store.StatusReady || (*tailCaseInput.st).
+							GetArtifact(
+								replacement,
+								store.ArtifactContent,
+							) != nil, "%v", "obsolete source withdrew after replacement settled")
+					}
+				}
+				withdrawn <- struct{}{}
+			}
+		},
+		false,
+	)
+	defer stopWithdrawal()
+	blocked := (*tailCaseInput.reconcile)(manifest.DrainNone)
+	defer blocked.Close()
+	select {
+	case <-withdrawn:
+	default:
+		t.Fatal("obsolete generated source did not withdraw before the replacement wait")
+	}
+	if !blocked.Reads.Valid() {
+		blocked = (*tailCaseInput.reconcile)(manifest.DrainNone)
+		defer blocked.Close()
+	}
+	if blocked.Outcome() != schedule.Blocked {
+		info, _ := (*tailCaseInput.st).GetStatus((*tailCaseInput.hr).Named())
+		t.Fatalf(
+			"replacement outcome=%v status=%#v readsValid=%t admitted=%t source=%v",
+			blocked.Outcome(),
+			info,
+			blocked.Reads.Valid(),
+			blocked.Reads.Admitted(),
+			replacement,
+		)
+	}
+	assert.Diff(t, blocked.Blocked, []manifest.NamedResource{replacement})
+	assert.Equal(t, (*tailCaseInput.filter).ShouldReconcile(next.Named()), true)
+	assert.Equal(t, (*tailCaseInput.filter).ShouldReconcile(sibling.Named()), false)
+	_, _, waiting := (*tailCaseInput.st).GetEmission((*tailCaseInput.hr).Named())
+	defer waiting.Finish()
+	{
+		assert.FatalIf(
+			t,
+			waiting.Complete || len(waiting.Failures) != 0,
+			"%v",
+			"source transition forced completion or failure",
+		)
+	}
+	for _, child := range tailCaseInput.completed.Children {
+		if child.Generated {
+			continue
+		}
+		{
+			assert.FatalIf(t, !slices.ContainsFunc(
+				waiting.Children,
+				func(current store.Child) bool { return current.Obj.Named() == child.Obj.Named() },
+			) || (*tailCaseInput.st).
+				GetObject(
+					child.Obj.Named(),
+				) == nil, "%v", "blocked replacement discarded ordinary partial inventory")
+		}
+	}
+	assert.Diff(
+		t,
+		testutil.DocumentMaps(waiting.Manifests),
+		testutil.DocumentMaps(tailCaseInput.completed.Manifests),
+	)
+	{
+		assert.FatalIf(
+			t, (*tailCaseInput.st).
+				GetObject((*tailCaseInput.id)) != nil || (*tailCaseInput.st).
+				HasGeneratedObjects(
+					(*tailCaseInput.hr).Named(),
+				) != ((*tailCaseInput.testCaseInput).replacement != "chartRef"), "%v",
+			"blocked replacement retained obsolete generated membership",
+		)
+	}
+	return true
 }

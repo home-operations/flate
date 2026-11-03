@@ -72,162 +72,7 @@ func TestReconcile_ParentUpdateDuringRender(t *testing.T) {
 	for _, workers := range []int{2, 4} {
 		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
 			t.Parallel()
-
-			st := store.New()
-			tasks := task.NewBounded(workers)
-			owner, err := sourcecache.New(t.Context(), "")
-			{
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
-			t.Cleanup(func() { _ = owner.Close() })
-			client := helm.NewClient(owner)
-			c := New(base.New(st, tasks), client, helm.Options{}, false)
-			c.Configure(base.Options{})
-			c.StartLifecycle()
-			started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
-			release := sync.OnceFunc(func() { close(resume) })
-			t.Cleanup(func() { release(); tasks.BlockTillDone(); c.StartLifecycle() })
-			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
-			st.AddObject(parent)
-			dir := t.TempDir()
-			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: binding\nversion: 1.0.0\n")
-			testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `apiVersion: v1
-kind: ConfigMap
-metadata: {name: binding}
-data:
-  output: {{ .Values.output | quote }}
-  required: {{ required "required value" .Values.required | quote }}
-`)
-			src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
-			st.AddObject(src)
-			source := &store.SourceArtifact{
-				Kind:      manifest.KindOCIRepository,
-				FS:        &renderBarrierFS{FS: os.DirFS(dir), tasks: tasks, started: started, resume: resume},
-				LocalPath: dir,
-				Revision:  "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
-				Digest:    "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
-			}
-			st.SetArtifact(src.Named(), source)
-			st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			required := "present"
-			docA := map[string]any{
-				"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
-				"metadata": map[string]any{"name": "release", "namespace": "apps"},
-				"spec": map[string]any{
-					"chartRef": map[string]any{"kind": manifest.KindOCIRepository, "name": src.Name},
-					"values":   map[string]any{"output": "A", "required": required},
-				},
-			}
-			docB := manifest.DeepCopyMap(docA)
-			docB["spec"].(map[string]any)["values"].(map[string]any)["output"] = "B"
-			publish := func(doc map[string]any) {
-				_, _, next := st.GetEmission(parent.Named())
-				defer next.Finish()
-				children, retained := testutil.ParseChildren(
-					c,
-					parent,
-					[]map[string]any{doc},
-					manifest.ParseDocOptions{DefaultNamespace: "apps"},
-				)
-				next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
-				next.Complete = true
-				controllertest.Emit(t.Context(), c.Controller, parent.Named(), &next)
-			}
-			publish(docA)
-			st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
-			id := testutil.HelmReleaseID("apps", "release")
-			hr, ok := st.Get[*manifest.HelmRelease](id)
-			{
-				assert.FatalIf(t, !ok, "%v", "parent did not emit input A")
-			}
-			var accepted atomic.Pointer[store.Emission]
-			unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
-				if emission, localOk := payload.(*store.Emission); other == id && localOk && emission.Complete {
-					accepted.Store(emission)
-				}
-			}, false)
-			t.Cleanup(unsubscribe)
-			tasks.Go(t.Context(), "parent", func(context.Context) {
-				defer release()
-				reached := false
-				tasks.YieldSlot(func() {
-					select {
-					case <-started:
-						reached = true
-					case <-rendered:
-					}
-				})
-				if !reached {
-					t.Error("render never reached chart filesystem")
-					return
-				}
-				publish(docB)
-			})
-			markRendered := sync.OnceFunc(func() { close(rendered) })
-			info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
-				Tasks: tasks,
-				Store: st,
-				ID:    id,
-				ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-					defer markRendered()
-					return c.ReconcileNode(ctx, id, level)
-				},
-			})
-			{
-				assert.FatalIf(t, info.Status != store.StatusReady, "canonical replacement status = %+v", info)
-			}
-
-			if tasks.Failures() != 0 {
-				t.Fatalf("task failures = %d", tasks.Failures())
-			}
-			emission := accepted.Load()
-			{
-				assert.FatalIf(
-					t,
-					emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint == "" ||
-						!emission.OutputReads.Valid(),
-					"accepted B emission = %+v; want complete output with current provenance and a content key",
-					emission,
-				)
-			}
-			{
-				{
-					got := renderedConfigMapValue(testutil.DocumentMaps(emission.Manifests), "output")
-					assert.FatalIf(t, got != "B", "rendered output = %q, want B", got)
-				}
-			}
-			current, ok := st.Get[*manifest.HelmRelease](id)
-			{
-				assert.FatalIf(t, !ok || current.Values["output"] != "B", "current input is not B: %+v", current)
-			}
-			{
-				assert.ErrorIf(
-					t,
-					st.GetArtifact(id, store.ArtifactContent) != emission,
-					"%v",
-					"canonical B does not expose its accepted output",
-				)
-			}
-			output, ok := st.Get[*manifest.ConfigMap](
-				manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "binding"},
-			)
-			{
-				assert.FatalIf(
-					t,
-					!ok || output.Data["output"] != "B",
-					"canonical emitted child = %+v, want output B",
-					output,
-				)
-			}
-
-			{
-				assert.FatalIf(
-					t,
-					hr.Values["output"] != "A" || hr.Values["required"] != required,
-					"%v",
-					"render mutated input A",
-				)
-			}
+			checkParentUpdateDuringRender(t, &workers)
 		})
 	}
 }
@@ -652,77 +497,23 @@ data: {greeting: hi}
 		published.Store(true)
 	}, false)
 	t.Cleanup(unsub)
-	reconcileFixture(t, c, id)
-	if observations.Load() < 1 || !published.Load() || c.Tasks.Failures() != 0 {
-		t.Fatalf(
-			"observations=%d published=%t panics=%d",
-			observations.Load(),
-			published.Load(),
-			c.Tasks.Failures(),
-		)
-	}
-	if parentEvents.Load() != 0 {
-		t.Fatalf("parent refresh events = %d", parentEvents.Load())
-	}
-	fresh, ok := st.Get[*manifest.HelmRelease](id)
-	{
-		assert.FatalIf(t, !ok || fresh == hr || fresh.Suspend != (*testCaseInput.suspended) ||
-			fresh.Values["output"] != "hr-refresh-output", "canonical replacement = %+v", fresh)
-	}
-	{
-		{
-			diff := cmp.Diff(original, hr, cmpopts.IgnoreUnexported(manifest.HelmRelease{}))
-			assert.FatalIf(t, diff != "", "original mutated (-want +got):\n%s", diff)
-		}
-	}
-	if (*testCaseInput.testCaseInput).parent {
-		{
-			{
-				owners := testutil.Owners(
-					st.Productions(id, nil),
-				)
-				assert.FatalIf(t, !slices.Contains(
-					owners,
-					parent.Named(),
-				), "missing independent contributor: %v", owners)
-			}
-		}
-	}
-	info, _ := st.GetStatus(id)
-	art, _ := st.GetArtifact(id, store.ArtifactContent).(*store.Emission)
-	output := manifest.NamedResource{
-		Kind:      manifest.KindConfigMap,
-		Namespace: "apps",
-		Name:      "hr-refresh-output",
-	}
-	if *testCaseInput.suspended {
-		{
-			assert.ErrorIf(
-				t,
-				info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
-				"status = %+v, want Ready/suspended",
-				info,
-			)
-		}
-		_, _, inventory := st.GetEmission(id)
-		if art != retained || renders.Load() != 0 || st.GetObject(output) != nil ||
-			len(inventory.Children) != 0 {
-			t.Errorf(
-				"suspended replacement rendered: artifact=%+v output=%v renders=%d",
-				art,
-				st.GetObject(output),
-				renders.Load(),
-			)
-		}
-	} else if info.Status != store.StatusReady || art == nil || art == retained || renders.Load() != 1 || len(art.Manifests) != 1 || st.GetObject(output) == nil {
-		t.Fatalf(
-			"active replacement did not render %s: status=%+v artifact=%+v renders=%d",
-			output,
-			info,
-			art,
-			renders.Load(),
-		)
-	}
+	checkRefreshedRelease(
+		t,
+		&refreshedReleaseChecks{
+			testCaseInput: &testCaseInput,
+			parent:        &parent,
+			id:            &id,
+			c:             &c,
+			st:            &st,
+			hr:            &hr,
+			original:      &original,
+			retained:      &retained,
+			observations:  &observations,
+			parentEvents:  &parentEvents,
+			renders:       &renders,
+			published:     &published,
+		},
+	)
 }
 
 type testReconcileSyntheticChartReplayContentTailInputs struct {
@@ -733,4 +524,254 @@ type testReconcileSyntheticChartReplayContentTailInputs struct {
 	input     **manifest.ConfigMap
 	chart     *manifest.NamedResource
 	secondDir *string
+}
+
+type refreshedReleaseChecks struct {
+	testCaseInput *testReconcileSuspensionAfterRefreshCaseCaseInputs
+	parent        **manifest.Kustomization
+	id            *manifest.NamedResource
+	c             **Controller
+	st            **store.Store
+	hr            **manifest.HelmRelease
+	original      **manifest.HelmRelease
+	retained      **store.Emission
+	observations  *atomic.Int64
+	parentEvents  *atomic.Int64
+	renders       *atomic.Int64
+	published     *atomic.Bool
+}
+
+func checkRefreshedRelease(t *testing.T, scope *refreshedReleaseChecks) {
+	t.Helper()
+	reconcileFixture(t, (*scope.c), (*scope.id))
+	if scope.observations.Load() < 1 || !scope.published.Load() || (*scope.c).Tasks.Failures() != 0 {
+		t.Fatalf(
+			"observations=%d published=%t panics=%d",
+			scope.observations.Load(),
+			scope.published.Load(),
+			(*scope.c).Tasks.Failures(),
+		)
+	}
+	if scope.parentEvents.Load() != 0 {
+		t.Fatalf("parent refresh events = %d", scope.parentEvents.Load())
+	}
+	fresh, ok := (*scope.st).Get[*manifest.HelmRelease]((*scope.id))
+	{
+		assert.FatalIf(t, !ok || fresh == (*scope.hr) || fresh.Suspend != (*scope.testCaseInput.suspended) ||
+			fresh.Values["output"] != "hr-refresh-output", "canonical replacement = %+v", fresh)
+	}
+	{
+		{
+			diff := cmp.Diff((*scope.original), (*scope.hr), cmpopts.IgnoreUnexported(manifest.HelmRelease{}))
+			assert.FatalIf(t, diff != "", "original mutated (-want +got):\n%s", diff)
+		}
+	}
+	if (*scope.testCaseInput.testCaseInput).parent {
+		{
+			{
+				owners := testutil.Owners(
+					(*scope.st).Productions((*scope.id), nil),
+				)
+				assert.FatalIf(t, !slices.Contains(
+					owners,
+					(*scope.parent).Named(),
+				), "missing independent contributor: %v", owners)
+			}
+		}
+	}
+	info, _ := (*scope.st).GetStatus((*scope.id))
+	art, _ := (*scope.st).GetArtifact((*scope.id), store.ArtifactContent).(*store.Emission)
+	output := manifest.NamedResource{
+		Kind:      manifest.KindConfigMap,
+		Namespace: "apps",
+		Name:      "hr-refresh-output",
+	}
+	if *scope.testCaseInput.suspended {
+		{
+			assert.ErrorIf(
+				t,
+				info.Outcome() != store.OutcomeSuspended || info.Message != "suspended",
+				"status = %+v, want Ready/suspended",
+				info,
+			)
+		}
+		_, _, inventory := (*scope.st).GetEmission((*scope.id))
+		if art != (*scope.retained) || scope.renders.Load() != 0 || (*scope.st).GetObject(output) != nil ||
+			len(inventory.Children) != 0 {
+			t.Errorf(
+				"suspended replacement rendered: artifact=%+v output=%v renders=%d",
+				art,
+				(*scope.st).GetObject(output),
+				scope.renders.Load(),
+			)
+		}
+	} else if info.Status != store.StatusReady || art == nil || art == (*scope.retained) || scope.renders.Load() != 1 || len(art.Manifests) != 1 || (*scope.st).GetObject(output) == nil {
+		t.Fatalf(
+			"active replacement did not render %s: status=%+v artifact=%+v renders=%d",
+			output,
+			info,
+			art,
+			scope.renders.Load(),
+		)
+	}
+}
+
+func checkParentUpdateDuringRender(t *testing.T, workers *int) {
+	t.Helper()
+
+	st := store.New()
+	tasks := task.NewBounded(*workers)
+	owner, err := sourcecache.New(t.Context(), "")
+	{
+		assert.FatalIf(t, err != nil, "%v", err)
+	}
+	t.Cleanup(func() { _ = owner.Close() })
+	client := helm.NewClient(owner)
+	c := New(base.New(st, tasks), client, helm.Options{}, false)
+	c.Configure(base.Options{})
+	c.StartLifecycle()
+	started, resume, rendered := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(resume) })
+	t.Cleanup(func() { release(); tasks.BlockTillDone(); c.StartLifecycle() })
+	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+	st.AddObject(parent)
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: binding\nversion: 1.0.0\n")
+	testutil.WriteFile(t, dir, "chart/templates/cm.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata: {name: binding}
+data:
+  output: {{ .Values.output | quote }}
+  required: {{ required "required value" .Values.required | quote }}
+`)
+	src := &manifest.OCIRepository{Name: "chart", Namespace: "apps", URL: "oci://example.test/chart"}
+	st.AddObject(src)
+	source := &store.SourceArtifact{
+		Kind:      manifest.KindOCIRepository,
+		FS:        &renderBarrierFS{FS: os.DirFS(dir), tasks: tasks, started: started, resume: resume},
+		LocalPath: dir,
+		Revision:  "1.0.0@sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+		Digest:    "sha256:abcdef12345675476ed4d43c14f80d52d81d36bc16906843463d464c6146f0d8",
+	}
+	st.SetArtifact(src.Named(), source)
+	st.UpdateStatus(src.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	required := "present"
+	docA := map[string]any{
+		"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease,
+		"metadata": map[string]any{"name": "release", "namespace": "apps"},
+		"spec": map[string]any{
+			"chartRef": map[string]any{"kind": manifest.KindOCIRepository, "name": src.Name},
+			"values":   map[string]any{"output": "A", "required": required},
+		},
+	}
+	docB := manifest.DeepCopyMap(docA)
+	docB["spec"].(map[string]any)["values"].(map[string]any)["output"] = "B"
+	publish := func(doc map[string]any) {
+		_, _, next := st.GetEmission(parent.Named())
+		defer next.Finish()
+		children, retained := testutil.ParseChildren(
+			c,
+			parent,
+			[]map[string]any{doc},
+			manifest.ParseDocOptions{DefaultNamespace: "apps"},
+		)
+		next.Children, next.Manifests = children, testutil.DocumentOccurrences(retained)
+		next.Complete = true
+		controllertest.Emit(t.Context(), c.Controller, parent.Named(), &next)
+	}
+	publish(docA)
+	st.UpdateStatus(parent.Named(), store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""})
+	id := testutil.HelmReleaseID("apps", "release")
+	hr, ok := st.Get[*manifest.HelmRelease](id)
+	{
+		assert.FatalIf(t, !ok, "%v", "parent did not emit input A")
+	}
+	var accepted atomic.Pointer[store.Emission]
+	unsubscribe := st.AddListener(store.EventArtifactUpdated, func(other manifest.NamedResource, payload any) {
+		if emission, localOk := payload.(*store.Emission); other == id && localOk && emission.Complete {
+			accepted.Store(emission)
+		}
+	}, false)
+	t.Cleanup(unsubscribe)
+	tasks.Go(t.Context(), "parent", func(context.Context) {
+		defer release()
+		reached := false
+		tasks.YieldSlot(func() {
+			select {
+			case <-started:
+				reached = true
+			case <-rendered:
+			}
+		})
+		if !reached {
+			t.Error("render never reached chart filesystem")
+			return
+		}
+		publish(docB)
+	})
+	markRendered := sync.OnceFunc(func() { close(rendered) })
+	info := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{
+		Tasks: tasks,
+		Store: st,
+		ID:    id,
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+			defer markRendered()
+			return c.ReconcileNode(ctx, id, level)
+		},
+	})
+	{
+		assert.FatalIf(t, info.Status != store.StatusReady, "canonical replacement status = %+v", info)
+	}
+
+	if tasks.Failures() != 0 {
+		t.Fatalf("task failures = %d", tasks.Failures())
+	}
+	emission := accepted.Load()
+	{
+		assert.FatalIf(
+			t,
+			emission == nil || !emission.Complete || len(emission.Manifests) != 1 || emission.Fingerprint == "" ||
+				!emission.OutputReads.Valid(),
+			"accepted B emission = %+v; want complete output with current provenance and a content key",
+			emission,
+		)
+	}
+	{
+		{
+			got := renderedConfigMapValue(testutil.DocumentMaps(emission.Manifests), "output")
+			assert.FatalIf(t, got != "B", "rendered output = %q, want B", got)
+		}
+	}
+	current, ok := st.Get[*manifest.HelmRelease](id)
+	{
+		assert.FatalIf(t, !ok || current.Values["output"] != "B", "current input is not B: %+v", current)
+	}
+	{
+		assert.ErrorIf(
+			t,
+			st.GetArtifact(id, store.ArtifactContent) != emission,
+			"%v",
+			"canonical B does not expose its accepted output",
+		)
+	}
+	output, ok := st.Get[*manifest.ConfigMap](
+		manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "binding"},
+	)
+	{
+		assert.FatalIf(
+			t,
+			!ok || output.Data["output"] != "B",
+			"canonical emitted child = %+v, want output B",
+			output,
+		)
+	}
+
+	{
+		assert.FatalIf(
+			t,
+			hr.Values["output"] != "A" || hr.Values["required"] != required,
+			"%v",
+			"render mutated input A",
+		)
+	}
 }

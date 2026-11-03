@@ -472,7 +472,17 @@ func TestReconcile_SuppliedAdvisoriesOnReplay(t *testing.T) {
 	st.AddObject(hr)
 	var previous *base.Execution
 	var first *store.Emission
-	testReconcileSuppliedAdvisoriesOnReplaySegment(t, &testReconcileSuppliedAdvisoriesOnReplaySegmentInputs{c: &c, st: &st, input: &input, hr: &hr, previous: &previous, first: &first})
+	testReconcileSuppliedAdvisoriesOnReplaySegment(
+		t,
+		&testReconcileSuppliedAdvisoriesOnReplaySegmentInputs{
+			c:        &c,
+			st:       &st,
+			input:    &input,
+			hr:       &hr,
+			previous: &previous,
+			first:    &first,
+		},
+	)
 }
 
 type testReconcileMutableChartAndSourceValuesReplayTailInputs struct {
@@ -494,36 +504,22 @@ type testReconcileSuppliedAdvisoriesOnReplaySegmentInputs struct {
 	first    **store.Emission
 }
 
-func testReconcileSuppliedAdvisoriesOnReplaySegment(t *testing.T, statementInput *testReconcileSuppliedAdvisoriesOnReplaySegmentInputs) {
+func testReconcileSuppliedAdvisoriesOnReplaySegment(
+	t *testing.T,
+	statementInput *testReconcileSuppliedAdvisoriesOnReplaySegmentInputs,
+) {
 	t.Helper()
 	for i, value := range []string{"", "equal", "", "fresh"} {
-		repository := &manifest.ConfigMap{Name: (*statementInput.input).Name, Namespace: (*statementInput.input).Namespace, Data: map[string]any{}}
+		repository := &manifest.ConfigMap{
+			Name:      (*statementInput.input).Name,
+			Namespace: (*statementInput.input).Namespace,
+			Data:      map[string]any{},
+		}
 		if value != "" {
 			repository.Data["values.yaml"] = "value: " + value + "\n"
 		}
 		(*statementInput.st).AddObject(repository)
-		var next *base.Execution
-		d := controllertest.Dispatch{
-			Tasks: (*statementInput.c).Tasks,
-			Store: (*statementInput.st),
-			ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
-				run := (*statementInput.c).reconcileNodeForTest(ctx, id, level)
-				if id == (*statementInput.hr).Named() {
-					next = run
-				}
-				return run
-			},
-		}
-		scheduler := schedule.New((*statementInput.c).Tasks, d)
-		stop := (*statementInput.st).AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-			if (*statementInput.c).Owns(id) || id.Group == manifest.SourceDomain && id.Kind == manifest.KindHelmChart {
-				scheduler.OnArrival(id, true)
-			}
-		}, true)
-		scheduler.Seed([]schedule.NodeID{(*statementInput.hr).Named()})
-		assert.NoError(t, scheduler.Run(t.Context()))
-		stop()
-		assert.Equal(t, (*statementInput.c).Tasks.Failures(), 0)
+		next := statementInput.dispatchReplay(t)
 		if (*statementInput.previous) != nil {
 			(*statementInput.previous).Retire()
 		}
@@ -538,8 +534,16 @@ func testReconcileSuppliedAdvisoriesOnReplaySegment(t *testing.T, statementInput
 				next,
 			)
 		}
-		if info, ok := (*statementInput.st).GetStatus((*statementInput.hr).Named()); !ok || info.Status != store.StatusReady {
-			t.Fatalf("phase %d: status=%+v, chart declaration=%+v, want Ready", i, info, (*statementInput.hr).HelmReleaseSpec.Chart)
+		if info, ok := (*statementInput.st).GetStatus(
+			(*statementInput.hr).Named(),
+		); !ok ||
+			info.Status != store.StatusReady {
+			t.Fatalf(
+				"phase %d: status=%+v, chart declaration=%+v, want Ready",
+				i,
+				info,
+				(*statementInput.hr).HelmReleaseSpec.Chart,
+			)
 		}
 		current := (*statementInput.st).GetArtifact((*statementInput.hr).Named(), store.ArtifactContent).(*store.Emission)
 		{
@@ -556,7 +560,8 @@ func testReconcileSuppliedAdvisoriesOnReplaySegment(t *testing.T, statementInput
 		} else {
 			assert.FatalIf(
 				t,
-				i < 3 && (current.Fingerprint != (*statementInput.first).Fingerprint || !cmp.Equal(current.Manifests, (*statementInput.first).Manifests)),
+				i < 3 &&
+					(current.Fingerprint != (*statementInput.first).Fingerprint || !cmp.Equal(current.Manifests, (*statementInput.first).Manifests)),
 				"%v",
 				"equal-output collision transition changed render output",
 			)
@@ -574,4 +579,31 @@ func testReconcileSuppliedAdvisoriesOnReplaySegment(t *testing.T, statementInput
 		}
 		assert.Equal(t, current.Manifests[0].Document["data"].(map[string]any)["value"], any(wantValue))
 	}
+}
+
+func (p *testReconcileSuppliedAdvisoriesOnReplaySegmentInputs) dispatchReplay(t *testing.T) *base.Execution {
+	t.Helper()
+	var next *base.Execution
+	d := controllertest.Dispatch{
+		Tasks: (*p.c).Tasks,
+		Store: (*p.st),
+		ReconcileNode: func(ctx context.Context, id manifest.NamedResource, level manifest.DrainLevel) *base.Execution {
+			run := (*p.c).reconcileNodeForTest(ctx, id, level)
+			if id == (*p.hr).Named() {
+				next = run
+			}
+			return run
+		},
+	}
+	scheduler := schedule.New((*p.c).Tasks, d)
+	stop := (*p.st).AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if (*p.c).Owns(id) || id.Group == manifest.SourceDomain && id.Kind == manifest.KindHelmChart {
+			scheduler.OnArrival(id, true)
+		}
+	}, true)
+	scheduler.Seed([]schedule.NodeID{(*p.hr).Named()})
+	assert.NoError(t, scheduler.Run(t.Context()))
+	stop()
+	assert.Equal(t, (*p.c).Tasks.Failures(), 0)
+	return next
 }

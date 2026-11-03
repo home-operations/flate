@@ -104,12 +104,14 @@ stringData:
 
 func TestParseDoc_Dispatch(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
+	type dispatchCase = struct {
 		name    string
 		yaml    string
 		kind    string
 		cluster bool
-	}{
+	}
+	cases := make([]dispatchCase, 0, 21)
+	cases = append(cases, []dispatchCase{
 		{"kustomization", `
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
@@ -176,7 +178,7 @@ metadata: {name: s, namespace: ns}`, KindSecret, false},
 apiVersion: example.com/v1
 kind: Foo
 metadata: {name: x}`, "Foo", false},
-	}
+	}...)
 	for _, raw := range []struct {
 		apiVersion, kind string
 		cluster          bool
@@ -218,10 +220,12 @@ metadata: {name: x}`, "Foo", false},
 // Typed decoding requires the exact API group and the supported core version.
 func TestParseDoc_ForeignAPIGroup(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
+	type foreignGroupCase = struct {
 		name string
 		yaml string
-	}{
+	}
+	cases := make([]foreignGroupCase, 0, 19)
+	cases = append(cases, []foreignGroupCase{
 		{"slash-less flux version", `
 apiVersion: kustomize.toolkit.fluxcd.io
 kind: Kustomization
@@ -281,7 +285,7 @@ apiVersion: source.toolkit.fluxcd.io.example.com/v1
 kind: Bucket
 metadata: {name: b, namespace: default}
 spec: {name: b}`},
-	}
+	}...)
 	for _, kind := range []string{KindKustomization, KindHelmChart, KindExternalArtifact, KindResourceSet, KindResourceSetInputProvider, KindSecret} {
 		cases = append(
 			cases,

@@ -205,26 +205,7 @@ func testParseDocAuthoritativeSanitationCaseCompletion(
 		assert.NoError(t, err)
 		assert.Equal(t, obj.Named().Namespace, "apps")
 		assert.Equal(t, authoritative["metadata"].(map[string]any)["namespace"], any("apps"))
-		if scope.testCaseInput.tc.field != "binaryData" {
-			value, found, valueErr := obj.(Data).Value("VALUE")
-			if scope.testCaseInput.tc.readError {
-				{
-					assert.FatalIf(
-						t,
-						value != "" || found || !errors.Is(valueErr, ErrInput) ||
-							!errors.Is(valueErr, ErrFlux),
-						"value=%q found=%t err=%v",
-						value,
-						found,
-						valueErr,
-					)
-				}
-			} else {
-				assert.NoError(t, valueErr)
-				assert.Equal(t, found, true)
-				assert.Equal(t, value, scope.testCaseInput.tc.wantRead)
-			}
-		}
+		assertSanitizedDataValue(t, scope.testCaseInput, obj)
 	} else {
 		assert.FatalIf(
 			t,
@@ -257,5 +238,29 @@ func testParseDocAuthoritativeSanitationCaseCompletion(
 		assert.NoError(t, err)
 		ReleaseDoc(next[0])
 		assert.Diff(t, authoritative, retained)
+	}
+}
+
+func assertSanitizedDataValue(t *testing.T, input *testParseDocAuthoritativeSanitationCaseInputs, obj BaseManifest) {
+	t.Helper()
+	if input.tc.field != "binaryData" {
+		value, found, valueErr := obj.(Data).Value("VALUE")
+		if input.tc.readError {
+			{
+				assert.FatalIf(
+					t,
+					value != "" || found || !errors.Is(valueErr, ErrInput) ||
+						!errors.Is(valueErr, ErrFlux),
+					"value=%q found=%t err=%v",
+					value,
+					found,
+					valueErr,
+				)
+			}
+		} else {
+			assert.NoError(t, valueErr)
+			assert.Equal(t, found, true)
+			assert.Equal(t, value, input.tc.wantRead)
+		}
 	}
 }

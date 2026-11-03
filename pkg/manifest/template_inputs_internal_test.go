@@ -122,24 +122,28 @@ func testTemplateInputsStaticReferencesCase(t *testing.T, testCaseInput *struct 
 	assert.NoError(t, err)
 	refs := projection.Inputs
 	assert.Equal(t, len(refs), testCaseInput.count)
-	for _, input := range refs {
-		ref := input.Reference
-		namespace := "apps"
-		if testCaseInput.name == "explicit namespace" {
-			namespace = "foreign"
-			assert.Equal(t, ref.NamespaceDefault, false)
-		}
-		assert.Equal(t, ref.Namespace, namespace)
-		assert.Equal(t, ref.Gate, GateStage(0))
-		if ref.Use == "source" {
-			assert.Equal(t, input.UnresolvedPath, testCaseInput.name == "dynamic path")
-			if testCaseInput.name == "alias" {
-				assert.Equal(t, ref.Name, "child")
+	{
+		inputValues := refs
+		for inputIndex := range inputValues {
+			input := inputValues[inputIndex]
+			ref := input.Reference
+			namespace := "apps"
+			if testCaseInput.name == "explicit namespace" {
+				namespace = "foreign"
+				assert.Equal(t, ref.NamespaceDefault, false)
 			}
-			if testCaseInput.name == "dynamic path" {
-				assert.Equal(t, len(ref.Files), 0)
-			} else {
-				assert.Diff(t, ref.Files, []string{"apps/child"})
+			assert.Equal(t, ref.Namespace, namespace)
+			assert.Equal(t, ref.Gate, GateStage(0))
+			if ref.Use == "source" {
+				assert.Equal(t, input.UnresolvedPath, testCaseInput.name == "dynamic path")
+				if testCaseInput.name == "alias" {
+					assert.Equal(t, ref.Name, "child")
+				}
+				if testCaseInput.name == "dynamic path" {
+					assert.Equal(t, len(ref.Files), 0)
+				} else {
+					assert.Diff(t, ref.Files, []string{"apps/child"})
+				}
 			}
 		}
 	}
@@ -172,11 +176,15 @@ func testTemplateInputsStaticReferencesFirstEvaluatedChildReplacesDraft(
 	assert.Equal(t, projection.Objects[0].(*Kustomization).Path, "first")
 	assert.Equal(t, len(projection.Targets), 1)
 	assert.Equal(t, len(projection.Inputs), 2)
-	for _, input := range projection.Inputs {
-		if input.Reference.Use == "source" {
-			assert.Diff(t, input.Reference.Files, []string{"first"})
-		} else {
-			assert.Equal(t, input.Reference.Name, "accepted")
+	{
+		inputValues2 := projection.Inputs
+		for inputIndex2 := range inputValues2 {
+			input := inputValues2[inputIndex2]
+			if input.Reference.Use == "source" {
+				assert.Diff(t, input.Reference.Files, []string{"first"})
+			} else {
+				assert.Equal(t, input.Reference.Name, "accepted")
+			}
 		}
 	}
 }

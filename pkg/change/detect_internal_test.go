@@ -344,7 +344,9 @@ func TestDetect_HashLimit(t *testing.T) {
 	for _, scenario := range []string{"changed", "canceled", "read error"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			testDetectHashLimitCase(t, &scenario)
+			synctest.Test(t, func(t *testing.T) {
+				testDetectHashLimitCase(t, &scenario)
+			})
 		},
 		)
 	}
@@ -527,132 +529,135 @@ func TestSet_WithReadersBuildInputs(t *testing.T) {
 	}
 }
 
-func testDetectHashLimitCase(t *testing.T, testCaseInput *string,
-) {
+func testDetectHashLimitCase(t *testing.T, testCaseInput *string) {
 	t.Helper()
 
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		reads := &hashReads{release: make(chan struct{}), cancelled: func() bool { return ctx.Err() != nil }}
-		released := false
-		defer func() {
-			if !released {
-				close(reads.release)
-			}
-		}()
-		readErr := errors.New("hash read failed")
-		if (*testCaseInput) == "read error" {
-			reads.err = readErr
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reads := &hashReads{release: make(chan struct{}), cancelled: func() bool { return ctx.Err() != nil }}
+	released := false
+	defer func() {
+		if !released {
+			close(reads.release)
 		}
-		before, after := fstest.MapFS{}, fstest.MapFS{}
-		want := make([]string, 0, 17)
-		for i := range 17 {
-			name := fmt.Sprintf("file-%02d.yaml", i)
-			before[name] = &fstest.MapFile{Data: []byte("old")}
-			after[name] = &fstest.MapFile{Data: []byte("new")}
-			want = append(want, name)
-		}
-		type result struct {
-			set *Set
-			err error
-		}
-		done := make(chan result, 1)
-		go func() {
-			set, err := Detect(
-				ctx,
-				&store.SourceArtifact{FS: &hashInput{FS: before, reads: reads, before: true}},
-				&store.SourceArtifact{FS: &hashInput{FS: after, reads: reads}},
-			)
-			done <- result{set, err}
-		}()
-		synctest.Wait()
-		if reads.active.Load() != 8 || reads.maximum.Load() != 8 || reads.before.Load() != 8 ||
-			reads.started.Load() != 8 {
+	}()
+	readErr := errors.New("hash read failed")
+	if (*testCaseInput) == "read error" {
+		reads.err = readErr
+	}
+	before, after := fstest.MapFS{}, fstest.MapFS{}
+	want := make([]string, 0, 17)
+	for i := range 17 {
+		name := fmt.Sprintf("file-%02d.yaml", i)
+		before[name] = &fstest.MapFile{Data: []byte("old")}
+		after[name] = &fstest.MapFile{Data: []byte("new")}
+		want = append(want, name)
+	}
+	type result struct {
+		set *Set
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		set, err := Detect(
+			ctx,
+			&store.SourceArtifact{FS: &hashInput{FS: before, reads: reads, before: true}},
+			&store.SourceArtifact{FS: &hashInput{FS: after, reads: reads}},
+		)
+		done <- result{set, err}
+	}()
+	synctest.Wait()
+	if reads.active.Load() != 8 || reads.maximum.Load() != 8 || reads.before.Load() != 8 ||
+		reads.started.Load() != 8 {
+		t.Fatalf(
+			"blocked jobs: active=%d peak=%d before=%d reads=%d, want eight overlapping jobs",
+			reads.active.Load(),
+			reads.maximum.Load(),
+			reads.before.Load(),
+			reads.started.Load(),
+		)
+	}
+	switch *testCaseInput {
+	case "canceled":
+		cancel()
+	case "read error":
+		reads.release <- struct{}{}
+	}
+	synctest.Wait()
+	select {
+	case got := <-done:
+		t.Fatalf("Detect returned before blocked readers drained: %+v", got)
+	default:
+	}
+	if (*testCaseInput) == "read error" && (reads.active.Load() != 7 || reads.before.Load() != 8) {
+		t.Fatalf(
+			"failed submission started extra jobs: active=%d before=%d",
+			reads.active.Load(),
+			reads.before.Load(),
+		)
+	}
+	close(reads.release)
+	released = true
+	got := <-done
+	assertHashReadersDrained(t, testCaseInput, reads)
+	switch *testCaseInput {
+	case "changed":
+		if got.err != nil || got.set == nil || !slices.Equal(got.set.Paths(), want) ||
+			reads.before.Load() != 17 ||
+			reads.opened.Load() != 34 {
 			t.Fatalf(
-				"blocked jobs: active=%d peak=%d before=%d reads=%d, want eight overlapping jobs",
-				reads.active.Load(),
-				reads.maximum.Load(),
+				"hash results: set=%v error=%v before=%d opened=%d",
+				got.set,
+				got.err,
 				reads.before.Load(),
-				reads.started.Load(),
-			)
-		}
-		switch *testCaseInput {
-		case "canceled":
-			cancel()
-		case "read error":
-			reads.release <- struct{}{}
-		}
-		synctest.Wait()
-		select {
-		case got := <-done:
-			t.Fatalf("Detect returned before blocked readers drained: %+v", got)
-		default:
-		}
-		if (*testCaseInput) == "read error" && (reads.active.Load() != 7 || reads.before.Load() != 8) {
-			t.Fatalf(
-				"failed submission started extra jobs: active=%d before=%d",
-				reads.active.Load(),
-				reads.before.Load(),
-			)
-		}
-		close(reads.release)
-		released = true
-		got := <-done
-		if (*testCaseInput) == "canceled" {
-			t.Logf(
-				"read starts=%d reads after cancel=%d before opens=%d after opens=%d closes=%d",
-				reads.started.Load(),
-				reads.postCancel.Load(),
-				reads.before.Load(),
-				reads.opened.Load()-reads.before.Load(),
-				reads.closed.Load(),
-			)
-			{
-				assert.ErrorIf(
-					t,
-					reads.postCancel.Load() != 0 || reads.opened.Load() != reads.before.Load(),
-					"%v",
-					"hash work started after cancellation",
-				)
-			}
-		}
-		if reads.active.Load() != 0 || reads.opened.Load() != reads.closed.Load() || reads.maximum.Load() > 8 {
-			t.Fatalf(
-				"readers not drained: active=%d opened=%d closed=%d peak=%d",
-				reads.active.Load(),
 				reads.opened.Load(),
-				reads.closed.Load(),
-				reads.maximum.Load(),
 			)
 		}
-		if (*testCaseInput) == "changed" {
-			if got.err != nil || got.set == nil || !slices.Equal(got.set.Paths(), want) ||
-				reads.before.Load() != 17 ||
-				reads.opened.Load() != 34 {
-				t.Fatalf(
-					"hash results: set=%v error=%v before=%d opened=%d",
-					got.set,
-					got.err,
-					reads.before.Load(),
-					reads.opened.Load(),
-				)
-			}
-		} else {
-			cause := readErr
-			if (*testCaseInput) == "canceled" {
-				cause = context.Canceled
-			}
-			if !errors.Is(got.err, cause) || got.set != nil || reads.before.Load() != 8 {
-				t.Fatalf(
-					"failed hash results: set=%v error=%v before=%d",
-					got.set,
-					got.err,
-					reads.before.Load(),
-				)
-			}
+	default:
+		cause := readErr
+		if (*testCaseInput) == "canceled" {
+			cause = context.Canceled
 		}
-	})
+		if !errors.Is(got.err, cause) || got.set != nil || reads.before.Load() != 8 {
+			t.Fatalf(
+				"failed hash results: set=%v error=%v before=%d",
+				got.set,
+				got.err,
+				reads.before.Load(),
+			)
+		}
+	}
+}
+
+func assertHashReadersDrained(t *testing.T, testCaseInput *string, reads *hashReads) {
+	t.Helper()
+	if (*testCaseInput) == "canceled" {
+		t.Logf(
+			"read starts=%d reads after cancel=%d before opens=%d after opens=%d closes=%d",
+			reads.started.Load(),
+			reads.postCancel.Load(),
+			reads.before.Load(),
+			reads.opened.Load()-reads.before.Load(),
+			reads.closed.Load(),
+		)
+		{
+			assert.ErrorIf(
+				t,
+				reads.postCancel.Load() != 0 || reads.opened.Load() != reads.before.Load(),
+				"%v",
+				"hash work started after cancellation",
+			)
+		}
+	}
+	if reads.active.Load() != 0 || reads.opened.Load() != reads.closed.Load() || reads.maximum.Load() > 8 {
+		t.Fatalf(
+			"readers not drained: active=%d opened=%d closed=%d peak=%d",
+			reads.active.Load(),
+			reads.opened.Load(),
+			reads.closed.Load(),
+			reads.maximum.Load(),
+		)
+	}
 }
 
 func testSetWithReadersCase(t *testing.T, testCaseInput *string,

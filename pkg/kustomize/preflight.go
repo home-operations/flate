@@ -318,15 +318,16 @@ func (w *inputWalk) pluginOperand(ctx context.Context, loc walkScope, node *yaml
 
 func (w *inputWalk) acquire(ctx context.Context, descriptor remoteInput, scope walkScope) (fs.FS, error) {
 	acquired, identity, err := descriptor.acquire(ctx, w.cache, w.fs)
-	w.recordRemote(descriptor, identity, scope)
+	w.recordRemote(descriptor, &identity, &scope)
 	return acquired, err
 }
 
-func (w *inputWalk) recordRemote(descriptor remoteInput, identity remoteIdentity, scope walkScope) {
+func (w *inputWalk) recordRemote(descriptor remoteInput, observed *remoteIdentity, location *walkScope) {
+	identity, scope := *observed, *location
 	if w.fs.rec == nil {
 		return
 	}
-	w.fs.rec.recordRemote(descriptor, identity, scope.parents)
+	w.fs.rec.recordRemote(descriptor, &identity, scope.parents)
 	for key := scope.observation; key.file != ""; {
 		observation := w.visited[key]
 		if observation.remotes == nil {
@@ -343,7 +344,8 @@ func (w *inputWalk) reuse(prior controlObservation, scope walkScope) {
 		return
 	}
 	for descriptor := range prior.remotes {
-		w.recordRemote(descriptor, w.fs.rec.remotes[descriptor].identity, scope)
+		identity := w.fs.rec.remotes[descriptor].identity
+		w.recordRemote(descriptor, &identity, &scope)
 	}
 }
 

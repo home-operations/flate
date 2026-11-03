@@ -153,7 +153,7 @@ func testReadSetRemoteValidationCase(t *testing.T, testCaseInput *string,
 					},
 				)
 			}
-			rec.recordRemote(descriptor, identity, parents)
+			rec.recordRemote(descriptor, &identity, parents)
 		}
 	}
 	frame, err := encodeFrame(&renderHeader{Reads: rec.snapshot()}, nil)

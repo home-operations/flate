@@ -21,7 +21,8 @@ func (w *inputWalk) fetchGitBase(ctx context.Context, spec kustomizeinput.GitBas
 	}
 	if dest := input.bases[descriptor]; dest != "" {
 		if input.rec != nil {
-			w.recordRemote(descriptor, input.rec.remotes[descriptor].identity, scope)
+			identity := input.rec.remotes[descriptor].identity
+			w.recordRemote(descriptor, &identity, &scope)
 		}
 		rel, err := filepath.Rel(scope.root, filepath.Join(dest, spec.SubPath))
 		return "./" + filepath.ToSlash(rel), err

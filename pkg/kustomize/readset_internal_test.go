@@ -391,7 +391,7 @@ func TestReadSet_RemotePolicyValidation(t *testing.T) {
 		{
 			assert.NoError(t, err)
 		}
-		rec.recordRemote(input, identity, nil)
+		rec.recordRemote(input, &identity, nil)
 	}
 	snap := rec.snapshot()
 	{
@@ -641,9 +641,9 @@ func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetR
 			slices.Reverse(parents)
 		}
 		for _, parent := range parents {
-			rs.recordRemote(entry.Input, entry.Identity, []remoteInput{parent})
+			rs.recordRemote(entry.Input, &entry.Identity, []remoteInput{parent})
 		}
-		rs.recordRemote(entry.Input, entry.Identity, nil)
+		rs.recordRemote(entry.Input, &entry.Identity, nil)
 	}
 	snap := rs.snapshot()
 	{
@@ -674,7 +674,7 @@ func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetR
 	}
 	rs.recordRemote(
 		(*testCaseInput.entries)[3].Input,
-		(*testCaseInput.entries)[3].Identity,
+		&(*testCaseInput.entries)[3].Identity,
 		[]remoteInput{(*testCaseInput.entries)[1].Input},
 	)
 	{

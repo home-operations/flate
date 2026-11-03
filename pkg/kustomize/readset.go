@@ -116,7 +116,8 @@ type remoteObservation struct {
 	parents  map[remoteInput]struct{}
 }
 
-func (rs *readSet) recordRemote(input remoteInput, identity remoteIdentity, parents []remoteInput) {
+func (rs *readSet) recordRemote(input remoteInput, observed *remoteIdentity, parents []remoteInput) {
+	identity := *observed
 	if rs.remotes == nil {
 		rs.remotes = make(map[remoteInput]remoteObservation)
 	}

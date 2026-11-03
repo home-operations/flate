@@ -580,7 +580,6 @@ func testTemplateCacheTemplateIntegrationCase3Loop(t *testing.T, loopInputs stru
 	t.Helper()
 
 	if (*(*loopInputs.testCaseInput)) == "acquired" {
-
 		assert.NoError(t, os.RemoveAll(filepath.Join((*loopInputs.chartRoot), "oci", "blobs")))
 		_, err := fs.ReadFile((*loopInputs.input), "mychart/templates/configmap.yaml")
 		{

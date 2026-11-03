@@ -180,7 +180,7 @@ func (f countingFile) Read(p []byte) (int, error) {
 	return n, err
 }
 
-//nolint:paralleltest // test replaces process-wide dependency configuration.
+//nolint:paralleltest,reassign // Serial fixtures must set and restore Helm's process-wide decompression limit.
 func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 	old := archive.MaxDecompressedChartSize
 	archive.MaxDecompressedChartSize = 256
@@ -233,7 +233,7 @@ func TestLoadFSChart_ArchiveSizeLimit(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // test replaces process-wide dependency configuration.
+//nolint:paralleltest,reassign // Serial fixtures must set and restore Helm's process-wide decompression limit.
 func TestLoadFSChart_DecompressedBudgetMatchesHelm(t *testing.T) {
 	old := archive.MaxDecompressedChartSize
 	archive.MaxDecompressedChartSize = 128

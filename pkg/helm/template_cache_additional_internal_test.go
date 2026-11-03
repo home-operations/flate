@@ -187,15 +187,17 @@ func computeTemplateKeyDifferingFieldsDivergeCase(
 
 	var opts Options
 	v := reflect.ValueOf(&opts).Elem().Field((*i))
-	switch v.Kind() {
-	case reflect.Bool:
+	kind := v.Kind()
+	isBool, isString, isSlice := kind == reflect.Bool, kind == reflect.String, kind == reflect.Slice
+	switch {
+	case isBool:
 		v.SetBool(true)
-	case reflect.String:
+	case isString:
 		v.SetString("different")
-	case reflect.Slice:
+	case isSlice:
 		v.Set(reflect.ValueOf([]string{"different"}))
 	default:
-		t.Fatalf("new option %s requires an explicit cache-key decision", (*field).Name)
+		t.Fatalf("new option %s requires an explicit cache-key decision", field.Name)
 	}
 	key := computeTemplateKey(
 		&chartDescription{
@@ -207,7 +209,7 @@ func computeTemplateKeyDifferingFieldsDivergeCase(
 		(*capturedInputs.hr),
 	)
 	assert.FatalIf(t, key == "", "%v", "valid option produced an empty key")
-	_, skip := (*capturedInputs.excluded)[(*field).Name]
+	_, skip := (*capturedInputs.excluded)[field.Name]
 	assert.Equal(t, key == (*capturedInputs.base), skip)
 }
 
@@ -232,12 +234,14 @@ func computeTemplateKeyDifferingFieldsDivergeCase2(
 			v = v.Elem()
 		}
 	}
-	switch v.Kind() {
-	case reflect.Bool:
+	kind := v.Kind()
+	isBool, isString, isSlice := kind == reflect.Bool, kind == reflect.String, kind == reflect.Slice
+	switch {
+	case isBool:
 		v.SetBool(true)
-	case reflect.String:
+	case isString:
 		v.SetString("different")
-	case reflect.Slice:
+	case isSlice:
 		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
 		if v.Type().Elem().Kind() == reflect.String {
 			v.Index(0).SetString("different")

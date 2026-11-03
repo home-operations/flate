@@ -271,13 +271,13 @@ func testTemplateOCIConcurrentIdentitiesCaseLoop(t *testing.T, loopInputs struct
 		if (*loopInputs.testCaseInput).disable {
 			version = "6.15.0"
 		}
-		if (*loopInputs.errs)[i] != nil || !hasRenderField((*loopInputs.output)[i], "version", version) {
-			t.Fatalf("parallel render %d = %q, err = %v", i, (*loopInputs.output)[i], (*loopInputs.errs)[i])
+		if loopInputs.errs[i] != nil || !hasRenderField(loopInputs.output[i], "version", version) {
+			t.Fatalf("parallel render %d = %q, err = %v", i, loopInputs.output[i], loopInputs.errs[i])
 		}
 		{
 			assert.FatalIf(
 				t,
-				(*loopInputs.round) > 0 && !reflect.DeepEqual((*loopInputs.output)[i], (*loopInputs.expected)[i]),
+				(*loopInputs.round) > 0 && !reflect.DeepEqual(loopInputs.output[i], loopInputs.expected[i]),
 				"parallel render %d changed bytes",
 				i,
 			)

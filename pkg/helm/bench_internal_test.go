@@ -179,24 +179,6 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 }
 
 func BenchmarkTemplate_CRDsValidation(b *testing.B) {
-	const crd = `apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: widgets.example.com
-spec:
-  group: example.com
-  names:
-    kind: Widget
-    plural: widgets
-  scope: Namespaced
-  versions:
-    - name: v1
-      served: true
-      storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-`
 	for _, count := range []int{1, 10} {
 		for _, policy := range []string{"Create", "Skip"} {
 			b.Run(
@@ -419,7 +401,7 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 ) {
 	b.Helper()
 
-	if (*tc).disk && !renderPersistenceEligible(b) {
+	if tc.disk && !renderPersistenceEligible(b) {
 		b.Fatalf(
 			"persisted benchmark requires a clean VCS-stamped build: %s",
 			sourcecache.RenderPersistenceDisabledReason(),
@@ -428,7 +410,7 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 	dir := stageBenchChartDir(b)
 	testutil.WriteFile(b, dir, "config/prod.yaml", "greeting: pinned\nreplicas: 3\n")
 	root := ""
-	if (*tc).disk {
+	if tc.disk {
 		root = b.TempDir()
 	}
 	owner := cachetest.New(b, root, sourcecache.New)
@@ -480,7 +462,7 @@ func benchmarkTemplateSourceValuesName(b *testing.B, tc *struct {
 	if err != nil || loaded.valuesPin == "" {
 		b.Fatalf("source values are not pinned: %v", err)
 	}
-	if (*tc).disk {
+	if tc.disk {
 		if loaded.record == nil {
 			b.Fatal("warm render did not use persisted output")
 		}

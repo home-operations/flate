@@ -126,6 +126,8 @@ func (p EmissionPolicy) MatchesNamespace(target NamedResource) bool {
 }
 
 // Stamp applies producer overlays to caller-owned decoded documents before substitution.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 	if !p.Owner && len(p.Labels) == 0 && len(p.Annotations) == 0 {
 		return
@@ -134,40 +136,7 @@ func (p EmissionPolicy) Stamp(docs []DocOccurrence) {
 		if occurrence.Err != nil || occurrence.Document == nil {
 			continue
 		}
-		doc := occurrence.Document
-		md := EnsureMetadata(doc)
-		hook := func() bool {
-			if p.HookAnnotation == "" {
-				return false
-			}
-			annotations, _ := md[annotationsKey].(map[string]any)
-			_, found := annotations[p.HookAnnotation]
-			return found
-		}
-		owner := func() {
-			if !p.Owner || hook() {
-				return
-			}
-			labels, _ := md["labels"].(map[string]any)
-			if labels == nil {
-				labels = make(map[string]any, ownerLabelCount)
-				md["labels"] = labels
-			}
-			labels[p.OwnerKeys[0]] = p.OwnerValues[0]
-			if p.OwnerValues[1] != "" || p.PreserveEmptyOwnerNamespace {
-				labels[p.OwnerKeys[1]] = p.OwnerValues[1]
-			}
-		}
-		if !p.CommonFirst {
-			owner()
-		}
-		if !hook() && (p.CommonExcludedKind == "" || DocKind(doc) != p.CommonExcludedKind) {
-			MergeStringMap(md, "labels", p.Labels)
-			MergeStringMap(md, annotationsKey, p.Annotations)
-		}
-		if p.CommonFirst {
-			owner()
-		}
+		stampDocument(&p, occurrence.Document)
 	}
 }
 
@@ -207,3 +176,39 @@ func (p EmissionPolicy) SelectOutput(
 const (
 	ownerLabelCount = 2
 )
+
+func stampDocument(p *EmissionPolicy, doc map[string]any) {
+	md := EnsureMetadata(doc)
+	hook := func() bool {
+		if p.HookAnnotation == "" {
+			return false
+		}
+		annotations, _ := md[annotationsKey].(map[string]any)
+		_, found := annotations[p.HookAnnotation]
+		return found
+	}
+	owner := func() {
+		if !p.Owner || hook() {
+			return
+		}
+		labels, _ := md["labels"].(map[string]any)
+		if labels == nil {
+			labels = make(map[string]any, ownerLabelCount)
+			md["labels"] = labels
+		}
+		labels[p.OwnerKeys[0]] = p.OwnerValues[0]
+		if p.OwnerValues[1] != "" || p.PreserveEmptyOwnerNamespace {
+			labels[p.OwnerKeys[1]] = p.OwnerValues[1]
+		}
+	}
+	if !p.CommonFirst {
+		owner()
+	}
+	if !hook() && (p.CommonExcludedKind == "" || DocKind(doc) != p.CommonExcludedKind) {
+		MergeStringMap(md, "labels", p.Labels)
+		MergeStringMap(md, annotationsKey, p.Annotations)
+	}
+	if p.CommonFirst {
+		owner()
+	}
+}

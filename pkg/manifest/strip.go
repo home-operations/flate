@@ -35,23 +35,25 @@ import (
 // noise on every chart-version rotation despite the strip pass.
 func StripResourceAttributes(resource map[string]any, attrs []string) {
 	stripObjectMetadata(resource, attrs)
-	if spec, ok := resource[specKey].(map[string]any); ok {
-		if tmpl, ok := spec["template"].(map[string]any); ok {
-			stripObjectMetadata(tmpl, attrs)
-		}
-		if jobTmpl, ok := spec["jobTemplate"].(map[string]any); ok {
-			stripObjectMetadata(jobTmpl, attrs)
-			if jobSpec, ok := jobTmpl[specKey].(map[string]any); ok {
-				if podTmpl, ok := jobSpec["template"].(map[string]any); ok {
-					stripObjectMetadata(podTmpl, attrs)
-				}
+	spec, ok := resource[specKey].(map[string]any)
+	if !ok {
+		return
+	}
+	if tmpl, ok := spec["template"].(map[string]any); ok {
+		stripObjectMetadata(tmpl, attrs)
+	}
+	if jobTmpl, ok := spec["jobTemplate"].(map[string]any); ok {
+		stripObjectMetadata(jobTmpl, attrs)
+		if jobSpec, ok := jobTmpl[specKey].(map[string]any); ok {
+			if podTmpl, ok := jobSpec["template"].(map[string]any); ok {
+				stripObjectMetadata(podTmpl, attrs)
 			}
 		}
-		items, _ := spec["volumeClaimTemplates"].([]any)
-		for _, item := range items {
-			if obj, ok := item.(map[string]any); ok {
-				stripObjectMetadata(obj, attrs)
-			}
+	}
+	items, _ := spec["volumeClaimTemplates"].([]any)
+	for _, item := range items {
+		if obj, ok := item.(map[string]any); ok {
+			stripObjectMetadata(obj, attrs)
 		}
 	}
 }

@@ -63,19 +63,7 @@ func (r *RawObject) artifactTargets(candidates []NamedResource) []ProducerTarget
 		if !ok {
 			continue
 		}
-		bound := make([]string, len(captures))
-		for _, candidate := range candidates {
-			if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact ||
-				candidate.Namespace != r.Namespace ||
-				len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
-				continue
-			}
-			clear(bound)
-			budget := artifactMatchBudget
-			if artifactMatch(tokens, candidate.Name, bound, &budget) {
-				targets = append(targets, ProducerTarget{NamedResource: candidate})
-			}
-		}
+		targets = r.appendArtifactMatches(targets, candidates, tokens, len(captures))
 	}
 	slices.SortFunc(targets, func(a, b ProducerTarget) int { return a.Compare(b.NamedResource) })
 	return slices.CompactFunc(targets, func(a, b ProducerTarget) bool { return a.NamedResource == b.NamedResource })
@@ -96,9 +84,7 @@ func artifactTokens(template string, captures []string, declare bool) ([]artifac
 			tokens = append(tokens, artifactToken{literal: template[:i]})
 		}
 		name, rest, ok := strings.Cut(template[i+1:], "}")
-		if !ok || name == "" || strings.IndexFunc(name, func(r rune) bool {
-			return r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
-		}) >= 0 || name[0] >= '0' && name[0] <= '9' {
+		if !ok || !validArtifactCapture(name) {
 			return nil, nil, false
 		}
 		index := slices.Index(captures, name)
@@ -211,3 +197,31 @@ func (r *RawObject) references(yield func(Reference) bool) {
 const (
 	maxArtifactCaptureLength = 63
 )
+
+func (r *RawObject) appendArtifactMatches(
+	targets []ProducerTarget,
+	candidates []NamedResource,
+	tokens []artifactToken,
+	captureCount int,
+) []ProducerTarget {
+	bound := make([]string, captureCount)
+	for _, candidate := range candidates {
+		if candidate.Group != SourceDomain || candidate.Kind != KindExternalArtifact ||
+			candidate.Namespace != r.Namespace ||
+			len(apivalidation.NameIsDNSSubdomain(candidate.Name, false)) != 0 {
+			continue
+		}
+		clear(bound)
+		budget := artifactMatchBudget
+		if artifactMatch(tokens, candidate.Name, bound, &budget) {
+			targets = append(targets, ProducerTarget{NamedResource: candidate})
+		}
+	}
+	return targets
+}
+
+func validArtifactCapture(name string) bool {
+	return !(name == "" || strings.IndexFunc(name, func(r rune) bool {
+		return r != '_' && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+	}) >= 0 || name[0] >= '0' && name[0] <= '9')
+}

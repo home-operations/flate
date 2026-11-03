@@ -30,24 +30,7 @@ func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
 			encoding = base64.StdEncoding
 		}
 		data, _ := doc[field].(map[string]any)
-		var replaced map[string]any
-		for key, raw := range data {
-			if value, ok := raw.(string); ok && !secretData && len(value) < len(sopsCiphertextPrefix) {
-				continue
-			}
-			value, err := scalarString(raw)
-			if err != nil {
-				continue
-			}
-			wiped := WipeValue(key, value, encoding, secretData)
-			if wiped == value {
-				continue
-			}
-			if replaced == nil {
-				replaced = maps.Clone(data)
-			}
-			replaced[key] = wiped
-		}
+		replaced := sanitizeDataField(data, encoding, secretData)
 		if replaced != nil {
 			if sanitized == nil {
 				sanitized = maps.Clone(doc)
@@ -66,21 +49,7 @@ func sanitizeData(doc map[string]any, kind string) (map[string]any, bool) {
 func WipeValue(key, value string, encoding *base64.Encoding, secretData bool) string {
 	wiped := strings.HasPrefix(value, sopsCiphertextPrefix) && sopsCiphertext.MatchString(value)
 	if !wiped && secretData && encoding != nil {
-		var scratch [128]byte
-		decoded, err := encoding.AppendDecode(scratch[:0], []byte(value))
-		if err == nil {
-			if bytes.HasPrefix(decoded, []byte(sopsCiphertextPrefix)) {
-				// The regexp matcher makes its input escape; keep ordinary decoding on the stack.
-				wiped = sopsCiphertext.Match(bytes.Clone(decoded))
-			}
-			// Flux 07fe06f32fd5 decryptor.go detects Secret documents by these markers.
-			for _, marker := range []string{"mac: ENC[", `"mac": "ENC[`, "sops_mac=ENC[", "[sops]"} {
-				if bytes.Contains(decoded, []byte(marker)) {
-					wiped = true
-					break
-				}
-			}
-		}
+		wiped = wipedSecretValue(value, encoding)
 	}
 	if !wiped {
 		return value
@@ -114,4 +83,46 @@ func HasSubstituteDisabled(doc map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func sanitizeDataField(data map[string]any, encoding *base64.Encoding, secretData bool) map[string]any {
+	var replaced map[string]any
+	for key, raw := range data {
+		if value, ok := raw.(string); ok && !secretData && len(value) < len(sopsCiphertextPrefix) {
+			continue
+		}
+		value, err := scalarString(raw)
+		if err != nil {
+			continue
+		}
+		wiped := WipeValue(key, value, encoding, secretData)
+		if wiped == value {
+			continue
+		}
+		if replaced == nil {
+			replaced = maps.Clone(data)
+		}
+		replaced[key] = wiped
+	}
+	return replaced
+}
+
+func wipedSecretValue(value string, encoding *base64.Encoding) bool {
+	wiped := false
+	var scratch [128]byte
+	decoded, err := encoding.AppendDecode(scratch[:0], []byte(value))
+	if err == nil {
+		if bytes.HasPrefix(decoded, []byte(sopsCiphertextPrefix)) {
+			// The regexp matcher makes its input escape; keep ordinary decoding on the stack.
+			wiped = sopsCiphertext.Match(bytes.Clone(decoded))
+		}
+		// Flux 07fe06f32fd5 decryptor.go detects Secret documents by these markers.
+		for _, marker := range []string{"mac: ENC[", `"mac": "ENC[`, "sops_mac=ENC[", "[sops]"} {
+			if bytes.Contains(decoded, []byte(marker)) {
+				wiped = true
+				break
+			}
+		}
+	}
+	return wiped
 }

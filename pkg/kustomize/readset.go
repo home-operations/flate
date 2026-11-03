@@ -284,56 +284,8 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err() == nil, ctx.Err()
 	}
-	indices := make(map[remoteInput]int, len(rs.Remotes))
-	{
-		entryValues := rs.Remotes
-		for index := range entryValues {
-			entry := entryValues[index]
-			if _, duplicate := indices[entry.Input]; duplicate {
-				//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
-				return false, ctx.Err()
-			}
-			indices[entry.Input] = index
-		}
-	}
-	pending := make([]int, len(rs.Remotes))
-	children := make([][]int, len(rs.Remotes))
-	var ready []int
-	{
-		entryValues2 := rs.Remotes
-		for index := range entryValues2 {
-			entry := entryValues2[index]
-			pending[index] = len(entry.Parents)
-			if pending[index] == 0 {
-				ready = append(ready, index)
-			}
-			for _, parent := range entry.Parents {
-				parentIndex, ok := indices[parent]
-				if !ok {
-					//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
-					return false, ctx.Err()
-				}
-				children[parentIndex] = append(children[parentIndex], index)
-			}
-		}
-	}
-	var waves [][]int
-	visited := 0
-	for len(ready) > 0 {
-		waves = append(waves, ready)
-		visited += len(ready)
-		var next []int
-		for _, index := range ready {
-			for _, child := range children[index] {
-				pending[child]--
-				if pending[child] == 0 {
-					next = append(next, child)
-				}
-			}
-		}
-		ready = next
-	}
-	if visited != len(rs.Remotes) {
+	waves, graphValid := remoteValidationWaves(rs.Remotes)
+	if !graphValid {
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return false, ctx.Err()
 	}
@@ -378,4 +330,62 @@ func (rs readSetSnapshot) validateRemotes(ctx context.Context, cache *TreeCache,
 	}
 	//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 	return valid && ctx.Err() == nil, ctx.Err()
+}
+
+func remoteValidationWaves(remotes []remoteEntry) ([][]int, bool) {
+	indices := make(map[remoteInput]int, len(remotes))
+	{
+		entryValues := remotes
+		for index := range entryValues {
+			entry := entryValues[index]
+			if _, duplicate := indices[entry.Input]; duplicate {
+				return nil, false
+			}
+			indices[entry.Input] = index
+		}
+	}
+	pending := make([]int, len(remotes))
+	children := make([][]int, len(remotes))
+	var ready []int
+	{
+		entryValues2 := remotes
+		for index := range entryValues2 {
+			entry := entryValues2[index]
+			pending[index] = len(entry.Parents)
+			if pending[index] == 0 {
+				ready = append(ready, index)
+			}
+			for _, parent := range entry.Parents {
+				parentIndex, ok := indices[parent]
+				if !ok {
+					return nil, false
+				}
+				children[parentIndex] = append(children[parentIndex], index)
+			}
+		}
+	}
+	return orderRemoteValidation(pending, children, ready)
+}
+
+func orderRemoteValidation(pending []int, children [][]int, ready []int) ([][]int, bool) {
+	var waves [][]int
+	visited := 0
+	for len(ready) > 0 {
+		waves = append(waves, ready)
+		visited += len(ready)
+		var next []int
+		for _, index := range ready {
+			for _, child := range children[index] {
+				pending[child]--
+				if pending[child] == 0 {
+					next = append(next, child)
+				}
+			}
+		}
+		ready = next
+	}
+	if visited != len(pending) {
+		return nil, false
+	}
+	return waves, true
 }

@@ -126,21 +126,9 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository, policy source
 	if kind, _ := (*manifest.GitRepositoryRef)(repo.Reference).Effective(); opts.Depth > 0 && kind == commitReference {
 		opts.Depth = 0
 	}
-	proxy := resolved.ProxyComponents()
-	if proxy[0] != "" {
-		opts.ProxyOptions = transport.ProxyOptions{URL: proxy[0], Username: proxy[1], Password: proxy[2]}
-	} else if target, err := url.Parse(repo.URL); err == nil && (target.Scheme == "http" || target.Scheme == "https") {
-		selected, err := resolved.ProxyURL(target)
-		if err != nil {
-			return gitAcquisition{}, manifest.NewError(
-				manifest.ErrInput,
-				nil,
-				"resolve proxy: invalid proxy configuration",
-			)
-		}
-		if selected != nil {
-			opts.ProxyOptions.URL = selected.String()
-		}
+	opts.ProxyOptions, err = gitProxyOptions(repo.URL, &resolved)
+	if err != nil {
+		return gitAcquisition{}, err
 	}
 	var material any
 	if sec != nil || opts.ProxyOptions.URL != "" {
@@ -158,28 +146,51 @@ func (f *operation) resolveTransport(repo *manifest.GitRepository, policy source
 		)
 	}
 	request := gitAcquisition{spec: repo, options: opts, material: material}
-	if authErr != nil && repo.Provider != sourcev1.GitProviderGitHub && !skipTLS {
-		missing, _ := errors.AsType[*source.MissingSecretError](authErr)
-		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
-			return source.AcquireMachine(
-				ctx,
-				policy,
-				func(context.Context) error { return nil },
-				func(ctx context.Context, policy sourcecache.Policy) (*store.SourceArtifact, error) {
-					return f.fetch(ctx, &request, policy)
-				},
-			)
-		}
+	if authErr == nil || repo.Provider == sourcev1.GitProviderGitHub {
+		return request, authErr
 	}
-	if authErr != nil && skipTLS && repo.Provider != sourcev1.GitProviderGitHub {
-		missing, _ := errors.AsType[*source.MissingSecretError](authErr)
+	missing, _ := errors.AsType[*source.MissingSecretError](authErr)
+	if skipTLS {
 		timeout := repo.OperationTimeout()
 		policy.Timeout = &timeout
 		missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
 			return f.retrySSH(ctx, &request, policy, endpoint)
 		}
+		return request, authErr
+	}
+	missing.RetryAmbient = func(ctx context.Context) (*store.SourceArtifact, error) {
+		return source.AcquireMachine(ctx, policy,
+			func(context.Context) error { return nil },
+			func(ctx context.Context, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+				return f.fetch(ctx, &request, policy)
+			},
+		)
 	}
 	return request, authErr
+}
+
+func gitProxyOptions(repoURL string, resolved *source.TransportMaterial) (transport.ProxyOptions, error) {
+	proxy := resolved.ProxyComponents()
+	if proxy[0] != "" {
+		return transport.ProxyOptions{URL: proxy[0], Username: proxy[1], Password: proxy[2]}, nil
+	}
+	target, err := url.Parse(repoURL)
+	if err != nil || target.Scheme != "http" && target.Scheme != "https" {
+		return transport.ProxyOptions{}, nil //nolint:nilerr // Non-HTTP go-git endpoint syntaxes bypass HTTP proxy selection.
+	}
+	selected, err := resolved.ProxyURL(target)
+	if err != nil {
+		return transport.ProxyOptions{}, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"resolve proxy: invalid proxy configuration",
+		)
+	}
+	var options transport.ProxyOptions
+	if selected != nil {
+		options.URL = selected.String()
+	}
+	return options, nil
 }
 
 func (f *Fetcher) fetch(
@@ -358,17 +369,9 @@ func (f *Fetcher) acquire(
 		specs = []config.RefSpec{spec}
 	}
 	if len(specs) == 0 || worktree != nil {
-		cloneCtx := ctx
-		var cancel context.CancelFunc
-		if request.timeout > 0 {
-			cloneCtx, cancel = context.WithTimeout(ctx, request.timeout)
-		}
-		repo, err := git.CloneContext(cloneCtx, storer, worktree, &options)
-		if cancel != nil {
-			cancel()
-		}
+		repo, err := request.clone(ctx, storer, worktree, &options)
 		if err != nil {
-			return nil, fmt.Errorf("clone git repository: %w", err)
+			return nil, err
 		}
 		switch kind {
 		case "name":
@@ -395,6 +398,27 @@ func (f *Fetcher) acquire(
 		err = nil
 	}
 	return repo, err
+}
+
+func (r *gitAcquisition) clone(
+	ctx context.Context,
+	storer storage.Storer,
+	worktree billy.Filesystem,
+	options *git.CloneOptions,
+) (*git.Repository, error) {
+	cloneCtx := ctx
+	var cancel context.CancelFunc
+	if r.timeout > 0 {
+		cloneCtx, cancel = context.WithTimeout(ctx, r.timeout)
+	}
+	repo, err := git.CloneContext(cloneCtx, storer, worktree, options)
+	if cancel != nil {
+		cancel()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("clone git repository: %w", err)
+	}
+	return repo, nil
 }
 
 func initRemote(storer storage.Storer, worktree billy.Filesystem, url string) (*git.Repository, error) {
@@ -522,34 +546,37 @@ func machineSSHAuthentication(
 	return auth, conn, keys, nil
 }
 
-func (request *gitAcquisition) fetchRevision(ctx context.Context, repo *git.Repository, fetch *git.FetchOptions) error {
+func (r *gitAcquisition) fetchRevision(ctx context.Context, repo *git.Repository, fetch *git.FetchOptions) error {
 	fetchCtx := ctx
-	if request.timeout > 0 {
+	if r.timeout > 0 {
 		var cancel context.CancelFunc
-		fetchCtx, cancel = context.WithTimeout(ctx, request.timeout)
+		fetchCtx, cancel = context.WithTimeout(ctx, r.timeout)
 		defer cancel()
 	}
-	return repo.FetchContext(fetchCtx, fetch)
+	return repo.FetchContext( //nolint:wrapcheck // Preserve go-git protocol error identity and messages.
+		fetchCtx,
+		fetch,
+	)
 }
 
-func (request *gitAcquisition) fetchPin(
+func (r *gitAcquisition) fetchPin(
 	ctx context.Context,
 	f *Fetcher,
 	repo *git.Repository,
 	fetch *git.FetchOptions,
 ) error {
-	err := request.fetchRevision(ctx, repo, fetch)
+	err := r.fetchRevision(ctx, repo, fetch)
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
 			errors.Is(err, transport.ErrAuthenticationRequired) ||
 			errors.Is(err, transport.ErrAuthorizationFailed) {
 			return err
 		}
-		if _, loaded := f.fallback.LoadOrStore(request.options.URL, struct{}{}); !loaded {
-			slog.Debug("git: exact commit fetch refused; fetching full history", "url", request.options.URL)
+		if _, loaded := f.fallback.LoadOrStore(r.options.URL, struct{}{}); !loaded {
+			slog.Debug("git: exact commit fetch refused; fetching full history", "url", r.options.URL)
 		}
 		fetch.Depth, fetch.RefSpecs = 0, []config.RefSpec{fetchAllRefs}
-		if err := request.fetchRevision(ctx, repo, fetch); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		if err := r.fetchRevision(ctx, repo, fetch); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return err
 		}
 	}

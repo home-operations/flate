@@ -22,9 +22,9 @@ func checkoutRef(repo *git.Repository, hash plumbing.Hash, sparse []string) erro
 	if err != nil {
 		return err //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
 	}
-	return wt.Checkout(
+	return wt.Checkout( //nolint:wrapcheck // The checkout adapter must preserve upstream protocol error identity and messages.
 		&git.CheckoutOptions{Hash: hash, SparseCheckoutDirectories: gittree.NormalizeSparsePaths(sparse)},
-	) //nolint:wrapcheck // The go-git checkout and submodule adapters retain upstream protocol errors for source classification.
+	)
 }
 
 // Flux reuses the parent's credentials for submodules on every host.

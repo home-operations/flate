@@ -68,6 +68,7 @@ type pinSession struct {
 	owner *pinTransport
 }
 
+//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (p *pinTransport) NewUploadPackSession(
 	endpoint *transport.Endpoint,
 	auth transport.AuthMethod,

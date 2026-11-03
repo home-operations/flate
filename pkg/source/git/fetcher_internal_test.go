@@ -96,6 +96,7 @@ type timeoutSession struct {
 	observe func(context.Context)
 }
 
+//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (tr timeoutTransport) NewUploadPackSession(
 	*transport.Endpoint,
 	transport.AuthMethod,

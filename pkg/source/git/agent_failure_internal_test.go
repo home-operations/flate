@@ -40,8 +40,6 @@ func TestFetcher_AmbientPostAuthenticationFailure(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // The test replaces go-git protocol registration and restores it afterward.
-//nolint:paralleltest // The test replaces process-wide go-git protocol registration.
 func TestFetcher_AmbientSubmodulesShareAttempt(t *testing.T) {
 	identity, key := testSSHIdentity(t)
 	_, host := testSSHIdentity(t)

@@ -453,8 +453,8 @@ type testFetcherHTTPSBasicAuthSnapshotRotationCaseInputs struct {
 func testFetcherHTTPSBasicAuthSnapshotRotationCase(
 	t *testing.T, testCaseInputValue *testFetcherHTTPSBasicAuthSnapshotRotationCaseInputs,
 ) {
-	testCaseInput := *testCaseInputValue
 	t.Helper()
+	testCaseInput := *testCaseInputValue
 	if (*testCaseInput.wave) == "password" {
 		(*testCaseInput.sec) = &manifest.Secret{
 			StringData: map[string]any{"username": "alice", "password": "second", "ca.crt": (*testCaseInput.ca)},

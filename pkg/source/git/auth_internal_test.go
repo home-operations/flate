@@ -399,6 +399,7 @@ func testEndpoint(t *testing.T, url string) *transport.Endpoint {
 	return endpoint
 }
 
+//nolint:ireturn // The upstream SSH key parser exposes only its signer interface.
 func testSSHIdentity(t *testing.T) (string, ssh.Signer) {
 	t.Helper()
 	_, key, err := ed25519.GenerateKey(nil)
@@ -477,7 +478,8 @@ func testFetcherSecretReferencesCase(t *testing.T, testCaseInput testFetcherSecr
 	var auth transport.AuthMethod
 	var err error
 	owner, secretName := repo.Named(), "creds"
-	if (*testCaseInput.tc).proxy {
+	switch {
+	case testCaseInput.tc.proxy:
 		repo.Name, repo.SecretRef = "repo", nil
 		repo.ProxySecretRef = &manifest.LocalObjectReference{Name: "missing"}
 		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
@@ -485,12 +487,12 @@ func testFetcherSecretReferencesCase(t *testing.T, testCaseInput testFetcherSecr
 			sourcecache.Policy{},
 		)
 		owner.Name, secretName = "repo", "missing"
-	} else if testCaseInput.tc.field == "tls.crt" {
+	case testCaseInput.tc.field == "tls.crt":
 		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveTransport(
 			repo,
 			sourcecache.Policy{},
 		)
-	} else {
+	default:
 		auth, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveAuth(
 			repo,
 			sec,
@@ -518,7 +520,8 @@ func testFetcherSecretReferencesCaseCompletion(
 	if (*captures.err) != nil {
 		assert.Equal(t, (*captures.auth) == nil, true)
 	}
-	if (*(*captures.testCaseInput).tc).wantInput {
+	switch {
+	case captures.testCaseInput.tc.wantInput:
 		assert.Equal(t, errors.Is((*captures.err), manifest.ErrInput), true)
 		assert.Equal(t, errors.Is((*captures.err), manifest.ErrFlux), true)
 		assert.Equal(t, errors.Is((*captures.err), manifest.ErrMissingSecret), false)
@@ -535,7 +538,7 @@ func testFetcherSecretReferencesCaseCompletion(
 		for _, payload := range []string{"%%%fixture", "credential-fixture", "invalid-private-fixture", "invalid-known-hosts-fixture"} {
 			assert.FatalIf(t, strings.Contains((*captures.err).Error(), payload), "%s", "credential payload leaked")
 		}
-	} else if captures.testCaseInput.tc.wantMissing {
+	case captures.testCaseInput.tc.wantMissing:
 		missing, ok := errors.AsType[*source.MissingSecretError]((*captures.err))
 		assert.FatalIf(t, !ok, "expected MissingSecretError; got %v", (*captures.err))
 		assert.Equal(t, errors.Is((*captures.err), manifest.ErrMissingSecret), true)
@@ -545,11 +548,11 @@ func testFetcherSecretReferencesCaseCompletion(
 			missing.Secret,
 			manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "ns", Name: (*captures.secretName)},
 		)
-	} else if captures.testCaseInput.tc.wantError != "" {
+	case captures.testCaseInput.tc.wantError != "":
 		if (*captures.err) == nil || !strings.Contains((*captures.err).Error(), captures.testCaseInput.tc.wantError) {
 			t.Fatalf("expected %q error; got %v", captures.testCaseInput.tc.wantError, (*captures.err))
 		}
-	} else {
+	default:
 		assert.NoError(t, (*captures.err))
 		assert.FatalIf(t, (*captures.auth) == nil, "%s", "valid credentials did not produce auth")
 	}

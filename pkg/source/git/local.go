@@ -131,7 +131,7 @@ func (r *localResolver) open() error {
 	}
 	headRef, err := r.repo.Head()
 	if err != nil {
-		return err
+		return fmt.Errorf("read local git HEAD: %w", err)
 	}
 	r.head = headRef.Hash()
 	_, err = readCommit(r.repo, r.head)

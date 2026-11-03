@@ -44,6 +44,7 @@ type agentAuthentication struct {
 	afterAuth     func() error
 }
 
+//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (a *agentAuthentication) NewUploadPackSession(
 	endpoint *transport.Endpoint,
 	auth transport.AuthMethod,
@@ -94,6 +95,7 @@ func (a *agentAuthentication) NewUploadPackSession(
 	return a.Transport.NewUploadPackSession(&local, nil)
 }
 
+//nolint:ireturn // The upstream keyring constructor exposes only the agent interface.
 func acquisitionAgent(t *testing.T, identity string) (<-chan struct{}, *atomic.Int32, agent.Agent) {
 	t.Helper()
 	keyring := agent.NewKeyring()

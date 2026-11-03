@@ -35,10 +35,7 @@ func knownHostsCallback(data []byte) (ssh.HostKeyCallback, error) {
 	cb, parseErr := knownhosts.New(fmt.Sprintf("/dev/fd/%d", r.Fd()))
 	_ = r.Close() // read side no longer needed after New returns
 	if werr := <-writeErr; werr != nil && parseErr == nil {
-		if werr != nil {
-			return nil, fmt.Errorf("write known_hosts pipe: %w", werr)
-		}
-		return nil, nil
+		return nil, fmt.Errorf("write known_hosts pipe: %w", werr)
 	}
 	if parseErr != nil {
 		return cb, fmt.Errorf("parse SSH known hosts: %w", parseErr)

@@ -177,7 +177,7 @@ func resolveSemver(repo *git.Repository, expr string) (plumbing.Hash, error) {
 			return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
 		}
 		if !constraint.Check(v) {
-			return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
+			return nil
 		}
 		if best == nil || v.GreaterThan(best) || (v.Equal(best) && name < bestName) {
 			best, bestHash, bestName = v, ref.Hash(), name

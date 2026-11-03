@@ -346,6 +346,9 @@ func TestResolveSemver_EqualVersionCreationOrder(t *testing.T) {
 			_, repo, a, b := localFixture(t)
 			hashes := map[string]plumbing.Hash{"1.0.0": a, "v1.0.0": b}
 			var refs []*plumbing.Reference
+			if len(names) > 0 {
+				refs = make([]*plumbing.Reference, 0, len(names))
+			}
 			for _, name := range names {
 				ref := plumbing.NewHashReference(plumbing.NewTagReferenceName(name), hashes[name])
 				{
@@ -372,6 +375,7 @@ type orderedTagStore struct {
 	refs []*plumbing.Reference
 }
 
+//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (s *orderedTagStore) IterReferences() (storer.ReferenceIter, error) {
 	return storer.NewReferenceSliceIter(s.refs), nil
 }
@@ -436,7 +440,7 @@ func TestResolveLocal_UnusableObjectsAndStore(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Subtests share their parent acquisition fixture and observe its state in order.
+//nolint:paralleltest,tparallel // Child options must finish before the parent moves their shared repository metadata.
 func TestResolveLocal_OptionsFallbackAndGitIndirection(t *testing.T) {
 	t.Parallel()
 
@@ -611,6 +615,7 @@ func (s *failingRefStore) Reference(plumbing.ReferenceName) (*plumbing.Reference
 	return nil, s.err
 }
 
+//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (s *failingRefStore) IterReferences() (storer.ReferenceIter, error) { return nil, s.err }
 
 func localSource(refValue *sourcev1.GitRepositoryRef) *manifest.GitRepository {

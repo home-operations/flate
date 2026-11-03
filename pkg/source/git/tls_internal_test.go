@@ -114,58 +114,63 @@ func gitHTTPHandler(t *testing.T, root string) http.Handler {
 	assert.NoError(t, err)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		session, err := server.DefaultServer.NewUploadPackSession(ep, nil)
-		if err != nil {
-			t.Error(err)
-			http.Error(w, "session", http.StatusInternalServerError)
-			return
-		}
-		defer session.Close()
-		refs, err := session.AdvertisedReferencesContext(r.Context())
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if setErr := refs.Capabilities.Set(capability.Shallow); setErr != nil {
-			t.Error(setErr)
-			return
-		}
-		if setErr2 := refs.Capabilities.Set(capability.AllowReachableSHA1InWant); setErr2 != nil {
-			t.Error(setErr2)
-			return
-		}
-		if r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
-			encoder := pktline.NewEncoder(w)
-			if encodeStringErr := encoder.EncodeString("# service=git-upload-pack\n"); encodeStringErr != nil {
-				t.Error(encodeStringErr)
-				return
-			}
-			if flushErr := encoder.Flush(); flushErr != nil {
-				t.Error(flushErr)
-				return
-			}
-			if encodeErr := refs.Encode(w); encodeErr != nil {
-				t.Error(encodeErr)
-			}
-			return
-		}
-		request := packp.NewUploadPackRequest()
-		if decodeErr := request.Decode(r.Body); decodeErr != nil {
-			t.Error(decodeErr)
-			return
-		}
-		response, err := session.UploadPack(r.Context(), request)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		defer response.Close()
-		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
-		if err := response.Encode(w); err != nil {
-			t.Error(err)
-		}
+		serveGitHTTP(t, w, r, ep)
 	})
+}
+
+func serveGitHTTP(t *testing.T, w http.ResponseWriter, r *http.Request, ep *transport.Endpoint) {
+	t.Helper()
+	session, err := server.DefaultServer.NewUploadPackSession(ep, nil)
+	if err != nil {
+		t.Error(err)
+		http.Error(w, "session", http.StatusInternalServerError)
+		return
+	}
+	defer session.Close()
+	refs, err := session.AdvertisedReferencesContext(r.Context())
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if setErr := refs.Capabilities.Set(capability.Shallow); setErr != nil {
+		t.Error(setErr)
+		return
+	}
+	if setErr2 := refs.Capabilities.Set(capability.AllowReachableSHA1InWant); setErr2 != nil {
+		t.Error(setErr2)
+		return
+	}
+	if r.Method == http.MethodGet {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+		encoder := pktline.NewEncoder(w)
+		if encodeStringErr := encoder.EncodeString("# service=git-upload-pack\n"); encodeStringErr != nil {
+			t.Error(encodeStringErr)
+			return
+		}
+		if flushErr := encoder.Flush(); flushErr != nil {
+			t.Error(flushErr)
+			return
+		}
+		if encodeErr := refs.Encode(w); encodeErr != nil {
+			t.Error(encodeErr)
+		}
+		return
+	}
+	request := packp.NewUploadPackRequest()
+	if decodeErr := request.Decode(r.Body); decodeErr != nil {
+		t.Error(decodeErr)
+		return
+	}
+	response, err := session.UploadPack(r.Context(), request)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer response.Close()
+	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+	if err := response.Encode(w); err != nil {
+		t.Error(err)
+	}
 }
 
 func TestFetcher_TLSOperations(t *testing.T) {
@@ -266,7 +271,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 	assert.NoError(t, err)
 	identity := string(pem.EncodeToMemory(block))
 
-	cases := []testFetcherResolveTLSTlsCase{
+	cases := append(make([]testFetcherResolveTLSTlsCase, 0, 34), []testFetcherResolveTLSTlsCase{
 		{name: "anonymous", encodedData: map[string]any{"ca.crt": "%%%fixture"}},
 		{
 			name:        "ssh",
@@ -371,7 +376,7 @@ func TestFetcher_ResolveTLS(t *testing.T) {
 			wantInput: true,
 			errorKey:  "tls.crt",
 		},
-	}
+	}...)
 	for _, field := range []string{"tls.crt", "tls.key", "ca.crt", "caFile"} {
 		cases = append(
 			cases,

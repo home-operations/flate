@@ -125,7 +125,7 @@ func testFetcherTLSOperationsCaseCaseCompletion(
 		t.Fatalf("upload requests=%d, want %d", captures.requests.Load(), want)
 	}
 	wantAdvertisements := int32(1)
-	if captures.testCaseInput.tc.recurse || (*(*captures.testCaseInput).tc).refuse {
+	if captures.testCaseInput.tc.recurse || captures.testCaseInput.tc.refuse {
 		wantAdvertisements = 2
 	}
 	if captures.advertisements.Load() != wantAdvertisements {
@@ -155,11 +155,11 @@ func testFetcherTLSOperationsCaseCaseCompletion(
 		(*captures.connects).
 			Load(),
 	)
-	if captures.testCaseInput.tc.ref == nil || (*(*captures.testCaseInput).tc).ref.Commit == "" {
+	if captures.testCaseInput.tc.ref == nil || captures.testCaseInput.tc.ref.Commit == "" {
 		wantAdvertisements *= 2
 		want *= 2
 	}
-	if captures.advertisements.Load() != wantAdvertisements || (*captures.requests).Load() != want {
+	if captures.advertisements.Load() != wantAdvertisements || captures.requests.Load() != want {
 		t.Errorf(
 			"two operations: advertisements=%d upload_pack=%d, want %d and %d", captures.advertisements.
 				Load(), captures.requests.

@@ -294,6 +294,7 @@ type commandSession struct {
 	before func(context.Context) error
 }
 
+//nolint:ireturn // The upstream go-git protocol interface fixes this return type.
 func (tr commandTransport) NewUploadPackSession(
 	endpoint *transport.Endpoint,
 	auth transport.AuthMethod,

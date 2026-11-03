@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/source"
 )
 
+//nolint:ireturn // The go-git transport contract shares one authentication interface for HTTP and SSH.
 func (f *operation) resolveAuth(
 	repo *manifest.GitRepository,
 	sec *manifest.Secret,

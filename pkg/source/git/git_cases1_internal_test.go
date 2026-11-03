@@ -322,7 +322,7 @@ func testFetcherFreshnessCase(t *testing.T, tc *struct {
 func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFreshnessCaseCompletionInputs) {
 	t.Helper()
 	if (*captures.tc).interval == 0 && !(*captures.tc).pinned &&
-		(captures.advertisements.Load()-(*captures.beforeAdvertisements) != 1 || (*captures.uploads).Load()-(*captures.beforeUploads) != 1) {
+		(captures.advertisements.Load()-(*captures.beforeAdvertisements) != 1 || captures.uploads.Load()-(*captures.beforeUploads) != 1) {
 		t.Errorf(
 			"due changed ref: advertisements=%d upload_pack=%d, want 1 each", captures.advertisements.
 				Load()-(*captures.beforeAdvertisements), captures.uploads.
@@ -343,7 +343,7 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 	}
 	cached := *(*captures.repo)
 	cached.Interval.Duration = time.Hour
-	(*captures.beforeAdvertisements), (*captures.beforeUploads), (*captures.beforeConnections) = captures.advertisements.Load(), (*captures.uploads).Load(), (*captures.connections).Load()
+	(*captures.beforeAdvertisements), (*captures.beforeUploads), (*captures.beforeConnections) = captures.advertisements.Load(), captures.uploads.Load(), captures.connections.Load()
 	var hit *store.SourceArtifact
 
 	hit, (*captures.err) = (*captures.f).Fetch(
@@ -356,9 +356,8 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 	assert.Equal(t, hit.Revision, want)
 	assert.Equal(t, hit.Key, (*captures.second).Key)
 	if captures.advertisements.Load() != (*captures.beforeAdvertisements) ||
-		(*captures.uploads).Load() != (*captures.beforeUploads) ||
-		(*captures.connections).
-			Load() != (*captures.beforeConnections) {
+		captures.uploads.Load() != (*captures.beforeUploads) ||
+		captures.connections.Load() != (*captures.beforeConnections) {
 		t.Error("fresh follow-up performed network work")
 	}
 	for _, art := range []*store.SourceArtifact{(*captures.first), (*captures.second), hit} {
@@ -397,9 +396,8 @@ func testFetcherFreshnessCaseCompletion(t *testing.T, captures *testFetcherFresh
 			Load()-(*captures.beforeConnections),
 	)
 	if captures.advertisements.Load() != (*captures.beforeAdvertisements) ||
-		(*captures.uploads).Load() != (*captures.beforeUploads) ||
-		(*captures.connections).
-			Load() != (*captures.beforeConnections) {
+		captures.uploads.Load() != (*captures.beforeUploads) ||
+		captures.connections.Load() != (*captures.beforeConnections) {
 		t.Error("reopened fresh owner performed network work")
 	}
 }
@@ -580,7 +578,7 @@ type testFetcherFreshnessCaseTailState struct {
 func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseTailState) {
 	t.Helper()
 	var second *store.SourceArtifact
-	beforeAdvertisements, beforeUploads, beforeConnections := (*scope.advertisements).Load(), (*scope.uploads).Load(), (*scope.connections).Load()
+	beforeAdvertisements, beforeUploads, beforeConnections := scope.advertisements.Load(), scope.uploads.Load(), scope.connections.Load()
 	if (*scope.tc).fail {
 		(*scope.srv).Close()
 		{
@@ -604,15 +602,15 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	if (*scope.tc).commit {
 		(*scope.srv).Close()
 		assert.NoError(t, os.RemoveAll((*scope.src)))
-		second, fetchErr2 := (*scope.f).Fetch(
+		committed, fetchErr2 := (*scope.f).Fetch(
 			t.Context(), (*scope.repo), (testInputs{}).readSet((*scope.repo)),
 			sourcecache.Policy{MaxAge: (*scope.tc).interval},
 		)
 		if (*scope.tc).mixed {
-			assert.FatalIf(t, fetchErr2 == nil || second != nil, "%s", "mixed commit unexpectedly retained forever")
+			assert.FatalIf(t, fetchErr2 == nil || committed != nil, "%s", "mixed commit unexpectedly retained forever")
 		} else {
 			assert.NoError(t, fetchErr2)
-			assert.Equal(t, second.Revision, (*scope.initial))
+			assert.Equal(t, committed.Revision, (*scope.initial))
 		}
 		return
 	}
@@ -628,13 +626,13 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 	assert.NoError(t, (*scope.err))
 	t.Logf(
 		"refresh: advertisements=%d upload_pack=%d new_connections=%d",
-		(*scope.advertisements).Load()-beforeAdvertisements,
-		(*scope.uploads).Load()-beforeUploads,
-		(*scope.connections).Load()-beforeConnections,
+		scope.advertisements.Load()-beforeAdvertisements,
+		scope.uploads.Load()-beforeUploads,
+		scope.connections.Load()-beforeConnections,
 	)
 	if (*scope.tc).interval != 0 || (*scope.tc).pinned {
-		if (*scope.advertisements).Load() != beforeAdvertisements || (*scope.uploads).Load() != beforeUploads ||
-			(*scope.connections).Load() != beforeConnections {
+		if scope.advertisements.Load() != beforeAdvertisements || scope.uploads.Load() != beforeUploads ||
+			scope.connections.Load() != beforeConnections {
 			t.Error("fresh interval or commit-only pin performed network work")
 		}
 	}
@@ -642,20 +640,20 @@ func testFetcherFreshnessCaseTail(t *testing.T, scope *testFetcherFreshnessCaseT
 		t,
 		&testFetcherFreshnessCaseCompletionInputs{
 			tc:                   scope.tc,
-			advertisements:       &(*scope.advertisements),
+			advertisements:       scope.advertisements,
 			beforeAdvertisements: &beforeAdvertisements,
-			uploads:              &(*scope.uploads),
+			uploads:              scope.uploads,
 			beforeUploads:        &beforeUploads,
 			tip:                  &tip,
-			initial:              &(*scope.initial),
+			initial:              scope.initial,
 			second:               &second,
 			first:                scope.first,
-			err:                  &(*scope.err),
+			err:                  scope.err,
 			repo:                 scope.repo,
 			beforeConnections:    &beforeConnections,
-			connections:          &(*scope.connections),
+			connections:          scope.connections,
 			f:                    scope.f,
-			cacheDir:             &(*scope.cacheDir),
+			cacheDir:             scope.cacheDir,
 		},
 	)
 }

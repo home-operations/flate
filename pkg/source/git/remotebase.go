@@ -103,10 +103,7 @@ func (f *Fetcher) FetchRemoteBase(
 					cancel()
 				}
 				if fetchContextErr != nil && !errors.Is(fetchContextErr, git.NoErrAlreadyUpToDate) {
-					if fetchContextErr != nil {
-						return plumbing.ZeroHash, fmt.Errorf("fetch git revision: %w", fetchContextErr)
-					}
-					return plumbing.ZeroHash, nil
+					return plumbing.ZeroHash, fmt.Errorf("fetch git revision: %w", fetchContextErr)
 				}
 			}
 			hash, err := resolveRefHash(cloned, repo.Reference, true)

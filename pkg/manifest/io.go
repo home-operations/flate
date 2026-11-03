@@ -78,37 +78,10 @@ func DecodeDocs(r io.Reader, role DocumentRole) ([]DocOccurrence, error) {
 		var node yaml.Node
 		err := dec.Decode(&node)
 		if err != nil {
-			if stream.err != nil {
-				failure := NewError(ErrInput, fmt.Errorf("read documents: %w", stream.err), "")
-				if errors.Is(stream.err, context.Canceled) || errors.Is(stream.err, context.DeadlineExceeded) {
-					return out, failure
-				}
-				return append(out, DocOccurrence{Ordinal: ordinal, Err: failure}), nil
-			}
-			if errors.Is(err, io.EOF) {
-				return out, nil
-			}
-			out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
-			return out, nil
+			return stream.finishDecode(out, err, ordinal)
 		}
 		preserveTimestampStrings(&node)
-		mapping := &node
-		if mapping.Kind == yaml.DocumentNode && len(mapping.Content) != 0 {
-			mapping = mapping.Content[0]
-		}
-		var m map[string]any
-		shapeFailure := false
-		if mapping.Kind == yaml.MappingNode {
-			m = getDecodedMap()
-			err = node.Load(&m, constructionOption)
-		} else {
-			var value any
-			err = node.Load(&value, constructionOption)
-			if err == nil && value != nil && role == RequiredDocuments {
-				err = fmt.Errorf("document must be a mapping")
-				shapeFailure = true
-			}
-		}
+		m, shapeFailure, err := loadDocumentNode(&node, role, constructionOption)
 		if err != nil {
 			ReleaseDoc(m)
 			out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
@@ -166,3 +139,44 @@ func DocumentFailure(docs []DocOccurrence) error {
 const (
 	initialDocumentCapacity = 8
 )
+
+func (s *documentStream) finishDecode(out []DocOccurrence, err error, ordinal int) ([]DocOccurrence, error) {
+	if s.err != nil {
+		failure := NewError(ErrInput, fmt.Errorf("read documents: %w", s.err), "")
+		if errors.Is(s.err, context.Canceled) || errors.Is(s.err, context.DeadlineExceeded) {
+			return out, failure
+		}
+		return append(out, DocOccurrence{Ordinal: ordinal, Err: failure}), nil
+	}
+	if errors.Is(err, io.EOF) {
+		return out, nil
+	}
+	out = append(out, DocOccurrence{Ordinal: ordinal, Err: NewError(ErrInput, err, "")})
+	return out, nil
+}
+
+func loadDocumentNode(
+	node *yaml.Node,
+	role DocumentRole,
+	constructionOption yaml.Option,
+) (map[string]any, bool, error) {
+	mapping := node
+	if mapping.Kind == yaml.DocumentNode && len(mapping.Content) != 0 {
+		mapping = mapping.Content[0]
+	}
+	var m map[string]any
+	var err error
+	shapeFailure := false
+	if mapping.Kind == yaml.MappingNode {
+		m = getDecodedMap()
+		err = node.Load(&m, constructionOption)
+	} else {
+		var value any
+		err = node.Load(&value, constructionOption)
+		if err == nil && value != nil && role == RequiredDocuments {
+			err = fmt.Errorf("document must be a mapping")
+			shapeFailure = true
+		}
+	}
+	return m, shapeFailure, err
+}

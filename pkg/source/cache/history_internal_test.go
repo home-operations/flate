@@ -41,7 +41,7 @@ func TestProducersForPaths_SourcePaths(t *testing.T) {
 			{Source: source, Path: "shared/values.yaml"},
 		},
 	}
-	metadata, err := history.record("accepted").metadata()
+	metadata, err := new(*history).record("accepted").metadata()
 	assert.NoError(t, err)
 	_, _, _, err = cache.Blob(
 		t.Context(),
@@ -236,7 +236,9 @@ func testProducersForPathsUnavailableCase(t *testing.T, mode *string,
 
 	cache := cachetest.New(t, t.TempDir(), New)
 	source := manifest.SourceIdentity{Root: "/input"}
-	metadata, err := (RenderHistory{Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "emitter"}, Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}).record("accepted").
+	metadata, err := new(
+		(RenderHistory{Owner: manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "emitter"}, Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}),
+	).record("accepted").
 		metadata()
 	assert.NoError(t, err)
 	if (*mode) == "foreign build" {
@@ -246,7 +248,9 @@ func testProducersForPathsUnavailableCase(t *testing.T, mode *string,
 		metadata[historyAnnotation] = "{"
 	}
 	if (*mode) == "incomplete owner" {
-		metadata, err = (RenderHistory{Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}).record("accepted").
+		metadata, err = new(
+			(RenderHistory{Sources: []manifest.SourceEvidence{{Source: source, Path: "apps/blue", Subtree: true}}}),
+		).record("accepted").
 			metadata()
 		assert.NoError(t, err)
 	}
@@ -307,7 +311,7 @@ func testProducersForPathsAcceptanceCase(t *testing.T, mode *string,
 	if (*mode) == "source" {
 		key.Render = 0
 	}
-	metadata, err := history.record("first").metadata()
+	metadata, err := new(*history).record("first").metadata()
 	assert.NoError(t, err)
 	metadata[acceptedRenderAnnotation] = "first"
 	_, _, _, err = cache.Blob(

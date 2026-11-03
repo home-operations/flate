@@ -148,25 +148,26 @@ func (s *payload) stage() error {
 func (s *payload) complete(ctx context.Context, c *Cache, resultValue *ProducerResult) (*entry, error) {
 	result := *resultValue
 	e := &entry{descriptor: result.Descriptor}
-	if result.Unchanged {
-		if err := ctx.Err(); err != nil {
-			return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
-		}
-		if !s.verified {
-			if _, err := (ProducerInput{cache: c, payload: s}).Previous(ctx); err != nil {
-				return nil, err
-			}
-		}
-		if !s.verified || s.previous == nil || s.written != 0 {
-			return nil, manifest.NewError(
-				manifest.ErrInput,
-				nil,
-				"unchanged production requires a previous payload and no new bytes",
-			)
-		}
-		e.fs, e.stored = s.previous.fs, s.previous.stored
-		s.unchanged = true
+	if !result.Unchanged {
+		return e, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
+	}
+	if !s.verified {
+		if _, err := (ProducerInput{cache: c, payload: s}).Previous(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if !s.verified || s.previous == nil || s.written != 0 {
+		return nil, manifest.NewError(
+			manifest.ErrInput,
+			nil,
+			"unchanged production requires a previous payload and no new bytes",
+		)
+	}
+	e.fs, e.stored = s.previous.fs, s.previous.stored
+	s.unchanged = true
 	return e, nil
 }
 
@@ -251,6 +252,7 @@ func (p archiveProducer) produce(
 	return &entry{fs: index, descriptor: result.Descriptor}, nil
 }
 
+//nolint:gocritic // A value descriptor preserves its snapshot without allocating through the dynamic producer interface.
 func (p archiveProducer) restore(_ context.Context, c *Cache, stored ocispec.Descriptor, e *entry) error {
 	if e.fs != nil {
 		index := e.fs.(*tarFS) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
@@ -322,6 +324,7 @@ func (p blobProducer) produce(
 	return e, nil
 }
 
+//nolint:gocritic // A value descriptor preserves its snapshot without allocating through the dynamic producer interface.
 func (p blobProducer) restore(_ context.Context, c *Cache, stored ocispec.Descriptor, e *entry) error {
 	algorithm := stored.Digest.Algorithm()
 	root := &c.blobRoots[slices.Index(blobAlgorithms[:], algorithm)]

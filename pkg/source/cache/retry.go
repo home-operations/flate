@@ -62,10 +62,11 @@ type attemptCeilingKey struct{}
 
 func (c *Cache) acquire(
 	ctx context.Context,
-	key acquireKey,
+	keyValue *acquireKey,
 	policy Policy,
 	callbacks acquisitionCallbacks,
 ) (*entry, string, error) {
+	key := *keyValue
 	if key.id == "" {
 		key.id = key.producer.identity()
 	}

@@ -167,9 +167,7 @@ func (c *Cache) Acquire(
 	}
 	producer := archiveProducer{key: key}
 	e, id, err := c.acquire(
-		ctx,
-		acquireKey{producer: producer, required: key.Required},
-		policy,
+		ctx, new(acquireKey{producer: producer, required: key.Required}), policy,
 		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 			return producer.produce(ctx, c, staged, produce)
 		}},
@@ -238,9 +236,7 @@ func (c *Cache) Blob(
 		validate = func(ctx context.Context, e *entry) (bool, error) { return key.Validate(ctx, e.fs) }
 	}
 	e, id, err := c.acquire(
-		ctx,
-		request,
-		policy,
+		ctx, new(request), policy,
 		acquisitionCallbacks{
 			validate: validate,
 			produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
@@ -294,7 +290,7 @@ func (c *Cache) RenderMetadata(ctx context.Context, content, lookup string) (oci
 			policy:     Policy{MaxAge: Forever},
 		}
 		if lookup == "" {
-			e, _, err = c.acquire(ctx, request, Policy{MaxAge: Forever}, acquisitionCallbacks{})
+			e, _, err = c.acquire(ctx, new(request), Policy{MaxAge: Forever}, acquisitionCallbacks{})
 		} else {
 			request.id = lookup
 			e, err = c.acquireOnce(ctx, &request, acquisitionCallbacks{})
@@ -445,26 +441,27 @@ func (c *Cache) loadEntry(ctx context.Context, keyValue *acquireKey, maxAge time
 
 func (c *Cache) touch(keyValue *acquireKey, e *entry) error {
 	key := *keyValue
-	if c.store != nil && !key.memoryOnly {
-		touched := e.touched.Load()
-		if touched == 0 {
-			info, err := c.root.Stat(blobPath(e.stored.Digest))
-			if err != nil {
-				return &CacheError{err}
-			}
-			touched = info.ModTime().UnixNano()
-			e.touched.Store(touched)
-		}
-		now := time.Now()
-		// Sweep allows the same interval so coalescing never retires a recent access early.
-		if now.UnixNano()-touched < int64(accessInterval) {
-			return nil
-		}
-		if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
+	if c.store == nil || key.memoryOnly {
+		return nil
+	}
+	touched := e.touched.Load()
+	if touched == 0 {
+		info, err := c.root.Stat(blobPath(e.stored.Digest))
+		if err != nil {
 			return &CacheError{err}
 		}
-		e.touched.Store(now.UnixNano())
+		touched = info.ModTime().UnixNano()
+		e.touched.Store(touched)
 	}
+	now := time.Now()
+	// Sweep allows the same interval so coalescing never retires a recent access early.
+	if now.UnixNano()-touched < int64(accessInterval) {
+		return nil
+	}
+	if err := c.root.Chtimes(blobPath(e.stored.Digest), now, now); err != nil {
+		return &CacheError{err}
+	}
+	e.touched.Store(now.UnixNano())
 	return nil
 }
 

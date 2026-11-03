@@ -53,7 +53,7 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 			return ctx.Err() //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 		}
 	}
-	history = inventory.History.record(inventory.Acceptance)
+	history = new(inventory.History).record(inventory.Acceptance)
 	acceptance := ""
 	if history != nil {
 		acceptance = manifest.Fingerprint(history)
@@ -62,7 +62,7 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	producer := blobProducer{content: inventory.Key, render: RenderAccepted}
 	_, _, err = c.acquire(
 		ctx,
-		acquireKey{producer: producer, id: inventory.Lookup, render: true},
+		new(acquireKey{producer: producer, id: inventory.Lookup, render: true}),
 		Policy{MaxAge: Forever, Retry: RetryConfig{Attempts: 1}},
 		acquisitionCallbacks{
 			validate: func(_ context.Context, e *entry) (bool, error) {
@@ -148,7 +148,8 @@ type historyRecord struct {
 	Sources    []historyPaths         `json:"Sources"`
 }
 
-func (h RenderHistory) record(acceptance string) *historyRecord {
+func (hv *RenderHistory) record(acceptance string) *historyRecord {
+	h := *hv
 	if h.Sources == nil || acceptance == "" {
 		return nil
 	}

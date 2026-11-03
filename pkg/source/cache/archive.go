@@ -102,24 +102,25 @@ func (t *tarFS) Open(name string) (fs.File, error) {
 		return nil, &fs.PathError{Op: openOperation, Path: name, Err: fs.ErrNotExist}
 	}
 	f := &tarFile{tarNode: node, Reader: bytes.NewReader(nil)}
-	if !node.IsDir() {
-		if t.memory != nil {
-			return t.memory.Open(name)
+	if node.IsDir() {
+		return f, nil
+	}
+	if t.memory != nil {
+		return t.memory.Open(name)
+	}
+	var err error
+	f.file, err = t.root.Open(blobPath(t.digest))
+	if err != nil {
+		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	}
+	f.Reader = io.NewSectionReader(f.file, node.offset, node.Size())
+	if node.sparse {
+		tr := tar.NewReader(io.NewSectionReader(f.file, node.header, 1<<63-1-node.header))
+		if _, err := tr.Next(); err != nil {
+			_ = f.file.Close()
+			return nil, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
 		}
-		var err error
-		f.file, err = t.root.Open(blobPath(t.digest))
-		if err != nil {
-			return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
-		}
-		f.Reader = io.NewSectionReader(f.file, node.offset, node.Size())
-		if node.sparse {
-			tr := tar.NewReader(io.NewSectionReader(f.file, node.header, 1<<63-1-node.header))
-			if _, err := tr.Next(); err != nil {
-				_ = f.file.Close()
-				return nil, err //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
-			}
-			f.Reader = tr
-		}
+		f.Reader = tr
 	}
 	return f, nil
 }

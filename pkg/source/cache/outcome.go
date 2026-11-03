@@ -278,7 +278,13 @@ type outcomeCodecState struct {
 	terminal, remote bool
 }
 
-func (c *outcomeCodecState) kind(n outcomeCause, children int, context outcomeContext, depth int) (outcomeCodec, bool) {
+func (c *outcomeCodecState) kind(
+	nValue *outcomeCause,
+	children int,
+	context outcomeContext,
+	depth int,
+) (outcomeCodec, bool) {
+	n := *nValue
 	c.nodes++
 	k, ok := outcomeCodecs[n.Kind]
 	if !ok || depth > outcomeDepthLimit || children < k.minChildren || children > k.maxChildren ||
@@ -305,7 +311,7 @@ func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int)
 	if !ok {
 		return n, false
 	}
-	k, ok := c.kind(n, len(children), context, depth)
+	k, ok := c.kind(new(n), len(children), context, depth)
 	if !ok {
 		return n, false
 	}
@@ -322,7 +328,7 @@ func (c *outcomeCodecState) encode(err error, context outcomeContext, depth int)
 //nolint:revive // The returned error is decoded data; the boolean reports validity.
 func (c *outcomeCodecState) decode(nValue *outcomeCause, context outcomeContext, depth int) (error, bool) {
 	n := *nValue
-	k, ok := c.kind(n, len(n.Children), context, depth)
+	k, ok := c.kind(new(n), len(n.Children), context, depth)
 	if !ok {
 		return nil, false
 	}

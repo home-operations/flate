@@ -57,9 +57,7 @@ func (c *Cache) Git(
 ) (*GitGeneration, string, error) {
 	producer := gitProducer{key: key}
 	e, id, err := c.acquire(
-		ctx,
-		acquireKey{producer: producer},
-		policy,
+		ctx, new(acquireKey{producer: producer}), policy,
 		acquisitionCallbacks{produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 			return producer.produce(ctx, c, staged, produce)
 		}},
@@ -76,31 +74,11 @@ func (p gitProducer) produce(
 	staged *payload,
 	fetch func(context.Context, storage.Storer, billy.Filesystem) (plumbing.Hash, error),
 ) (*entry, error) {
-	g := &GitGeneration{id: uuid.NewString()}
-	e := &entry{git: g}
-	if c.store == nil {
-		g.Backing = memfs.New()
-		if p.key.RecurseSubmodules {
-			g.Worktree = memfs.New()
-		}
-	} else {
-		staged.discard = func() error {
-			if e.stored.Digest == "" {
-				return c.root.RemoveAll(generationPath(g.id))
-			}
-			return nil
-		}
-		g.Backing = osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(g.id)))
-		if err := c.root.MkdirAll(gitObjectsPath(g.id), cacheDirectoryMode); err != nil {
-			return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
-		}
-		if p.key.RecurseSubmodules {
-			g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(g.id)))
-			if err := c.root.MkdirAll(gitWorktreePath(g.id), cacheDirectoryMode); err != nil {
-				return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
-			}
-		}
+	e, prepareErr := p.prepareGeneration(c, staged)
+	if prepareErr != nil {
+		return nil, prepareErr
 	}
+	g := e.git
 	storer := filesystem.NewStorageWithOptions(g.Backing, objectcache.NewObjectLRU(0), filesystem.Options{})
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Join(err, storer.Close())
@@ -126,6 +104,37 @@ func (p gitProducer) produce(
 	return e, nil
 }
 
+func (p gitProducer) prepareGeneration(c *Cache, staged *payload) (*entry, error) {
+	g := &GitGeneration{id: uuid.NewString()}
+	e := &entry{git: g}
+	if c.store == nil {
+		g.Backing = memfs.New()
+		if p.key.RecurseSubmodules {
+			g.Worktree = memfs.New()
+		}
+		return e, nil
+	}
+	staged.discard = func() error {
+		if e.stored.Digest == "" {
+			return c.root.RemoveAll(generationPath(g.id))
+		}
+		return nil
+	}
+	g.Backing = osfs.New(filepath.Join(c.root.Name(), gitObjectsPath(g.id)))
+	if err := c.root.MkdirAll(gitObjectsPath(g.id), cacheDirectoryMode); err != nil {
+		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	}
+	if !p.key.RecurseSubmodules {
+		return e, nil
+	}
+	g.Worktree = osfs.New(filepath.Join(c.root.Name(), gitWorktreePath(g.id)))
+	if err := c.root.MkdirAll(gitWorktreePath(g.id), cacheDirectoryMode); err != nil {
+		return nil, err //nolint:wrapcheck // Filesystem adapters retain fs.PathError operation, path, and concrete error identity.
+	}
+	return e, nil
+}
+
+//nolint:gocritic // A value descriptor preserves its snapshot without allocating through the dynamic producer interface.
 func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descriptor, e *entry) error {
 	if e.git != nil {
 		return nil

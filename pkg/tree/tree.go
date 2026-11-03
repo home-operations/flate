@@ -158,67 +158,89 @@ func (t *view) resolve(name string, follow bool) (string, *node, error) {
 			return "", nil, err
 		}
 	}
-	current := "."
-	n, err := t.lookup(current)
+	r := pathResolution{view: t, current: ".", remaining: name}
+	return r.resolve(follow)
+}
+
+type pathResolution struct {
+	view      *view
+	current   string
+	remaining string
+	node      *node
+	hops      int
+}
+
+func (r *pathResolution) resolve(follow bool) (string, *node, error) {
+	var err error
+	r.node, err = r.view.lookup(r.current)
 	if err != nil {
 		return "", nil, err
 	}
-	hops := 0
-	for remaining := name; remaining != ""; {
-		part, rest, slash := strings.Cut(remaining, "/")
-		remaining = rest
+	for r.remaining != "" {
+		part, rest, slash := strings.Cut(r.remaining, "/")
+		r.remaining = rest
 		switch part {
 		case "", ".":
 			continue
 		case "..":
-			if current == "." {
+			if r.current == "." {
 				return "", nil, ErrEscape
 			}
-			current = path.Dir(current)
-			n, err = t.lookup(current)
+			r.current = path.Dir(r.current)
+			r.node, err = r.view.lookup(r.current)
 			if err != nil {
 				return "", nil, err
 			}
 			continue
 		}
-		next := part
-		if current != "." {
-			next = current + "/" + part
+		if advanceErr := r.advance(part, rest, slash, follow); advanceErr != nil {
+			return "", nil, advanceErr
 		}
-		n, err = t.lookup(next)
-		if err != nil {
-			return "", nil, err
-		}
-		if n.mode&fs.ModeSymlink != 0 && (follow || slash) {
-			if path.IsAbs(n.target) {
-				return "", nil, ErrEscape
-			}
-			hops++
-			if hops > maxSymbolicLinkDepth {
-				return "", nil, ErrLoop
-			}
-			remaining = n.target
-			if slash {
-				remaining += "/" + rest
-			}
-			if n.target == "" {
-				return "", nil, fs.ErrNotExist
-			}
-			n, err = t.lookup(current)
-			if err != nil {
-				return "", nil, err
-			}
-			continue
-		}
-		if slash && !n.IsDir() {
-			return "", nil, fs.ErrInvalid
-		}
-		current = next
 	}
-	if n == nil {
+	if r.node == nil {
 		return "", nil, fs.ErrNotExist
 	}
-	return current, n, nil
+	return r.current, r.node, nil
+}
+
+func (r *pathResolution) advance(part, rest string, slash, follow bool) error {
+	next := part
+	if r.current != "." {
+		next = r.current + "/" + part
+	}
+	var err error
+	r.node, err = r.view.lookup(next)
+	if err != nil {
+		return err
+	}
+	if r.node.mode&fs.ModeSymlink != 0 && (follow || slash) {
+		return r.followLink(rest, slash)
+	}
+	if slash && !r.node.IsDir() {
+		return fs.ErrInvalid
+	}
+	r.current = next
+	return nil
+}
+
+func (r *pathResolution) followLink(rest string, slash bool) error {
+	if path.IsAbs(r.node.target) {
+		return ErrEscape
+	}
+	r.hops++
+	if r.hops > maxSymbolicLinkDepth {
+		return ErrLoop
+	}
+	r.remaining = r.node.target
+	if slash {
+		r.remaining += "/" + rest
+	}
+	if r.node.target == "" {
+		return fs.ErrNotExist
+	}
+	var err error
+	r.node, err = r.view.lookup(r.current)
+	return err
 }
 
 func (t *view) readNode(op, name string, follow bool) (*node, error) {

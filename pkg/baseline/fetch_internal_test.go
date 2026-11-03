@@ -567,59 +567,18 @@ func testBaseRemoteFetchPolicyCase(t *testing.T, testCaseInput testBaseRemoteFet
 	}
 	testBaseRemoteFetchPolicyCaseSegment(t, &testCaseInput, &fixture, &wants)
 	marker, markerErr := upper.Reference(fullBaseRef)
-	if err == nil {
-		{
-			assert.FatalIf(
-				t,
-				upper.HasEncodedObject(body) != nil || fixture.responsesClosed != 1,
-				"%v",
-				"successful response was not consumed and closed",
-			)
-		}
-		if testCaseInput.tc.wantFull {
-			{
-				assert.FatalIf(
-					t,
-					markerErr != nil || marker.Hash() != (*testCaseInput.pin),
-					"full marker: %v, %v",
-					marker,
-					markerErr,
-				)
-			}
-		} else {
-			assert.FatalIf(
-				t,
-				!errors.Is(markerErr, plumbing.ErrReferenceNotFound),
-				"partial fetch wrote full marker: %v",
-				marker,
-			)
-		}
-	} else {
-		assert.FatalIf(
-			t,
-			!errors.Is(markerErr, plumbing.ErrReferenceNotFound),
-			"failed fetch wrote full marker: %v",
-			marker,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.tc.closeErrors &&
-				(!errors.Is(err, (*testCaseInput.sessionClose)) || fixture.responsesClosed != 1),
-			"joined close errors lost: %v",
-			err,
-		)
-	}
-	{
-		assert.FatalIf(
-			t,
-			testCaseInput.tc.cancel &&
-				(errors.Is(err, (*testCaseInput.refusal)) || errors.Is(err, transport.ErrAuthenticationRequired)),
-			"cancellation did not take precedence: %v",
-			err,
-		)
-	}
+	testFetchPolicyCompletion(
+		t,
+		&testFetchPolicyCompletionInputs{
+			testCaseInput: &testCaseInput,
+			body:          &body,
+			fixture:       &fixture,
+			upper:         &upper,
+			err:           &err,
+			marker:        &marker,
+			markerErr:     &markerErr,
+		},
+	)
 }
 
 type testAdoptFetchedStorageCaseInputs struct {
@@ -736,18 +695,23 @@ func testAdoptFetchedStorageCase(t *testing.T, testCaseInput testAdoptFetchedSto
 	}
 }
 
-func testBaseRemoteFetchPolicyCaseSegment(t *testing.T, testCaseInput *testBaseRemoteFetchPolicyCaseInputs, fixture **fetchPolicyTransport, wants *[]plumbing.Hash) {
+func testBaseRemoteFetchPolicyCaseSegment(
+	t *testing.T,
+	testCaseInput *testBaseRemoteFetchPolicyCaseInputs,
+	fixture **fetchPolicyTransport,
+	wants *[]plumbing.Hash,
+) {
 	t.Helper()
 	for i, request := range (*fixture).requests {
-		bodyRequest := (*testCaseInput).tc.bodies && (*testCaseInput).tc.reachable && i == 0
-		want := []plumbing.Hash{(*(*testCaseInput).pin)}
+		bodyRequest := testCaseInput.tc.bodies && testCaseInput.tc.reachable && i == 0
+		want := []plumbing.Hash{(*testCaseInput.pin)}
 		depth := packp.DepthCommits(0)
 		if bodyRequest {
 			want = (*wants)
-		} else if (*testCaseInput).tc.shallow {
+		} else if testCaseInput.tc.shallow {
 			depth = packp.DepthCommits(1)
 		}
-		filtered := !(*testCaseInput).tc.bodies && !(*testCaseInput).tc.full && (*testCaseInput).tc.filter && i == 0
+		filtered := !testCaseInput.tc.bodies && !testCaseInput.tc.full && testCaseInput.tc.filter && i == 0
 		if !slices.Equal(request.Wants, want) || request.Depth != depth ||
 			request.Capabilities.Supports(capability.Shallow) != (depth != 0) ||
 			request.Capabilities.Supports(capability.Filter) != filtered ||
@@ -773,5 +737,74 @@ func testBaseRemoteFetchPolicyCaseSegment(t *testing.T, testCaseInput *testBaseR
 			assert.FatalIf(t, i > 0 &&
 				(request == (*fixture).requests[0] || request.Capabilities == (*fixture).requests[0].Capabilities), "%v", "fallback reused a partial request")
 		}
+	}
+}
+
+type testFetchPolicyCompletionInputs struct {
+	testCaseInput *testBaseRemoteFetchPolicyCaseInputs
+	body          *plumbing.Hash
+	fixture       **fetchPolicyTransport
+	upper         **memory.Storage
+	err           *error
+	marker        **plumbing.Reference
+	markerErr     *error
+}
+
+func testFetchPolicyCompletion(t *testing.T, statementInput *testFetchPolicyCompletionInputs) {
+	t.Helper()
+	if (*statementInput.err) == nil {
+		{
+			assert.FatalIf(
+				t,
+				(*statementInput.upper).HasEncodedObject((*statementInput.body)) != nil ||
+					(*statementInput.fixture).responsesClosed != 1,
+				"%v",
+				"successful response was not consumed and closed",
+			)
+		}
+		if statementInput.testCaseInput.tc.wantFull {
+			{
+				assert.FatalIf(
+					t,
+					(*statementInput.markerErr) != nil ||
+						(*statementInput.marker).Hash() != (*statementInput.testCaseInput.pin),
+					"full marker: %v, %v",
+					(*statementInput.marker),
+					(*statementInput.markerErr),
+				)
+			}
+		} else {
+			assert.FatalIf(
+				t,
+				!errors.Is((*statementInput.markerErr), plumbing.ErrReferenceNotFound),
+				"partial fetch wrote full marker: %v",
+				(*statementInput.marker),
+			)
+		}
+	} else {
+		assert.FatalIf(
+			t,
+			!errors.Is((*statementInput.markerErr), plumbing.ErrReferenceNotFound),
+			"failed fetch wrote full marker: %v",
+			(*statementInput.marker),
+		)
+	}
+	{
+		assert.FatalIf(
+			t,
+			statementInput.testCaseInput.tc.closeErrors &&
+				(!errors.Is((*statementInput.err), (*statementInput.testCaseInput.sessionClose)) || (*statementInput.fixture).responsesClosed != 1),
+			"joined close errors lost: %v",
+			(*statementInput.err),
+		)
+	}
+	{
+		assert.FatalIf(
+			t,
+			statementInput.testCaseInput.tc.cancel &&
+				(errors.Is((*statementInput.err), (*statementInput.testCaseInput.refusal)) || errors.Is((*statementInput.err), transport.ErrAuthenticationRequired)),
+			"cancellation did not take precedence: %v",
+			(*statementInput.err),
+		)
 	}
 }

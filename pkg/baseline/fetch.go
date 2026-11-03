@@ -136,8 +136,8 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 		return err
 	}
 	for {
-		err := r.uploadPack(ctx, upper, req)
-		if err == nil {
+		transferErr := r.uploadPack(ctx, upper, req)
+		if transferErr == nil {
 			if !r.full {
 				return nil
 			}
@@ -149,11 +149,12 @@ func (r *baseRemote) fetch(ctx context.Context, upper storage.Storer, wants []pl
 		if ctx.Err() != nil {
 			return fmt.Errorf("context: %w", ctx.Err())
 		}
-		if errors.Is(err, transport.ErrAuthenticationRequired) || errors.Is(err, transport.ErrAuthorizationFailed) {
-			return err
+		if errors.Is(transferErr, transport.ErrAuthenticationRequired) ||
+			errors.Is(transferErr, transport.ErrAuthorizationFailed) {
+			return transferErr
 		}
-		if _, refusal := errors.AsType[*pktline.ErrorLine](err); !refusal || r.full {
-			return err
+		if _, refusal := errors.AsType[*pktline.ErrorLine](transferErr); !refusal || r.full {
+			return transferErr
 		}
 		r.full = true
 		req = r.newRequest(true)

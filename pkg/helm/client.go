@@ -96,19 +96,42 @@ func (c *Client) describeChart(
 		return chartDescription{}, err
 	}
 	selector := chartSelector{Pin: pin, Path: location, Auto: auto}
+	loaded, err := c.describeInput(ctx, input, selector, art.LocalPath)
+	if err != nil {
+		return chartDescription{}, err
+	}
+	loaded.artifact = *art
+	if hr.Chart.UsesSourceValuesFiles() {
+		loaded.valuesFS, loaded.valuesPin = input, pin
+	}
+	return loaded, nil
+}
+
+func (c *Client) describeInput(
+	ctx context.Context,
+	input fs.FS,
+	selector chartSelector,
+	root string,
+) (chartDescription, error) {
+	location := selector.Path
+	var err error
 	var captured capturedChart
+	var fingerprint string
 	capture := func() error {
-		captured, location, err = selector.capture(ctx, input, art.LocalPath)
+		captured, location, err = selector.capture(ctx, input, root)
+		if err == nil {
+			fingerprint = captured.fingerprint()
+		}
 		return err
 	}
 	var cacheKey string
-	if pin != "" {
+	if selector.Pin != "" {
 		cacheKey = manifest.Fingerprint(selector)
 	} else {
 		if err := capture(); err != nil {
 			return chartDescription{}, err
 		}
-		cacheKey = captured.fingerprint()
+		cacheKey = fingerprint
 	}
 	c.chartMu.RLock()
 	loaded, cached := c.chartCache[cacheKey]
@@ -122,31 +145,25 @@ func (c *Client) describeChart(
 		c.chartMu.RLock()
 		loaded, cached = c.chartCache[cacheKey]
 		c.chartMu.RUnlock()
+		if !cached && selector.Pin != "" {
+			err = capture()
+		}
+		if err != nil {
+			return chartDescription{}, err
+		}
 		if !cached {
-			if pin != "" {
-				if err := capture(); err != nil {
-					return chartDescription{}, err
-				}
-			}
-			fingerprint := cacheKey
-			if pin != "" {
-				fingerprint = captured.fingerprint()
-			}
 			loaded = chartDescription{captured: captured, fingerprint: fingerprint, key: cacheKey, location: location}
-			loaded = c.rememberDescription(loaded, nil)
+			loaded = c.rememberDescription(&loaded, nil)
 		}
 	}
-	if pin == "" {
+	if selector.Pin == "" {
 		loaded.location = location
-	}
-	loaded.artifact = *art
-	if hr.Chart.UsesSourceValuesFiles() {
-		loaded.valuesFS, loaded.valuesPin = input, pin
 	}
 	return loaded, nil
 }
 
-func (c *Client) rememberDescription(d chartDescription, fresh *renderRecord) chartDescription {
+func (c *Client) rememberDescription(description *chartDescription, fresh *renderRecord) chartDescription {
+	d := *description
 	c.chartMu.Lock()
 	if previous := c.chartCache[d.key]; previous.chart != nil {
 		d.chart, d.analysis = previous.chart, previous.analysis
@@ -206,7 +223,7 @@ func (c *Client) decodeChart(ctx context.Context, d *chartDescription) error {
 		}
 		return fmt.Errorf("load chart %s: %w", label, err)
 	}
-	*d = c.rememberDescription(*d, nil)
+	*d = c.rememberDescription(d, nil)
 	return nil
 }
 

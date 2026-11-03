@@ -654,7 +654,7 @@ func (r *templateRequest) validate(
 		record = &fresh
 	}
 	if record != r.loaded.record {
-		c.rememberDescription(r.loaded, record)
+		c.rememberDescription(&r.loaded, record)
 	}
 	result.receipt = record.receipt
 	return true, nil

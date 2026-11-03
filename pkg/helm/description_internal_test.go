@@ -491,7 +491,7 @@ func testDescriptionHydrationKeepsDecodedCase(
 	decoded := d
 	var decodeErr error
 	wg.Go(func() { <-start; decodeErr = cli.decodeChart(t.Context(), &decoded) })
-	wg.Go(func() { <-start; cli.rememberDescription(d, fresh) })
+	wg.Go(func() { <-start; cli.rememberDescription(&d, fresh) })
 	close(start)
 	wg.Wait()
 	assert.NoError(t, decodeErr)
@@ -511,8 +511,8 @@ func testDescriptionHydrationKeepsDecodedCase(
 			Allowed:   knownTopLevelKeys(ch),
 		},
 	}
-	cli.rememberDescription(d, late)
-	cli.rememberDescription(d, nil)
+	cli.rememberDescription(&d, late)
+	cli.rememberDescription(&d, nil)
 	current, err := cli.describeChart(t.Context(), hr, cliSources)
 	assert.NoError(t, err)
 	assert.Equal(t, current.chart != nil && current.chart == decoded.chart, true)

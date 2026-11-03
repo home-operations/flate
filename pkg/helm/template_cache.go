@@ -549,7 +549,7 @@ func (c *Client) PreviousRender(
 	}
 	records, complete := record.frame.history(hr.Named())
 	if complete && record != prepared.loaded.record {
-		c.rememberDescription(prepared.loaded, record)
+		c.rememberDescription(&prepared.loaded, record)
 	}
 	return records, complete
 }

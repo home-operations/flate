@@ -30,7 +30,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 	child.Name = "child"
 	payload, err := testutil.EncodeRender([]map[string]any{{"data": map[string]any{"key": "original"}}})
 	assert.NoError(t, err)
-	receipt, err := encodeFrame(renderHeader{Key: "raw-key", Binding: "source-and-policy"}, payload)
+	receipt, err := encodeFrame(&renderHeader{Key: "raw-key", Binding: "source-and-policy"}, payload)
 	assert.NoError(t, err)
 	frame, err := decodeFrame(receipt)
 	assert.NoError(t, err)
@@ -41,9 +41,9 @@ func TestRenderReceipt_Domains(t *testing.T) {
 			Productions:  []manifest.Production{{Owner: owner, Source: source}, {Owner: owner, Source: source}},
 		},
 	}
-	accepted, err := encodeAccepted(owner, frame, maps.All(records))
+	accepted, err := encodeAccepted(owner, &frame, maps.All(records))
 	assert.NoError(t, err)
-	again, err := encodeAccepted(owner, frame, maps.All(records))
+	again, err := encodeAccepted(owner, &frame, maps.All(records))
 	assert.NoError(t, err)
 	assert.Equal(t, bytes.Equal(accepted, again), true)
 	frame, err = decodeFrame(append(bytes.Clone(receipt), accepted...))
@@ -110,7 +110,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 		},
 		)
 	}
-	empty, err := encodeAccepted(owner, frame, emptyRenderInventory)
+	empty, err := encodeAccepted(owner, &frame, emptyRenderInventory)
 	assert.NoError(t, err)
 	frame, err = decodeFrame(append(bytes.Clone(receipt), empty...))
 	assert.NoError(t, err)
@@ -128,7 +128,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 
 func encodeAccepted(
 	owner manifest.NamedResource,
-	frame renderFrame,
+	frame *renderFrame,
 	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 ) ([]byte, error) {
 	accepted, err := prepareAccepted(owner, frame, manifest.Fingerprint(acceptedInput), records)
@@ -316,11 +316,11 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 		}
 	}
 	frame := renderFrame{raw: "raw"}
-	got, err := prepareAccepted(a, frame, manifest.Fingerprint(acceptedInput), oneShot)
+	got, err := prepareAccepted(a, &frame, manifest.Fingerprint(acceptedInput), oneShot)
 	assert.NoError(t, err)
 	want, err := prepareAccepted(
 		a,
-		frame,
+		&frame,
 		manifest.Fingerprint(acceptedInput),
 		maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{a: record, b: record}),
 	)
@@ -337,7 +337,7 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 	{
 		assert.FatalIf(t, !got.equal(&want), "%s", "caller mutation changed the prepared inventory")
 	}
-	_, err = prepareAccepted(a, frame, manifest.Fingerprint(acceptedInput), func(
+	_, err = prepareAccepted(a, &frame, manifest.Fingerprint(acceptedInput), func(
 		yield func(
 			manifest.NamedResource,
 			manifest.DiscoveryRecord,
@@ -357,11 +357,11 @@ func TestRenderReceipt_CompactBacking(t *testing.T) {
 	owner := manifest.NamedResource{Kind: "owner", Name: "renderer"}
 	payload, err := testutil.EncodeRender([]map[string]any{{"data": map[string]any{"key": "original"}}})
 	assert.NoError(t, err)
-	raw, err := encodeFrame(renderHeader{Key: "key", Binding: "binding"}, payload)
+	raw, err := encodeFrame(&renderHeader{Key: "key", Binding: "binding"}, payload)
 	assert.NoError(t, err)
 	frame, err := decodeFrame(raw)
 	assert.NoError(t, err)
-	accepted, err := encodeAccepted(owner, frame, emptyRenderInventory)
+	accepted, err := encodeAccepted(owner, &frame, emptyRenderInventory)
 	assert.NoError(t, err)
 	wire := make([]byte, 0, len(raw)+len(accepted)+(1<<20))
 	wire = append(wire, raw...)
@@ -402,7 +402,7 @@ func TestRenderReceipt_FrameBounds(t *testing.T) {
 	owner := manifest.NamedResource{Group: "group", Kind: "owner", Namespace: "team", Name: "renderer"}
 	payload, err := testutil.EncodeRender([]map[string]any{{"value": "original"}})
 	assert.NoError(t, err)
-	raw, err := encodeFrame(renderHeader{Key: "key", Binding: "binding"}, payload)
+	raw, err := encodeFrame(&renderHeader{Key: "key", Binding: "binding"}, payload)
 	assert.NoError(t, err)
 	frame, err := decodeFrame(raw)
 	assert.NoError(t, err)
@@ -462,7 +462,7 @@ func TestRenderReceipt_FrameBounds(t *testing.T) {
 		},
 		)
 	}
-	accepted, err := encodeAccepted(owner, frame, emptyRenderInventory)
+	accepted, err := encodeAccepted(owner, &frame, emptyRenderInventory)
 	assert.NoError(t, err)
 	for _, tc := range []struct {
 		name string
@@ -731,7 +731,7 @@ func testRenderReceiptFrameBoundsEncodedHeaderLimit(
 	t.Helper()
 
 	_, err := encodeFrame(
-		renderHeader{Key: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))},
+		&renderHeader{Key: string(bytes.Repeat([]byte{'x'}, frameHeaderLimit+1))},
 		(*testCaseInput),
 	)
 	{

@@ -80,7 +80,7 @@ func newAcceptedHistoryCase(t *testing.T) *acceptedHistoryCase {
 	}
 	frame := receipt.Value().(renderFrame)
 	frame.header.Binding = manifest.Fingerprint(frame.binding)
-	frame.encoded, err = encodeFrame(frame.header, frame.output)
+	frame.encoded, err = encodeFrame(&frame.header, frame.output)
 	assert.NoError(t, err)
 	frame.raw = manifest.Fingerprint(frame.encoded[12 : 12+int(binary.BigEndian.Uint32(frame.encoded[8:12]))])
 	original := bytes.Clone(frame.output)
@@ -242,11 +242,11 @@ func (h *acceptedHistoryCase) requestKey(t *testing.T) {
 	isolated := newTestTreeCache(t, t.TempDir())
 	foreign := frame.header
 	foreign.Key = "foreign"
-	foreignReceipt, err := encodeFrame(foreign, frame.output)
+	foreignReceipt, err := encodeFrame(&foreign, frame.output)
 	assert.NoError(t, err)
 	foreignFrame, err := decodeFrame(foreignReceipt)
 	assert.NoError(t, err)
-	accepted, err := encodeAccepted(owner, foreignFrame, maps.All(records))
+	accepted, err := encodeAccepted(owner, &foreignFrame, maps.All(records))
 	assert.NoError(t, err)
 	_, _, _, err = isolated.owner.Blob(
 		t.Context(),
@@ -411,7 +411,7 @@ func (h *acceptedHistoryCase) remoteObservations(t *testing.T, fresh *TreeCache)
 	frame, cache, owner, records, req, key := h.frame, h.cache, h.owner, h.records, h.req, h.key
 	remote := frame.header
 	remote.Reads.Remotes = []remoteEntry{{Input: remoteInput{URL: "https://example.invalid/remote"}}}
-	remoteReceipt, err := encodeFrame(remote, frame.output)
+	remoteReceipt, err := encodeFrame(&remote, frame.output)
 	assert.NoError(t, err)
 	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{
 		Owner: owner,

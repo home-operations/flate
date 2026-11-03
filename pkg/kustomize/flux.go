@@ -351,7 +351,7 @@ func (r *renderRequest) produce(
 		return sourcecache.ProducerResult{}, cleanedAbsErr
 	}
 	data, cleanedAbsErr := encodeFrame(
-		renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
+		&renderHeader{Key: r.key, Binding: manifest.Fingerprint(r.binding), Reads: rec.snapshot()},
 		payload,
 	)
 	if cleanedAbsErr == nil {

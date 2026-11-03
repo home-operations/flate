@@ -156,7 +156,7 @@ func testReadSetRemoteValidationCase(t *testing.T, testCaseInput *string,
 			rec.recordRemote(descriptor, identity, parents)
 		}
 	}
-	frame, err := encodeFrame(renderHeader{Reads: rec.snapshot()}, nil)
+	frame, err := encodeFrame(&renderHeader{Reads: rec.snapshot()}, nil)
 	{
 		assert.NoError(t, err)
 	}

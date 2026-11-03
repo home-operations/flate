@@ -40,6 +40,8 @@ type entryApplication struct {
 
 const frameHeaderLimit = 16 << 20
 
+const acceptedRenderVersion = 2
+
 type renderBinding struct {
 	Render       string                         `json:"Render"`
 	Source       manifest.NamedResource         `json:"Source"`
@@ -57,7 +59,7 @@ type renderBinding struct {
 	Dependencies values.DependencySubstitutions `json:"Dependencies"`
 }
 
-func (a renderBinding) equal(b renderBinding) bool {
+func (a *renderBinding) equal(b *renderBinding) bool {
 	return a.Render == b.Render && a.Source == b.Source && a.Kind == b.Kind && a.URL == b.URL && a.Path == b.Path &&
 		a.Root == b.Root &&
 		a.Key == b.Key &&
@@ -82,7 +84,7 @@ type renderFrame struct {
 func equalRenderFrame(a, b any) bool {
 	left, ok := a.(renderFrame)
 	right, other := b.(renderFrame)
-	if !ok || !other || left.header.Key != right.header.Key || !left.binding.equal(right.binding) ||
+	if !ok || !other || left.header.Key != right.header.Key || !left.binding.equal(&right.binding) ||
 		!bytes.Equal(left.output, right.output) {
 		return false
 	}
@@ -145,7 +147,9 @@ func (a *acceptedRender) equal(b *acceptedRender) bool {
 	return true
 }
 
-func encodeFrame(header renderHeader, output []byte) ([]byte, error) {
+func encodeFrame(input *renderHeader, output []byte) ([]byte, error) {
+	header := *input
+
 	if output == nil {
 		output = []byte{}
 	}
@@ -206,23 +210,14 @@ func decodeFrame(data []byte) (renderFrame, error) {
 		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
 		return frame, nil
 	}
-	if accepted.Version != 2 || accepted.Final == "" || !accepted.Complete || accepted.Raw != frame.raw {
+	if accepted.Version != acceptedRenderVersion || accepted.Final == "" || !accepted.Complete ||
+		accepted.Raw != frame.raw {
 		return frame, nil
 	}
-	{
-		itemValues := accepted.Records
-		for i := range itemValues {
-			item := itemValues[i]
-			if i > 0 && accepted.Records[i-1].ID.Compare(item.ID) >= 0 {
-				return frame, nil
-			}
-			for j, root := range item.Roots {
-				if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
-					return frame, nil
-				}
-			}
-		}
+	if !accepted.ordered() {
+		return frame, nil
 	}
+
 	canonical, err := json.Marshal(accepted)
 	if err != nil {
 		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
@@ -234,11 +229,17 @@ func decodeFrame(data []byte) (renderFrame, error) {
 
 func prepareAccepted(
 	owner manifest.NamedResource,
-	frame renderFrame,
+	frame *renderFrame,
 	fingerprint string,
 	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 ) (acceptedRender, error) {
-	accepted := acceptedRender{Version: 2, Complete: true, Owner: owner, Raw: frame.raw, Final: fingerprint}
+	accepted := acceptedRender{
+		Version:  acceptedRenderVersion,
+		Complete: true,
+		Owner:    owner,
+		Raw:      frame.raw,
+		Final:    fingerprint,
+	}
 	{
 		//nolint:gocritic // The iterator supplies immutable value snapshots.
 		for id, record := range records {
@@ -380,15 +381,18 @@ type renderPublication struct {
 }
 
 // WriteTo writes the render frame and accepted inventory.
+//
+//nolint:gocritic // A publication is a value snapshot so encoding never mutates its accepted frame.
 func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 	if p.frame.encoded == nil {
-		encoded, err := encodeFrame(p.frame.header, p.frame.output)
+		encoded, err := encodeFrame(&p.frame.header, p.frame.output)
 		if err != nil {
 			return 0, manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
 		}
 		p.frame.encoded = encoded
 	}
 	if !p.accepted.Complete {
+		//nolint:wrapcheck // Cache publication preserves the writer's original error and byte count.
 		return io.Copy(w, bytes.NewReader(p.frame.encoded))
 	}
 	data := p.data
@@ -402,6 +406,7 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 	if len(data) > frameHeaderLimit {
 		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted kustomize render exceeds frame limit")
 	}
+	//nolint:wrapcheck // Cache publication preserves the writer's original error and byte count.
 	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
 }
 
@@ -478,7 +483,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 		frame.header.Binding = manifest.Fingerprint(frame.binding)
 	}
 	if frame.encoded == nil && frame.raw == "" {
-		frame.encoded, err = encodeFrame(frame.header, frame.output)
+		frame.encoded, err = encodeFrame(&frame.header, frame.output)
 		if err != nil {
 			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
 		}
@@ -492,7 +497,7 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	var data []byte
 	content := frame.raw
 	if records != nil {
-		accepted, err = prepareAccepted(owner, frame, manifest.Fingerprint(finalContent), records)
+		accepted, err = prepareAccepted(owner, &frame, manifest.Fingerprint(finalContent), records)
 		if err != nil {
 			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
 		}
@@ -519,3 +524,19 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 }
 
 const framePrefixSize = 12
+
+func (a *acceptedRender) ordered() bool {
+	itemValues := a.Records
+	for i := range itemValues {
+		item := itemValues[i]
+		if i > 0 && a.Records[i-1].ID.Compare(item.ID) >= 0 {
+			return false
+		}
+		for j, root := range item.Roots {
+			if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
+				return false
+			}
+		}
+	}
+	return true
+}

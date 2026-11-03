@@ -103,7 +103,7 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 	}
 	if frame, err := decodeFrame(raw); err == nil {
 		frame.header.Key, _ = key.Content.(string)
-		raw, err = encodeFrame(frame.header, frame.output)
+		raw, err = encodeFrame(&frame.header, frame.output)
 		if err != nil {
 			tb.Fatal(err)
 		}
@@ -124,7 +124,7 @@ func publishTestFrame(tb testing.TB, owner *sourcecache.Cache, key sourcecache.B
 
 func testRenderFrame(tb testing.TB, snap readSetSnapshot, output []byte) []byte {
 	tb.Helper()
-	frame, err := encodeFrame(renderHeader{Reads: snap}, output)
+	frame, err := encodeFrame(&renderHeader{Reads: snap}, output)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -663,7 +663,7 @@ func TestEncodeDecodeFrame_RoundTrip(t *testing.T) {
 	for _, output := range []string{"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n", ""} {
 		t.Run(fmt.Sprintf("output-bytes-%d", len(output)), func(t *testing.T) {
 			t.Parallel()
-			frame, err := encodeFrame(renderHeader{Reads: snap}, []byte(output))
+			frame, err := encodeFrame(&renderHeader{Reads: snap}, []byte(output))
 			{
 				assert.FatalIf(t, err != nil, "encodeFrame: %v", err)
 			}

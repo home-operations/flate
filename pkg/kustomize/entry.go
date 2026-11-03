@@ -110,7 +110,7 @@ func (*TreeCache) ApplicationReceipt(
 		}
 		reads.recordFile(filepath.Join(source.LocalPath, filepath.FromSlash(file)), data, err)
 	}
-	inventory, err := prepareAccepted(evidence.Owner, renderFrame{}, "", evidence.Records)
+	inventory, err := prepareAccepted(evidence.Owner, &renderFrame{}, "", evidence.Records)
 	if err != nil {
 		return nil, err
 	}

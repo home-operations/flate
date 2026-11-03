@@ -90,11 +90,11 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			binding.Render = prepared.key
 			header := frame.header
 			header.Key, header.Binding = prepared.key, manifest.Fingerprint(binding)
-			wire, err := encodeFrame(header, frame.output)
+			wire, err := encodeFrame(&header, frame.output)
 			assert.NoError(t, err)
 			stored, err := decodeFrame(wire)
 			assert.NoError(t, err)
-			accepted, err := encodeAccepted(owner, stored, emptyRenderInventory)
+			accepted, err := encodeAccepted(owner, &stored, emptyRenderInventory)
 			assert.NoError(t, err)
 			_, _, _, err = renderer.owner.Blob(
 				t.Context(),
@@ -226,7 +226,7 @@ func TestRecordRender_FinalDependencyBinding(t *testing.T) {
 			"warm receipt lacks publication memos",
 		)
 	}
-	before.encoded, err = encodeFrame(before.header, before.output)
+	before.encoded, err = encodeFrame(&before.header, before.output)
 	assert.NoError(t, err)
 	_, _, before.lookup, err = renderer.owner.Blob(
 		t.Context(),

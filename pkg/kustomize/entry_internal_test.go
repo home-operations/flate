@@ -107,7 +107,7 @@ func TestPreviousEntry_ApplicationInputs(t *testing.T) {
 func TestEntryApplication_RequiresCompleteFrame(t *testing.T) {
 	t.Parallel()
 	for _, application := range []entryApplication{{}, {Complete: true}} {
-		encoded, err := encodeFrame(renderHeader{Entry: &application}, []byte("output"))
+		encoded, err := encodeFrame(&renderHeader{Entry: &application}, []byte("output"))
 		assert.NoError(t, err)
 		_, err = decodeFrame(encoded)
 		assert.Equal(t, err != nil, true)

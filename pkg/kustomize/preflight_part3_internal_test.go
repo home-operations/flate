@@ -158,7 +158,7 @@ func testPreflightRemoteResourcesRemoteObservationsRootAfterNested(t *testing.T)
 			snap.Remotes[1].Parents,
 		)
 	}
-	frame, err := encodeFrame(renderHeader{Reads: snap}, nil)
+	frame, err := encodeFrame(&renderHeader{Reads: snap}, nil)
 	{
 		assert.NoError(t, err)
 	}
@@ -362,7 +362,7 @@ func testPreflightRemoteResourcesRemoteObservationsCase(
 		}
 	}
 	mu.Unlock()
-	frame, err := encodeFrame(renderHeader{Reads: snap}, nil)
+	frame, err := encodeFrame(&renderHeader{Reads: snap}, nil)
 	{
 		assert.NoError(t, err)
 	}

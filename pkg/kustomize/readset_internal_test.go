@@ -650,7 +650,7 @@ func testReadSetRemoteObservationsCase(t *testing.T, testCaseInput *testReadSetR
 		diff := cmp.Diff((*testCaseInput.want), snap.Remotes)
 		assert.FatalIf(t, diff != "", "observations (-want +got):\n%s", diff)
 	}
-	frame, err := encodeFrame(renderHeader{Reads: snap}, []byte("output"))
+	frame, err := encodeFrame(&renderHeader{Reads: snap}, []byte("output"))
 	{
 		assert.NoError(t, err)
 	}

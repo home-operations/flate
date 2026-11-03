@@ -51,79 +51,100 @@ func localGitSSH(t *testing.T, root string, allowed ssh.PublicKey) (string, *ato
 	assert.NoError(t, err)
 	var workers sync.WaitGroup
 	workers.Go(func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			workers.Go(func() {
-				defer conn.Close()
-				connection, channels, requests, err := ssh.NewServerConn(conn, config)
-				if err != nil {
-					return
-				}
-				authenticated.Add(1)
-				defer connection.Close()
-				workers.Go(func() { ssh.DiscardRequests(requests) })
-				for incoming := range channels {
-					if incoming.ChannelType() != "session" {
-						_ = incoming.Reject(ssh.UnknownChannelType, "session required")
-						continue
-					}
-					channel, requests, err := incoming.Accept()
-					if err != nil {
-						return
-					}
-					workers.Go(func() {
-						defer channel.Close()
-						for request := range requests {
-							var command struct{ Command string }
-							if request.Type != "exec" || ssh.Unmarshal(request.Payload, &command) != nil ||
-								command.Command != fmt.Sprintf("git-upload-pack '%s'", root) {
-								_ = request.Reply(false, nil)
-								continue
-							}
-							_ = request.Reply(true, nil)
-							session, err := server.DefaultServer.NewUploadPackSession(endpoint, nil)
-							if err != nil {
-								t.Error(err)
-								return
-							}
-							defer session.Close()
-							refs, err := session.AdvertisedReferencesContext(t.Context())
-							if err != nil {
-								t.Error(err)
-								return
-							}
-							if encodeErr := refs.Encode(channel); encodeErr != nil {
-								t.Error(encodeErr)
-								return
-							}
-							input := packp.NewUploadPackRequest()
-							if decodeErr := input.Decode(channel); decodeErr != nil {
-								t.Error(decodeErr)
-								return
-							}
-							response, err := session.UploadPack(t.Context(), input)
-							if err != nil {
-								t.Error(err)
-								return
-							}
-							defer response.Close()
-							if err := response.Encode(channel); err != nil {
-								t.Error(err)
-								return
-							}
-							_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
-							return
-						}
-					})
-				}
-			})
-		}
+		acceptGitSSH(t, listener, &testGitSSHServer{
+			root: &root, config: &config, endpoint: &endpoint, workers: &workers, authenticated: &authenticated,
+		})
 	})
 	t.Cleanup(func() { _ = listener.Close(); workers.Wait() })
 	return "ssh://git@" + listener.Addr().String() + root, &authenticated
+}
+
+type testGitSSHServer struct {
+	root          *string
+	config        **ssh.ServerConfig
+	endpoint      **transport.Endpoint
+	workers       *sync.WaitGroup
+	authenticated *atomic.Int32
+}
+
+func acceptGitSSH(t *testing.T, listener net.Listener, fixture *testGitSSHServer) {
+	t.Helper()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		fixture.workers.Go(func() { serveGitSSH(t, conn, fixture) })
+	}
+}
+
+func serveGitSSH(t *testing.T, conn net.Conn, fixture *testGitSSHServer) {
+	t.Helper()
+	defer conn.Close()
+	connection, channels, requests, err := ssh.NewServerConn(conn, *fixture.config)
+	if err != nil {
+		return
+	}
+	fixture.authenticated.Add(1)
+	defer connection.Close()
+	fixture.workers.Go(func() { ssh.DiscardRequests(requests) })
+	for incoming := range channels {
+		if incoming.ChannelType() != "session" {
+			_ = incoming.Reject(ssh.UnknownChannelType, "session required")
+			continue
+		}
+		channel, requests, err := incoming.Accept()
+		if err != nil {
+			return
+		}
+		fixture.workers.Go(func() { serveGitSSHSession(t, channel, requests, fixture) })
+	}
+}
+
+func serveGitSSHSession(t *testing.T, channel ssh.Channel, requests <-chan *ssh.Request, fixture *testGitSSHServer) {
+	t.Helper()
+	defer channel.Close()
+	for request := range requests {
+		var command struct{ Command string }
+		if request.Type != "exec" || ssh.Unmarshal(request.Payload, &command) != nil ||
+			command.Command != fmt.Sprintf("git-upload-pack '%s'", *fixture.root) {
+			_ = request.Reply(false, nil)
+			continue
+		}
+		_ = request.Reply(true, nil)
+		session, err := server.DefaultServer.NewUploadPackSession(*fixture.endpoint, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer session.Close()
+		refs, err := session.AdvertisedReferencesContext(t.Context())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if encodeErr := refs.Encode(channel); encodeErr != nil {
+			t.Error(encodeErr)
+			return
+		}
+		input := packp.NewUploadPackRequest()
+		if decodeErr := input.Decode(channel); decodeErr != nil {
+			t.Error(decodeErr)
+			return
+		}
+		response, err := session.UploadPack(t.Context(), input)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer response.Close()
+		if err := response.Encode(channel); err != nil {
+			t.Error(err)
+			return
+		}
+		_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+		return
+	}
 }
 
 //nolint:paralleltest // Credential fixture helpers change the process environment.

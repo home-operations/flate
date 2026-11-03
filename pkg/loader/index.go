@@ -127,6 +127,9 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 			}
 		}
 	}
+	if l.documents.compact {
+		l.Index.Visibility = l.inputVisibility()
+	}
 	for file, doc := range l.documents.cache {
 		incomplete := doc.decodeErr != nil || slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
 		if l.Options.Selection.Changed && incomplete {

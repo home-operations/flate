@@ -439,7 +439,8 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 	if l.documents.compact {
 		source := l.sourceFacts(abs)
 		key := loadContext{path: abs, ignore: l.IgnoreFile}
-		if facts, ok := source.loads[key]; ok {
+		facts, replay := source.loads[key]
+		if replay && facts.complete {
 			for file, directory := range facts.directories {
 				l.documents.restore(file)
 				doc := l.documents.cache[file]
@@ -457,19 +458,19 @@ func (l *Loader) Load(ctx context.Context, root string) (int, error) {
 					break
 				}
 			}
+			facts.complete = w.proceed(ctx)
 		} else {
-			files := []fileAdmission{}
-			w.files = &files
+			facts = loadFacts{directories: map[string]loadDirectory{}}
+			w.files = &facts.files
 			w.walk(ctx, graphVisit{root: abs, file: abs}, nil)
-			if w.proceed(ctx) {
-				facts := loadFacts{files: files, directories: map[string]loadDirectory{}}
-				for file := range w.directories {
-					doc := l.documents.cache[file]
-					facts.directories[file] = loadDirectory{adHoc: doc.adHoc, traversed: doc.traversed}
-				}
-				source.loads[key] = facts
+			facts.complete = w.proceed(ctx)
+			for file := range w.directories {
+				doc := l.documents.cache[file]
+				facts.directories[file] = loadDirectory{adHoc: doc.adHoc, traversed: doc.traversed}
 			}
 		}
+		facts.observed = true
+		source.loads[key] = facts
 	} else {
 		w.walk(ctx, graphVisit{root: abs, file: abs}, nil)
 	}

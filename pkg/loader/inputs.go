@@ -1,8 +1,11 @@
 package loader
 
 import (
+	"cmp"
 	"maps"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"sigs.k8s.io/kustomize/api/types"
 
@@ -44,8 +47,9 @@ type physicalContext struct {
 type loadContext struct{ path, ignore string }
 type loadDirectory struct{ adHoc, traversed bool }
 type loadFacts struct {
-	files       []fileAdmission
-	directories map[string]loadDirectory
+	complete, observed bool
+	files              []fileAdmission
+	directories        map[string]loadDirectory
 }
 
 type admissionKind uint8
@@ -84,6 +88,10 @@ func (l *Loader) sourceFacts(root string) parsedSource {
 	if prepared := l.documents.parsed; prepared != nil && prepared.compact {
 		if prior, ok := prepared.sources[root]; ok && prior.input == identity && *prior.binding == binding {
 			source.walks, source.loads = maps.Clone(prior.walks), maps.Clone(prior.loads)
+			for key, load := range source.loads {
+				load.observed = false
+				source.loads[key] = load
+			}
 		}
 	}
 	l.facts.sources[root] = source
@@ -163,4 +171,89 @@ func cloneInputObjects(objects []parsedObject) []parsedObject {
 		cloned[i].outcome.Document = cloned[i].Doc
 	}
 	return cloned
+}
+
+func (l *Loader) inputVisibility() []manifest.InputVisibility {
+	if l.facts == nil {
+		return nil
+	}
+	var observations []manifest.InputVisibility
+	for root, facts := range l.facts.sources {
+		artifact := l.documents.artifacts[root]
+		var identity any
+		if artifact != nil {
+			identity = parsedInputIdentity(artifact)
+		}
+		if facts.input != identity || *facts.binding != artifact.Input(store.ArtifactContent|store.ArtifactRevision) {
+			continue
+		}
+		sources := []manifest.NamedResource{}
+		if root == l.documents.bootstrap {
+			sources = append(sources, manifest.BootstrapSourceID)
+		}
+		for _, scope := range l.scopes.sources {
+			if scope.root != root || scope.artifact == nil || slices.Contains(sources, scope.id) {
+				continue
+			}
+			if parsedInputIdentity(scope.artifact) != identity || scope.artifact.Input(store.ArtifactContent|store.ArtifactRevision) != *facts.binding {
+				continue
+			}
+			sources = append(sources, scope.id)
+		}
+		for domain, load := range facts.loads {
+			if !load.observed {
+				continue
+			}
+			relative, _ := filepath.Rel(root, domain.path)
+			observation := manifest.InputVisibility{Root: filepath.ToSlash(relative), Complete: load.complete}
+			if domain.ignore != "" {
+				relative, _ := filepath.Rel(root, domain.ignore)
+				observation.Ignore = filepath.ToSlash(relative)
+			}
+			for _, file := range load.files {
+				if file.kind == admissionWarning || l.terminalInput(file.file) || l.documents.cache[file.file].eligible == fileInactive {
+					continue
+				}
+				for _, child := range l.documents.cache[file.file].objects {
+					if child.outcome.Err != nil {
+						continue
+					}
+					var id manifest.NamedResource
+					if child.fact != nil {
+						if child.fact.facts.uncertain || file.kind == admissionBootstrap && child.fact.Declaration != file.coordinate {
+							continue
+						}
+						id = child.fact.Authored
+					} else if child.Obj != nil {
+						id = child.Obj.Named()
+					}
+					if id.Name == "" || !id.KindInfo().Tracked || file.kind == admissionData && !id.KindInfo().Data {
+						continue
+					}
+					record := manifest.DiscoveryRecord{Authored: id, Path: file.file, File: l.fileCoordinate(file.file)}
+					relative, _ := filepath.Rel(root, file.file)
+					for _, namespace := range l.recordNamespaces(record, "") {
+						effective := id
+						effective.Namespace = namespace
+						if observation.Inputs == nil {
+							observation.Inputs = map[manifest.NamedResource][]string{}
+						}
+						observation.Inputs[effective] = append(observation.Inputs[effective], filepath.ToSlash(relative))
+					}
+				}
+			}
+			for id, files := range observation.Inputs {
+				slices.Sort(files)
+				observation.Inputs[id] = slices.Compact(files)
+			}
+			for _, source := range sources {
+				observation.Source = source
+				observations = append(observations, observation)
+			}
+		}
+	}
+	slices.SortFunc(observations, func(a, b manifest.InputVisibility) int {
+		return cmp.Or(a.Source.Compare(b.Source), strings.Compare(a.Root, b.Root), strings.Compare(a.Ignore, b.Ignore))
+	})
+	return observations
 }

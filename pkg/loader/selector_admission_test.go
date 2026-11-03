@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"testing/fstest"
@@ -16,6 +17,10 @@ import (
 
 func TestAdmission_SelectorInputs(t *testing.T) {
 	t.Parallel()
+	t.Run("visibility", func(t *testing.T) {
+		t.Parallel()
+		testSelectorVisibility(t, false)
+	})
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
@@ -146,6 +151,10 @@ func TestAdmission_SelectorInputs(t *testing.T) {
 
 func TestAdmission_LateSelectorInput(t *testing.T) {
 	t.Parallel()
+	t.Run("visibility", func(t *testing.T) {
+		t.Parallel()
+		testSelectorVisibility(t, true)
+	})
 	root := t.TempDir()
 	st := store.New()
 	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
@@ -164,7 +173,7 @@ func TestAdmission_LateSelectorInput(t *testing.T) {
 	assert.Equal(t, retry, false)
 	reads := &store.ReadSet{}
 	reads.Init(st, parent, nil)
-	defer reads.Retire()
+	t.Cleanup(reads.Retire)
 	provider := &manifest.ResourceSetInputProvider{Name: "late", Namespace: "apps", Labels: map[string]string{"app": "selected"}}
 	proposal, err := l.Prepare(t.Context(), store.Child{Obj: provider, Productions: []manifest.Production{{Owner: parent}}}, reads, nil)
 	assert.NoError(t, err)
@@ -203,4 +212,103 @@ func TestAdmission_ExcludedSelectorKeepsQueryObservation(t *testing.T) {
 	assert.Equal(t, reads.Valid(), true)
 	st.AddObject(&manifest.ResourceSetInputProvider{Name: "provider", Namespace: "apps", Labels: map[string]string{"app": "selected"}})
 	assert.Equal(t, reads.Valid(), false)
+}
+
+func testSelectorVisibility(t *testing.T, incoming bool) {
+	t.Helper()
+	for _, visibleSide := range []manifest.TreeSide{manifest.TreeBase, manifest.TreeHead} {
+		for _, representation := range []string{"store", "compact", "candidate"} {
+			t.Run(fmt.Sprintf("visible=%d/%s", visibleSide, representation), func(t *testing.T) {
+				t.Parallel()
+				stores := [2]*store.Store{store.New(), store.New()}
+				var loaders [2]*Loader
+				var prepared [2]map[manifest.NamedResource]store.Child
+				var indexes [2]*manifest.DiscoveryIndex
+				app := &manifest.ResourceSet{Name: "consumer", Namespace: "apps", InputsFrom: []fluxopv1.InputProviderReference{{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "selected"}}}}}
+				other := *app
+				other.InputsFrom = slices.Clone(app.InputsFrom)
+				other.Name = "nonmatching"
+				other.InputsFrom[0].Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "absent"}}
+				provider := &manifest.ResourceSetInputProvider{Name: "chosen", Namespace: "apps", Labels: map[string]string{"app": "selected"}}
+				controls := []manifest.BaseManifest{
+					provider,
+					&manifest.ResourceSetInputProvider{Name: "other", Namespace: "apps", Labels: map[string]string{"app": "other"}},
+					&manifest.ResourceSetInputProvider{Name: "namespace", Namespace: "elsewhere", Labels: map[string]string{"app": "selected"}},
+					&manifest.RawObject{APIVersion: "foreign.example/v1", Kind: manifest.KindResourceSetInputProvider, Name: "foreign", Namespace: "apps"},
+				}
+				for side, st := range stores {
+					root := t.TempDir()
+					st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
+					l := New(st)
+					l.SourceRoot = root
+					l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{app.Named(), other.Named()}, Changed: true}
+					l.Options.Filter = change.NewFilter()
+					l.sideKnown, l.side = true, manifest.TreeSide(side)
+					l.locations = map[manifest.NamedResource]Occurrence{}
+					l.candidates = map[manifest.NamedResource]store.Child{}
+					prepared[side] = map[manifest.NamedResource]store.Child{}
+					for _, consumer := range []*manifest.ResourceSet{app, &other} {
+						object := consumer.WithNamespace(consumer.Namespace)
+						prepared[side][object.Named()] = store.Child{Obj: object}
+						if !incoming {
+							l.candidates[object.Named()] = store.Child{Obj: object}
+							l.Index.Records[object.Named()] = manifest.DiscoveryRecord{File: object.Named().Name + ".yaml", Declaration: object}
+						}
+					}
+					observation := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: ".", Complete: true, Inputs: map[manifest.NamedResource][]string{}}
+					if manifest.TreeSide(side) == visibleSide {
+						for _, object := range controls {
+							id := object.Named()
+							prepared[side][id] = store.Child{Obj: object}
+							observation.Inputs[id] = []string{id.Name + ".yaml"}
+							l.Index.Records[id] = manifest.DiscoveryRecord{File: id.Name + ".yaml"}
+							switch representation {
+							case "store":
+								st.AddObject(object)
+							case "compact":
+								occurrence := compactOccurrence(object, manifest.ProjectProducer(object))
+								occurrence.Declaration = OccurrenceID{Source: root, File: id.Name + ".yaml"}
+								l.locations[id] = occurrence
+							case "candidate":
+								l.candidates[id] = store.Child{Obj: object}
+							}
+						}
+					}
+					l.Index.Visibility = []manifest.InputVisibility{observation}
+					st.SetDiscoveryIndex(l.Index)
+					indexes[side], loaders[side] = l.Index, l
+				}
+				changes, err := change.Qualify(t.Context(), change.NewSet([]string{".krmignore"}), stores[0], stores[1])
+				assert.NoError(t, err)
+				changes, err = changes.WithReaders(t.Context(), indexes[0], indexes[1])
+				assert.NoError(t, err)
+				changes, err = changes.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
+				assert.NoError(t, err)
+				for side, l := range loaders {
+					l.Options.Changes = changes
+					l.freezeConstruction()
+					if manifest.TreeSide(side) != visibleSide {
+						assert.Equal(t, stores[side].GetObject(provider.Named()), nil)
+						_, located := l.locations[provider.Named()]
+						assert.Equal(t, located, false)
+						assert.Equal(t, l.candidates[provider.Named()].Obj, nil)
+					}
+					child := store.Child{}
+					if incoming {
+						child = prepared[side][app.Named()]
+					}
+					proposal, err := l.Prepare(t.Context(), child, nil, nil)
+					assert.NoError(t, err)
+					assert.Equal(t, slices.Contains(proposal.Selected, app.Named()), true)
+					assert.Equal(t, slices.Contains(proposal.Dirty, app.Named()), true)
+					assert.Equal(t, slices.Contains(proposal.Needed, provider.Named()), manifest.TreeSide(side) == visibleSide)
+					assert.Equal(t, slices.Contains(proposal.Selected, other.Named()), false)
+					assert.Equal(t, slices.Contains(proposal.Dirty, other.Named()), false)
+					for _, control := range controls[1:] {
+						assert.Equal(t, slices.Contains(proposal.Needed, control.Named()), false)
+					}
+				}
+			})
+		}
+	}
 }

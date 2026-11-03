@@ -9,11 +9,13 @@ import (
 	"testing/fstest"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	"github.com/go-git/go-git/v5/plumbing"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/gittree"
 	"github.com/home-operations/flate/pkg/store"
 )
 
@@ -1103,6 +1105,16 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 	}
 	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
 	assert.NoError(t, err)
+	var observations [2]manifest.DiscoveryIndex
+	for _, source := range sources {
+		visible := manifest.InputVisibility{Source: source, Root: "inputs", Complete: true, Inputs: map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "optional"}: {"inputs/optional.yaml"}}}
+		empty := visible
+		empty.Inputs = nil
+		observations[0].Visibility = append(observations[0].Visibility, visible)
+		observations[1].Visibility = append(observations[1].Visibility, empty)
+	}
+	changes, err = changes.WithReaders(t.Context(), &observations[0], &observations[1])
+	assert.NoError(t, err)
 	consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "apps", PostBuild: &kustomizev1.PostBuild{SubstituteFrom: []manifest.SubstituteReference{
 		{Kind: manifest.KindConfigMap, Name: "unrelated", Optional: true},
 		{Kind: manifest.KindConfigMap, Name: "optional", Optional: true},
@@ -1146,8 +1158,8 @@ func TestAdmission_SourceBindingsCaptureOncePerEvaluation(t *testing.T) {
 
 func TestAdmission_FrozenBindingsCaptureEachConsumer(t *testing.T) {
 	t.Parallel()
-	_, stores, roots, source := optionalSupplierPair(t, "apps")
-	changes, err := change.Qualify(t.Context(), nil, stores[0], stores[1])
+	changes, stores, roots, source := optionalSupplierPair(t, "apps")
+	changes, err := change.Qualify(t.Context(), changes, stores[0], stores[1])
 	assert.NoError(t, err)
 	l := New(stores[1])
 	l.SourceRoot = roots[1]
@@ -1519,6 +1531,160 @@ func TestAdmission_SourceCoordinates(t *testing.T) {
 			assert.Equal(t, indexed, "input.txt")
 			assert.Equal(t, c.fileChanged(manifest.BootstrapSourceID, "input.txt"), true)
 			assert.Diff(t, slices.Collect(c.sourceFiles(manifest.BootstrapSourceID)), []string{"input.txt"})
+		})
+	}
+}
+
+func TestAdmission_InputVisibility(t *testing.T) {
+	t.Parallel()
+	for _, policy := range []string{"krmignore", "sourceignore", "spec_ignore"} {
+		for _, scenario := range []string{"comment_only", "hidden"} {
+			t.Run(policy+"/"+scenario, func(t *testing.T) {
+				t.Parallel()
+				hide := scenario == "hidden"
+				var loaders [2]*Loader
+				var stores [2]*store.Store
+				for side := range loaders {
+					root := t.TempDir()
+					st := store.New()
+					stores[side] = st
+					ignore := "# unchanged visibility\n"
+					if side == 1 {
+						ignore = "# new comment\n"
+						if hide {
+							ignore += "settings.yaml\n"
+							if policy == "krmignore" {
+								ignore += "unused.yaml\nready.yaml\n"
+							}
+						}
+					}
+					files := fstest.MapFS{
+						".krmignore":    {Data: []byte(ignore)},
+						"opaque.yaml":   {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: opaque, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: absent}}\n")},
+						"consumer.yaml": {Data: []byte(testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"))},
+						"stable.yaml":   {Data: []byte(testutil.KustomizationYAML("stable", "apps", "  path: ./stable\n"))},
+						"ordering.yaml": {Data: []byte(testutil.KustomizationYAML("ordering", "apps", "  path: ./ordering\n  dependsOn: [{name: ready}]\n"))},
+						"ready.yaml":    {Data: []byte(testutil.KustomizationYAML("ready", "apps", "  path: ./ready\n"))},
+						"settings.yaml": {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: unchanged}\n")},
+						"unused.yaml":   {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata: {name: unused, namespace: apps}\nspec: {url: https://fixture.invalid/unused}\n")},
+					}
+					for _, directory := range []string{"app", "stable", "ordering", "ready"} {
+						files[directory+"/kustomization.yaml"] = &fstest.MapFile{Data: []byte("resources: []\n")}
+					}
+					input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: files})
+					assert.NoError(t, err)
+					if policy != "krmignore" {
+						delete(files, ".krmignore")
+						view := gittree.ViewOptions{Mode: gittree.Source, Current: files}
+						if policy == "sourceignore" {
+							files[".sourceignore"] = &fstest.MapFile{Data: []byte(ignore)}
+						} else {
+							view.Ignore = ignore
+						}
+						input, _, err = gittree.New(t.Context(), nil, plumbing.ZeroHash, view)
+						assert.NoError(t, err)
+					}
+					st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: input})
+					l := New(st)
+					loaders[side] = l
+					l.SourceRoot = root
+					l.Options.Selection = manifest.Selection{Changed: true}
+					l.Options.Filter = change.NewFilter()
+					_, err = l.Load(t.Context(), root)
+					assert.NoError(t, err)
+					assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+				}
+				for _, reverse := range []bool{false, true} {
+					before, after := 0, 1
+					if reverse {
+						before, after = after, before
+					}
+					changes, err := change.Qualify(t.Context(), nil, stores[before], stores[after])
+					assert.NoError(t, err)
+					changes, err = changes.WithReaders(t.Context(), loaders[before].Index, loaders[after].Index)
+					assert.NoError(t, err)
+					for _, l := range loaders {
+						l.Options.Changes = changes
+						proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+						assert.NoError(t, err)
+						assert.Equal(t, slices.Contains(proposal.Selected, testutil.KustomizationID("apps", "consumer")), hide)
+						assert.Equal(t, slices.Contains(proposal.Needed, testutil.HelmReleaseID("apps", "opaque")), false)
+						for _, name := range []string{"stable", "ordering", "ready"} {
+							if slices.Contains(proposal.Needed, testutil.KustomizationID("apps", name)) {
+								t.Errorf("unrelated %s admitted: needed=%v selected=%v", name, proposal.Needed, proposal.Selected)
+							}
+						}
+						assert.Equal(t, slices.Contains(proposal.Needed, manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "unused"}), false)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAdmission_DuplicateInputContent(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"retained", "changed_content", "last_hidden"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			var loaders [2]*Loader
+			var stores [2]*store.Store
+			input := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+			consumer := testutil.KustomizationID("apps", "consumer")
+			for side := range loaders {
+				root := t.TempDir()
+				data := []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {VALUE: old}\n")
+				files := fstest.MapFS{
+					"flux/consumer.yaml":     {Data: []byte(testutil.KustomizationYAML("consumer", "apps", "  path: ./app\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: settings}]}\n"))},
+					"app/kustomization.yaml": {Data: []byte("resources: []\n")},
+					"a/settings.yaml":        {Data: data},
+					"b/settings.yaml":        {Data: data},
+					".sourceignore":          {},
+				}
+				if side == 1 {
+					ignore := "a/settings.yaml\n"
+					if scenario == "last_hidden" {
+						ignore += "b/settings.yaml\n"
+					}
+					files[".sourceignore"].Data = []byte(ignore)
+					if scenario == "changed_content" {
+						files["b/settings.yaml"].Data = []byte(strings.ReplaceAll(string(data), "old", "new"))
+					}
+				}
+				view, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Source, Current: files})
+				assert.NoError(t, err)
+				st := store.New()
+				stores[side] = st
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: view})
+				l := New(st)
+				loaders[side] = l
+				l.SourceRoot = root
+				l.Options.Selection = manifest.Selection{Changed: true}
+				l.Options.Filter = change.NewFilter()
+				_, err = l.Load(t.Context(), root)
+				assert.NoError(t, err)
+				assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+			}
+			assert.Diff(t, loaders[0].Index.Visibility[0].Inputs[input], []string{"a/settings.yaml", "b/settings.yaml"})
+			for _, reverse := range []bool{false, true} {
+				before, after := 0, 1
+				if reverse {
+					before, after = after, before
+				}
+				changes, err := change.Qualify(t.Context(), nil, stores[before], stores[after])
+				assert.NoError(t, err)
+				changes, err = changes.WithReaders(t.Context(), loaders[before].Index, loaders[after].Index)
+				assert.NoError(t, err)
+				if scenario == "changed_content" {
+					assert.Equal(t, changes.Contains("b/settings.yaml"), true)
+				}
+				for _, l := range loaders {
+					l.Options.Changes = changes
+					proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+					assert.NoError(t, err)
+					assert.Equal(t, slices.Contains(proposal.Selected, consumer), scenario != "retained")
+				}
+			}
 		})
 	}
 }

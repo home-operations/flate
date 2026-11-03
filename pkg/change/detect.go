@@ -97,7 +97,7 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 		}
 		if previous.changes != nil && previous.artifacts == evidence.artifacts && previous.declarations == evidence.declarations {
 			delta = previous.changes
-		} else if id != manifest.BootstrapSourceID || delta == nil {
+		} else if id != manifest.BootstrapSourceID || delta == nil || previous.changes != nil {
 			pair := readerPair{before: a, after: b}
 			for i, input := range evidence.artifacts {
 				exclusion, err := filepath.Rel(input.LocalPath, evidence.artifacts[1-i].LocalPath)
@@ -147,7 +147,7 @@ func Qualify(ctx context.Context, changes *Set, before, after *store.Store) (*Se
 		}
 		out.sources[id] = evidence
 		if id == manifest.BootstrapSourceID {
-			out.paths, out.inputs, out.origins, out.oneSided = delta.paths, delta.inputs, evidence.artifacts, delta.oneSided
+			out.paths, out.origins, out.oneSided = delta.paths, evidence.artifacts, delta.oneSided
 		}
 	}
 	if out.paths == nil && changes != nil {
@@ -320,7 +320,7 @@ type inputReader func([]byte) (int, error)
 
 func (r inputReader) Read(p []byte) (int, error) { return r(p) }
 
-// CollectInputs records a one-sided path, its declared content and named data.
+// CollectInputs records a one-sided path and its declared content.
 // Before identifies the baseline side; WithReaders resolves its exact read dependents.
 // Call only while constructing an unpublished Set, never concurrently, and discard
 // the set on error. Completed sets returned by Detect or baseline resolution MUST
@@ -337,30 +337,24 @@ func (s *Set) CollectInputs(ctx context.Context, input fs.FS, name string, befor
 		s.oneSided[side] = make(map[string]map[manifest.NamedResource]string)
 	}
 	s.oneSided[side][name] = nil
-	declared, inputs, err := collectInput(ctx, input, name, s.Contains(name))
+	declared, err := collectInput(ctx, input, name)
 	if err != nil {
 		return err
 	}
 	s.oneSided[side][name] = declared
-	if s.inputs == nil {
-		s.inputs = inputs
-	} else {
-		maps.Copy(s.inputs, inputs)
-	}
 	return nil
 }
 
-func collectInput(ctx context.Context, input fs.FS, name string, declarations bool) (map[manifest.NamedResource]string, map[manifest.NamedResource]InputChange, error) {
+func collectInput(ctx context.Context, input fs.FS, name string) (map[manifest.NamedResource]string, error) {
 	var declared map[manifest.NamedResource]string
-	var inputs map[manifest.NamedResource]InputChange
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".yaml", ".yml", ".json":
 	default:
-		return nil, nil, nil
+		return nil, nil
 	}
 	f, err := input.Open(name)
 	if err != nil {
-		return nil, nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("open input %s: %w", name, err), "")
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("open input %s: %w", name, err), "")
 	}
 	defer func() { _ = f.Close() }()
 	var terminal, readErr error
@@ -394,18 +388,18 @@ func collectInput(ctx context.Context, input fs.FS, name string, declarations bo
 		for _, doc := range docs {
 			manifest.ReleaseDoc(doc.Document)
 		}
-		return nil, nil, err
+		return nil, err
 	}
 	if decodeErr != nil {
 		for _, doc := range docs {
 			manifest.ReleaseDoc(doc.Document)
 		}
-		return nil, nil, nil
+		return nil, nil
 	}
 	for _, occurrence := range docs {
 		doc := occurrence.Document
 		id := manifest.DocIdentity(doc)
-		if declarations && id.Kind != "" && id.Name != "" && manifest.DocAPIVersion(doc) != "" && !manifest.HasEnvsubstReference(id.Name) && !manifest.HasEnvsubstReference(id.Namespace) {
+		if id.Kind != "" && id.Name != "" && manifest.DocAPIVersion(doc) != "" && !manifest.HasEnvsubstReference(id.Name) && !manifest.HasEnvsubstReference(id.Namespace) {
 			if declared == nil {
 				declared = map[manifest.NamedResource]string{}
 			}
@@ -415,20 +409,12 @@ func collectInput(ctx context.Context, input fs.FS, name string, declarations bo
 			}
 			declared[id] = fingerprint
 		}
-		eligible := manifest.DocAPIVersion(doc) == manifest.CoreAPIVersion && id.KindInfo().Data &&
-			id.Name != "" && !manifest.HasEnvsubstReference(id.Name) && !manifest.HasEnvsubstReference(id.Namespace)
 		manifest.ReleaseDoc(doc)
-		if eligible {
-			if inputs == nil {
-				inputs = make(map[manifest.NamedResource]InputChange)
-			}
-			inputs[id] = InputChange{File: name, Unbound: true}
-		}
 	}
-	return declared, inputs, ctx.Err()
+	return declared, ctx.Err()
 }
 
-// WithReaders returns a set including consumers of one-sided files in their admitting index.
+// WithReaders derives affected inputs from raw facts and current discovery observations.
 // The receiver and both discovery indexes remain immutable.
 func (s *Set) WithReaders(ctx context.Context, before, after *manifest.DiscoveryIndex) (*Set, error) {
 	if s == nil {
@@ -446,14 +432,12 @@ func (s *Set) WithReaders(ctx context.Context, before, after *manifest.Discovery
 	}
 	if len(s.sources) == 0 {
 		out := s.withReaders(indexes, &bindings, readerComparison{artifacts: origins, source: manifest.BootstrapSourceID})
-		if out == s {
-			return out, nil
-		}
 		out.declarations = bindings.declarations
 		return out, nil
 	}
 	out := *s
 	out.sources = maps.Clone(s.sources)
+	out.inputs = nil
 	for ref, evidence := range s.sources {
 		qualified := evidence.changes.withReaders(indexes, &bindings, readerComparison{artifacts: evidence.artifacts, source: ref})
 		evidence.changes = qualified
@@ -473,9 +457,6 @@ type readerComparison struct {
 }
 
 func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, evidence readerComparison) *Set {
-	if s.Len() == 0 {
-		return s
-	}
 	source, artifacts := evidence.source, evidence.artifacts
 	roots := [2]string{}
 	_, bootstrap, _ := bindings.ForSource(manifest.BootstrapSourceID)
@@ -633,15 +614,7 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 	}
 
 	out := *s
-	out.inputs = maps.Clone(s.inputs)
-	for id, input := range out.inputs {
-		if len(input.Declarations) != 0 {
-			delete(out.inputs, id)
-		}
-		if changed, known := bindings.declaredChanged(source, id); known && !changed {
-			delete(out.inputs, id)
-		}
-	}
+	out.inputs = nil
 	coordinate := func(side int, name string) string {
 		if input := artifacts[side]; input != nil && roots[side] != "" {
 			if origins[side] == roots[side] {
@@ -655,21 +628,55 @@ func (s *Set) withReaders(indexes [2]*manifest.DiscoveryIndex, bindings *Set, ev
 		}
 		return name
 	}
-	for id, input := range out.inputs {
-		if !input.Unbound {
+	type domain struct{ root, ignore string }
+	domains := map[domain][2]bool{}
+	visible := [2]map[manifest.NamedResource]string{{}, {}}
+	for side, index := range indexes {
+		if index == nil {
 			continue
 		}
-		for side, index := range indexes {
-			if _, present := s.oneSided[side][input.File]; !present {
+		for _, observation := range index.Visibility {
+			if !qualifiedSource(side, observation.Source) {
 				continue
 			}
-			for reader := range index.ReadersOfFile(coordinate(side, input.File)) {
+			key := domain{observation.Root, observation.Ignore}
+			observed := domains[key]
+			observed[side] = observation.Complete
+			domains[key] = observed
+			if !observation.Complete {
+				continue
+			}
+			for id, files := range observation.Inputs {
+				for _, file := range files {
+					if previous, ok := visible[side][id]; !ok || file < previous {
+						visible[side][id] = file
+					}
+				}
+			}
+		}
+	}
+	observed := [2]bool{len(domains) != 0, len(domains) != 0}
+	for _, complete := range domains {
+		for side := range observed {
+			observed[side] = observed[side] && complete[side]
+		}
+	}
+	for side, identities := range visible {
+		for id, file := range identities {
+			if _, opposite := visible[1-side][id]; opposite || !observed[1-side] {
+				continue
+			}
+			input := InputChange{File: file, Unbound: true}
+			for reader := range indexes[side].ReadersOfFile(coordinate(side, file)) {
 				if qualifiedSource(side, reader.Source) {
 					input.Unbound = false
-					out.inputs[id] = input
 					break
 				}
 			}
+			if out.inputs == nil {
+				out.inputs = map[manifest.NamedResource]InputChange{}
+			}
+			out.inputs[id] = input
 		}
 	}
 	for side, index := range indexes {
@@ -1084,6 +1091,10 @@ func (s *Set) WithDeclarations(ctx context.Context, before, after *store.Store, 
 			if delta == nil {
 				continue
 			}
+			key := comparisonKey{source: source, owner: id, input: id}
+			comparison := out.declarations[key]
+			comparison.objects[side], comparison.changed = declarations[id].Obj, true
+			out.declarations[key] = comparison
 			for _, production := range stores[side].Productions(id, nil) {
 				if production.Source != source || production.File == "" || !delta.Contains(production.File) {
 					continue
@@ -1241,7 +1252,7 @@ func (s *Set) OutputChanged(side manifest.TreeSide, source manifest.NamedResourc
 		return false, false
 	}
 	fact, ok := s.declarations[comparisonKey{source: source, owner: current.Named(), input: ref.NamedResource, use: ref.Use, position: ref.Position}]
-	if !ok || current != fact.objects[side] {
+	if !ok || current != fact.objects[side] || fact.objects[manifest.TreeHead-side] == nil {
 		return false, false
 	}
 	if ref.Use != "" && !referencesEqual(ref, fact.references[side]) {
@@ -1250,13 +1261,12 @@ func (s *Set) OutputChanged(side manifest.TreeSide, source manifest.NamedResourc
 	return fact.changed, true
 }
 
-// OppositeDeclaration returns the paired declaration while the same local declaration applies.
+// OppositeDeclaration returns the opposite declaration while the local identity and declaration apply.
 // Source artifact applicability MUST be checked by the caller against ForSource first.
-func (s *Set) OppositeDeclaration(side manifest.TreeSide, source manifest.NamedResource, current manifest.BaseManifest) manifest.BaseManifest {
-	if s == nil || current == nil || side > manifest.TreeHead {
+func (s *Set) OppositeDeclaration(side manifest.TreeSide, source, id manifest.NamedResource, current manifest.BaseManifest) manifest.BaseManifest {
+	if s == nil || side > manifest.TreeHead {
 		return nil
 	}
-	id := current.Named()
 	fact := s.declarations[comparisonKey{source: source, owner: id, input: id}]
 	if current != fact.objects[side] {
 		return nil

@@ -277,6 +277,16 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Diff(t, res.Changes.Paths(), []string{".sourceignore", "apps/b.yaml"})
 			testutil.WriteFile(t, root, ".sourceignore", "*.yaml\n")
+			var indexes [2]*manifest.DiscoveryIndex
+			for side := range indexes {
+				observation := manifest.InputVisibility{Source: manifest.BootstrapSourceID, Root: "apps", Complete: true}
+				if behavior == "exclude" && side == 0 || behavior == "reinclude" && side == 1 {
+					observation.Inputs = map[manifest.NamedResource][]string{{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "optional"}: {"apps/b.yaml"}}
+				}
+				indexes[side] = &manifest.DiscoveryIndex{Visibility: []manifest.InputVisibility{observation}}
+			}
+			changes, err := res.Changes.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
 			for side, input := range []*store.SourceArtifact{res.BaseInput, res.Source} {
 				_, directIdentity, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: input.FS})
 				assert.NoError(t, err)
@@ -295,7 +305,7 @@ func TestAutoResolve_IgnoreMembershipFlips(t *testing.T) {
 				}}
 				objects := store.New()
 				objects.SetArtifact(manifest.BootstrapSourceID, input)
-				filter := admissiontest.Filter(t, admissiontest.Config{Changes: res.Changes, Index: index, Inventory: objects, Root: input.LocalPath})
+				filter := admissiontest.Filter(t, admissiontest.Config{Changes: changes, Index: index, Inventory: objects, Root: input.LocalPath})
 				if !filter.ShouldReconcile(app) {
 					t.Errorf("side %d ignore %s did not select optional input consumer", side, behavior)
 				}

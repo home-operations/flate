@@ -113,10 +113,10 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 				ref = candidate
 			}
 		}
-		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner), manifest.BaseManifest(owners[1-side]))
+		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner.Named(), owner), manifest.BaseManifest(owners[1-side]))
 		foreign := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "apps", Name: "foreign"}
-		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), foreign, owner), nil)
-		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner.Clone()), nil)
+		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), foreign, owner.Named(), owner), nil)
+		assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), manifest.BootstrapSourceID, owner.Named(), owner.Clone()), nil)
 		changed, known := frozen.OutputChanged(manifest.TreeSide(side), manifest.BootstrapSourceID, ref, owner)
 		assert.Equal(t, known, true)
 		assert.Equal(t, changed, false)
@@ -134,7 +134,7 @@ func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	}
 	unknown, err := changes.WithDeclarations(t.Context(), stores[0], nil, [2]map[manifest.NamedResource]store.Child{})
 	assert.NoError(t, err)
-	assert.Equal(t, unknown.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, owners[0]), nil)
+	assert.Equal(t, unknown.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, owners[0].Named(), owners[0]), nil)
 	_, known := unknown.OutputChanged(manifest.TreeBase, manifest.BootstrapSourceID, manifest.Reference{NamedResource: owners[0].Named()}, owners[0])
 	assert.Equal(t, known, false)
 	assert.Equal(t, len(changes.declarations), 0)
@@ -154,7 +154,7 @@ func TestWithDeclarations_ProducerOwnedRawIsUnknown(t *testing.T) {
 	assert.NoError(t, err)
 	frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], [2]map[manifest.NamedResource]store.Child{})
 	assert.NoError(t, err)
-	assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, child), nil)
+	assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeBase, manifest.BootstrapSourceID, child.Named(), child), nil)
 	_, known := frozen.OutputChanged(manifest.TreeBase, manifest.BootstrapSourceID, manifest.Reference{NamedResource: child.Named()}, child)
 	assert.Equal(t, known, false)
 }
@@ -240,7 +240,7 @@ func TestWithDeclarations_PreparedProduction(t *testing.T) {
 				if !tc.foreign && !tc.missing {
 					opposite = children[1-side]
 				}
-				assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), source, child), opposite)
+				assert.Equal(t, frozen.OppositeDeclaration(manifest.TreeSide(side), source, child.Named(), child), opposite)
 				assert.Equal(t, known, !tc.foreign && !tc.missing)
 				assert.Equal(t, changed, tc.output)
 			}

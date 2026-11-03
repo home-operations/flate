@@ -196,6 +196,9 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 			continue
 		}
 		for id, changed := range delta.Inputs(dependency) {
+			if consumer == dependency && !delta.Contains(changed.File) {
+				continue
+			}
 			if id.Group != dependency.Group || id.Kind != dependency.Kind || id.Name != dependency.Name || id.Namespace != "" && id.Namespace != dependency.Namespace {
 				continue
 			}

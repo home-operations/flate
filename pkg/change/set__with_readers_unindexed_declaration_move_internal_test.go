@@ -703,11 +703,12 @@ func testCollectInputsParseFailureDrainCase(t *testing.T, testCaseInput *struct 
 	}
 	var set Set
 	err := set.CollectInputs(ctx, input, "input.yaml", false)
-	if testCaseInput.wantErr == nil {
+	switch {
+	case testCaseInput.wantErr == nil:
 		assert.NoError(t, err)
-	} else if !errors.Is(err, testCaseInput.wantErr) {
+	case !errors.Is(err, testCaseInput.wantErr):
 		t.Fatalf("drained error=%v, want %v", err, testCaseInput.wantErr)
-	} else {
+	default:
 		assert.FatalIf(
 			t,
 			!testCaseInput.cancel &&

@@ -195,7 +195,7 @@ func (d *declarationScope) compare(ctx context.Context, id manifest.NamedResourc
 		return nil
 	}
 	children := [2]store.Child{*left, right}
-	if !d.validSourcePaths(ctx, children) {
+	if !d.validSourcePaths(ctx, &children) {
 		return nil
 	}
 	equal, err := manifest.OutputEqual(left.Obj, right.Obj, [2]map[string]any{left.Doc, right.Doc})
@@ -206,11 +206,11 @@ func (d *declarationScope) compare(ctx context.Context, id manifest.NamedResourc
 	comparison := d.out.declarations[key]
 	comparison.objects, comparison.changed = [2]manifest.BaseManifest{left.Obj, right.Obj}, !equal
 	d.out.declarations[key] = comparison
-	return d.compareReferences(id, children, d.sameInputs(&comparison))
+	return d.compareReferences(id, &children, d.sameInputs(&comparison))
 }
 
-func (d *declarationScope) validSourcePaths(_ context.Context, children [2]store.Child) bool {
-	for side, child := range children {
+func (d *declarationScope) validSourcePaths(_ context.Context, children *[2]store.Child) bool {
+	for side, child := range *children {
 		ref, path, applies := child.Obj.SourcePath()
 		if !applies {
 			continue
@@ -246,11 +246,11 @@ func (d *declarationScope) sameInputs(comparison *declarationComparison) bool {
 
 func (d *declarationScope) compareReferences(
 	id manifest.NamedResource,
-	children [2]store.Child,
+	children *[2]store.Child,
 	sameInputs bool,
 ) error {
 	refs := [2][]manifest.Reference{}
-	for side, child := range children {
+	for side, child := range *children {
 		for ref := range manifest.References(child.Obj, manifest.ReferenceRelations) {
 			refs[side] = append(refs[side], ref.Clone())
 		}
@@ -270,7 +270,7 @@ func (d *declarationScope) compareReferences(
 			continue
 		}
 		inputs := [2]store.Child{d.objects[0][ref.NamedResource], d.objects[1][ref.NamedResource]}
-		changed, known, err := referenceChanged(ref, inputs)
+		changed, known, err := referenceChanged(ref, &inputs)
 		if err != nil {
 			return err
 		}
@@ -289,7 +289,7 @@ func (d *declarationScope) compareReferences(
 	return nil
 }
 
-func referenceChanged(ref *manifest.Reference, inputs [2]store.Child) (bool, bool, error) {
+func referenceChanged(ref *manifest.Reference, inputs *[2]store.Child) (bool, bool, error) {
 	if inputs[0].Obj == nil || inputs[1].Obj == nil {
 		return false, false, nil
 	}
@@ -302,7 +302,7 @@ func referenceChanged(ref *manifest.Reference, inputs [2]store.Child) (bool, boo
 	if ref.Key != "" {
 		values := [2]string{}
 		present := [2]bool{}
-		for side, input := range inputs {
+		for side, input := range *inputs {
 			data, ok := input.Obj.(manifest.Data)
 			if !ok {
 				return false, false, nil
@@ -377,6 +377,8 @@ func freezeArtifacts(
 
 // OutputChanged reads a frozen verdict only while the same local declaration and reference apply.
 // Source artifact applicability MUST be checked by the caller against ForSource first.
+//
+//nolint:gocritic // OutputChanged preserves the SDK reference value snapshot.
 func (s *Set) OutputChanged(
 	side manifest.TreeSide,
 	source manifest.NamedResource,

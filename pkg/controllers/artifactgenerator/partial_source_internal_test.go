@@ -22,16 +22,15 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
+//nolint:paralleltest,tparallel // The subtests produce the values compared by their parent.
 func TestArtifactGenerator_PartialSourceConvergence(t *testing.T) {
 	t.Parallel()
 
 	var first, second []map[string]any
 	t.Run("first", func(t *testing.T) {
-		t.Parallel()
 		first = partialSourcePublication(t)
 	})
 	t.Run("second", func(t *testing.T) {
-		t.Parallel()
 		second = partialSourcePublication(t)
 	})
 	assert.Diff(t, second, first)

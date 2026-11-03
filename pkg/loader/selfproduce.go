@@ -394,7 +394,7 @@ func (l *Loader) addGenerated(ctx context.Context, generators []generatorRecord)
 			if l.documents.compact {
 				continue
 			}
-			obj, err := r.materialize(ctx, l.Options)
+			obj, err := r.materialize(ctx, &l.Options)
 			if err != nil {
 				if ctx.Err() != nil || errors.Is(err, errRemoteInputs) {
 					return err

@@ -30,36 +30,16 @@ type generatorRecord struct {
 
 var errRemoteInputs = manifest.NewError(manifest.ErrInput, nil, "remote generator input requires HTTPInputs")
 
-func (r generatorRecord) materialize(ctx context.Context, opts options) (manifest.BaseManifest, error) {
+//nolint:ireturn // Generator kind selects the concrete immutable manifest.
+func (r *generatorRecord) materialize(ctx context.Context, optsArg *options) (manifest.BaseManifest, error) {
+	opts := *optsArg
 	var ldr ifc.Loader
 	if len(r.args.EnvSources)+len(r.args.FileSources) != 0 {
-		input, name := r.reader.input(r.root)
-		input, err := fs.Sub(input, name)
+		var err error
+		ldr, err = r.inputLoader(ctx, &opts)
 		if err != nil {
-			return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("generator fs %s: %w", r.root, err), "")
+			return nil, err
 		}
-		confined := tree.NewBuilder(input)
-		root, dir := r.root, filepath.Dir(r.file)
-		ldr = generatorFileLoader{load: func(file string) ([]byte, error) {
-			if _, _, ok := kustomizeinput.CutHTTPScheme(file); ok {
-				if opts.RemoteInputs == nil {
-					return nil, errRemoteInputs
-				}
-				acquired, err := opts.RemoteInputs.Acquire(ctx, file, opts.RemoteRetry, nil)
-				if err != nil {
-					return nil, err
-				}
-				return fs.ReadFile(acquired, "content")
-			}
-			if !filepath.IsAbs(file) {
-				file = filepath.Join(dir, file)
-			}
-			name, err := filepath.Rel(root, file)
-			if err != nil {
-				return nil, err
-			}
-			return fs.ReadFile(confined, filepath.ToSlash(name))
-		}}
 	}
 
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
@@ -70,7 +50,7 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 			"",
 		)
 	}
-	return materializeGeneratorData(&r, &opts, pairs)
+	return materializeGeneratorData(r, &opts, pairs)
 }
 
 // KV loading is synchronous; the adapter binds only the current materialization.
@@ -82,6 +62,7 @@ type generatorFileLoader struct {
 
 func (l generatorFileLoader) Load(file string) ([]byte, error) { return l.load(file) }
 
+//nolint:ireturn // Generator kind selects the concrete immutable manifest.
 func materializeGeneratorData(r *generatorRecord, opts *options, pairs []types.Pair) (manifest.BaseManifest, error) {
 	data := make(map[string]any, len(pairs))
 	for _, pair := range pairs {
@@ -100,4 +81,36 @@ func materializeGeneratorData(r *generatorRecord, opts *options, pairs []types.P
 		return manifest.NewConfigMap(manifest.NamedResource{Name: r.args.Name, Namespace: r.namespace}, data), nil
 	}
 	return manifest.NewSecret(manifest.NamedResource{Name: r.args.Name, Namespace: r.namespace}, data, nil), nil
+}
+
+//nolint:ireturn // Kustomize requires its loader interface for generator inputs.
+func (r *generatorRecord) inputLoader(ctx context.Context, optsArg *options) (ifc.Loader, error) {
+	opts := *optsArg
+	input, name := r.reader.input(r.root)
+	input, err := fs.Sub(input, name)
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrInput, fmt.Errorf("generator fs %s: %w", r.root, err), "")
+	}
+	confined := tree.NewBuilder(input)
+	root, dir := r.root, filepath.Dir(r.file)
+	return generatorFileLoader{load: func(file string) ([]byte, error) {
+		if _, _, ok := kustomizeinput.CutHTTPScheme(file); ok {
+			if opts.RemoteInputs == nil {
+				return nil, errRemoteInputs
+			}
+			acquired, err := opts.RemoteInputs.Acquire(ctx, file, opts.RemoteRetry, nil)
+			if err != nil {
+				return nil, err
+			}
+			return fs.ReadFile(acquired, "content")
+		}
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(dir, file)
+		}
+		name, err := filepath.Rel(root, file)
+		if err != nil {
+			return nil, fmt.Errorf("generator path %s: %w", file, err)
+		}
+		return fs.ReadFile(confined, filepath.ToSlash(name))
+	}}, nil
 }

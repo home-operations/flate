@@ -50,14 +50,9 @@ func (p *childDocumentParser) parse() ([]store.Child, []manifest.DocOccurrence, 
 		changed := false
 		if admit {
 			var child store.Child
-			child, outcome, changed = Prepare(doc, *p.opts)
-			if obj := child.Obj; outcome.Err == nil && obj != nil {
-				if p.policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
-					child.Obj = obj.WithNamespace(p.policy.Namespace)
-				}
-				if child.Obj.Named() != p.parent.Named() {
-					children = append(children, child)
-				}
+			child, outcome, changed = p.prepare(doc)
+			if child.Obj != nil {
+				children = append(children, child)
 			}
 		}
 		if outcome.Err != nil {
@@ -74,4 +69,19 @@ func (p *childDocumentParser) parse() ([]store.Child, []manifest.DocOccurrence, 
 		}
 	}
 	return children, visible, failures
+}
+
+func (p *childDocumentParser) prepare(doc manifest.DocOccurrence) (store.Child, manifest.DocOccurrence, bool) {
+	child, outcome, changed := Prepare(doc, *p.opts)
+	obj := child.Obj
+	if outcome.Err != nil || obj == nil {
+		return store.Child{}, outcome, changed
+	}
+	if p.policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
+		child.Obj = obj.WithNamespace(p.policy.Namespace)
+	}
+	if child.Obj.Named() == p.parent.Named() {
+		return store.Child{}, outcome, changed
+	}
+	return child, outcome, changed
 }

@@ -64,6 +64,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		Kind:       kustypes.KustomizationKind,
 	}
 	if unmarshalErr := yaml.Unmarshal(data, &kus); unmarshalErr != nil {
+		//nolint:wrapcheck // Flux returns this YAML diagnostic and its cause unchanged.
 		return nil, "", unmarshalErr
 	}
 
@@ -106,27 +107,16 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 		})
 	}
 
-	components, _, err := unstructured.NestedStringSlice(obj, specField, componentsField)
-	if err != nil {
-		return nil, "", fmt.Errorf("unable to get components: %w", err)
-	}
-	ignoreMissing, _, _ := unstructured.NestedBool(obj, specField, ignoreComponentsField)
-	for _, component := range components {
-		if !fluxkustomize.IsLocalRelativePath(component) {
-			return nil, "", fmt.Errorf("component path '%s' must be local and relative", component)
-		}
-		if !fsys.Exists(filepath.Join(dirPath, component)) && ignoreMissing {
-			continue
-		}
-		kus.Components = append(kus.Components, component)
+	if componentsErr := appendGeneratedComponents(&kus, fsys, dirPath, obj); componentsErr != nil {
+		return nil, "", componentsErr
 	}
 
-	if err := appendVersionedPatches(&kus, obj); err != nil {
-		return nil, "", err
+	if versionedErr := appendVersionedPatches(&kus, obj); versionedErr != nil {
+		return nil, "", versionedErr
 	}
 
-	if err := applyGeneratedImages(&kus, obj); err != nil {
-		return nil, "", err
+	if imagesErr := applyGeneratedImages(&kus, obj); imagesErr != nil {
+		return nil, "", imagesErr
 	}
 
 	buildMetadata, _, err := unstructured.NestedStringSlice(obj, specField, buildMetadataField)
@@ -139,6 +129,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 
 	manifest, err := yaml.Marshal(kus)
 	if err != nil {
+		//nolint:wrapcheck // Flux returns this YAML diagnostic and its cause unchanged.
 		return nil, "", err
 	}
 	return manifest, kfile, nil
@@ -150,6 +141,7 @@ func generateManifest(fsys filesys.FileSystem, dirPath string, obj map[string]an
 func setNestedString(dst *string, obj map[string]any, fields ...string) error {
 	v, ok, err := unstructured.NestedString(obj, fields...)
 	if err != nil {
+		//nolint:wrapcheck // Preserve Flux's nested-field diagnostic and cause.
 		return err
 	}
 	if ok {
@@ -181,6 +173,7 @@ func findOrGenerateKustomization(
 ) ([]byte, string, bool, error) {
 	if kpath, ok := kustomizationFileIn(fsys, dirPath); ok {
 		b, rerr := fsys.ReadFile(kpath)
+		//nolint:wrapcheck // Preserve Flux's filesystem diagnostic, including its path and cause.
 		return b, kpath, true, rerr
 	}
 
@@ -188,6 +181,7 @@ func findOrGenerateKustomization(
 	// entries remain relative to the build root.
 	base, _, err := fsys.CleanedAbs(dirPath)
 	if err != nil {
+		//nolint:wrapcheck // Preserve Flux's filesystem diagnostic, including its path and cause.
 		return nil, "", false, err
 	}
 	files, err := scanManifests(fsys, base.String())
@@ -219,6 +213,7 @@ func findOrGenerateKustomization(
 
 	kfile := filepath.Join(dirPath, konfig.DefaultKustomizationFileName())
 	data, err := yaml.Marshal(kus)
+	//nolint:wrapcheck // Flux returns generated-kustomization encoding errors unchanged.
 	return data, kfile, false, err
 }
 
@@ -251,6 +246,7 @@ func scanManifests(fsys filesys.FileSystem, base string) ([]string, error) {
 		}
 		contents, err := fsys.ReadFile(path)
 		if err != nil {
+			//nolint:wrapcheck // The scan retains Flux's filesystem diagnostic and cause.
 			return err
 		}
 		// The kustomize YAML parser can panic on (accidentally) invalid object
@@ -270,6 +266,7 @@ func scanManifests(fsys filesys.FileSystem, base string) ([]string, error) {
 		paths = append(paths, path)
 		return nil
 	})
+	//nolint:wrapcheck // Preserve upstream walker errors and callback recovery errors unchanged.
 	return paths, err
 }
 
@@ -304,6 +301,7 @@ func kustomizeConfigKind(b []byte) string {
 func decodeTypedSlice[T any](obj map[string]any, fields ...string) ([]T, error) {
 	raw, ok, err := unstructured.NestedSlice(obj, fields...)
 	if err != nil {
+		//nolint:wrapcheck // Preserve Flux's nested-field diagnostic and cause.
 		return nil, err
 	}
 	if !ok {
@@ -362,6 +360,7 @@ func appendVersionedPatches(kus *kustypes.Kustomization, obj map[string]any) err
 			p := pValues[pIndex]
 			raw, marshalErr := json.Marshal(p.Patch)
 			if marshalErr != nil {
+				//nolint:wrapcheck // Flux forwards JSON6902 encoding failures unchanged.
 				return marshalErr
 			}
 			//nolint:staticcheck // byte-for-byte parity with flux's Generator, which populates this deprecated field
@@ -416,4 +415,28 @@ func resourceDecodeError(contents []byte, path string, err error) error {
 		)
 	}
 	return fmt.Errorf("failed to decode Kubernetes YAML from %s: %w", path, err)
+}
+
+func appendGeneratedComponents(
+	kus *kustypes.Kustomization,
+	fsys filesys.FileSystem,
+	dirPath string,
+	obj map[string]any,
+) error {
+	components, _, err := unstructured.NestedStringSlice(obj, specField, componentsField)
+	if err != nil {
+		return fmt.Errorf("unable to get components: %w", err)
+	}
+	ignoreMissing, _, _ := unstructured.NestedBool(obj, specField, ignoreComponentsField)
+	for _, component := range components {
+		if !fluxkustomize.IsLocalRelativePath(component) {
+			return fmt.Errorf("component path '%s' must be local and relative", component)
+		}
+		if !fsys.Exists(filepath.Join(dirPath, component)) && ignoreMissing {
+			continue
+		}
+		kus.Components = append(kus.Components, component)
+	}
+
+	return nil
 }

@@ -623,7 +623,7 @@ func testEntrySourceViewWarningEvidenceCase(t *testing.T, testCaseInput *bool,
 	for range 2 {
 		artifact, _, err := d.entrySourceView(
 			t.Context(),
-			entryResolution{object: obj, input: bootstrap, git: obj},
+			&entryResolution{object: obj, input: bootstrap, git: obj},
 		)
 		{
 			assert.FatalIf(

@@ -235,6 +235,10 @@ func (d *Session) addMissingSources(groups map[manifest.NamedResource]entrySourc
 			}
 		}
 	}
+	d.addMissingIndexedSources(groups)
+}
+
+func (d *Session) addMissingIndexedSources(groups map[manifest.NamedResource]entrySourceGroup) {
 	if d.loader == nil {
 		return
 	}
@@ -298,7 +302,7 @@ func (d *Session) resolveEntrySource(
 	}
 	if seen && previous.input == bootstrap && previous.object == obj {
 		if previous.artifact != nil && obj != nil && d.cfg.Store.GetArtifact(id, store.ArtifactContent) == nil {
-			d.publishEntrySource(previous, previous.artifact)
+			d.publishEntrySource(&previous, previous.artifact)
 			return id != manifest.BootstrapSourceID, nil
 		}
 		return false, nil
@@ -327,10 +331,10 @@ func (d *Session) refreshEntrySource(
 	previous.input = admission.input
 	if id == manifest.BootstrapSourceID {
 		previous.artifact = admission.input
-		d.publishEntrySource(*previous, admission.input)
+		d.publishEntrySource(previous, admission.input)
 		return nil
 	}
-	artifact, key, err := admission.entrySourceView(ctx, *previous)
+	artifact, key, err := admission.entrySourceView(ctx, previous)
 	if err != nil {
 		return err
 	}
@@ -345,7 +349,7 @@ func (d *Session) publishResolvedSource(candidate *entryResolution) {
 	if candidate.pinned && !candidate.artifact.InputAlias {
 		d.hasPins = true
 	}
-	d.publishEntrySource(*candidate, candidate.artifact)
+	d.publishEntrySource(candidate, candidate.artifact)
 	if candidate.viewKey == "" {
 		return
 	}
@@ -472,7 +476,7 @@ func (a *Admission) resolve(
 			return candidate, nil
 		}
 	}
-	artifact, key, err := a.entrySourceView(ctx, candidate)
+	artifact, key, err := a.entrySourceView(ctx, &candidate)
 	candidate.artifact, candidate.viewKey = artifact, key
 	return candidate, err
 }
@@ -480,7 +484,7 @@ func (a *Admission) resolve(
 // Mutable aliases keep empty keys and source-qualified mounts; their input is immutable.
 func (a *Admission) entrySourceView(
 	ctx context.Context,
-	candidate entryResolution,
+	candidate *entryResolution,
 ) (*store.SourceArtifact, string, error) {
 	bootstrap := candidate.input
 	repoRoot := bootstrap.LocalPath
@@ -535,7 +539,7 @@ func (a *Admission) entrySourceView(
 	return &artifact, viewKey, nil
 }
 
-func (d *Session) publishEntrySource(candidate entryResolution, artifact *store.SourceArtifact) {
+func (d *Session) publishEntrySource(candidate *entryResolution, artifact *store.SourceArtifact) {
 	id := candidate.object.Named()
 	if candidate.synthetic ||
 		(d.cfg.Selection.Changed || len(d.cfg.Selection.Roots) != 0) && d.cfg.Store.GetObject(id) != nil &&
@@ -545,7 +549,7 @@ func (d *Session) publishEntrySource(candidate entryResolution, artifact *store.
 
 	d.cfg.Store.SetArtifact(id, artifact)
 	d.cfg.Store.UpdateStatus(id, store.StatusInfo{Status: store.StatusReady, Reason: "", Message: "local entry source"})
-	d.resolvedSources[id] = candidate
+	d.resolvedSources[id] = *candidate
 }
 
 // Only working-input aliases contribute; canonical and independently committed artifacts do not.

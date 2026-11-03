@@ -61,6 +61,7 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 			return fs.ReadFile(confined, filepath.ToSlash(name))
 		}}
 	}
+
 	pairs, err := kv.NewLoader(ldr, provider.NewDefaultDepProvider().GetFieldValidator()).Load(r.args.KvPairSources)
 	if err != nil {
 		return nil, manifest.NewError(
@@ -69,6 +70,19 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 			"",
 		)
 	}
+	return materializeGeneratorData(&r, &opts, pairs)
+}
+
+// KV loading is synchronous; the adapter binds only the current materialization.
+type generatorFileLoader struct {
+	ifc.Loader
+
+	load func(string) ([]byte, error)
+}
+
+func (l generatorFileLoader) Load(file string) ([]byte, error) { return l.load(file) }
+
+func materializeGeneratorData(r *generatorRecord, opts *options, pairs []types.Pair) (manifest.BaseManifest, error) {
 	data := make(map[string]any, len(pairs))
 	for _, pair := range pairs {
 		value := pair.Value
@@ -87,12 +101,3 @@ func (r generatorRecord) materialize(ctx context.Context, opts options) (manifes
 	}
 	return manifest.NewSecret(manifest.NamedResource{Name: r.args.Name, Namespace: r.namespace}, data, nil), nil
 }
-
-// KV loading is synchronous; the adapter binds only the current materialization.
-type generatorFileLoader struct {
-	ifc.Loader
-
-	load func(string) ([]byte, error)
-}
-
-func (l generatorFileLoader) Load(file string) ([]byte, error) { return l.load(file) }

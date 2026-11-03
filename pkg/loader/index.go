@@ -195,6 +195,38 @@ func (l *Loader) freezeConstruction() {
 			}
 		}
 	}
+	l.publishFrozenRecords()
+}
+
+// Retire releases admission readers while preserving completed owners' read tracking.
+func (l *Loader) Retire() {
+	l.InputContent = nil
+	l.Options.HistoryOwners = nil
+	l.inputReaders, l.inputObjects = nil, nil
+	l.templateTargets = nil
+	l.producerFacts.Store(nil)
+	if !l.Options.Filter.Enabled() {
+		l.documents = documentReader{}
+		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
+		l.candidates, l.admitted, l.locations, l.roots = nil, nil, nil, nil
+		l.bindings.Store(nil)
+		l.projections.Clear()
+		return
+	}
+	for file, readers := range l.Index.Readers {
+		readers = slices.DeleteFunc(
+			readers,
+			func(reader manifest.FileReader) bool { return !l.Options.Filter.ShouldReconcile(reader.Reader) },
+		)
+		if len(readers) == 0 {
+			delete(l.Index.Readers, file)
+		} else {
+			l.Index.Readers[file] = readers
+		}
+	}
+}
+
+func (l *Loader) publishFrozenRecords() {
 	{
 		//nolint:gocritic // Map iteration supplies value snapshots without an additional lookup.
 		for id, record := range l.Index.Records {
@@ -247,32 +279,4 @@ func (l *Loader) freezeConstruction() {
 	l.frozen = true
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes, l.facts, l.Options.ParsedInputs, l.documents.parsed = nil, nil, nil, nil
-}
-
-// Retire releases admission readers while preserving completed owners' read tracking.
-func (l *Loader) Retire() {
-	l.InputContent = nil
-	l.Options.HistoryOwners = nil
-	l.inputReaders, l.inputObjects = nil, nil
-	l.templateTargets = nil
-	l.producerFacts.Store(nil)
-	if !l.Options.Filter.Enabled() {
-		l.documents = documentReader{}
-		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
-		l.candidates, l.admitted, l.locations, l.roots = nil, nil, nil, nil
-		l.bindings.Store(nil)
-		l.projections.Clear()
-		return
-	}
-	for file, readers := range l.Index.Readers {
-		readers = slices.DeleteFunc(
-			readers,
-			func(reader manifest.FileReader) bool { return !l.Options.Filter.ShouldReconcile(reader.Reader) },
-		)
-		if len(readers) == 0 {
-			delete(l.Index.Readers, file)
-		} else {
-			l.Index.Readers[file] = readers
-		}
-	}
 }

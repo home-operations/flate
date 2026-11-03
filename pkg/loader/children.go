@@ -27,22 +27,35 @@ func ParseChildren(
 			opts.DefaultNamespace = policy.Namespace
 		}
 	}
-	children := make([]store.Child, 0, len(docs))
-	visible := docs
+	parser := childDocumentParser{parent: parent, docs: docs, opts: &opts, skipKinds: skipKinds, policy: &policy}
+	return parser.parse()
+}
+
+type childDocumentParser struct {
+	parent    manifest.BaseManifest
+	docs      []manifest.DocOccurrence
+	opts      *manifest.ParseDocOptions
+	skipKinds []string
+	policy    *manifest.EmissionPolicy
+}
+
+func (p *childDocumentParser) parse() ([]store.Child, []manifest.DocOccurrence, []manifest.DocOccurrence) {
+	children := make([]store.Child, 0, len(p.docs))
+	visible := p.docs
 	filtered := false
 	var failures []manifest.DocOccurrence
-	for i, doc := range docs {
-		output, admit := policy.SelectDocument(doc.Document, skipKinds)
+	for i, doc := range p.docs {
+		output, admit := p.policy.SelectDocument(doc.Document, p.skipKinds)
 		outcome := doc
 		changed := false
 		if admit {
 			var child store.Child
-			child, outcome, changed = Prepare(doc, opts)
+			child, outcome, changed = Prepare(doc, *p.opts)
 			if obj := child.Obj; outcome.Err == nil && obj != nil {
-				if policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
-					child.Obj = obj.WithNamespace(policy.Namespace)
+				if p.policy.InternalNamespace && obj.Named().Namespace == "" && manifest.KindOf(obj).Namespaced() {
+					child.Obj = obj.WithNamespace(p.policy.Namespace)
 				}
-				if child.Obj.Named() != parent.Named() {
+				if child.Obj.Named() != p.parent.Named() {
 					children = append(children, child)
 				}
 			}
@@ -52,8 +65,8 @@ func ParseChildren(
 		}
 		output = output && outcome.Document != nil
 		if !filtered && (!output || changed || doc.Err == nil && outcome.Err != nil) {
-			visible = make([]manifest.DocOccurrence, 0, len(docs))
-			visible = append(visible, docs[:i]...)
+			visible = make([]manifest.DocOccurrence, 0, len(p.docs))
+			visible = append(visible, p.docs[:i]...)
 			filtered = true
 		}
 		if filtered && output {

@@ -145,20 +145,7 @@ func (l *Loader) refreshClaims(repoRoot string, kss []store.Child) {
 		}
 		l.scopes.inputs = inputs
 	}
-	for _, input := range l.scopes.inputs {
-		view := &l.scopes.sources[input.source]
-		if !view.external && !view.ready && len(l.scopes.scanned) != 0 {
-			_, view.ready = l.scopes.scanned[filepath.Join(view.root, input.owner.Path)]
-		}
-	}
-	l.scopes.claims, _ = l.claimView(repoRoot, func(input scopeInput) bool {
-		view := l.scopes.sources[input.source]
-		return repoRoot == "" || view.id.Name == "" || view.ready
-	})
-	l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
-	for _, claim := range l.scopes.claims {
-		l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
-	}
+	l.publishScopeClaims(repoRoot)
 }
 
 func (l *Loader) claimView(repoRoot string, eligible func(scopeInput) bool) ([]manifest.KSClaim, bool) {
@@ -443,36 +430,7 @@ func (l *Loader) visitScope(root graphVisit, membershipOnly bool) []graphVisit {
 			visits = append(visits, l.scopeWalk(child)...)
 		}
 	}
-	l.scopes.contributions = append(
-		l.scopes.contributions,
-		scopeContribution{
-			owner:          root.owner,
-			source:         root.source,
-			visits:         visits,
-			context:        root.graphContext,
-			unshared:       unshared,
-			membershipOnly: membershipOnly,
-			input:          root.input,
-		},
-	)
-	{
-		vValues := visits
-		for vIndex := range vValues {
-			v := vValues[vIndex]
-			v.owner, v.source, v.input = root.owner, root.source, root.input
-			v.membershipOnly = membershipOnly
-			if membershipOnly {
-				// Membership projects identities without owning or materializing bootstrap files.
-				v.owner, v.deferMaterialization = manifest.NamedResource{}, false
-			}
-			l.scopes.visits[v.file] = append(l.scopes.visits[v.file], v)
-			if local := v.localCoordinate(); local != "" {
-				file := filepath.Join(l.SourceRoot, filepath.FromSlash(local))
-				l.scopes.visits[file] = append(l.scopes.visits[file], v)
-			}
-		}
-	}
-	return visits
+	return l.recordScopeVisits(&root, visits, membershipOnly, unshared)
 }
 
 type authoredRecord struct {
@@ -1065,4 +1023,54 @@ func (l *Loader) authoredOccurrence(file string, id manifest.NamedResource) (Occ
 		}
 	}
 	return Occurrence{}, false
+}
+
+func (l *Loader) publishScopeClaims(repoRoot string) {
+	for _, input := range l.scopes.inputs {
+		view := &l.scopes.sources[input.source]
+		if !view.external && !view.ready && len(l.scopes.scanned) != 0 {
+			_, view.ready = l.scopes.scanned[filepath.Join(view.root, input.owner.Path)]
+		}
+	}
+	l.scopes.claims, _ = l.claimView(repoRoot, func(input scopeInput) bool {
+		view := l.scopes.sources[input.source]
+		return repoRoot == "" || view.id.Name == "" || view.ready
+	})
+	l.Index.Claims = make(map[string][]manifest.NamedResource, len(l.scopes.claims))
+	for _, claim := range l.scopes.claims {
+		l.Index.Claims[claim.Prefix] = appendUniqueProducer(l.Index.Claims[claim.Prefix], claim.ID)
+	}
+}
+
+func (l *Loader) recordScopeVisits(root *graphVisit, visits []graphVisit, membershipOnly, unshared bool) []graphVisit {
+	l.scopes.contributions = append(
+		l.scopes.contributions,
+		scopeContribution{
+			owner:          root.owner,
+			source:         root.source,
+			visits:         visits,
+			context:        root.graphContext,
+			unshared:       unshared,
+			membershipOnly: membershipOnly,
+			input:          root.input,
+		},
+	)
+	{
+		vValues := visits
+		for vIndex := range vValues {
+			v := vValues[vIndex]
+			v.owner, v.source, v.input = root.owner, root.source, root.input
+			v.membershipOnly = membershipOnly
+			if membershipOnly {
+				// Membership projects identities without owning or materializing bootstrap files.
+				v.owner, v.deferMaterialization = manifest.NamedResource{}, false
+			}
+			l.scopes.visits[v.file] = append(l.scopes.visits[v.file], v)
+			if local := v.localCoordinate(); local != "" {
+				file := filepath.Join(l.SourceRoot, filepath.FromSlash(local))
+				l.scopes.visits[file] = append(l.scopes.visits[file], v)
+			}
+		}
+	}
+	return visits
 }

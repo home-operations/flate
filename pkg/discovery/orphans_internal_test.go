@@ -488,8 +488,8 @@ func testPromoteOrphansNamespaceAdmissionCase(
 			batch = make([]store.Child, 0, len(docs))
 		}
 		for _, doc := range docs {
-			obj, document, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
-			assert.NoError(t, err)
+			obj, document, _, parseErr := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			assert.NoError(t, parseErr)
 			batch = append(batch, store.Child{Obj: obj, Doc: document})
 		}
 		l.RegisterBuilt(loader.BuiltInput{Root: root, Source: manifest.BootstrapSourceID}, batch)

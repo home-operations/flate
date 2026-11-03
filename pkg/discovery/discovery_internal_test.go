@@ -107,11 +107,11 @@ func testReceiptTrees(t *testing.T, cacheDir string) (*kustomize.TreeCache, func
 func packageHistory(
 	t *testing.T,
 	trees *kustomize.TreeCache,
-	req kustomize.RenderRequest,
+	req *kustomize.RenderRequest,
 	owner manifest.NamedResource,
 ) map[manifest.NamedResource]manifest.DiscoveryRecord {
 	t.Helper()
-	evidence := trees.PreviousEntry(t.Context(), req)
+	evidence := trees.PreviousEntry(t.Context(), *req)
 	records := evidence.Records
 	{
 		assert.FatalIf(t, evidence.Owner != owner || records == nil, "package %q has no complete accepted history",
@@ -124,7 +124,7 @@ func packageHistory(
 
 func preparedRequest(
 	t *testing.T,
-	cfg Config,
+	cfg *Config,
 	ks *manifest.Kustomization,
 	source *store.SourceArtifact,
 ) kustomize.RenderRequest {
@@ -629,7 +629,7 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 		owner := (*tailCaseInput.st).GetObject(result.Binding.Producer).(*manifest.Kustomization)
 		source, _, err := kustomize.SourceInput((*tailCaseInput.st), owner)
 		assert.NoError(t, err)
-		req := preparedRequest(t, cfg, owner, source)
+		req := preparedRequest(t, &cfg, owner, source)
 		want := map[manifest.NamedResource]manifest.DiscoveryRecord{
 			applied: {
 				Productions: []manifest.Production{{Owner: owner.Named(), Source: result.Binding.Source}},
@@ -646,10 +646,10 @@ func testRunSelectedEntryAdmissionCaseTail(t *testing.T, tailCaseInput *testRunS
 			assert.Equal(t, ownRecord.File, "app/owner.yaml")
 			assert.Equal(t, ownRecord.Declaration != nil, true)
 		}
-		assert.Diff(t, packageHistory(t, trees, req, owner.Named()), want)
+		assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), want)
 		closeCache()
 		trees, closeCache = testReceiptTrees(t, (*tailCaseInput.cacheDir))
-		assert.Diff(t, packageHistory(t, trees, req, owner.Named()), want)
+		assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), want)
 	}
 	closeCache()
 }

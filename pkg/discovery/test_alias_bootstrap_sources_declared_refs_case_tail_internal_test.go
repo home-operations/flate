@@ -92,9 +92,10 @@ func testAliasBootstrapSourcesDeclaredRefsCaseTail(
 		}
 	}
 	want := "A"
-	if (*tailCaseInput.testCaseInput).base != "" {
+	switch {
+	case (*tailCaseInput.testCaseInput).base != "":
 		want = "B"
-	} else if (*tailCaseInput.testCaseInput).head {
+	case (*tailCaseInput.testCaseInput).head:
 		want = "dirty"
 		{
 			assert.FatalIf(
@@ -105,7 +106,7 @@ func testAliasBootstrapSourcesDeclaredRefsCaseTail(
 				artifact,
 			)
 		}
-	} else {
+	default:
 		assert.FatalIf(
 			t,
 			artifact.FS == nil || artifact.Key == "" || artifact.URL != (*tailCaseInput.repository).URL,

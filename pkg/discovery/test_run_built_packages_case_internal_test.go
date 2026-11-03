@@ -91,7 +91,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 			(*testCaseInput),
 			manifest.NamedResource{},
 		)
-		req := preparedRequest(t, d.cfg, owner, source)
+		req := preparedRequest(t, &d.cfg, owner, source)
 		if lifetime == "changed" {
 			assert.FatalIf(
 				t,
@@ -101,7 +101,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 			)
 		}
 		if strings.HasPrefix(lifetime, "warm-") {
-			assert.Diff(t, packageHistory(t, trees, req, owner.Named()), previousHistory)
+			assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), previousHistory)
 		}
 		assert.NoError(t, d.loadManifests(t.Context(), root, true))
 		assert.Equal(t, d.binding.Producer, owner.Named())
@@ -148,7 +148,7 @@ func testRunBuiltPackagesCase(t *testing.T, testCaseInput *string,
 		assert.NoError(t, d.loader.FinalizeIndex(t.Context(), root, true))
 		assert.NoError(t, d.acceptPrepared(t.Context()))
 		if dir != "" {
-			assert.Diff(t, packageHistory(t, trees, req, owner.Named()), wantHistory)
+			assert.Diff(t, packageHistory(t, trees, &req, owner.Named()), wantHistory)
 		}
 		files := []string{"a/kustomization.yaml", "a/cm.yaml", "a/patch.yaml", "a/driver.yaml", "a/source.yaml"}
 		if (*testCaseInput) == "." {

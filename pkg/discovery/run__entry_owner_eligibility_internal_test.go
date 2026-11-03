@@ -67,16 +67,16 @@ func TestRun_BuiltEntryDoesNotRebindTransformedOwner(t *testing.T) {
 		record.Parent != result.Binding.Producer, "transformed declaration lost its prepared ownership: %+v", record)
 	assert.FatalIf(t, st.GetObject(owner) != nil, "%v", "prepared child was published before ordinary runtime emission")
 	producer := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
-	req := preparedRequest(t, cfg, producer, source)
+	req := preparedRequest(t, &cfg, producer, source)
 	want := map[manifest.NamedResource]manifest.DiscoveryRecord{owner: {
 		Application:  `{"apiVersion":"kustomize.toolkit.fluxcd.io/v1","kind":"Kustomization","metadata":{"name":"owner","namespace":"apps"},"spec":{"path":"./app"}}`,
 		Productions:  []manifest.Production{{Owner: producer.Named(), Source: result.Binding.Source}},
 		ContentRoots: map[manifest.NamedResource][]string{manifest.BootstrapSourceID: {"app"}},
 	}}
-	assert.Diff(t, packageHistory(t, trees, req, producer.Named()), want)
+	assert.Diff(t, packageHistory(t, trees, &req, producer.Named()), want)
 	closeCache()
 	trees, closeCache = testReceiptTrees(t, cacheDir)
-	assert.Diff(t, packageHistory(t, trees, req, producer.Named()), want)
+	assert.Diff(t, packageHistory(t, trees, &req, producer.Named()), want)
 	assert.FatalIf(
 		t,
 		trees.PreviousEntry(t.Context(), req).Owner == owner,
@@ -182,7 +182,7 @@ spec:
 			closeCache()
 			assert.NoError(t, cacheOwner.Close())
 			trees, closeCache = testReceiptTrees(t, cacheDir)
-			req := preparedRequest(t, d.cfg, owner, source)
+			req := preparedRequest(t, &d.cfg, owner, source)
 			assert.FatalIf(
 				t,
 				trees.PreviousEntry(t.Context(), req).Records != nil,
@@ -206,10 +206,10 @@ spec:
 			d.binding = Binding{Producer: owner.Named(), Source: manifest.BootstrapSourceID}
 			assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
 			assert.NoError(t, d.acceptPrepared(t.Context()))
-			assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 1)
+			assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 1)
 			closeCache()
 			trees, closeCache = testReceiptTrees(t, cacheDir)
-			assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 1)
+			assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 1)
 			closeCache()
 		})
 	}
@@ -231,7 +231,7 @@ func TestPrepareEntry_PublicationFailure(t *testing.T) {
 	assert.NoError(t, err)
 	owner, err := d.bindEntry(t.Context(), root)
 	assert.NoError(t, err)
-	req := preparedRequest(t, d.cfg, owner, source)
+	req := preparedRequest(t, &d.cfg, owner, source)
 	assert.NoError(t, os.RemoveAll(cacheDir))
 	assert.NoError(t, d.prepareProducer(t.Context(), owner, source))
 	err = d.acceptPrepared(t.Context())
@@ -348,11 +348,11 @@ func TestRun_EmptyEntryHistory(t *testing.T) {
 	result, err := Run(t.Context(), Config{Input: source, Path: root, Store: st, Trees: trees})
 	assert.NoError(t, err)
 	owner := st.GetObject(result.Binding.Producer).(*manifest.Kustomization)
-	req := preparedRequest(t, Config{}, owner, source)
-	assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 0)
+	req := preparedRequest(t, &Config{}, owner, source)
+	assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 0)
 	closeCache()
 	trees, closeCache = testReceiptTrees(t, cacheDir)
-	assert.Equal(t, len(packageHistory(t, trees, req, owner.Named())), 0)
+	assert.Equal(t, len(packageHistory(t, trees, &req, owner.Named())), 0)
 	closeCache()
 }
 

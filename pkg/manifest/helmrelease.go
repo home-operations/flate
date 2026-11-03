@@ -18,6 +18,8 @@ import (
 // HelmChart is the embedded chart template inside a HelmRelease.spec.chart
 // (or the resolved form of HelmRelease.spec.chartRef). It is NOT the
 // stand-alone HelmChart CRD — see HelmChartSource for that.
+//
+//nolint:recvcheck // Public value methods retain the SDK method set beside private pointer helpers.
 type HelmChart struct {
 	// Name is the chart name within the source repository.
 	Name string `json:"name" yaml:"name"`
@@ -129,6 +131,8 @@ func helmChartFromSource(src *HelmChartSource) HelmChart {
 //   - DisableSchemaValidation projects install policy.
 //   - ChartValuesFiles + IgnoreMissingValuesFiles are sourced from
 //     spec.chart.spec.valuesFiles OR the referenced HelmChart CRD.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type HelmRelease struct {
 	Name      string `json:"name"      yaml:"name"`
 	Namespace string `json:"namespace" yaml:"namespace"`

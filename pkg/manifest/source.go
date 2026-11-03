@@ -12,6 +12,8 @@ import (
 // sourcev1.GitRepositorySpec promotes URL, Reference, Verification,
 // Provider, SecretRef, ProxySecretRef, RecurseSubmodules,
 // SparseCheckout, Suspend etc. to the top level.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type GitRepository struct {
 	Name        string            `json:"name"      yaml:"name"`
 	Namespace   string            `json:"namespace" yaml:"namespace"`
@@ -156,6 +158,8 @@ func (r *OCIRepositoryRef) Pinned() bool { return r != nil && r.Digest != "" }
 // sourcev1.OCIRepositorySpec promotes URL, Reference, LayerSelector,
 // Provider, SecretRef, CertSecretRef, ProxySecretRef, Verify, Insecure,
 // Suspend etc. to the top level.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type OCIRepository struct {
 	diagnosticOwner NamedResource
 	diagnosticPath  string
@@ -180,16 +184,9 @@ type RegistryAccess struct {
 	Timeout        time.Duration
 }
 
-// RegistryAccess returns the repository's registry acquisition requirements.
-func (o *OCIRepository) RegistryAccess() RegistryAccess {
-	return RegistryAccess{
-		Owner: DiagnosticFor(o.Named(), o), URL: o.URL, Namespace: o.Namespace,
-		SecretRef: o.SecretRef, CertSecretRef: o.CertSecretRef, ProxySecretRef: o.ProxySecretRef,
-		Insecure: o.Insecure, Timeout: o.OperationTimeout(),
-	}
-}
-
 // NewOCIRepository normalizes an owned typed OCIRepository declaration.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func NewOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
 	cr.Spec.Provider = cmp.Or(cr.Spec.Provider, sourcev1.GenericOCIProvider)
 	if cr.Spec.Verify != nil && cr.Spec.Verify.Provider == "" {
@@ -203,6 +200,15 @@ func NewOCIRepository(cr sourcev1.OCIRepository) *OCIRepository {
 		Labels:            cr.Labels,
 		Annotations:       cr.Annotations,
 		OCIRepositorySpec: cr.Spec,
+	}
+}
+
+// RegistryAccess returns the repository's registry acquisition requirements.
+func (o *OCIRepository) RegistryAccess() RegistryAccess {
+	return RegistryAccess{
+		Owner: DiagnosticFor(o.Named(), o), URL: o.URL, Namespace: o.Namespace,
+		SecretRef: o.SecretRef, CertSecretRef: o.CertSecretRef, ProxySecretRef: o.ProxySecretRef,
+		Insecure: o.Insecure, Timeout: o.OperationTimeout(),
 	}
 }
 
@@ -272,6 +278,7 @@ func (o *OCIRepository) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (o *OCIRepository) ProjectionCompatible(previous BaseManifest) bool {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	p := previous.(*OCIRepository)
 	return o.diagnosticOwner == p.diagnosticOwner && o.diagnosticPath == p.diagnosticPath &&
 		o.hasDiagnostic == p.hasDiagnostic
@@ -321,6 +328,8 @@ func parseOCIRepository(doc map[string]any) (*OCIRepository, error) {
 }
 
 // ExternalArtifact is a source whose content is published by its materializer.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type ExternalArtifact struct {
 	Name        string            `json:"name"                yaml:"name"`
 	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`

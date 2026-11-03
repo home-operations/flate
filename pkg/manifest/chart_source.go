@@ -175,7 +175,7 @@ func (h *HelmRelease) GeneratedObjects() ([]BaseManifest, error) {
 		)
 	}
 	if metadata.Labels == nil {
-		metadata.Labels = make(map[string]string, 2)
+		metadata.Labels = make(map[string]string, chartOwnerLabelCount)
 	}
 	metadata.Labels[HelmReleaseDomain+"/name"], metadata.Labels[HelmReleaseDomain+"/namespace"] = h.Name, h.Namespace
 	release := helmv2.HelmRelease{Spec: view.HelmReleaseSpec}
@@ -282,3 +282,5 @@ func equalChartOCI(x, y *sourcev1.OCIRepositorySpec) bool {
 		slices.Equal(x.Verify.MatchOIDCIdentity, y.Verify.MatchOIDCIdentity)
 	return verification
 }
+
+const chartOwnerLabelCount = 2

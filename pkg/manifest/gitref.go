@@ -103,8 +103,10 @@ func (r *GitRepositoryRef) Validate() error {
 	case nameKey:
 		name = plumbing.ReferenceName(value)
 	case semverKey:
-		_, err := semver.NewConstraint(value)
-		return err
+		if _, err := semver.NewConstraint(value); err != nil {
+			return fmt.Errorf("parse semver constraint: %w", err)
+		}
+		return nil
 	case tagKey:
 		name = plumbing.NewTagReferenceName(value)
 	case branchKey:

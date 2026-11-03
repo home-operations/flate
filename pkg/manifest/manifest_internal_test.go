@@ -62,6 +62,7 @@ func TestNamedResource(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tc.a.Compare(tc.b), -1)
 			assert.Equal(t, tc.b.Compare(tc.a), 1)
+			//nolint:gocritic // Comparing an identity with itself tests reflexivity.
 			assert.Equal(t, tc.a.Compare(tc.a), 0)
 		})
 	}

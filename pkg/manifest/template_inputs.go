@@ -103,6 +103,7 @@ func (p *ProducerProjections) project(
 		}
 	}
 	if projection, ok := cache.facts.Load(key); ok {
+		//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 		return projection.(TemplateProjection), nil
 	}
 	release, err := cache.locks.Acquire(ctx, key)
@@ -111,6 +112,7 @@ func (p *ProducerProjections) project(
 	}
 	defer release()
 	if projection, ok := cache.facts.Load(key); ok {
+		//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 		return projection.(TemplateProjection), nil
 	}
 	projection := build()

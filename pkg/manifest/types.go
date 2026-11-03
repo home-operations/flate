@@ -82,7 +82,7 @@ func (n NamedResource) String() string {
 }
 
 // Compare orders NamedResources by (kind, group, namespace, name), returning
-// -1, 0, or +1 per cmp.Compare semantics.
+// -1, 0, or +1 per [cmp.Compare] semantics.
 func (n NamedResource) Compare(other NamedResource) int {
 	return cmp.Or(
 		cmp.Compare(n.Kind, other.Kind),

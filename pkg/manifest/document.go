@@ -11,7 +11,7 @@ func (e *ExternalArtifact) RenderDocument() (map[string]any, error) {
 	if e.Namespace != "" {
 		metadata[namespaceKey] = e.Namespace
 	}
-	for key, values := range map[string]map[string]string{"labels": e.Labels, annotationsKey: e.Annotations} {
+	for key, values := range map[string]map[string]string{labelsKey: e.Labels, annotationsKey: e.Annotations} {
 		if len(values) != 0 {
 			fields := make(map[string]any, len(values))
 			for key, value := range values {
@@ -54,10 +54,12 @@ func ObjectDocument(id NamedResource, obj BaseManifest) (map[string]any, error) 
 			return nil, err
 		}
 		doc = maps.Clone(rendered)
+		//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 		doc[metadataKey] = maps.Clone(rendered[metadataKey].(map[string]any))
 	} else {
 		doc = map[string]any{metadataKey: map[string]any{}}
 	}
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	meta := doc[metadataKey].(map[string]any)
 	meta[nameKey], meta[namespaceKey] = id.Name, id.Namespace
 	doc[kindKey], doc[apiVersionKey] = id.Kind, id.KindInfo().APIVersion()

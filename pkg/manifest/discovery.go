@@ -153,7 +153,8 @@ func (i *DiscoveryIndex) Files() iter.Seq2[NamedResource, DiscoveryRecord] {
 
 // OwnersOfFile returns deepest claimants plus render graph readers, and strict ancestors.
 // Missing resource directories retain ownership of deleted descendant files.
-func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedResource) {
+func (i *DiscoveryIndex) OwnersOfFile(file string) ([]NamedResource, []NamedResource) {
+	var owners, ancestors []NamedResource
 	if i == nil || file == "" {
 		return nil, nil
 	}

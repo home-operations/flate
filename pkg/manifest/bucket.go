@@ -15,6 +15,8 @@ import (
 // flate currently implements the "generic" provider only (S3-compatible
 // via minio-go). The aws/gcp/azure providers parse correctly but the
 // Fetcher returns a clear "provider X not implemented" error.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type Bucket struct {
 	Name        string            `json:"name"                yaml:"name"`
 	Namespace   string            `json:"namespace,omitempty" yaml:"namespace,omitempty"`

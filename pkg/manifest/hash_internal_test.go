@@ -148,8 +148,8 @@ func TestFingerprint_Concurrent(t *testing.T) {
 	start := make(chan struct{})
 	for i := range callers {
 		payload := struct {
-			Index int
-			Files [][]byte
+			Index int      `json:"Index"`
+			Files [][]byte `json:"Files"`
 		}{i, [][]byte{bytes.Repeat([]byte{byte(i)}, 8<<10)}}
 		raw, err := json.Marshal(payload)
 		{

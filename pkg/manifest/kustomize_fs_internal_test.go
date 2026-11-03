@@ -124,7 +124,7 @@ func testBuildKSClaimsPathsAndComponentsCase(
 		components = map[NamedResource][]string{ks.Named(): {testCaseInput.tc.component}}
 	}
 	claims := BuildKSClaims([]*Kustomization{ks}, components)
-	var prefixes []string
+	prefixes := make([]string, 0, len(claims))
 	for _, claim := range claims {
 		if claim.ID != ks.Named() {
 			t.Fatalf("claim ID = %v, want %v", claim.ID, ks.Named())

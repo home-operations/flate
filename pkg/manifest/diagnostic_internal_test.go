@@ -60,8 +60,8 @@ func testDiagnosticForEntryContextCase(t *testing.T, testCaseInput *NamedResourc
 			subject,
 		)
 	}
-	for _, copy := range []BaseManifest{entry.Clone(), entry.WithNamespace("projected")} {
-		got := DiagnosticFor(copy.Named(), copy)
+	for _, cloned := range []BaseManifest{entry.Clone(), entry.WithNamespace("projected")} {
+		got := DiagnosticFor(cloned.Named(), cloned)
 		{
 			assert.FatalIf(
 				t,

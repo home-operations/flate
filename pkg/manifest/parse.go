@@ -12,8 +12,10 @@ import (
 func decodeInto(doc map[string]any, out any) error {
 	raw, err := json.Marshal(doc)
 	if err != nil {
+		//nolint:wrapcheck // decodeCR adds the resource operation and preserves the admitted JSON error text.
 		return err
 	}
+	//nolint:wrapcheck // decodeCR adds the resource operation and preserves the admitted JSON error text.
 	return json.Unmarshal(raw, out)
 }
 
@@ -52,13 +54,13 @@ func DocIdentity(doc map[string]any) NamedResource {
 
 // DocMetadata returns (name, namespace) from a manifest document's
 // metadata block. Both are "" when metadata is absent or unset.
-func DocMetadata(doc map[string]any) (name, namespace string) {
+func DocMetadata(doc map[string]any) (string, string) {
 	md, _ := doc[metadataKey].(map[string]any)
 	if md == nil {
 		return "", ""
 	}
-	name, _ = md[nameKey].(string)
-	namespace, _ = md[namespaceKey].(string)
+	name, _ := md[nameKey].(string)
+	namespace, _ := md[namespaceKey].(string)
 	return name, namespace
 }
 
@@ -123,8 +125,8 @@ func checkAPIVersion(doc map[string]any, want string) error {
 	return nil
 }
 
-func requireMetadata(doc map[string]any) (name, namespace, missing string) {
-	name, namespace = DocMetadata(doc)
+func requireMetadata(doc map[string]any) (string, string, string) {
+	name, namespace := DocMetadata(doc)
 	if name != "" {
 		return name, namespace, ""
 	}

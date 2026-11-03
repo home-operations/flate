@@ -181,7 +181,6 @@ func TestDecodeDocs_CumulativeSkippedAliasBudget(t *testing.T) {
 
 func TestDecodeDocs_RetainedOutcomes(t *testing.T) {
 	t.Parallel()
-	const input = "null\n---\ntext\n---\nkey: first\nkey: duplicate\n---\nkind: Sibling\n---\nbroken: [\n---\nkind: Unreachable\n"
 	for _, role := range []DocumentRole{IncidentalDocuments, RequiredDocuments} {
 		name := "incidental"
 		if role == RequiredDocuments {
@@ -218,7 +217,8 @@ func TestDecodeDocs_RetainedOutcomes(t *testing.T) {
 
 func TestRenderCodec_OutcomeOrdinals(t *testing.T) {
 	t.Parallel()
-	docs := []DocOccurrence{{Document: map[string]any{"kind": "ConfigMap"}, Ordinal: 7}}
+	docs := make([]DocOccurrence, 1, 2)
+	docs[0] = DocOccurrence{Document: map[string]any{"kind": "ConfigMap"}, Ordinal: 7}
 	data, err := EncodeRender(docs)
 	assert.NoError(t, err)
 	restored, err := DecodeRender(data)

@@ -28,7 +28,7 @@ func Equal(a, b BaseManifest) bool {
 }
 
 // ValueEqual compares JSON-shaped values directly, preserving container nilness and scalar types.
-// Other values retain reflect.DeepEqual semantics.
+// Other values retain [reflect.DeepEqual] semantics.
 func ValueEqual(a, b any) bool {
 	switch v := a.(type) {
 	case map[string]any:

@@ -54,6 +54,7 @@ func TestResourceSetInputProvider_InputPlan(t *testing.T) {
 					assert.Equal(t, plan.Inputs[0]["name"], any("app"))
 					assert.Equal(t, len(plan.Inputs[0]["id"].(string)), 16)
 				}
+			case ProviderInputUnsupported:
 			case ProviderInputRegistry:
 				assert.Diff(t, *plan.Registry, RegistryAccess{
 					Owner: DiagnosticIdentity{ID: projected.Named(), Resource: projected.Named()},

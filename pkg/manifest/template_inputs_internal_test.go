@@ -57,7 +57,6 @@ spec:
 
 func TestProducerProjections_ConcurrentContent(t *testing.T) {
 	t.Parallel()
-	const content = "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shared}\ndata: {value: '{{ .Values.VALUE }}'}\n"
 	for _, mode := range []string{"producer", "template"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()

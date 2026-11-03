@@ -21,6 +21,7 @@ var decodedMapPool = sync.Pool{
 }
 
 func getDecodedMap() map[string]any {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	return decodedMapPool.Get().(map[string]any)
 }
 
@@ -145,6 +146,7 @@ func (s *documentStream) Read(p []byte) (int, error) {
 	if err != nil && err != io.EOF {
 		s.err = err
 	}
+	//nolint:wrapcheck // Reader errors and EOF retain their identity at this transparent observation boundary.
 	return n, err
 }
 

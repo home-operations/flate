@@ -107,7 +107,7 @@ func HasSubstituteDisabled(doc map[string]any) bool {
 	if md == nil {
 		return false
 	}
-	for _, field := range []string{"labels", annotationsKey} {
+	for _, field := range []string{labelsKey, annotationsKey} {
 		m, _ := md[field].(map[string]any)
 		if v, _ := m[SubstituteAnnotationKey].(string); v == kustomizev1.DisabledValue {
 			return true

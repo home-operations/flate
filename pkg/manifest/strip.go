@@ -61,7 +61,7 @@ func stripObjectMetadata(parent map[string]any, attrs []string) {
 	if !ok {
 		return
 	}
-	for _, key := range []string{annotationsKey, "labels"} {
+	for _, key := range []string{annotationsKey, labelsKey} {
 		val, ok := meta[key].(map[string]any)
 		if !ok || val == nil {
 			continue

@@ -63,6 +63,7 @@ var KustomizeBuilderFilenames = konfig.RecognizedKustomizationFileNames()
 const internalKustomizationNamespace = "\x00"
 
 const (
+	labelsKey         = "labels"
 	annotationsKey    = "annotations"
 	apiVersionKey     = "apiVersion"
 	branchKey         = "branch"

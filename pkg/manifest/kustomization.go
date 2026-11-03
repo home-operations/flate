@@ -19,6 +19,8 @@ import (
 // Kustomization is the Flux Kustomization CR. It bundles the path of a
 // local kustomize tree together with the in-cluster materials it produces
 // (HelmReleases, HelmRepositories, ConfigMaps, ...).
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type Kustomization struct {
 	Name      string `json:"name"                yaml:"name"`
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
@@ -84,6 +86,7 @@ func (k *Kustomization) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (k *Kustomization) ProjectionCompatible(previous BaseManifest) bool {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	p := previous.(*Kustomization)
 	return k.TargetNamespace == p.TargetNamespace && k.diagnosticOwner == p.diagnosticOwner &&
 		k.diagnosticPath == p.diagnosticPath &&
@@ -314,6 +317,7 @@ var kustomizationEncoders = sync.Pool{New: func() any {
 
 // RenderDocument derives a Flux desired document; callers MUST keep it immutable.
 func (k *Kustomization) RenderDocument() (map[string]any, error) {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	state := kustomizationEncoders.Get().(*kustomizationEncoder)
 	state.buffer.Reset()
 	state.encoder.Reset(&state.buffer)

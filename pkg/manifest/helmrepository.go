@@ -11,6 +11,8 @@ import (
 // HelmRepository is the Flux HelmRepository CR. The embedded
 // sourcev1.HelmRepositorySpec promotes URL, Type, Provider, Interval,
 // Suspend, SecretRef, CertSecretRef, etc. to the top level.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type HelmRepository struct {
 	Name      string `json:"name"      yaml:"name"`
 	Namespace string `json:"namespace" yaml:"namespace"`

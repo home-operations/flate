@@ -124,8 +124,7 @@ data:
 		expected["metadata"].(map[string]any)["namespace"] = "apps"
 		assert.Diff(t, authoritative, expected)
 		assert.Diff(t, retained, expected)
-		switch obj := obj.(type) {
-		case *RawObject:
+		if obj, ok := obj.(*RawObject); ok {
 			assert.Diff(t, obj.Spec, before["spec"])
 		}
 	}

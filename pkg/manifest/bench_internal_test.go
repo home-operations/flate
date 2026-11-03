@@ -281,7 +281,7 @@ data:
 func BenchmarkParseDoc_Secret(b *testing.B) {
 	var data strings.Builder
 	for i := range 8 {
-		fmt.Fprintf(&data, "  key-%d: %s\n", i, "dGVzdA==") // base64("test")
+		fmt.Fprintf(&data, "  key-%d: %s\n", i, "dGVzdA==")
 	}
 	doc := mustDecodeSingle(b, `apiVersion: v1
 kind: Secret

@@ -12,6 +12,8 @@ import (
 // kind that emits a chart artifact a HelmRelease can reference via
 // spec.chartRef. Distinct from the inline HelmChart projection that
 // lives next to HelmRelease.
+//
+//nolint:embeddedstructfieldcheck // The SDK field order preserves serialized document order.
 type HelmChartSource struct {
 	diagnosticOwner NamedResource
 	diagnosticPath  string
@@ -87,6 +89,7 @@ func (h *HelmChartSource) WithNamespace(namespace string) BaseManifest {
 
 // ProjectionCompatible reports whether an eligible previous projection can be reused.
 func (h *HelmChartSource) ProjectionCompatible(previous BaseManifest) bool {
+	//nolint:errcheck // The owning path guarantees the concrete type and panics on a broken invariant.
 	p := previous.(*HelmChartSource)
 	return h.diagnosticOwner == p.diagnosticOwner && h.diagnosticPath == p.diagnosticPath &&
 		h.hasDiagnostic == p.hasDiagnostic

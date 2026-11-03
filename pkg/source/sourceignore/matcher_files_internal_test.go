@@ -219,49 +219,68 @@ func testNewFSParityCase(t *testing.T, tc *struct {
 	slices.Reverse(files)
 	for _, withDefaults := range []bool{false, true} {
 		for _, extra := range []*string{nil, new("!app/keep.tmp\n")} {
-			patterns, err := flux.LoadIgnorePatterns(root, nil)
-			assert.NoError(t, err)
-			if extra != nil {
-				patterns = append(patterns, flux.ReadPatterns(strings.NewReader(*extra), nil)...)
-			}
-			want := flux.NewMatcher(patterns)
-			if withDefaults {
-				if len(patterns) == 0 {
-					want = flux.NewDefaultMatcher(nil, nil)
-				} else {
-					want = flux.NewMatcher(append(flux.VCSPatterns(nil), patterns...))
-				}
-			}
-			var relative []string
-			for _, file := range files {
-				rel, relErr := filepath.Rel(root, file)
-				assert.NoError(t, relErr)
-				relative = append(relative, filepath.ToSlash(rel))
-			}
-			rules := ""
-			if extra != nil {
-				rules = *extra
-			}
-			orig := slices.Clone(relative)
-			listed, err := NewFS(os.DirFS(root), relative, rules, withDefaults)
-			assert.NoError(t, err)
-			assert.Diff(t, relative, orig)
-			walked, err := NewFS(os.DirFS(root), nil, rules, withDefaults)
-			assert.NoError(t, err)
-			for _, rel := range paths {
-				for _, isDir := range []bool{false, true} {
-					assert.Equal(
-						t,
-						listed.Match(rel, isDir),
-						want.Match(strings.Split(rel, string(filepath.Separator)), isDir),
-					)
-					assert.Equal(
-						t,
-						walked.Match(rel, isDir),
-						want.Match(strings.Split(rel, string(filepath.Separator)), isDir),
-					)
-				}
-			}
+			testNewFSParityRules(t, testNewFSParityRulesInputs{
+				root: &root, files: &files, paths: &paths, withDefaults: &withDefaults, extra: &extra,
+			})
+		}
+	}
+}
+
+type testNewFSParityRulesInputs struct {
+	root         *string
+	files        *[]string
+	paths        *[]string
+	withDefaults *bool
+	extra        **string
+}
+
+func testNewFSParityRules(t *testing.T, inputs testNewFSParityRulesInputs) {
+	t.Helper()
+
+	patterns, err := flux.LoadIgnorePatterns((*inputs.root), nil)
+	assert.NoError(t, err)
+	if (*inputs.extra) != nil {
+		patterns = append(patterns, flux.ReadPatterns(strings.NewReader(*(*inputs.extra)), nil)...)
+	}
+	want := flux.NewMatcher(patterns)
+	if *inputs.withDefaults {
+		if len(patterns) == 0 {
+			want = flux.NewDefaultMatcher(nil, nil)
+		} else {
+			want = flux.NewMatcher(append(flux.VCSPatterns(nil), patterns...))
+		}
+	}
+	var relative []string
+	if len(*inputs.files) > 0 {
+		relative = make([]string, 0, len(*inputs.files))
+	}
+	for _, file := range *inputs.files {
+		rel, relErr := filepath.Rel((*inputs.root), file)
+		assert.NoError(t, relErr)
+		relative = append(relative, filepath.ToSlash(rel))
+	}
+	rules := ""
+	if (*inputs.extra) != nil {
+		rules = *(*inputs.extra)
+	}
+	orig := slices.Clone(relative)
+	listed, err := NewFS(os.DirFS((*inputs.root)), relative, rules, (*inputs.withDefaults))
+	assert.NoError(t, err)
+	assert.Diff(t, relative, orig)
+	walked, err := NewFS(os.DirFS((*inputs.root)), nil, rules, (*inputs.withDefaults))
+	assert.NoError(t, err)
+	for _, rel := range *inputs.paths {
+		for _, isDir := range []bool{false, true} {
+			assert.Equal(
+				t,
+				listed.Match(rel, isDir),
+				want.Match(strings.Split(rel, string(filepath.Separator)), isDir),
+			)
+			assert.Equal(
+				t,
+				walked.Match(rel, isDir),
+				want.Match(strings.Split(rel, string(filepath.Separator)), isDir),
+			)
 		}
 	}
 }

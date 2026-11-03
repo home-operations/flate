@@ -110,47 +110,80 @@ func benchmarkArtifactGeneratorOutputsSegment(b *testing.B) {
 		for _, backing := range []string{"memory", "persistent"} {
 			for _, warm := range []bool{false, true} {
 				b.Run(fmt.Sprintf("%d/%s/warm=%t", count, backing, warm), func(b *testing.B) {
-					obj, doc, input := generatedWorkload(b, count)
-					root := ""
-					if backing == "persistent" {
-						root = b.TempDir()
-					}
-					owner, err := cache.New(b.Context(), root)
-					if err != nil {
-						b.Fatal(err)
-					}
-					b.Cleanup(func() {
-						if err := owner.Close(); err != nil {
-							b.Error(err)
-						}
-					})
-					if warm {
-						reconcileWorkload(b, owner, store.Child{Obj: obj, Doc: doc}, input)
-					}
-					input.opens.Store(0)
-					input.bytes.Store(0)
-					for b.Loop() {
-						if warm {
-							reconcileWorkload(b, owner, store.Child{Obj: obj, Doc: doc}, input)
-							continue
-						}
-						coldRoot := ""
-						if backing == "persistent" {
-							coldRoot = b.TempDir()
-						}
-						fresh, err := cache.New(b.Context(), coldRoot)
-						if err != nil {
-							b.Fatal(err)
-						}
-						reconcileWorkload(b, fresh, store.Child{Obj: obj, Doc: doc}, input)
-						if err := fresh.Close(); err != nil {
-							b.Fatal(err)
-						}
-					}
-					b.ReportMetric(float64(input.opens.Load())/float64(b.N), "input-opens/op")
-					b.ReportMetric(float64(input.bytes.Load())/float64(b.N), "input-bytes/op")
-				})
+					benchmarkArtifactGeneratorOutputsSegmentCase(b, &count, &backing, &warm)
+				},
+				)
 			}
 		}
 	}
+}
+
+func benchmarkArtifactGeneratorOutputsSegmentCase(b *testing.B, count *int, backing *string, warm *bool) {
+	b.Helper()
+	obj, doc, input := generatedWorkload(b, (*count))
+	root := ""
+	if (*backing) == "persistent" {
+		root = b.TempDir()
+	}
+	owner, err := cache.New(b.Context(), root)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		if err := owner.Close(); err != nil {
+			b.Error(err)
+		}
+	})
+	if *warm {
+		reconcileWorkload(b, owner, store.Child{Obj: obj, Doc: doc}, input)
+	}
+	input.opens.Store(0)
+	input.bytes.Store(0)
+	measureGeneratedOutputs(
+		b,
+		&generatedOutputMeasurement{backing: &backing, warm: &warm, obj: &obj, doc: &doc, input: &input, owner: &owner},
+	)
+}
+
+type generatedOutputMeasurement struct {
+	backing **string
+	warm    **bool
+	obj     **manifest.RawObject
+	doc     *map[string]any
+	input   **workloadFS
+	owner   **cache.Cache
+}
+
+func measureGeneratedOutputs(b *testing.B, statementInput *generatedOutputMeasurement) {
+	b.Helper()
+	for b.Loop() {
+		if *(*statementInput.warm) {
+			reconcileWorkload(
+				b,
+				(*statementInput.owner),
+				store.Child{Obj: (*statementInput.obj), Doc: (*statementInput.doc)},
+				(*statementInput.input),
+			)
+			continue
+		}
+		coldRoot := ""
+		if (*(*statementInput.backing)) == "persistent" {
+			coldRoot = b.TempDir()
+		}
+		fresh, err := cache.New(b.Context(), coldRoot)
+		if err != nil {
+			b.Fatal(err)
+		}
+		reconcileWorkload(
+			b,
+			fresh,
+			store.Child{Obj: (*statementInput.obj), Doc: (*statementInput.doc)},
+			(*statementInput.input),
+		)
+		if err := fresh.Close(); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64((*statementInput.input).opens.Load())/float64(b.N), "input-opens/op")
+	b.ReportMetric(float64((*statementInput.input).bytes.Load())/float64(b.N), "input-bytes/op")
 }

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"hash"
 	"io"
 	"io/fs"
@@ -336,29 +337,32 @@ func (r *readerScope) routeReaders() {
 func (r *readerScope) routeOneSided(side int, index *manifest.DiscoveryIndex) {
 	for name := range r.changes.oneSided[side] {
 		for reader := range index.ReadersOfFile(r.coordinate(side, name)) {
-			if reader.Materialize || !r.qualifiedSource(side, reader.Source) {
-				continue
-			}
-			if reader.Declaration != (manifest.NamedResource{}) {
-				if changed, known := r.bindings.declaredChanged(
-					r.evidence.source,
-					reader.Declaration,
-				); known &&
-					!changed {
-					continue
-				}
-			}
-			if r.out.inputs == nil {
-				r.out.inputs = make(map[manifest.NamedResource]InputChange)
-			}
-			input := r.out.inputs[reader.Reader]
-			if input.File == "" || len(input.Declarations) == 0 && name < input.File {
-				input.File = name
-			}
-			input.Unbound = false
-			r.out.inputs[reader.Reader] = input
+			r.routeInputReader(side, name, &reader)
 		}
 	}
+}
+
+func (r *readerScope) routeInputReader(side int, name string, reader *manifest.FileReader) {
+	if reader.Materialize || !r.qualifiedSource(side, reader.Source) {
+		return
+	}
+	if reader.Declaration != (manifest.NamedResource{}) {
+		if changed, known := r.bindings.declaredChanged(
+			r.evidence.source,
+			reader.Declaration,
+		); known && !changed {
+			return
+		}
+	}
+	if r.out.inputs == nil {
+		r.out.inputs = make(map[manifest.NamedResource]InputChange)
+	}
+	input := r.out.inputs[reader.Reader]
+	if input.File == "" || len(input.Declarations) == 0 && name < input.File {
+		input.File = name
+	}
+	input.Unbound = false
+	r.out.inputs[reader.Reader] = input
 }
 
 type readerRoute struct {
@@ -561,7 +565,7 @@ func scanFiles(ctx context.Context, scoped fs.FS, oppositeName string, out map[s
 			return err
 		}
 		if localErr := ctx.Err(); localErr != nil {
-			return localErr
+			return fmt.Errorf("context: %w", localErr)
 		}
 		if name != "." && (d.Name() == ".git" || name == oppositeName) {
 			if d.IsDir() {
@@ -577,13 +581,13 @@ func scanFiles(ctx context.Context, scoped fs.FS, oppositeName string, out map[s
 		}
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return fmt.Errorf("stat %s: %w", name, err)
 		}
 		out[name] = fileMeta{size: info.Size()}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("walk: %w", err)
 	}
 	return files, nil
 }
@@ -601,11 +605,11 @@ var hashBuffers = sync.Pool{New: func() any {
 
 func hashFile(ctx context.Context, input fs.FS, name string) ([sha256.Size]byte, error) {
 	if err := ctx.Err(); err != nil {
-		return [sha256.Size]byte{}, err
+		return [sha256.Size]byte{}, fmt.Errorf("context: %w", err)
 	}
 	f, err := input.Open(name)
 	if err != nil {
-		return [sha256.Size]byte{}, err
+		return [sha256.Size]byte{}, fmt.Errorf("open %s: %w", name, err)
 	}
 	defer func() { _ = f.Close() }()
 	buf := hashBuffers.Get().(*hashBuffer) //nolint:errcheck // The pool stores only hashBuffer pointers.
@@ -614,7 +618,7 @@ func hashFile(ctx context.Context, input fs.FS, name string) ([sha256.Size]byte,
 	h.Reset()
 	for {
 		if err := ctx.Err(); err != nil {
-			return [sha256.Size]byte{}, err
+			return [sha256.Size]byte{}, fmt.Errorf("context: %w", err)
 		}
 		n, err := f.Read(buf.bytes[:])
 		if n > 0 {
@@ -624,7 +628,7 @@ func hashFile(ctx context.Context, input fs.FS, name string) ([sha256.Size]byte,
 			break
 		}
 		if err != nil {
-			return [sha256.Size]byte{}, err
+			return [sha256.Size]byte{}, fmt.Errorf("read %s: %w", name, err)
 		}
 	}
 	h.Sum(buf.sum[:0])

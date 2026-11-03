@@ -43,7 +43,7 @@ func TestExpand_CapturesAndIdentity(t *testing.T) {
 					{Name: tc.output, Copy: []operation{{From: "@repo/apps/{App}", To: "@artifact/{App}"}}},
 				},
 			}
-			got, err := expand(t.Context(), spec, map[string]fs.FS{"repo": tc.input})
+			got, err := expand(t.Context(), &spec, map[string]fs.FS{"repo": tc.input})
 			{
 				assert.FatalIf(t, (err != nil) != tc.invalid, "expand() = %v; invalid=%v", err, tc.invalid)
 			}
@@ -74,7 +74,7 @@ func TestExpand_Canceled(t *testing.T) {
 		{
 			_, err := expand(
 				ctx,
-				specification{PathPattern: "@repo/{App}"},
+				&specification{PathPattern: "@repo/{App}"},
 				map[string]fs.FS{"repo": fstest.MapFS{"app/file": {}}},
 			)
 			assert.FatalIf(t, !errors.Is(

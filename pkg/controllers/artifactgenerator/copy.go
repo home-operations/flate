@@ -212,7 +212,7 @@ func ensureDirectory(builder *tree.Builder, name string) error {
 		}
 		return nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return fmt.Errorf("stat: %w", err)
 	}
 	empty, _ := tree.NewBuilder(nil).Build()
 	return builder.Mount(name, empty)
@@ -315,10 +315,10 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 	if err != nil {
 		return err
 	}
-	if err := ensureDirectory(builder, selection.Destination); err != nil {
-		return err
+	if directoryErr := ensureDirectory(builder, selection.Destination); directoryErr != nil {
+		return directoryErr
 	}
-	return fs.WalkDir(extracted, ".", func(name string, entry fs.DirEntry, err error) error {
+	err = fs.WalkDir(extracted, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -334,6 +334,10 @@ func (e *evaluation) extract(ctx context.Context, builder *tree.Builder, selecti
 		}
 		return copyFile(ctx, extracted, builder, operation{From: name, To: target, Strategy: strategyExtract})
 	})
+	if err != nil {
+		return fmt.Errorf("walkdir: %w", err)
+	}
+	return nil
 }
 
 func (e *evaluation) produce(
@@ -351,5 +355,8 @@ func (e *evaluation) produce(
 	if err := writer.AddFS(builder); err != nil {
 		return cache.ProducerResult{}, fmt.Errorf("addfs: %w", err)
 	}
-	return cache.ProducerResult{}, writer.Close()
+	if err := writer.Close(); err != nil {
+		return cache.ProducerResult{}, fmt.Errorf("close: %w", err)
+	}
+	return cache.ProducerResult{}, nil
 }

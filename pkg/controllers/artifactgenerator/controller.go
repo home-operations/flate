@@ -111,7 +111,7 @@ func (c *execution) reconcile(ctx context.Context, obj *manifest.RawObject, leve
 	if handled || err != nil {
 		return err
 	}
-	requests, err := expand(ctx, spec, views)
+	requests, err := expand(ctx, &spec, views)
 	if err != nil {
 		return manifest.NewError(manifest.ErrInput, fmt.Errorf("expand outputs: %w", err), "")
 	}

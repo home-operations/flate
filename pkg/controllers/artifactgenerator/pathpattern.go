@@ -19,17 +19,17 @@ type request struct {
 
 var captureName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func expand(ctx context.Context, spec specification, inputs map[string]fs.FS) ([]request, error) {
+func expand(ctx context.Context, spec *specification, inputs map[string]fs.FS) ([]request, error) {
 	matcher, input, err := pathMatcher(spec.PathPattern, inputs)
 	if err != nil {
 		return nil, err
 	}
 
-	x := requestExpansion{spec: &spec, names: map[string]bool{}}
+	x := requestExpansion{spec: spec, names: map[string]bool{}}
 	add := x.add
 	if matcher == nil {
-		err := add(nil)
-		return x.requests, err
+		addErr := add(nil)
+		return x.requests, addErr
 	}
 	err = fs.WalkDir(input, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -119,32 +119,40 @@ func pathMatcher(patternValue string, inputs map[string]fs.FS) (*regexp.Regexp, 
 		if input == nil {
 			return nil, nil, fmt.Errorf("unknown pathPattern source %q", alias)
 		}
-		var expression strings.Builder
-		expression.WriteByte('^')
-		seen := map[string]bool{}
-		for pattern != "" {
-			i := strings.IndexAny(pattern, "{}")
-			if i < 0 {
-				expression.WriteString(regexp.QuoteMeta(pattern))
-				break
-			}
-			expression.WriteString(regexp.QuoteMeta(pattern[:i]))
-			name, rest, ok := strings.Cut(pattern[i+1:], "}")
-			if pattern[i] != '{' || !ok || !captureName.MatchString(name) || seen[name] ||
-				len(content.IsLabelKey(name)) != 0 {
-				return nil, nil, fmt.Errorf("invalid or repeated pathPattern capture %q", name)
-			}
-			seen[name] = true
-			expression.WriteString("(?P<" + name + ">[^/]+)")
-			pattern = rest
-		}
-		expression.WriteByte('$')
-		matcher, err = regexp.Compile(expression.String())
+		matcher, err = compilePathPattern(pattern)
 		if err != nil {
-			return nil, nil, fmt.Errorf("compile: %w", err)
+			return nil, nil, err
 		}
 	}
 	return matcher, input, nil
+}
+
+func compilePathPattern(pattern string) (*regexp.Regexp, error) {
+	var expression strings.Builder
+	expression.WriteByte('^')
+	seen := map[string]bool{}
+	for pattern != "" {
+		i := strings.IndexAny(pattern, "{}")
+		if i < 0 {
+			expression.WriteString(regexp.QuoteMeta(pattern))
+			break
+		}
+		expression.WriteString(regexp.QuoteMeta(pattern[:i]))
+		name, rest, ok := strings.Cut(pattern[i+1:], "}")
+		if pattern[i] != '{' || !ok || !captureName.MatchString(name) || seen[name] ||
+			len(content.IsLabelKey(name)) != 0 {
+			return nil, fmt.Errorf("invalid or repeated pathPattern capture %q", name)
+		}
+		seen[name] = true
+		expression.WriteString("(?P<" + name + ">[^/]+)")
+		pattern = rest
+	}
+	expression.WriteByte('$')
+	matcher, err := regexp.Compile(expression.String())
+	if err != nil {
+		return nil, fmt.Errorf("compile: %w", err)
+	}
+	return matcher, nil
 }
 
 func render(template string, captures map[string]string) (string, error) {

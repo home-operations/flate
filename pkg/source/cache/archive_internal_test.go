@@ -98,24 +98,71 @@ func testAcquireArchiveEntryConflictsCase(t *testing.T, backing *struct {
 	t.Helper()
 
 	c := cachetest.New(t, backing.root, New)
-	for _, tc := range []struct {
+	entryCases := []struct {
 		name          string
 		first, second tar.Header
 		want          error
 	}{
-		{"duplicate_regular", tar.Header{Name: "file", Typeflag: tar.TypeReg}, tar.Header{Name: "file", Typeflag: tar.TypeReg}, nil},
-		{"duplicate_link", tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, nil},
-		{"duplicate_hardlink", tar.Header{Name: "file", Typeflag: tar.TypeLink}, tar.Header{Name: "file", Typeflag: tar.TypeLink}, nil},
-		{"file_then_link", tar.Header{Name: "file", Typeflag: tar.TypeReg}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tree.ErrConflict},
-		{"hardlink_then_file", tar.Header{Name: "file", Typeflag: tar.TypeLink}, tar.Header{Name: "file", Typeflag: tar.TypeReg}, tree.ErrConflict},
-		{"directory_then_link", tar.Header{Name: "file", Typeflag: tar.TypeDir}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tree.ErrConflict},
-		{"link_then_directory", tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tar.Header{Name: "file", Typeflag: tar.TypeDir}, tree.ErrConflict},
-		{"link_then_child", tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tar.Header{Name: "file/child", Typeflag: tar.TypeReg}, tree.ErrConflict},
-		{"child_then_link", tar.Header{Name: "file/child", Typeflag: tar.TypeReg}, tar.Header{Name: "file", Typeflag: tar.TypeSymlink}, tree.ErrConflict},
-	} {
+		{
+			"duplicate_regular",
+			tar.Header{Name: "file", Typeflag: tar.TypeReg},
+			tar.Header{Name: "file", Typeflag: tar.TypeReg},
+			nil,
+		},
+		{
+			"duplicate_link",
+			tar.Header{Name: "file", Typeflag: tar.TypeSymlink},
+			tar.Header{Name: "file", Typeflag: tar.TypeSymlink},
+			nil,
+		},
+		{
+			"duplicate_hardlink",
+			tar.Header{Name: "file", Typeflag: tar.TypeLink},
+			tar.Header{Name: "file", Typeflag: tar.TypeLink},
+			nil,
+		},
+		{
+			"file_then_link",
+			tar.Header{Name: "file", Typeflag: tar.TypeReg},
+			tar.Header{Name: "file", Typeflag: tar.TypeSymlink},
+			tree.ErrConflict,
+		},
+		{
+			"hardlink_then_file",
+			tar.Header{Name: "file", Typeflag: tar.TypeLink},
+			tar.Header{Name: "file", Typeflag: tar.TypeReg},
+			tree.ErrConflict,
+		},
+		{
+			"directory_then_link",
+			tar.Header{Name: "file", Typeflag: tar.TypeDir},
+			tar.Header{Name: "file", Typeflag: tar.TypeSymlink},
+			tree.ErrConflict,
+		},
+		{
+			"link_then_directory",
+			tar.Header{Name: "file", Typeflag: tar.TypeSymlink},
+			tar.Header{Name: "file", Typeflag: tar.TypeDir},
+			tree.ErrConflict,
+		},
+		{
+			"link_then_child",
+			tar.Header{Name: "file", Typeflag: tar.TypeSymlink},
+			tar.Header{Name: "file/child", Typeflag: tar.TypeReg},
+			tree.ErrConflict,
+		},
+		{
+			"child_then_link",
+			tar.Header{Name: "file/child", Typeflag: tar.TypeReg},
+			tar.Header{Name: "file", Typeflag: tar.TypeSymlink},
+			tree.ErrConflict,
+		},
+	}
+	for index := range entryCases {
+		tc := &entryCases[index]
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testAcquireArchiveEntryConflictsCaseCase(t, testAcquireArchiveEntryConflictsCaseCaseInputs{c: &c, tc: &tc})
+			testAcquireArchiveEntryConflictsCaseCase(t, testAcquireArchiveEntryConflictsCaseCaseInputs{c: &c, tc: tc})
 		},
 		)
 	}
@@ -199,13 +246,15 @@ func testAcquireArchiveEntryConflictsCaseCase(
 
 	var data bytes.Buffer
 	w := tar.NewWriter(&data)
-	for i, h := range []tar.Header{(*testCaseInput.tc).first, (*testCaseInput.tc).second} {
+	headers := []tar.Header{testCaseInput.tc.first, testCaseInput.tc.second}
+	for i := range headers {
+		h := &headers[i]
 		if h.Typeflag == tar.TypeReg {
 			h.Size = 1
 		} else if h.Typeflag != tar.TypeDir {
 			h.Linkname = fmt.Sprintf("../absent-%d", i)
 		}
-		assert.NoError(t, w.WriteHeader(&h))
+		assert.NoError(t, w.WriteHeader(h))
 		if h.Typeflag == tar.TypeReg {
 			_, err := fmt.Fprint(w, i)
 			assert.NoError(t, err)

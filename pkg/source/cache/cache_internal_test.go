@@ -103,6 +103,7 @@ func TestAcquire_ArchiveFailuresAndLinks(t *testing.T) {
 	}
 }
 
+//nolint:tparallel // Cancel these synchronous acquisition deadlines before the parallel subtests start.
 func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -151,9 +152,7 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 						key.Required = []string{"revision"}
 					}
 					_, _, id, err := c.Acquire(t.Context(), key, Policy{MaxAge: time.Hour}, fill)
-					if err != nil {
-						t.Error(err)
-					}
+					assert.ErrorIf(t, err != nil, "%v", err)
 					ids <- id
 				})
 			}
@@ -341,7 +340,7 @@ func TestAcquire_SparseReplayMatchesMemory(t *testing.T) {
 	)
 	assert.NoError(t, err)
 
-	var inputs []fs.FS
+	inputs := make([]fs.FS, 0, 2)
 	for _, root := range []string{"", t.TempDir()} {
 		c := cachetest.New(t, root, New)
 		input, _, _, err := c.Acquire(

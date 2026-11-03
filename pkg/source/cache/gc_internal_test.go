@@ -165,8 +165,8 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	c := cachetest.New(t, root, New)
-	var anchors []ocispec.Descriptor
-	var generations []*GitGeneration
+	anchors := make([]ocispec.Descriptor, 0, 2)
+	generations := make([]*GitGeneration, 0, 2)
 	for _, id := range []string{"source-git-shared", "git-base-shared"} {
 		g, desc, key := sweepGit(t, c, id)
 		generations = append(generations, g)
@@ -180,7 +180,7 @@ func TestSweep_SharedGraphRetainsAllGitAnchors(t *testing.T) {
 			assert.NoError(t, err)
 		}
 	}
-	var roots []ocispec.Descriptor
+	roots := make([]ocispec.Descriptor, 0, 2)
 	for _, tag := range []string{"render-v1-expired", "render-v1-retained"} {
 		data, err := json.Marshal(ocispec.Index{
 			SchemaVersion: 2, Manifests: anchors,
@@ -634,7 +634,8 @@ func testSweepAgeUsesPayloadLastUseCase(t *testing.T, maxAge *time.Duration,
 	assert.FatalIf(t, err != nil || len(res.Errors) > 0, "Sweep: %+v, %v", res, err)
 	var want []string
 	if (*maxAge) > 0 {
-		want = append(retired, generations...)
+		want = retired
+		want = append(want, generations...)
 		slices.Sort(want)
 	}
 	if !slices.Equal(res.Removed, want) {

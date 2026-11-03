@@ -312,150 +312,155 @@ func testBlobLookupAndReplacementOutcomes(t *testing.T) {
 		t.Run(maxAge.String(), func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				root := t.TempDir()
-				c := cachetest.New(t, root, New)
-				key := BlobKey{Content: "recorded"}
-				calls := 0
-				fail := func(context.Context, ProducerInput) (ProducerResult, error) {
-					calls++
-					return ProducerResult{}, connReset()
-				}
-				policy := Policy{MaxAge: maxAge, Retry: fastRetry(3)}
-				_, _, id, err := c.Blob(
-					t.Context(),
-					key,
-					Policy{},
-					producer([]byte("original"), &ocispec.Descriptor{}),
-				)
-				assert.NoError(t, err)
-
-				lastGood, err := c.store.Resolve(t.Context(), id)
-				assert.NoError(t, err)
-				{
-					closeErr2 := c.Close()
-					assert.NoError(t, closeErr2)
-				}
-
-				c = cachetest.New(t, root, New)
-				_, _, _, err = c.Blob(t.Context(), key, Policy{Retry: fastRetry(3)}, fail)
-				terminal, ok := errors.AsType[*TerminalError](err)
-				assert.FatalIf(
-					t,
-					!ok || !terminal.Attempted || calls != 3,
-					"initial calls=%d, error=%v",
-					calls,
-					err,
-				)
-				desc, err := c.store.Resolve(t.Context(), id)
-				assert.FatalIf(
-					t,
-					err != nil || desc.MediaType != ocispec.MediaTypeImageManifest,
-					"same-tag outcome=%+v, error=%v",
-					desc,
-					err,
-				)
-				initial, err := c.readOutcome(t.Context(), &desc)
-				assert.FatalIf(t, err != nil || initial == nil || initial.record.Count != 1 ||
-					initial.lastGood.Digest != lastGood.Digest, "initial outcome=%+v, error=%v", initial, err)
-				for range 2 {
-					{
-						closeErr3 := c.Close()
-						assert.NoError(t, closeErr3)
-					}
-
-					c = cachetest.New(t, root, New)
-					for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, fail} {
-						_, _, _, blobErr5 := c.Blob(t.Context(), key, policy, produce)
-						terminal, ok := errors.AsType[*TerminalError](blobErr5)
-						assert.FatalIf(t, !ok || terminal.Attempted || !errors.Is(blobErr5, syscall.ECONNRESET) ||
-							!errors.Is(blobErr5, manifest.ErrFlux) ||
-							calls != 3, "fresh calls=%d, error=%v", calls, blobErr5)
-					}
-				}
-				time.Sleep(750*time.Millisecond - time.Nanosecond)
-				_, _, _, err = c.Blob(t.Context(), key, policy, fail)
-				{
-					terminal, ok := errors.AsType[*TerminalError](err)
-					assert.FatalIf(
-						t,
-						!ok || terminal.Attempted || calls != 3,
-						"before deadline calls=%d, error=%v",
-						calls,
-						err,
-					)
-				}
-				unchanged, err := c.readOutcome(t.Context(), &desc)
-				assert.FatalIf(
-					t,
-					err != nil || unchanged == nil || unchanged.record.Count != initial.record.Count ||
-						!unchanged.record.Completed.Equal(
-							initial.record.Completed,
-						),
-					"read renewed outcome: %+v, error=%v",
-					unchanged,
-					err,
-				)
-				time.Sleep(time.Nanosecond)
-				{
-					_, _, _, blobErr6 := c.Blob(t.Context(), key, policy, nil)
-					assert.FatalIf(t, !errors.Is(blobErr6, errdef.ErrNotFound), "due lookup: %v", blobErr6)
-				}
-				_, _, _, err = c.Blob(t.Context(), key, policy, fail)
-				{
-					terminal, ok := errors.AsType[*TerminalError](err)
-					assert.FatalIf(
-						t,
-						!ok || !terminal.Attempted || calls != 4,
-						"due calls=%d, error=%v",
-						calls,
-						err,
-					)
-				}
-				nextDesc, err := c.store.Resolve(t.Context(), id)
-				assert.NoError(t, err)
-
-				next, err := c.readOutcome(t.Context(), &nextDesc)
-				assert.FatalIf(
-					t,
-					err != nil || next == nil || next.record.Count != 2 || !next.record.Completed.Equal(time.Now()),
-					"second outcome=%+v, error=%v",
-					next,
-					err,
-				)
-				time.Sleep(1500 * time.Millisecond)
-				_, _, _, err = c.Blob(t.Context(), key, policy, producer([]byte("recovered"), &ocispec.Descriptor{}))
-				assert.NoError(t, err)
-
-				good, err := c.store.Resolve(t.Context(), id)
-				assert.FatalIf(
-					t,
-					err != nil || good.MediaType != "application/octet-stream",
-					"recovery descriptor=%+v, error=%v",
-					good,
-					err,
-				)
-				_, _, _, err = c.Blob(t.Context(), key, Policy{}, fail)
-				assert.FatalIf(
-					t,
-					!errors.Is(err, syscall.ECONNRESET) || calls != 5,
-					"new sequence calls=%d, error=%v",
-					calls,
-					err,
-				)
-				resetDesc, err := c.store.Resolve(t.Context(), id)
-				assert.NoError(t, err)
-
-				reset, err := c.readOutcome(t.Context(), &resetDesc)
-				assert.FatalIf(
-					t,
-					err != nil || reset == nil || reset.record.Count != 1 || reset.lastGood.Digest != good.Digest,
-					"reset outcome=%+v, error=%v",
-					reset,
-					err,
-				)
+				testBlobLookupAndReplacementOutcome(t, maxAge)
 			})
 		})
 	}
+}
+
+func testBlobLookupAndReplacementOutcome(t *testing.T, maxAge time.Duration) {
+	t.Helper()
+	root := t.TempDir()
+	c := cachetest.New(t, root, New)
+	key := BlobKey{Content: "recorded"}
+	calls := 0
+	fail := func(context.Context, ProducerInput) (ProducerResult, error) {
+		calls++
+		return ProducerResult{}, connReset()
+	}
+	policy := Policy{MaxAge: maxAge, Retry: fastRetry(3)}
+	_, _, id, err := c.Blob(
+		t.Context(),
+		key,
+		Policy{},
+		producer([]byte("original"), &ocispec.Descriptor{}),
+	)
+	assert.NoError(t, err)
+
+	lastGood, err := c.store.Resolve(t.Context(), id)
+	assert.NoError(t, err)
+	{
+		closeErr2 := c.Close()
+		assert.NoError(t, closeErr2)
+	}
+
+	c = cachetest.New(t, root, New)
+	_, _, _, err = c.Blob(t.Context(), key, Policy{Retry: fastRetry(3)}, fail)
+	terminal, ok := errors.AsType[*TerminalError](err)
+	assert.FatalIf(
+		t,
+		!ok || !terminal.Attempted || calls != 3,
+		"initial calls=%d, error=%v",
+		calls,
+		err,
+	)
+	desc, err := c.store.Resolve(t.Context(), id)
+	assert.FatalIf(
+		t,
+		err != nil || desc.MediaType != ocispec.MediaTypeImageManifest,
+		"same-tag outcome=%+v, error=%v",
+		desc,
+		err,
+	)
+	initial, err := c.readOutcome(t.Context(), &desc)
+	assert.FatalIf(t, err != nil || initial == nil || initial.record.Count != 1 ||
+		initial.lastGood.Digest != lastGood.Digest, "initial outcome=%+v, error=%v", initial, err)
+	for range 2 {
+		{
+			closeErr3 := c.Close()
+			assert.NoError(t, closeErr3)
+		}
+
+		c = cachetest.New(t, root, New)
+		for _, produce := range []func(context.Context, ProducerInput) (ProducerResult, error){nil, fail} {
+			_, _, _, blobErr5 := c.Blob(t.Context(), key, policy, produce)
+			terminal, ok := errors.AsType[*TerminalError](blobErr5)
+			assert.FatalIf(t, !ok || terminal.Attempted || !errors.Is(blobErr5, syscall.ECONNRESET) ||
+				!errors.Is(blobErr5, manifest.ErrFlux) ||
+				calls != 3, "fresh calls=%d, error=%v", calls, blobErr5)
+		}
+	}
+	time.Sleep(750*time.Millisecond - time.Nanosecond)
+	_, _, _, err = c.Blob(t.Context(), key, policy, fail)
+	{
+		terminal, ok := errors.AsType[*TerminalError](err)
+		assert.FatalIf(
+			t,
+			!ok || terminal.Attempted || calls != 3,
+			"before deadline calls=%d, error=%v",
+			calls,
+			err,
+		)
+	}
+	unchanged, err := c.readOutcome(t.Context(), &desc)
+	assert.FatalIf(
+		t,
+		err != nil || unchanged == nil || unchanged.record.Count != initial.record.Count ||
+			!unchanged.record.Completed.Equal(
+				initial.record.Completed,
+			),
+		"read renewed outcome: %+v, error=%v",
+		unchanged,
+		err,
+	)
+	time.Sleep(time.Nanosecond)
+	{
+		_, _, _, blobErr6 := c.Blob(t.Context(), key, policy, nil)
+		assert.FatalIf(t, !errors.Is(blobErr6, errdef.ErrNotFound), "due lookup: %v", blobErr6)
+	}
+	_, _, _, err = c.Blob(t.Context(), key, policy, fail)
+	{
+		terminal, ok := errors.AsType[*TerminalError](err)
+		assert.FatalIf(
+			t,
+			!ok || !terminal.Attempted || calls != 4,
+			"due calls=%d, error=%v",
+			calls,
+			err,
+		)
+	}
+	nextDesc, err := c.store.Resolve(t.Context(), id)
+	assert.NoError(t, err)
+
+	next, err := c.readOutcome(t.Context(), &nextDesc)
+	assert.FatalIf(
+		t,
+		err != nil || next == nil || next.record.Count != 2 || !next.record.Completed.Equal(time.Now()),
+		"second outcome=%+v, error=%v",
+		next,
+		err,
+	)
+	time.Sleep(1500 * time.Millisecond)
+	_, _, _, err = c.Blob(t.Context(), key, policy, producer([]byte("recovered"), &ocispec.Descriptor{}))
+	assert.NoError(t, err)
+
+	good, err := c.store.Resolve(t.Context(), id)
+	assert.FatalIf(
+		t,
+		err != nil || good.MediaType != "application/octet-stream",
+		"recovery descriptor=%+v, error=%v",
+		good,
+		err,
+	)
+	_, _, _, err = c.Blob(t.Context(), key, Policy{}, fail)
+	assert.FatalIf(
+		t,
+		!errors.Is(err, syscall.ECONNRESET) || calls != 5,
+		"new sequence calls=%d, error=%v",
+		calls,
+		err,
+	)
+	resetDesc, err := c.store.Resolve(t.Context(), id)
+	assert.NoError(t, err)
+
+	reset, err := c.readOutcome(t.Context(), &resetDesc)
+	assert.FatalIf(
+		t,
+		err != nil || reset == nil || reset.record.Count != 1 || reset.lastGood.Digest != good.Digest,
+		"reset outcome=%+v, error=%v",
+		reset,
+		err,
+	)
 }
 
 func testBlobLookupAndReplacementCase2(t *testing.T, identities *map[string]string,

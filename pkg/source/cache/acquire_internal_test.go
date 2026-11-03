@@ -57,14 +57,9 @@ func TestAcquire_GeneratedIdentity(t *testing.T) {
 func TestAcquire_GeneratedTreeContent(t *testing.T) {
 	t.Parallel()
 	archive := func(order []string, execute, empty bool, mode int64, value string) []byte {
-		return testAcquireGeneratedTreeContentCallback(
-			order,
-			execute,
-			empty,
-			mode,
-			value,
-			testAcquireGeneratedTreeContentCallbackInputs{t: &t},
-		)
+		return testAcquireGeneratedTreeContentCallback(testAcquireGeneratedTreeContentCallbackInputs{
+			order: order, execute: execute, empty: empty, mode: mode, value: value, t: &t,
+		})
 	}
 
 	base := archive([]string{"a", "b"}, false, false, 0o644, "bytes")
@@ -656,16 +651,16 @@ func testReadArchiveAcceptsLargeSourceCase(t *testing.T, policy *string,
 }
 
 type testAcquireGeneratedTreeContentCallbackInputs struct {
-	t **testing.T
+	order          []string
+	execute, empty bool
+	mode           int64
+	value          string
+	t              **testing.T
 }
 
-func testAcquireGeneratedTreeContentCallback(
-	order []string,
-	execute, empty bool,
-	mode int64,
-	value string,
-	testCaseInput testAcquireGeneratedTreeContentCallbackInputs,
-) []byte {
+func testAcquireGeneratedTreeContentCallback(testCaseInput testAcquireGeneratedTreeContentCallbackInputs) []byte {
+	(*testCaseInput.t).Helper()
+	order, execute, empty, mode, value := testCaseInput.order, testCaseInput.execute, testCaseInput.empty, testCaseInput.mode, testCaseInput.value
 	var data bytes.Buffer
 	w := tar.NewWriter(&data)
 	for _, name := range order {

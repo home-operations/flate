@@ -583,9 +583,7 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 		assert.FatalIf(t, !ok, "replay root: %T", (*scope.replay))
 		//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 		producer, ok := terminal.Err.(*producerError)
-		if !ok {
-			t.Fatalf("terminal child: %T", terminal.Err)
-		}
+		assert.FatalIf(t, !ok, "terminal child: %T", terminal.Err)
 		node, shape := producer.error, (*scope.tc).shape
 		for _, index := range (*scope.tc).machinePath {
 			assert.FatalIf(t, shape.Kind == "wrap" && reflect.TypeOf(node) != fmtWrapType ||
@@ -612,9 +610,7 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 			assert.FatalIf(t, !ok || terminal.Attempted, "machine terminal child: %T, %v", child, child)
 			//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 			producer, ok := terminal.Err.(*producerError)
-			if !ok {
-				t.Fatalf("nested terminal child: %T", terminal.Err)
-			}
+			assert.FatalIf(t, !ok, "nested terminal child: %T", terminal.Err)
 			child = producer.error
 		}
 		assert.FatalIf(t, reflect.TypeOf(child) != fmtWrapType, "machine transport child: %T", child)

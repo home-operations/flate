@@ -206,7 +206,14 @@ func testAcquireGeneratedPolicyCase(t *testing.T, disk *bool,
 	c := cachetest.New(t, root, New)
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)
-	for _, header := range []tar.Header{{Name: "empty/", Mode: 0o700, Typeflag: tar.TypeDir}, {Name: ".sourceignore", Mode: 0o600, Size: 4}, {Name: "kept", Mode: 0o711, Size: 4}, {Name: "parent/plain", Mode: 0o664, Size: 4}} {
+	headers := []tar.Header{
+		{Name: "empty/", Mode: 0o700, Typeflag: tar.TypeDir},
+		{Name: ".sourceignore", Mode: 0o600, Size: 4},
+		{Name: "kept", Mode: 0o711, Size: 4},
+		{Name: "parent/plain", Mode: 0o664, Size: 4},
+	}
+	for index := range headers {
+		header := &headers[index]
 		header.Uid, header.Gid, header.Uname, header.Gname, header.ModTime = 42, 43, "owner", "group", time.Unix(
 			100,
 			0,
@@ -219,7 +226,7 @@ func testAcquireGeneratedPolicyCase(t *testing.T, disk *bool,
 			0,
 		), tar.FormatPAX
 		{
-			err := writer.WriteHeader(&header)
+			err := writer.WriteHeader(header)
 			assert.NoError(t, err)
 		}
 
@@ -278,12 +285,10 @@ func testAcquireGeneratedPolicyCaseCompletion(t *testing.T, captures *testAcquir
 			mode fs.FileMode
 		}{{"empty", fs.ModeDir | 0o750}, {"parent", fs.ModeDir | 0o750}, {"parent/plain", 0o600}, {"kept", 0o700}} {
 			info, err := fs.Stat(input, entry.name)
-			if err != nil || info.Mode() != entry.mode {
-				t.Fatalf("normalized %s = %v, %v; want mode %v", entry.name, info, err, entry.mode)
-			}
-			if !info.ModTime().IsZero() {
-				t.Fatalf("normalized %s retained timestamp %v", entry.name, info.ModTime())
-			}
+			assert.FatalIf(t, err != nil || info.Mode() != entry.mode,
+				"normalized %s = %v, %v; want mode %v", entry.name, info, err, entry.mode)
+			assert.FatalIf(t, !info.ModTime().IsZero(),
+				"normalized %s retained timestamp %v", entry.name, info.ModTime())
 			if header, ok := info.Sys().(*tar.Header); ok &&
 				(header.Uid != 0 || header.Gid != 0 || header.Uname != "" || header.Gname != "") {
 				t.Fatalf("normalized %s retained ownership: %+v", entry.name, header)

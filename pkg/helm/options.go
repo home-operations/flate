@@ -66,6 +66,7 @@ func (o Options) capabilities() (*common.Capabilities, error) {
 	if o.KubeVersion != "" {
 		kv, err := common.ParseKubeVersion(o.KubeVersion)
 		if err != nil {
+			//nolint:wrapcheck // Template preserves Helm's exact Kubernetes-version diagnostic.
 			return nil, err
 		}
 		caps.KubeVersion = *kv

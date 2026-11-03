@@ -36,8 +36,10 @@ func (c capturedChart) fingerprint() string {
 
 func (c capturedChart) load() (*chart.Chart, error) {
 	if c.files != nil {
+		//nolint:wrapcheck // The caller adds the chart path; preserve Helm's exact diagnostic and structured cause.
 		return loader.LoadFiles(c.files)
 	}
+	//nolint:wrapcheck // The caller adds the chart path; preserve Helm's exact diagnostic and structured cause.
 	return loader.LoadArchive(bytes.NewReader(c.archive))
 }
 
@@ -109,6 +111,7 @@ func chartFilesInFS(ctx context.Context, input fs.FS, archiveShape bool) ([]*arc
 		if data == nil {
 			r, err := input.Open(name)
 			if err != nil {
+				//nolint:wrapcheck // The outer chart-input boundary retains the filesystem cause and Helm-compatible diagnostic.
 				return err
 			}
 			var readErr error

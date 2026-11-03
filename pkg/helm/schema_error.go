@@ -74,20 +74,22 @@ func schemaForest(lines []string, indent int) (string, int) {
 		}
 		block := []string{lines[i][:len(lines[i])-len(message)] + schemaProperties(message)}
 		i++
+	diagnostics:
 		for i < len(lines) {
 			depth, _, diagnostic := schemaDiagnostic(lines[i])
-			if diagnostic {
+			switch {
+			case diagnostic:
 				if depth <= indent {
-					break
+					break diagnostics
 				}
 				children, consumed := schemaForest(lines[i:], depth)
 				block = append(block, children)
 				i += consumed
-			} else if len(lines[i])-len(strings.TrimLeft(lines[i], " ")) > indent {
+			case len(lines[i])-len(strings.TrimLeft(lines[i], " ")) > indent:
 				block = append(block, lines[i])
 				i++
-			} else {
-				break
+			default:
+				break diagnostics
 			}
 		}
 		blocks = append(blocks, strings.Join(block, "\n"))

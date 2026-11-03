@@ -239,12 +239,13 @@ func (p archiveProducer) produce(
 		return staged.complete(ctx, c, &result)
 	}
 	if err != nil {
+		//nolint:wrapcheck // Preserve producer and stream errors for replay and I/O sentinel handling.
 		return nil, cmp.Or(
 			ctx.Err(),
 			readerFailure,
 			producerFailure,
 			err,
-		) //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
+		)
 	}
 	index.identify(staged.hash.Digest(), p.key)
 	return &entry{fs: index, descriptor: result.Descriptor}, nil
@@ -283,9 +284,9 @@ func (p blobProducer) identity() string {
 	if p.render != 0 {
 		return blobID(
 			processIdentity,
-			p.content.(string),
+			p.content.(string), //nolint:errcheck // A mismatched cache content type must retain its invariant panic.
 			p.render,
-		) //nolint:errcheck // The owner stores this exact concrete type; a mismatched assertion must retain its panic.
+		)
 	}
 	return manifest.Fingerprint(acquisitionContent{Blob: struct{ Content any }{p.content}})
 }

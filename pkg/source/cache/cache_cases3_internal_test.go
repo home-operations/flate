@@ -346,7 +346,7 @@ func testAcquireCancelAfterArchiveWorkersCaseCallback(
 					started <- struct{}{}
 					<-produce
 					if (*(*testCaseInput.result)) == "fresh" {
-						return producer((*testCaseInput.data), &(*testCaseInput.want))(ctx, w)
+						return producer((*testCaseInput.data), testCaseInput.want)(ctx, w)
 					}
 					return ProducerResult{Descriptor: (*testCaseInput.want), Unchanged: true}, nil
 				},

@@ -546,7 +546,7 @@ func testAcquireRetrySequencePersistenceCaseCallback(
 			},
 		)
 		want := testCaseInput.testCaseInput.tc.attempts * (i + 1)
-		if (*testCaseInput.testCaseInput.disk) && (*testCaseInput.testCaseInput).tc.record {
+		if (*testCaseInput.testCaseInput.disk) && testCaseInput.testCaseInput.tc.record {
 			want = 1
 		}
 		assert.FatalIf(
@@ -557,7 +557,7 @@ func testAcquireRetrySequencePersistenceCaseCallback(
 			want,
 			err,
 		)
-		if !(*testCaseInput.testCaseInput.disk) || !(*testCaseInput.testCaseInput).tc.record || i == 0 {
+		if !(*testCaseInput.testCaseInput.disk) || !testCaseInput.testCaseInput.tc.record || i == 0 {
 			assert.FatalIf(t, !errors.Is(err, testCaseInput.testCaseInput.tc.cause), "live cause lost: %v", err)
 		}
 	}

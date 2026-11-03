@@ -386,6 +386,7 @@ func testBlobRepairFailureCleanupCaseCompletion(
 		for len(pending) != 0 {
 			cause := pending[0]
 			pending = pending[1:]
+			//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 			switch cause := cause.(type) {
 			case *os.PathError:
 				if cause.Op == "removeat" {

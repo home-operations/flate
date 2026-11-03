@@ -89,13 +89,13 @@ func Sweep(ctx context.Context, root string, opts SweepOpts) (SweepResult, error
 	return selection.apply(ctx)
 }
 
-func (selection *sweepSelection) apply(ctx context.Context) (SweepResult, error) {
-	res, r := selection.result, selection.root
+func (s *sweepSelection) apply(ctx context.Context) (SweepResult, error) {
+	res, r := s.result, s.root
 	writable, err := oci.NewWithContext(ctx, filepath.Join(r.Name(), ociDir))
 	if err != nil {
 		return res, &CacheError{fmt.Errorf("open sweep store: %w", err)}
 	}
-	for _, tag := range selection.tags {
+	for _, tag := range s.tags {
 		if err := writable.Untag(ctx, tag); err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("untag %q: %w", tag, err))
 		}
@@ -112,7 +112,7 @@ func (selection *sweepSelection) apply(ctx context.Context) (SweepResult, error)
 		res.Errors = append(res.Errors, fmt.Errorf("save swept index: %w", err))
 		return res, nil
 	}
-	for _, path := range selection.generations {
+	for _, path := range s.generations {
 		if err := r.RemoveAll(path); err != nil {
 			res.Errors = append(res.Errors, fmt.Errorf("remove git generation: %w", err))
 		}
@@ -158,8 +158,8 @@ func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSe
 		cutoff = time.Now().Add(-maxAge).Add(-accessInterval)
 	}
 	for _, tag := range tags {
-		if err := selection.selectTag(ctx, tag, cutoff); err != nil {
-			return sweepSelection{}, err
+		if selectErr := selection.selectTag(ctx, tag, cutoff); selectErr != nil {
+			return sweepSelection{}, selectErr
 		}
 	}
 
@@ -168,8 +168,8 @@ func selectSweep(ctx context.Context, r *os.Root, maxAge time.Duration) (sweepSe
 		return sweepSelection{}, &CacheError{fmt.Errorf("read git generations: %w", err)}
 	}
 	for _, entry := range entries {
-		if err := selection.selectGeneration(ctx, entry); err != nil {
-			return sweepSelection{}, err
+		if selectErr := selection.selectGeneration(ctx, entry); selectErr != nil {
+			return sweepSelection{}, selectErr
 		}
 	}
 

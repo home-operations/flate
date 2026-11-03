@@ -148,7 +148,7 @@ func (c *Cache) waveCandidate(ctx context.Context, key *acquireKey, observed *en
 ) (*entry, *entry, error) {
 	if observed == nil || key.lookupOnly {
 		return nil, nil, nil
-	} //nolint:nilnil // Lookup-only requests do not reuse an acquisition wave.
+	}
 	if observed.waveErr != nil {
 		if observed.outcome != nil {
 			return nil, nil, &TerminalError{Err: observed.waveErr, Attempted: false}
@@ -157,18 +157,18 @@ func (c *Cache) waveCandidate(ctx context.Context, key *acquireKey, observed *en
 	}
 	if observed.waveResult == nil {
 		return nil, nil, nil
-	} //nolint:nilnil // No completed wave leaves the stored candidate eligible.
+	}
 	valid, err := c.validCandidate(ctx, validate, observed.waveResult)
 	if err != nil || valid {
 		return observed.waveResult, nil, err
 	}
-	return nil, observed.waveResult, nil //nolint:nilnil // The rejected wave must be excluded from the stored-candidate check.
+	return nil, observed.waveResult, nil
 }
 
 func (c *Cache) freshCandidate(ctx context.Context, key *acquireKey, e *entry,
 	validate func(context.Context, *entry) (bool, error),
 ) (*entry, error) {
-	if err := c.touch(&*key, e); err != nil {
+	if err := c.touch(key, e); err != nil {
 		if !key.lookupOnly {
 			c.entries.Store(key.id, &entry{stored: e.stored})
 		}

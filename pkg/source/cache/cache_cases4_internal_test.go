@@ -666,8 +666,8 @@ type testCacheRootedWritesRejectEscapeCaseCallbackInputs struct {
 }
 
 func testCacheRootedWritesRejectEscapeCaseCallback(
-	callbackArg1 context.Context,
-	callbackArg2 ProducerInput, testCaseInputValue *testCacheRootedWritesRejectEscapeCaseCallbackInputs,
+	_ context.Context,
+	_ ProducerInput, testCaseInputValue *testCacheRootedWritesRejectEscapeCaseCallbackInputs,
 ) (ProducerResult, error) {
 	testCaseInput := *testCaseInputValue
 	(*testCaseInput.called) = true

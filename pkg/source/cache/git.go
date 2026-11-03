@@ -128,7 +128,7 @@ func (p gitProducer) produce(
 
 func (p gitProducer) restore(_ context.Context, c *Cache, desc ocispec.Descriptor, e *entry) error {
 	if e.git != nil {
-		return nil //nolint:nilerr // This optional cache miss deliberately discards an unavailable prior result.
+		return nil
 	}
 	resolved := e.resolved
 	e.resolved = time.Time{}

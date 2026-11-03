@@ -578,8 +578,10 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 			diff := cmp.Diff(want, (*scope.got).record.Cause)
 			assert.FatalIf(t, diff != "", "persisted cause (-want +got):\n%s", diff)
 		}
+		//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 		terminal, ok := (*scope.replay).(*TerminalError)
 		assert.FatalIf(t, !ok, "replay root: %T", (*scope.replay))
+		//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 		producer, ok := terminal.Err.(*producerError)
 		if !ok {
 			t.Fatalf("terminal child: %T", terminal.Err)
@@ -588,6 +590,7 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 		for _, index := range (*scope.tc).machinePath {
 			assert.FatalIf(t, shape.Kind == "wrap" && reflect.TypeOf(node) != fmtWrapType ||
 				shape.Kind == "join" && reflect.TypeOf(node) != joinType, "machine parent identity: %T", node)
+			//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 			switch parent := node.(type) {
 			case interface{ Unwrap() error }:
 				node = parent.Unwrap()
@@ -598,13 +601,16 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 			}
 			shape = shape.Children[index]
 		}
+		//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 		machine, ok := node.(*machineError)
 		assert.FatalIf(t, !ok || machine.Error() != "machine credential acquisition failed" ||
 			(*scope.replay).Error() != (*scope.tc).diagnostic, "machine masking or position: %T, %v", node, (*scope.replay))
 		child := machine.Unwrap()
 		if shape.Children[0].Kind == "terminal" {
+			//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 			terminal, ok := child.(*TerminalError)
 			assert.FatalIf(t, !ok || terminal.Attempted, "machine terminal child: %T, %v", child, child)
+			//nolint:errorlint // Exact replay node types and wrapper positions are part of this assertion.
 			producer, ok := terminal.Err.(*producerError)
 			if !ok {
 				t.Fatalf("nested terminal child: %T", terminal.Err)
@@ -632,10 +638,10 @@ func testOutcomeTypedRoundTripCaseTail(t *testing.T, scope *testOutcomeTypedRoun
 		t,
 		&testOutcomeTypedRoundTripCaseCompletionInputs{
 			tc:     scope.tc,
-			replay: &(*scope.replay),
+			replay: scope.replay,
 			o:      scope.o,
 			u:      scope.u,
-			live:   &(*scope.live),
+			live:   scope.live,
 		},
 	)
 }

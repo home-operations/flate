@@ -475,6 +475,7 @@ func fresh(at time.Time, maxAge time.Duration) bool {
 	return !at.IsZero() && (maxAge < 0 || maxAge > 0 && time.Since(at) < maxAge)
 }
 
+//nolint:nonamedreturns // Deferred cleanup must clear successful results and join cleanup errors, including during panic unwinding.
 func (c *Cache) fill(
 	ctx context.Context, keyValue *acquireKey,
 	previous *entry,
@@ -600,7 +601,7 @@ func decode(storedValue *ocispec.Descriptor, required []string) (ocispec.Descrip
 
 func (c *Cache) restoreCandidate(ctx context.Context, key *acquireKey, e *entry) error {
 	if e != nil && e.unloaded && !key.memoryOnly {
-		if err := c.loadEntry(ctx, &*key, key.policy.MaxAge, e); err != nil {
+		if err := c.loadEntry(ctx, key, key.policy.MaxAge, e); err != nil {
 			return err
 		}
 	}
@@ -629,14 +630,14 @@ func (c *Cache) prepareRenderBlob(ctx context.Context, key *BlobKey, lookupOnly 
 			}, id, nil
 		}
 	}
-	return nil, "", nil //nolint:nilnil // An enabled render continues through ordinary blob acquisition.
+	return nil, "", nil
 }
 
 func (c *Cache) replayOutcome(key *acquireKey, e *entry) error {
 	if e != nil && e.outcome != nil {
 		isFresh, _ := e.outcome.observe(time.Now().UTC())
 		if isFresh {
-			if err := c.touch(&*key, e); err != nil {
+			if err := c.touch(key, e); err != nil {
 				return err
 			}
 			return e.outcome.replay()

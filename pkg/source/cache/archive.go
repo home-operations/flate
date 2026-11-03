@@ -251,7 +251,7 @@ func (a *archiveReader) discardBody() error {
 	if _, err := io.Copy(
 		io.Discard,
 		a.reader,
-	); err != nil { //nolint:gosec // Flux source archives have no extract size limit.
+	); err != nil {
 		return fmt.Errorf("read tar body: %w", err)
 	}
 	a.nextHeader = alignNext(a.position.offset)

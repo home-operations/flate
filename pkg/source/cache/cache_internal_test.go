@@ -173,8 +173,9 @@ func TestAcquire_ConcurrentKeysAndCancellation(t *testing.T) {
 			crossCtx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 			defer stop()
 			testAcquireSharedContentAfterCancellation(
-				t,
-				crossCtx,
+
+				crossCtx, t,
+
 				&sharedContentAfterCancellation{
 					concurrency: &concurrency,
 					c:           &c,
@@ -608,8 +609,8 @@ type sharedContentAfterCancellation struct {
 }
 
 func testAcquireSharedContentAfterCancellation(
-	t *testing.T,
-	crossCtx context.Context,
+	crossCtx context.Context, t *testing.T,
+
 	scope *sharedContentAfterCancellation,
 ) {
 	t.Helper()
@@ -621,7 +622,7 @@ func testAcquireSharedContentAfterCancellation(
 	)
 	if err != nil {
 		close((*scope.release))
-		(*scope.wg).Wait()
+		scope.wg.Wait()
 		t.Fatal(err)
 	}
 	_, _ = fs.ReadFile(r, "content")
@@ -636,11 +637,11 @@ func testAcquireSharedContentAfterCancellation(
 	)
 	if err != nil || g == nil || blobID == "" || gitID == "" || blobID == gitID {
 		close((*scope.release))
-		(*scope.wg).Wait()
+		scope.wg.Wait()
 		t.Fatalf("cross-product Git: blob=%q git=%q, %v", blobID, gitID, err)
 	}
 	close((*scope.release))
-	(*scope.wg).Wait()
+	scope.wg.Wait()
 	close((*scope.ids))
 	var archiveID string
 	for id := range *scope.ids {
@@ -655,7 +656,7 @@ func testAcquireSharedContentAfterCancellation(
 		)
 		archiveID = id
 	}
-	if (*scope.calls).Load() != 1 {
-		t.Fatalf("concurrency=%d calls=%d", (*scope.concurrency), (*scope.calls).Load())
+	if scope.calls.Load() != 1 {
+		t.Fatalf("concurrency=%d calls=%d", (*scope.concurrency), scope.calls.Load())
 	}
 }

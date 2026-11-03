@@ -316,19 +316,6 @@ func TestOutcome_TypedRoundTrip(t *testing.T) {
 			t.Parallel()
 			testOutcomeTypedRoundTripCase(t, &u, &tc)
 		},
-
-		//nolint:errorlint // Replay MUST preserve direct node positions.
-
-		//nolint:errorlint // Replay MUST preserve direct node positions.
-
-		//nolint:errorlint // Replay MUST preserve direct node positions.
-
-		//nolint:errorlint // Replay MUST preserve direct node positions.
-
-		//nolint:errorlint // Replay MUST preserve direct node positions.
-
-		//nolint:errorlint // Replay MUST preserve direct node positions.
-
 		)
 	}
 }

@@ -515,7 +515,7 @@ func testAcquireGenerationsAndFreshnessCaseCompletion(
 	}()
 	replacement, _, _, err := (*captures.c).Acquire(
 		t.Context(), (*captures.key), Policy{MaxAge: 0},
-		producer(replacementArchive.Bytes(), &(*captures.want)),
+		producer(replacementArchive.Bytes(), captures.want),
 	)
 	assert.NoError(t, err)
 	assert.FatalIf(
@@ -560,7 +560,7 @@ func testAcquireGenerationsAndFreshnessCaseCompletion(
 				calls++
 				var recoveredArchive bytes.Buffer
 				testutil.WriteTar(t, &recoveredArchive, map[string]string{"file": "v3"}, 0o644)
-				return producer(recoveredArchive.Bytes(), &(*captures.want))(ctx, w)
+				return producer(recoveredArchive.Bytes(), captures.want)(ctx, w)
 			},
 		)
 		assert.FatalIf(t, err != nil ||

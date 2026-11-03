@@ -94,7 +94,7 @@ func RecordInventory[T io.WriterTo](ctx context.Context, c *Cache, inventory Acc
 	return err
 }
 
-func (inventory AcceptedInventory[T]) write(
+func (i AcceptedInventory[T]) write(
 	history *historyRecord, acceptance string, output ProducerInput,
 ) (ProducerResult, error) {
 	metadata, metadataErr := history.metadata()
@@ -104,9 +104,9 @@ func (inventory AcceptedInventory[T]) write(
 	if metadata == nil {
 		metadata = make(map[string]string, inventoryAnnotationCount)
 	}
-	metadata[acceptedRenderAnnotation] = inventory.Acceptance
+	metadata[acceptedRenderAnnotation] = i.Acceptance
 	metadata[historyIdentityAnnotation] = acceptance
-	_, metadataErr = inventory.Content.WriteTo(output)
+	_, metadataErr = i.Content.WriteTo(output)
 	return ProducerResult{
 		Annotations: metadata,
 	}, metadataErr //nolint:wrapcheck // The cache producer and stream adapters preserve the original error tree for replay and io sentinel handling.
@@ -239,7 +239,7 @@ func (c *Cache) ProducersForPaths(
 		return nil, &CacheError{err}
 	}
 	if !c.CanPersistRenders() || len(query) == 0 {
-		return nil, nil //nolint:nilnil // A nil value and nil error represent an optional absence or a reusable-cache miss.
+		return nil, nil
 	}
 	changes := changedHistoryPaths(query)
 
@@ -290,9 +290,9 @@ func changedHistoryPaths(query []manifest.SourceEvidence) map[string]map[string]
 	return changes
 }
 
-func (record *historyRecord) reaches(changes map[string]map[string]struct{}) bool {
+func (r *historyRecord) reaches(changes map[string]map[string]struct{}) bool {
 	matched := false
-	for _, source := range record.Sources {
+	for _, source := range r.Sources {
 		for file := range changes[source.Source] {
 			for _, root := range source.Paths {
 				if !fs.ValidPath(root.Path) {
@@ -341,6 +341,7 @@ func (c *Cache) pathProducer(
 		record.Owner.Kind == "" ||
 		record.Acceptance == "" ||
 		record.Acceptance != descriptor.Annotations[acceptedRenderAnnotation] {
+		//nolint:nilerr // Invalid persisted history metadata is a cache miss, including decode failures.
 		return manifest.NamedResource{}, false, nil
 	}
 	if !record.reaches(changes) {

@@ -356,9 +356,6 @@ func TestBlob_RepairFailureCleanup(t *testing.T) {
 			t.Parallel()
 			testBlobRepairFailureCleanupCase(t, &failure)
 		},
-
-		//nolint:errorlint // count each concrete removal node once while walking the joined tree
-
 		)
 	}
 }

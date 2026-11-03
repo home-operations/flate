@@ -181,10 +181,11 @@ func openStore(ctx context.Context, root *os.Root) (*oci.Store, error) {
 		return nil, errors.Join(err, removeErr)
 	}
 	slog.Debug("cache: rebuilding unreadable store index", "path", indexPath(), "root", root.Name(), "error", err)
+	//nolint:wrapcheck // Preserve ORAS recovery error identity for cache classification.
 	return oci.NewWithContext(
 		ctx,
 		filepath.Join(root.Name(), ociDir),
-	) //nolint:wrapcheck // The cache owner classifies store-open errors once and preserves the original ORAS recovery failure.
+	)
 }
 
 // Close releases this owner's share. It MUST follow all acquired readers.

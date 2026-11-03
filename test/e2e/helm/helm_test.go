@@ -384,7 +384,7 @@ metadata: {name: '{{ .Release.Name }}-values', namespace: '{{ .Release.Namespace
 	}
 }
 
-func TestE2E_HelmAutomaticAliasRevision(t *testing.T) {
+func TestE2E_HelmMissingOCISource(t *testing.T) {
 	dir := sourceValuesFixture(t, "[]", false, false)
 	testutil.WriteFile(t, dir, "apps/demo/app/release.yaml", `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -405,9 +405,9 @@ spec:
 	out, code := harness.RunCLIExpectErr(t, "build", "all", "--path", filepath.Join(dir, "cluster"),
 		"--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 	assert.Equal(t, code, 1)
-	if !strings.Contains(out, `track oci chart version: invalid artifact revision ""`) ||
-		strings.Count(out, "HelmRelease  apps/demo  ") != 1 || strings.Contains(out, "flux error:") {
-		t.Fatalf("alias revision failure changed:\n%s", out)
+	if !strings.Contains(out, "OCIRepository  flux-system/automatic  not found") ||
+		strings.Contains(out, "track oci chart version") || strings.Contains(out, "flux error:") {
+		t.Fatalf("missing OCI source failure changed:\n%s", out)
 	}
 }
 

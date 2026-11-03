@@ -38,7 +38,8 @@ func TestReconcile_OCICascadeDiagnostic(t *testing.T) {
 			})
 			c.Tasks.BlockTillDone()
 			info, _ := st.GetStatus(ks.Named())
-			if info.Status != store.StatusFailed || !strings.Contains(info.Message, "unknown OCI artifact root") {
+			want := map[bool]string{false: "dependency not found", true: "fetch failed"}[failed]
+			if info.Status != store.StatusFailed || !strings.Contains(info.Message, ks.SourceID().String()) || !strings.Contains(info.Message, want) {
 				t.Fatalf("OCI cascade status = %+v", info)
 			}
 			if st.GetArtifact(ks.Named(), store.ArtifactContent) != nil || c.Tasks.Failures() != 0 {

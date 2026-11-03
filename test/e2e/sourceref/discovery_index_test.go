@@ -342,130 +342,57 @@ sops:
 	}
 }
 
-func TestE2E_SourceRef_OCIArtifactRoot(t *testing.T) {
-	for _, tc := range []struct {
-		name, path, diagnostic, kind string
-		later, editChild             bool
-	}{
-		{name: "subtree", path: "./apps/x"},
-		{name: "bucket_subtree", path: "./apps/x", kind: "Bucket"},
-		{name: "unsupported", path: "kubernetes/apps/x", kind: "ExternalArtifact", diagnostic: "ExternalArtifact"},
-		{name: "repository", path: "kubernetes/apps/x"},
-		{name: "unknown", path: "./absent", diagnostic: "unknown OCI artifact root"},
-		{name: "frozen", path: "./apps/x", diagnostic: "kustomization path is not a directory", later: true},
-		{name: "frozen_changed_child", path: "./apps/x", diagnostic: "kustomization path is not a directory", later: true, editChild: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			kind := tc.kind
-			if kind == "" {
-				kind = "OCIRepository"
-			}
+func TestE2E_SourceRef_MissingNonGit(t *testing.T) {
+	for _, kind := range []string{"OCIRepository", "HelmRepository", "Bucket"} {
+		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			repo := testutil.GitInit(t, root)
-			testutil.WriteFile(t, root, "kubernetes/clusters/c0/ks.yaml", testutil.KustomizationYAML("bootstrap", "flux-system", "  {path: "+tc.path+", sourceRef: {kind: "+kind+", name: flux-system}}\n"))
-			if tc.diagnostic == "" {
-				consumerPath := "./consumer"
-				if tc.name == "repository" {
-					consumerPath = "kubernetes/consumer"
+			consumer := func(interval string) string {
+				if kind == "Bucket" {
+					return testutil.KustomizationYAML("consumer", "apps", "  interval: "+interval+"\n  path: ./decoy\n  sourceRef: {kind: Bucket, name: missing, namespace: sources}\n")
 				}
-				testutil.WriteFile(t, root, "kubernetes/clusters/c0/consumer.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: "+consumerPath+"\n  sourceRef: {kind: "+kind+", name: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: artifact-output}]}\n"))
-				testutil.WriteFile(t, root, "kubernetes/consumer/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "kubernetes/consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-output, namespace: flux-system}\ndata: {value: '${K}'}\n")
-				testutil.WriteFile(t, root, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-sibling}\n")
+				chart := "  chartRef: {kind: OCIRepository, name: missing, namespace: sources}\n"
+				if kind == "HelmRepository" {
+					chart = "  chart:\n    spec:\n      chart: ./decoy\n      sourceRef: {kind: HelmRepository, name: missing, namespace: sources}\n"
+				}
+				return "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: consumer, namespace: apps}\nspec:\n  interval: " + interval + "\n" + chart
 			}
-			resources := "resources: [cm.yaml]\n"
-			if tc.later {
-				resources = "resources: [cm.yaml, child.yaml]\n"
-				testutil.WriteFile(t, root, "kubernetes/apps/x/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  {path: ./root-only, sourceRef: {kind: "+kind+", name: flux-system}}\n"))
-				testutil.WriteFile(t, root, "root-only/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, root, "root-only/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated-root-output}\n")
-			}
-			testutil.WriteFile(t, root, "kubernetes/apps/x/kustomization.yaml", resources)
-			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: before}\n")
-			testutil.GitCommitAll(t, repo, "init", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
+			testutil.WriteFile(t, root, "entry/consumer.yaml", consumer("1m"))
+			testutil.WriteFile(t, root, "Chart.yaml", "apiVersion: v2\nname: decoy\nversion: 1.0.0\n")
+			testutil.WriteFile(t, root, ".editorconfig", "root = true\n")
+			testutil.WriteFile(t, root, "templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-payload}\n")
+			testutil.WriteFile(t, root, "decoy/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, root, "decoy/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: consumer-payload}\n")
+			testutil.GitCommitAll(t, repo, "initial", &gogit.CommitOptions{Author: &object.Signature{Name: "t", Email: "t@example", When: time.Unix(0, 0)}})
 			orig := t.TempDir()
 			testutil.CopyTree(t, root, orig)
-			if tc.editChild {
-				testutil.WriteFile(t, root, "kubernetes/apps/x/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  {path: ./root-only, interval: 2m, sourceRef: {kind: "+kind+", name: flux-system}}\n"))
-			}
-			origScan := filepath.Join(orig, "kubernetes/clusters/c0")
-			testutil.WriteFile(t, root, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: artifact-output, namespace: flux-system}\ndata: {K: after}\n")
-			scan := filepath.Join(root, "kubernetes/clusters/c0")
-			cache := t.TempDir()
-			for _, mode := range []string{"build", "test", "diff"} {
-				if tc.name == "unsupported" && mode != "diff" {
-					continue
-				}
-				args := []string{mode, "all", "--path", scan, "--concurrency", "2", "--cache-dir", cache, "--no-progress"}
-				if mode == "diff" {
-					args = append(args, "--path-orig", origScan)
-				}
-				stdout, stderr, code := harness.RunCLIBuffers(args...)
-				if tc.later && !tc.editChild && mode == "diff" {
-					if code != 0 || stderr != "" || strings.Count(stdout, "- before\n") != 1 || strings.Count(stdout, "+ after\n") != 1 || !strings.Contains(stdout, "artifact-output") || strings.Contains(stdout, "unrelated-root-output") || strings.Contains(stdout, "child") {
-						t.Fatalf("unreached child affected the parent diff: exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-					}
-					continue
-				}
-				if tc.name == "unknown" && mode == "diff" {
-					if code != 0 || stdout != "" || strings.Contains(stderr, "diff suppressed") {
-						t.Fatalf("unknown diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-					}
-					continue
-				}
-				if tc.diagnostic != "" {
-					if code != 1 || !strings.Contains(stdout+stderr, tc.diagnostic) {
-						t.Fatalf("%s exit=%d stdout=%s stderr=%s", mode, code, stdout, stderr)
-					}
-					if tc.later && mode == "build" && !strings.Contains(stdout, "artifact-output") {
-						t.Fatalf("parent did not render: %s", stdout)
-					}
-					if strings.Contains(stdout, "unrelated-root-output") {
-						t.Fatal("frozen root moved")
-					}
-					continue
-				}
-				if code != 0 {
-					t.Fatalf("%s exit=%d stdout=%s stderr=%s", mode, code, stdout, stderr)
-				}
-				switch mode {
-				case "build":
-					if !strings.Contains(stdout, "artifact-output") || !strings.Contains(stdout, "after") {
-						t.Fatalf("missing artifact bytes: %s", stdout)
-					}
-				case "test":
-					if !strings.Contains(stdout+stderr, "3 passed") {
-						t.Fatalf("test did not evaluate content: %s %s", stdout, stderr)
-					}
-				case "diff":
-					if strings.Count(stdout, "- before\n") != 2 || strings.Count(stdout, "+ after\n") != 2 {
-						t.Fatalf("forward artifact/consumer values: %s", stdout)
+			testutil.WriteFile(t, root, "entry/consumer.yaml", consumer("2m"))
+			for _, sides := range [][2]string{{root, orig}, {orig, root}} {
+				for _, mode := range []string{"full", "changed", "diff"} {
+					var previous [2]string
+					for run := range 2 {
+						args := []string{"build", "all", "--path", filepath.Join(sides[0], "entry"), "--concurrency", "2", "--cache-dir", t.TempDir(), "--no-progress"}
+						if mode != "full" {
+							args = append(args, "--path-orig", filepath.Join(sides[1], "entry"))
+						}
+						if mode == "diff" {
+							args[0] = "diff"
+						}
+						stdout, stderr, code := harness.RunCLIBuffers(args...)
+						if code != 1 || !strings.Contains(stderr, kind) || !strings.Contains(stderr, "sources/missing") {
+							t.Fatalf("%s %s exit=%d stdout=%s stderr=%s", kind, mode, code, stdout, stderr)
+						}
+						if strings.Contains(stdout, "consumer-payload") || strings.Contains(stderr, "chart illegally contains content") {
+							t.Fatalf("missing source used decoy bytes: stdout=%s stderr=%s", stdout, stderr)
+						}
+						current := [2]string{stdout, stderr}
+						if run == 1 && current != previous {
+							t.Fatalf("%s %s output changed between two cold runs", kind, mode)
+						}
+						previous = current
 					}
 				}
 			}
-			if tc.diagnostic == "" {
-				args := []string{"build", "all", "--path", scan, "--path-orig", origScan, "--concurrency", "2", "--no-progress"}
-				stdout, stderr, code := harness.RunCLIBuffers(args...)
-				if code != 0 || !strings.Contains(stdout, "consumer-output") || !strings.Contains(stdout, "value: after") || strings.Contains(stdout, "unrelated-sibling") {
-					t.Fatalf("changed subtree exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-				}
-				stdout, stderr, code = harness.RunCLIBuffers("diff", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", scan, "--concurrency", "2", "--no-progress")
-				if code != 0 {
-					t.Fatalf("reverse diff exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-				}
-				if strings.Count(stdout, "- after\n") != 2 || strings.Count(stdout, "+ before\n") != 2 {
-					t.Fatalf("reverse artifact/consumer values: %s", stdout)
-				}
-				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: dirty-unrelated-sibling}\n")
-				clean := t.TempDir()
-				testutil.CopyTree(t, orig, clean)
-				testutil.WriteFile(t, orig, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: another-unrelated-sibling}\n")
-				stdout, stderr, code = harness.RunCLIBuffers("build", "all", "--path", filepath.Join(orig, "kubernetes/clusters/c0"), "--path-orig", filepath.Join(clean, "kubernetes/clusters/c0"), "--concurrency", "2", "--no-progress")
-				if code != 0 || strings.Contains(stdout, "consumer-output") || strings.Contains(stdout, "artifact-output") || strings.Contains(stdout, "unrelated-sibling") {
-					t.Fatalf("unrelated edit exit=%d stdout=%s stderr=%s", code, stdout, stderr)
-				}
-			}
-
 		})
 	}
 }

@@ -420,7 +420,7 @@ func TestRequire_RetainsArtifactFactsThroughSettlement(t *testing.T) {
 			defer execution.Close()
 			deps := []manifest.DependencyRef{
 				{NamedResource: source.Named(), ReadyExpr: new("true")},
-				{NamedResource: source.Named(), ReadyExpr: new("true"), Artifact: true, UnknownArtifactRoot: true, ChartSource: true},
+				{NamedResource: source.Named(), ReadyExpr: new("true"), Artifact: true, ChartSource: true},
 			}
 			if tc.reverse {
 				slices.Reverse(deps)

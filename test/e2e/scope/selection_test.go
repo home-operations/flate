@@ -1592,7 +1592,7 @@ func TestE2E_LiteralRootFailureNamespace(t *testing.T) {
 				root := t.TempDir()
 				testutil.WriteFile(t, root, "kustomization.yaml", "resources: [cm.yaml, ks.yaml, missing.yaml]\n")
 				testutil.WriteFile(t, root, "cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: root-output, namespace: apps}\n")
-				testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./app\n  sourceRef: {kind: OCIRepository, name: flux-system}\n  postBuild:\n    substituteFrom:\n      - kind: ConfigMap\n        name: unavailable-input\n"))
+				testutil.WriteFile(t, root, "ks.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./app\n  sourceRef: {kind: GitRepository, name: flux-system}\n  postBuild:\n    substituteFrom:\n      - kind: ConfigMap\n        name: unavailable-input\n"))
 				testutil.WriteFile(t, root, "app/kustomization.yaml", "resources: []\n")
 				out, stderr, code := harness.RunCLIBuffers(command, kind, "-n", "apps", "--path", root, "--concurrency", "2", "--no-progress", "--cache-dir", t.TempDir())
 				if code != 1 || !strings.Contains(out+stderr, "missing.yaml") {

@@ -117,7 +117,7 @@ func New(s *store.Store) *Loader {
 func (l *Loader) Sources(ctx context.Context) iter.Seq2[store.Child, error] {
 	return func(yield func(store.Child, error) bool) {
 		for id, r := range l.Index.Files() {
-			if !id.KindInfo().SourceArtifact {
+			if info := id.KindInfo(); info.Group != manifest.SourceDomain || !info.Discovery {
 				continue
 			}
 			if l.documents.cache[r.Path].eligible == fileInactive {

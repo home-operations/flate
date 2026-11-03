@@ -354,7 +354,7 @@ func (a *Admission) qualifyEntry(ctx context.Context, st *store.Store, objects [
 		artifact := resolved.artifact
 		if artifact == nil {
 			var err error
-			resolved, err = a.resolve(ctx, application.Source, resolved.object, []sourceWitness{{id: obj.Named(), path: application.Path}})
+			resolved, err = a.resolve(ctx, application.Source, resolved.object)
 			if err != nil {
 				return err
 			}

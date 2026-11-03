@@ -122,8 +122,6 @@ type DependencyRef struct {
 	Artifact bool
 	// ArtifactOnly accepts readable content before readiness and rejects ready sources without it.
 	ArtifactOnly bool
-	// UnknownArtifactRoot preserves the unresolved source-root diagnostic at drain.
-	UnknownArtifactRoot bool
 	// ChartSource retains chart-source context on acquisition failures and skips.
 	ChartSource bool
 }

@@ -629,7 +629,7 @@ func TestReferences_SourceValuesFiles(t *testing.T) {
 
 func assertReferenceEdges(t *testing.T, got, want []Reference) {
 	t.Helper()
-	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "ArtifactOnly", "UnknownArtifactRoot", "ChartSource"), cmpopts.IgnoreFields(Reference{}, "Gate", "ArtifactStages", "Ordering", "Selector", "Key", "NamespaceDefault")); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(DependencyRef{}, "Artifact", "ArtifactOnly", "ChartSource"), cmpopts.IgnoreFields(Reference{}, "Gate", "ArtifactStages", "Ordering", "Selector", "Key", "NamespaceDefault")); diff != "" {
 		t.Fatalf("reference edges (-want +got):\n%s", diff)
 	}
 }

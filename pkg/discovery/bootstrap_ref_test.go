@@ -1,8 +1,6 @@
 package discovery
 
 import (
-	"bytes"
-	"compress/gzip"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -20,7 +18,6 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	helmloader "helm.sh/helm/v4/pkg/chart/v2/loader"
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil"
@@ -430,8 +427,8 @@ func TestAliasBootstrapSources_LocalPathOwnership(t *testing.T) {
 				if _, err := d.resolveEntrySources(t.Context(), true); err != nil {
 					t.Fatal(err)
 				}
-				if st.GetArtifact(id, store.ArtifactContent) == nil {
-					t.Fatal("missing source did not acquire a bootstrap alias")
+				if got := st.GetArtifact(id, store.ArtifactContent) != nil; got != (tc.kind == manifest.KindGitRepository) {
+					t.Fatalf("missing-source alias = %t for %s", got, tc.kind)
 				}
 				ref := ""
 				if tc.kind == manifest.KindGitRepository {
@@ -552,49 +549,6 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 			}
 		})
 	}
-	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
-		t.Run("frozen_generation/"+kind, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			st := store.New()
-			bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, Revision: "one", Digest: "aaa", FS: fstest.MapFS{
-				"kubernetes/clusters/c0/entry": {}, "kubernetes/apps/x/file": {Data: []byte("first")},
-			}}
-			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-			ks := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "./apps/x", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
-			st.AddObject(ks)
-			d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
-			if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
-				t.Fatalf("initial resolution = %d, %v", count, err)
-			}
-			for i, generation := range []struct{ revision, digest string }{{"two", "aaa"}, {"two", "bbb"}, {"two", "bbb"}} {
-				previous := st.GetArtifact(ks.SourceID(), store.ArtifactContent)
-				object := st.GetObject(ks.SourceID())
-				later := *ks
-				later.Name, later.Path = fmt.Sprintf("later-%d", i), "./root-only"
-				st.AddObject(&later)
-				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 || st.GetArtifact(ks.SourceID(), store.ArtifactContent) != previous || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
-					t.Fatalf("reference-only resolution changed publication: %d, %v", count, err)
-				}
-				next := *bootstrap
-				next.Revision, next.Digest = generation.revision, generation.digest
-				want := fmt.Sprintf("generation-%d", i)
-				next.FS = fstest.MapFS{
-					"kubernetes/apps/x/file": {Data: []byte(want)}, "apps/x/file": {Data: []byte("wrong root")}, "root-only/file": {},
-				}
-				st.SetArtifact(manifest.BootstrapSourceID, &next)
-				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 1 {
-					t.Fatalf("generation resolution = %d, %v", count, err)
-				}
-				artifact := st.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
-				data, err := fs.ReadFile(artifact.FS, "apps/x/file")
-				if err != nil || string(data) != want || artifact == previous || artifact.LocalRoot != filepath.Join(root, "kubernetes") || artifact.Revision != next.Revision || artifact.Digest != next.Digest || st.GetObject(ks.SourceID()) != object || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != &next {
-					t.Fatalf("frozen generation artifact=%+v bytes=%q error=%v", artifact, data, err)
-				}
-				bootstrap = &next
-			}
-		})
-	}
 
 	root := t.TempDir()
 	st := store.New()
@@ -665,96 +619,6 @@ func TestAliasBootstrapSources_PreservesCanonicalSource(t *testing.T) {
 		}
 	})
 
-	t.Run("OCI chart archive", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		files := map[string]string{
-			"chart/Chart.yaml":        "apiVersion: v2\nname: demo\nversion: 1.0.0\n",
-			"chart/templates/cm.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n",
-			"apps/file":               "retained sibling",
-		}
-		for name, data := range files {
-			testutil.WriteFile(t, root, "artifact/"+name, data)
-		}
-		oracle, err := helmloader.LoadArchive(bytes.NewReader(testutil.TarGz(t, files, 0o644, gzip.DefaultCompression)))
-		assert.NoError(t, err)
-		assert.Equal(t, oracle.Name(), "demo")
-		st := store.New()
-		bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: os.DirFS(root)}
-		st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-		ks := &manifest.Kustomization{Name: "parent", Namespace: "apps", Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}}
-		st.AddObject(ks)
-		d := Session{cfg: Config{Path: filepath.Join(root, "artifact"), RepoRoot: root, Store: st}}
-		count, err := d.resolveEntrySources(t.Context(), true)
-		assert.NoError(t, err)
-		assert.Equal(t, count, 1)
-		artifact := st.GetArtifact(ks.SourceID(), store.ArtifactContent).(*store.SourceArtifact)
-		assert.Equal(t, artifact.InputAlias, true)
-		assert.Equal(t, artifact.Key, "")
-		hr := &manifest.HelmRelease{Name: "release", Namespace: "apps", Chart: manifest.HelmChart{Source: ks.SourceID()}}
-		cli := helm.NewClient(cachetest.New(t, "", sourcecache.New))
-		first, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)}))
-		assert.NoError(t, err)
-		assert.Equal(t, len(first), len(oracle.Templates))
-		name, _ := manifest.DocMetadata(first[0])
-		assert.Equal(t, name, "rendered")
-		second, _, err := testutil.RenderMaps(cli.Template(t.Context(), hr, nil, helm.RenderOptions{Sources: helm.NewSources(st)}))
-		assert.NoError(t, err)
-		assert.Diff(t, second, first)
-		assert.Equal(t, st.GetArtifact(ks.SourceID(), store.ArtifactContent), store.Artifact(artifact))
-		assert.Equal(t, st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent), store.Artifact(bootstrap))
-	})
-
-	t.Run("OCI subtrees", func(t *testing.T) {
-		t.Parallel()
-		root := t.TempDir()
-		st := store.New()
-		input := fstest.MapFS{
-			"kubernetes/apps/file":     {Data: []byte("subtree")},
-			"kubernetes/.git/config":   {Data: []byte("metadata")},
-			"kubernetes/.sourceignore": {Data: []byte("excluded\n")},
-			"kubernetes/excluded":      {Data: []byte("excluded")},
-			"other/apps/file":          {Data: []byte("other")},
-		}
-		bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input, Key: "pinned", Content: "generation", Revision: "one"}
-		st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-		d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes"), Store: st}}
-		for i, subtree := range []string{"kubernetes", "kubernetes", "other"} {
-			id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: fmt.Sprintf("alias-%d", i)}
-			d.cfg.Path = filepath.Join(root, subtree)
-			st.AddObject(&manifest.Kustomization{Name: id.Name, Namespace: id.Namespace, Path: "apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: id.Kind, Name: id.Name}})
-			if count, err := d.resolveEntrySources(t.Context(), true); count != 1 || err != nil {
-				t.Fatalf("alias: %d %v", count, err)
-			}
-			art := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-			data, err := fs.ReadFile(art.FS, "apps/file")
-			want := "subtree"
-			if subtree == "other" {
-				want = "other"
-			}
-			if err != nil || string(data) != want || art.Key != "" || art.LocalRoot != filepath.Join(root, subtree) {
-				t.Fatalf("subtree artifact: %+v %q %v", art, data, err)
-			}
-			if subtree == "kubernetes" {
-				for _, name := range []string{".git/config", "excluded"} {
-					if _, err := fs.Stat(art.FS, name); !errors.Is(err, fs.ErrNotExist) {
-						t.Fatalf("source policy %s: %v", name, err)
-					}
-				}
-			}
-			wantViews := 1
-			if i == 2 {
-				wantViews = 2
-			}
-			if len(d.aliasViews) != wantViews {
-				t.Fatalf("views = %d", len(d.aliasViews))
-			}
-		}
-		if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
-			t.Fatal("bootstrap changed")
-		}
-	})
-
 }
 
 func discoveryRefFixture(t *testing.T) string {
@@ -821,48 +685,43 @@ func (warningFailureFS) Open(name string) (fs.File, error) {
 
 func TestEntrySourceView_WarningEvidence(t *testing.T) {
 	t.Parallel()
-	for _, subtree := range []string{".", "app"} {
-		t.Run(subtree, func(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint(failed), func(t *testing.T) {
 			t.Parallel()
-			for _, failed := range []bool{false, true} {
-				t.Run(fmt.Sprint(failed), func(t *testing.T) {
-					t.Parallel()
-					root := t.TempDir()
-					testutil.WriteFile(t, root, "app/file.yaml", "content")
-					current := os.DirFS(root)
-					if failed {
-						current = warningFailureFS{}
-					}
-					input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: current})
-					assert.NoError(t, err)
-					raw := manifest.Warning{Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"app/module"}}
-					input.Warnings = []manifest.Warning{raw}
-					invocation := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "current only"}
-					bootstrap := &store.SourceArtifact{LocalPath: root, FS: input, Warnings: []manifest.Warning{invocation}}
-					obj := &manifest.OCIRepository{Name: "alias", Namespace: "apps"}
-					d := &Admission{aliasViews: map[string]*store.SourceArtifact{}}
-					for range 2 {
-						artifact, _, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, subtree: subtree})
-						if failed && !errors.Is(err, fs.ErrPermission) || !failed && err != nil {
-							t.Fatalf("source view error=%v, failed=%t", err, failed)
-						}
-						if failed {
-							if artifact != nil {
-								t.Fatalf("failed source view = %+v", artifact)
-							}
-							continue
-						}
-						if artifact == nil || len(artifact.Warnings) != 0 {
-							t.Fatalf("alias warning evidence = %+v", artifact)
-						}
-						if input := artifact.FS.(*gittree.FS); len(input.Warnings) != 0 {
-							t.Fatalf("derived filesystem warnings = %+v", input.Warnings)
-						}
-					}
-					assert.Diff(t, input.Warnings, []manifest.Warning{raw})
-					assert.Diff(t, bootstrap.Warnings, []manifest.Warning{invocation})
-				})
+			root := t.TempDir()
+			testutil.WriteFile(t, root, "app/file.yaml", "content")
+			current := os.DirFS(root)
+			if failed {
+				current = warningFailureFS{}
 			}
+			input, _, err := gittree.New(t.Context(), nil, plumbing.ZeroHash, gittree.ViewOptions{Mode: gittree.Direct, Current: current})
+			assert.NoError(t, err)
+			raw := manifest.Warning{Category: manifest.WarnSkippedSubmodule, Message: "skipping submodule", Detail: []string{"app/module"}}
+			input.Warnings = []manifest.Warning{raw}
+			invocation := manifest.Warning{Category: manifest.WarnBaselineStatusUnavailable, Message: "current only"}
+			bootstrap := &store.SourceArtifact{LocalPath: root, FS: input, Warnings: []manifest.Warning{invocation}}
+			obj := &manifest.GitRepository{Name: "alias", Namespace: "apps"}
+			d := &Admission{aliasViews: map[string]*store.SourceArtifact{}}
+			for range 2 {
+				artifact, _, err := d.entrySourceView(t.Context(), entryResolution{object: obj, input: bootstrap, git: obj})
+				if failed && !errors.Is(err, fs.ErrPermission) || !failed && err != nil {
+					t.Fatalf("source view error=%v, failed=%t", err, failed)
+				}
+				if failed {
+					if artifact != nil {
+						t.Fatalf("failed source view = %+v", artifact)
+					}
+					continue
+				}
+				if artifact == nil || len(artifact.Warnings) != 0 {
+					t.Fatalf("alias warning evidence = %+v", artifact)
+				}
+				if input := artifact.FS.(*gittree.FS); len(input.Warnings) != 0 {
+					t.Fatalf("derived filesystem warnings = %+v", input.Warnings)
+				}
+			}
+			assert.Diff(t, input.Warnings, []manifest.Warning{raw})
+			assert.Diff(t, bootstrap.Warnings, []manifest.Warning{invocation})
 		})
 	}
 }

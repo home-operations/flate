@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -84,8 +85,9 @@ func TestResolveEntrySources_IndexedRoots(t *testing.T) {
 		want             bool
 	}{
 		{name: "git", kind: manifest.KindGitRepository, want: true},
-		{name: "bucket", kind: manifest.KindBucket, want: true},
+		{name: "bucket", kind: manifest.KindBucket},
 		{name: "helm repository", kind: manifest.KindHelmRepository},
+		{name: "oci", kind: manifest.KindOCIRepository},
 		{name: "covered", kind: manifest.KindGitRepository, role: "covered"},
 		{name: "terminal", kind: manifest.KindGitRepository, role: "terminal"},
 	} {
@@ -103,6 +105,9 @@ spec:
       sourceRef: {kind: %s, name: source}
 `, tc.kind)
 
+			if tc.kind == manifest.KindOCIRepository {
+				declaration = "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: orphan, namespace: apps}\nspec: {chartRef: {kind: OCIRepository, name: source}}\n"
+			}
 			testutil.WriteFile(t, root, "entry/release.yaml", declaration)
 			testutil.WriteFile(t, root, "charts/demo/Chart.yaml", "apiVersion: v2\nname: demo\nversion: 1.0.0\n")
 			testutil.WriteFile(t, root, "charts/demo/templates/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: rendered}\n")
@@ -226,8 +231,8 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		want                               bool
 	}{
 		{manifest.KindGitRepository, manifest.SourceDomain, "flux-system", "source", "", true},
-		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "source", "", true},
-		{manifest.KindBucket, manifest.SourceDomain, "other", "source", "", true},
+		{manifest.KindOCIRepository, manifest.SourceDomain, "other", "source", "", false},
+		{manifest.KindBucket, manifest.SourceDomain, "other", "source", "", false},
 		{manifest.KindHelmRepository, manifest.SourceDomain, "other", "source", "", false},
 		{manifest.KindExternalArtifact, manifest.SourceDomain, "other", "source", "", false},
 		{manifest.KindGitRepository, "wrong.group", "other", "source", "", false},
@@ -271,7 +276,7 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		{
 			name: "artifact reference without path fact",
 			obj: &manifest.RawObject{APIVersion: "source.extensions.fluxcd.io/v1beta1", Kind: "ArtifactGenerator", Name: "generator", Namespace: "apps",
-				Spec: map[string]any{"sources": []any{map[string]any{"kind": manifest.KindOCIRepository, "name": "source"}}}}, want: true,
+				Spec: map[string]any{"sources": []any{map[string]any{"kind": manifest.KindOCIRepository, "name": "source"}}}},
 		},
 		{
 			name: "loader witness without path fact",
@@ -382,17 +387,19 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 		st.AddObject(&manifest.Kustomization{Name: "wrong", Namespace: "consumer", Path: "./apps/x", SourceRef: kustomizev1.CrossNamespaceSourceReference{APIVersion: wrong.Group + "/v1", Kind: wrong.Kind, Namespace: wrong.Namespace, Name: wrong.Name}})
 		d := Session{cfg: Config{Path: filepath.Join(root, "kubernetes/clusters/c0"), Store: st}}
 		count, err := d.resolveEntrySources(t.Context(), true)
-		if err != nil || count != len(ids) {
+		if err != nil || count != 4 {
 			t.Fatalf("resolution = %d, %v, want %d", count, err, len(ids))
 		}
 		for _, id := range ids {
-			artifact, ok := st.GetArtifact(id, store.ArtifactContent).(*store.SourceArtifact)
-			want := filepath.Join(root, "kubernetes")
-			if id.Kind == manifest.KindGitRepository {
-				want = root
+			artifact := st.GetArtifact(id, store.ArtifactContent)
+			if id.Kind != manifest.KindGitRepository {
+				if artifact != nil || st.GetObject(id) != nil {
+					t.Fatalf("missing non-Git source aliased: %s", id)
+				}
+				continue
 			}
-			if !ok || artifact.LocalRoot != want || st.GetObject(id).Named() != id {
-				t.Fatalf("%s artifact = %+v, want root %s", id, artifact, want)
+			if artifact == nil || artifact.(*store.SourceArtifact).LocalRoot != root || st.GetObject(id).Named() != id {
+				t.Fatalf("Git identity changed: %s", id)
 			}
 		}
 		if st.GetObject(wrong) != nil || st.GetArtifact(wrong, store.ArtifactContent) != nil {
@@ -401,155 +408,37 @@ func TestResolveEntrySources_Identity(t *testing.T) {
 	})
 }
 
-func TestAliasMissingKustomizationSources_OCIRoot(t *testing.T) {
+func TestResolveEntrySources_MissingNonGit(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
-		for _, tc := range []struct {
-			name, scan   string
-			paths, files []string
-			want         string
-		}{
-			{name: "subtree", paths: []string{"./apps/x"}, files: []string{"kubernetes/apps/x/file"}, want: "kubernetes"},
-			{name: "repository", paths: []string{"kubernetes/apps/x"}, files: []string{"kubernetes/apps/x/file"}, want: "."},
-			{name: "scan", paths: []string{"./apps/x"}, files: []string{"kubernetes/clusters/c0/apps/x/file"}, want: "kubernetes/clusters/c0"},
-			{name: "shallowest", paths: []string{"./apps/x"}, files: []string{"apps/x/file", "kubernetes/apps/x/file"}, want: "."},
-			{name: "shared constraint", paths: []string{"./apps/x", "./apps/y"}, files: []string{"apps/x/file", "kubernetes/apps/x/file", "kubernetes/apps/y/file"}, want: "kubernetes"},
-			{name: "incompatible", paths: []string{"./apps/x", "./root-only"}, files: []string{"kubernetes/apps/x/file", "root-only/file"}},
-			{name: "missing", paths: []string{"./absent"}, files: []string{"kubernetes/apps/x/file"}},
-			{name: "file", paths: []string{"./apps/x/file"}, files: []string{"kubernetes/apps/x/file"}},
-			{name: "empty", paths: []string{""}, files: []string{"file"}, want: "."},
-			{name: "dot", paths: []string{"."}, files: []string{"file"}, want: "."},
-			{name: "outside scan", scan: "../outside", paths: []string{"./apps/x"}, files: []string{"apps/x/file"}},
-			{name: "escaping", paths: []string{"./apps/../../outside"}, files: []string{"outside/file"}},
-			{name: "normalized", paths: []string{"./apps/../apps/x"}, files: []string{"kubernetes/apps/x/file"}, want: "kubernetes"},
-		} {
-			t.Run(kind+"/"+tc.name, func(t *testing.T) {
-				t.Parallel()
-				for _, reverse := range []bool{false, true} {
-					root := t.TempDir()
-					testutil.WriteFile(t, root, "absent/file", "checkout decoy")
-					input := fstest.MapFS{"kubernetes/clusters/c0/ks.yaml": {Data: []byte("scan")}}
-					for _, file := range tc.files {
-						input[file] = &fstest.MapFile{Data: []byte(file)}
-					}
-					st := store.New()
-					bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: input}
-					st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-					paths := slices.Clone(tc.paths)
-					if reverse {
-						slices.Reverse(paths)
-					}
-					var source manifest.NamedResource
-					for i, p := range paths {
-						ks := &manifest.Kustomization{Name: string(rune('a' + i)), Namespace: "other", Path: p, SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
-						source = ks.SourceID()
-						st.AddObject(ks)
-					}
-					scan := "kubernetes/clusters/c0"
-					if tc.scan != "" {
-						scan = tc.scan
-					}
-					d := Session{cfg: Config{Path: filepath.Join(root, scan), Store: st}}
-					aliases, err := d.resolveEntrySources(t.Context(), true)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if tc.want == "" {
-						if aliases != 0 || st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil {
-							t.Fatalf("inconsistent source aliased: %v", aliases)
-						}
-						continue
-					}
-					art, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-					if !ok || aliases != 1 || st.GetObject(source) == nil {
-						t.Fatalf("missing alias: %v, %+v", aliases, art)
-					}
-					if art.LocalRoot != filepath.Join(root, tc.want) || art.Key != "" || !art.InputAlias {
-						t.Fatalf("alias coordinates: %+v", art)
-					}
-					for _, p := range paths {
-						name := filepath.ToSlash(filepath.Clean(manifest.NormalizeClaimBase(p)))
-						if info, err := fs.Stat(art.FS, name); err != nil || !info.IsDir() {
-							t.Fatalf("alias path %q: %v", name, err)
-						}
-					}
-					st.AddObject(&manifest.Kustomization{Name: "later", Namespace: "other", Path: "./root-only", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: source.Kind, Name: source.Name}})
-					if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != art {
-						t.Fatalf("published root changed: %v, %v", aliases, err)
-					}
-					if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
-						t.Fatal("bootstrap replaced")
-					}
-				}
-			})
-		}
-		t.Run(kind+"/duplicate and replaced witnesses", func(t *testing.T) {
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindHelmRepository, manifest.KindBucket} {
+		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
-			bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"apps/x/file": {}}}
+			bootstrap := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"apps/file": {Data: []byte("decoy")}, "Chart.yaml": {Data: []byte("apiVersion: v2\nname: decoy\nversion: 1.0.0\n")}}}
 			st.SetArtifact(manifest.BootstrapSourceID, bootstrap)
-			witness := &manifest.Kustomization{Name: "apps", Namespace: "other", Path: "./absent",
-				SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "source"}}
-			st.AddObject(witness)
-			source := witness.SourceID()
-			d := Session{cfg: Config{Path: root, Store: st}, loader: loader.New(st)}
-			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != nil {
-				t.Fatalf("failed root resolution = %d, %v", aliases, err)
-			}
-			if !slices.Equal(d.resolvedSources[source].refs, []sourceWitness{{id: witness.Named(), path: witness.Path}}) {
-				t.Fatalf("loader/store witnesses were duplicated or copied: %+v", d.resolvedSources[source].refs)
-			}
-			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 0 || st.GetArtifact(source, store.ArtifactContent) != nil {
-				t.Fatalf("unchanged witnesses made progress = %d, %v", aliases, err)
-			}
-			replacement := witness.Clone()
-			replacement.Path = "./apps/x"
-			st.AddObject(replacement)
-			if aliases, err := d.resolveEntrySources(t.Context(), true); err != nil || aliases != 1 {
-				t.Fatalf("replacement witness did not retry = %d, %v", aliases, err)
-			}
-			artifact, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-			if !ok || artifact.LocalRoot != root || !artifact.InputAlias || st.GetObject(source).Named() != source || st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
-				t.Fatalf("retried alias changed source or bootstrap identity: %+v", artifact)
-			}
-		})
-	}
-}
-
-func TestAliasMissingKustomizationSources_OCIReadErrors(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name     string
-		canceled bool
-		want     error
-	}{
-		{name: "permission", want: fs.ErrPermission},
-		{name: "canceled", canceled: true, want: context.Canceled},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			root := t.TempDir()
-			st := store.New()
-			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: deniedBootstrap{}})
-			st.AddObject(&manifest.Kustomization{Name: "apps", Namespace: "flux-system", Path: "./apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: manifest.KindOCIRepository, Name: "source"}})
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			if tc.canceled {
-				cancel()
-			}
+			consumer := &manifest.Kustomization{Name: "consumer", Namespace: "apps", Path: "./apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: "missing"}}
+			st.AddObject(consumer)
+			id := consumer.SourceID()
 			d := Session{cfg: Config{Path: root, Store: st}}
-			if _, err := d.resolveEntrySources(ctx, true); !errors.Is(err, tc.want) {
-				t.Fatalf("error = %v, want %v", err, tc.want)
+			if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 {
+				t.Fatalf("missing source discovery = %d, %v", count, err)
+			}
+			obj, artifact, err := d.admission().Resolve(t.Context(), id, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if obj != nil || artifact != nil || st.GetObject(id) != nil || st.GetArtifact(id, store.ArtifactContent) != nil {
+				t.Fatalf("missing source resolved: object=%v artifact=%v error=%v", obj, artifact, err)
+			}
+			if status, ok := st.GetStatus(id); ok && status.Status == store.StatusReady {
+				t.Fatal("missing source became ready")
+			}
+			if st.GetArtifact(manifest.BootstrapSourceID, store.ArtifactContent) != bootstrap {
+				t.Fatal("canonical bootstrap changed")
 			}
 		})
 	}
-}
-
-type deniedBootstrap struct{}
-
-func (deniedBootstrap) Open(name string) (fs.File, error) {
-	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrPermission}
 }
 
 func TestResolveEntrySources_Content(t *testing.T) {
@@ -567,9 +456,9 @@ func TestResolveEntrySources_Content(t *testing.T) {
 	}
 	bootstrap := &store.SourceArtifact{FS: input, Key: key, Content: cache.AcquisitionIdentity(input), LocalRoot: "/input", LocalPath: "/input", Revision: "first"}
 	obj := &manifest.GitRepository{Name: "alias", Namespace: "apps"}
-	candidate := entryResolution{input: bootstrap, object: obj, subtree: "apps"}
+	candidate := entryResolution{input: bootstrap, object: obj, git: obj}
 
-	for _, phase := range []string{"warm", "metadata", "subtree", "mutable"} {
+	for _, phase := range []string{"warm", "metadata", "sparse", "mutable"} {
 		t.Run(phase, func(t *testing.T) {
 			t.Parallel()
 			d := Admission{aliasViews: map[string]*store.SourceArtifact{}}
@@ -585,8 +474,10 @@ func TestResolveEntrySources_Content(t *testing.T) {
 			case "metadata":
 				cloned.Revision = "next"
 				cloned.Metadata = map[string]string{"org.opencontainers.image.revision": "next"}
-			case "subtree":
-				selected.subtree = "other"
+			case "sparse":
+				shaped := *obj
+				shaped.SparseCheckout = []string{"other"}
+				selected.git = &shaped
 			case "mutable":
 				cloned.Content = ""
 				cloned.Key = ""
@@ -604,9 +495,88 @@ func TestResolveEntrySources_Content(t *testing.T) {
 				if got.Content != "" {
 					t.Fatal("mutable alias acquired a generation")
 				}
-			} else if got.Content == "" || (got.Content == first.Content) != (phase != "subtree") {
+			} else if got.Content == "" || (got.Content == first.Content) != (phase != "sparse") {
 				t.Fatalf("shaped identity = %q, first %q", got.Content, first.Content)
 			}
 		})
+	}
+}
+
+func TestResolveEntrySources_IndexedDeclarations(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindHelmRepository, manifest.KindBucket} {
+		for _, independent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/independent=%t", kind, independent), func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "sources", Name: "declared"}
+				spec := "{url: 'oci://fixture.invalid/artifact', interval: 5m}"
+				if kind == manifest.KindHelmRepository {
+					spec = "{url: 'https://fixture.invalid/charts', interval: 5m}"
+				}
+				if kind == manifest.KindBucket {
+					spec = "{endpoint: fixture.invalid, bucketName: published, interval: 5m}"
+				}
+				testutil.WriteFile(t, root, "entry/source.yaml", fmt.Sprintf("apiVersion: source.toolkit.fluxcd.io/v1\nkind: %s\nmetadata: {name: declared, namespace: sources, uid: authored-source}\nspec: %s\n", kind, spec))
+				st := store.New()
+				l := loader.New(st)
+				l.SourceRoot = root
+				var requester manifest.BaseManifest = &manifest.Kustomization{Name: "requester", Namespace: "apps", Path: "./payload", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: id.Name, Namespace: id.Namespace}}
+				if kind == manifest.KindHelmRepository {
+					var err error
+					requester, _, _, err = manifest.ParseDoc(map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": manifest.KindHelmRelease, "metadata": map[string]any{"name": "requester", "namespace": "apps"}, "spec": map[string]any{"chart": map[string]any{"spec": map[string]any{"chart": "chart", "sourceRef": map[string]any{"kind": kind, "name": id.Name, "namespace": id.Namespace}}}}}, manifest.ParseDocOptions{})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				cfg := Config{Path: filepath.Join(root, "entry"), RepoRoot: root, Store: st, Selection: manifest.Selection{Roots: []manifest.NamedResource{requester.Named()}}}
+				if independent {
+					cfg.Selection.Roots = []manifest.NamedResource{id}
+				}
+				l.Options.Selection = cfg.Selection
+				d := Session{cfg: cfg, loader: l}
+				if _, err := d.resolveEntrySources(t.Context(), false); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := l.Load(t.Context(), cfg.Path); err != nil {
+					t.Fatal(err)
+				}
+				l.Admit(root)
+				record, indexed := l.Index.Lookup(id)
+				if !indexed || st.GetObject(id) != nil {
+					t.Fatal("source was not indexed without publication")
+				}
+				body, err := os.ReadFile(record.Path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				documents, err := manifest.DecodeDocs(strings.NewReader(string(body)), manifest.IncidentalDocuments)
+				if err != nil {
+					t.Fatal(err)
+				}
+				expected, _, _, err := manifest.ParseDoc(documents[0].Document, manifest.ParseDocOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				before := manifest.Fingerprint(expected)
+				if !independent {
+					st.AddObject(requester)
+				}
+				if count, err := d.resolveEntrySources(t.Context(), true); err != nil || count != 0 {
+					t.Fatalf("declared source resolution = %d, %v", count, err)
+				}
+				obj, doc, emission := st.GetEmission(id)
+				emission.Finish()
+				if obj == nil || manifest.Fingerprint(obj) != before || doc == nil {
+					t.Fatalf("authored declaration missing: object=%v document=%v", obj, doc)
+				}
+				if doc["metadata"].(map[string]any)["uid"] != "authored-source" {
+					t.Fatalf("authored document changed: %v", doc)
+				}
+				if st.GetArtifact(id, store.ArtifactContent) != nil {
+					t.Fatal("explicit non-Git declaration acquired a local artifact")
+				}
+			})
+		}
 	}
 }

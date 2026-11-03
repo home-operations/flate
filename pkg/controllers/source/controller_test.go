@@ -23,6 +23,7 @@ import (
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/controllers/base"
+	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/schedule"
@@ -1244,6 +1245,50 @@ func TestController_AmbientFailureRetainsCause(t *testing.T) {
 			if response, ok := errors.AsType[*fetcherr.ResponseError](err); rejected && (!ok || response.StatusCode != http.StatusUnauthorized) {
 				t.Fatal("lost typed rejection")
 			}
+		})
+	}
+}
+
+func TestController_DeclaredNonGitWithAdmission(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindHelmRepository, manifest.KindBucket} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			st := store.New()
+			input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"decoy": {Data: []byte("local")}}}
+			result, err := discovery.Run(t.Context(), discovery.Config{Input: input, Store: st})
+			assert.NoError(t, err)
+			spec := map[string]any{"url": "oci://fixture.invalid/artifact"}
+			if kind == manifest.KindHelmRepository {
+				spec["url"] = "https://fixture.invalid/charts"
+			}
+			if kind == manifest.KindBucket {
+				spec = map[string]any{"endpoint": "fixture.invalid", "bucketName": "published"}
+			}
+			doc := map[string]any{"apiVersion": manifest.SourceDomain + "/v1", "kind": kind, "metadata": map[string]any{"name": "declared", "namespace": "sources"}, "spec": spec}
+			obj, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			before := manifest.Fingerprint(obj)
+			f := &fakeFetcher{artifact: &store.SourceArtifact{Kind: kind, URL: "remote", FS: fstest.MapFS{"payload": {Data: []byte("acquired")}}}}
+			c, _ := newConfiguredController(t, map[string]src.Fetcher{kind: f}, FetchOptions{Admission: result.Admission, Loader: loader.New(st)})
+			st.AddObject(obj, doc)
+			status := controllertest.DispatchToFixpoint(t.Context(), t, controllertest.Dispatch{Tasks: c.Tasks, Store: st, ID: obj.Named(), ReconcileNode: c.ReconcileNode})
+			assert.Equal(t, status.Status, store.StatusReady)
+			if kind == manifest.KindHelmRepository {
+				assert.Equal(t, f.calls, 0)
+				assert.Equal(t, st.GetObject(obj.Named()), obj)
+				assert.Equal(t, manifest.Fingerprint(obj), before)
+				return
+			}
+			if f.calls != 1 || len(f.objects) != 1 || f.objects[0] != obj {
+				t.Fatalf("fetcher did not receive authored declaration: calls=%d objects=%v", f.calls, f.objects)
+			}
+			assert.Equal(t, manifest.Fingerprint(obj), before)
+			artifact := st.GetArtifact(obj.Named(), store.ArtifactContent).(*store.SourceArtifact)
+			data, err := fs.ReadFile(artifact.FS, "payload")
+			assert.NoError(t, err)
+			assert.Equal(t, string(data), "acquired")
 		})
 	}
 }

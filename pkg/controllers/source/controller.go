@@ -161,7 +161,7 @@ func (c *execution) reconcile(ctx context.Context, obj manifest.BaseManifest, le
 	}
 
 	if c.admission != nil {
-		_, artifact, err := c.admission.Resolve(ctx, obj.Named(), obj, nil)
+		_, artifact, err := c.admission.Resolve(ctx, obj.Named(), obj)
 		if err != nil {
 			return err
 		}

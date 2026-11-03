@@ -173,9 +173,9 @@ func (k *Kustomization) references(yield func(Reference) bool, view ReferenceVie
 		if (view == ReferenceAll || use != "") && !yield(Reference{
 			NamedResource: src,
 			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
-			ArtifactStages:      GateInputs | GateArtifacts,
-			UnknownArtifactRoot: src.Group == SourceDomain && src.Kind == KindOCIRepository,
-			NamespaceDefault:    use != "" && k.SourceRef.Namespace == "",
+			ArtifactStages: GateInputs | GateArtifacts,
+
+			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",
 		}) {
 			return
 		}

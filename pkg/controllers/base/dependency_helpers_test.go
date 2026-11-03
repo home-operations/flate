@@ -51,7 +51,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 
 	artifacts := c.dependencies(obj, manifest.GateArtifacts)
 	for _, dep := range artifacts {
-		dep.Artifact, dep.ChartSource, dep.UnknownArtifactRoot = false, false, false
+		dep.Artifact, dep.ChartSource = false, false
 		if !slices.ContainsFunc(deps, func(existing manifest.DependencyRef) bool {
 			return existing.NamedResource == dep.NamedResource && cmp.Equal(existing.ReadyExpr, dep.ReadyExpr)
 		}) {
@@ -59,7 +59,7 @@ func (e *Execution) dependenciesForTest(obj manifest.BaseManifest) []manifest.De
 		}
 	}
 	for i := range deps {
-		deps[i].Artifact, deps[i].ChartSource, deps[i].UnknownArtifactRoot = false, false, false
+		deps[i].Artifact, deps[i].ChartSource = false, false
 	}
 	return deps
 }
@@ -93,7 +93,7 @@ func (e *Execution) authoredDependenciesForTest(obj manifest.BaseManifest) []man
 		return -1
 	})
 	for i := range deps {
-		deps[i].Artifact, deps[i].ChartSource, deps[i].UnknownArtifactRoot = false, false, false
+		deps[i].Artifact, deps[i].ChartSource = false, false
 	}
 	return deps
 }

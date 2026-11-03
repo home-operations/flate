@@ -27,18 +27,18 @@ func (p *artifactPromotion) Promote(_ context.Context, _ *store.ReadSet, id mani
 func TestClassify_ArtifactRequirement(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name                                                         string
-		level                                                        manifest.DrainLevel
-		content, descriptor, registry, promote, skipped, unknownRoot bool
-		expr                                                         string
-		status                                                       store.Status
-		want                                                         schedule.Kind
-		message                                                      string
-		wantErr                                                      error
+		name                                                    string
+		level                                                   manifest.DrainLevel
+		content, descriptor, registry, promote, skipped, absent bool
+		expr                                                    string
+		status                                                  store.Status
+		want                                                    schedule.Kind
+		message                                                 string
+		wantErr                                                 error
 	}{
 		{name: "ready without content", status: store.StatusReady, want: schedule.Blocked},
-		{name: "unknown root before cascade", unknownRoot: true, want: schedule.Blocked},
-		{name: "unknown root at cascade", unknownRoot: true, level: manifest.DrainCascade, want: schedule.DependencyFailed, message: "unknown OCI artifact root", wantErr: manifest.ErrInput},
+		{name: "missing source before cascade", absent: true, want: schedule.Blocked},
+		{name: "missing source at cascade", absent: true, level: manifest.DrainCascade, want: schedule.DependencyFailed, message: "dependency not found"},
 		{name: "cascade without content", status: store.StatusReady, level: manifest.DrainCascade, want: schedule.DependencyFailed, message: "artifact content unavailable", wantErr: manifest.ErrObjectNotFound},
 		{name: "force never readmits missing content", status: store.StatusReady, level: manifest.DrainForce, want: schedule.DependencyFailed, message: "artifact content unavailable", wantErr: manifest.ErrObjectNotFound},
 		{name: "content available", status: store.StatusReady, content: true, want: schedule.Terminal},
@@ -55,7 +55,7 @@ func TestClassify_ArtifactRequirement(t *testing.T) {
 			t.Parallel()
 			s := store.New()
 			var source manifest.BaseManifest = &manifest.GitRepository{Name: "source", Namespace: "apps"}
-			if tc.unknownRoot {
+			if tc.absent {
 				source = &manifest.OCIRepository{Name: "source", Namespace: "apps"}
 			}
 			if tc.descriptor {
@@ -93,10 +93,10 @@ func TestClassify_ArtifactRequirement(t *testing.T) {
 					publish()
 					return true
 				}}
-			} else if !tc.unknownRoot {
+			} else if !tc.absent {
 				publish()
 			}
-			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: source.Named(), ReadyExpr: new(tc.expr), Artifact: true, UnknownArtifactRoot: tc.unknownRoot}, tc.level)
+			got := w.Classify(t.Context(), manifest.DependencyRef{NamedResource: source.Named(), ReadyExpr: new(tc.expr), Artifact: true}, tc.level)
 			wantErr := tc.wantErr
 			if tc.skipped {
 				wantErr = manifest.ErrSourceSkipped

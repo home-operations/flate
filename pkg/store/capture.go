@@ -65,10 +65,10 @@ type inputBlock struct {
 }
 
 type readinessGate struct {
-	expr                                                     *string
-	artifact, artifactOnly, unknownArtifactRoot, chartSource bool
-	materializer                                             bool
-	next                                                     *readinessGate
+	expr                                *string
+	artifact, artifactOnly, chartSource bool
+	materializer                        bool
+	next                                *readinessGate
 }
 
 // Gate retains a readiness expression and its dependency purpose.
@@ -577,7 +577,7 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 	input.required = true
 	if !input.gate {
 		input.Ref.ReadyExpr, input.gate = ref.ReadyExpr, true
-		input.Ref.Artifact, input.Ref.ArtifactOnly, input.Ref.UnknownArtifactRoot, input.Ref.ChartSource = ref.Artifact, ref.ArtifactOnly, ref.UnknownArtifactRoot, ref.ChartSource
+		input.Ref.Artifact, input.Ref.ArtifactOnly, input.Ref.ChartSource = ref.Artifact, ref.ArtifactOnly, ref.ChartSource
 		input.materializer = materializer
 		return
 	}
@@ -586,10 +586,10 @@ func (r *ReadSet) require(ref manifest.DependencyRef, materializer bool) {
 	}
 	for gate := &r.details(input).gates; ; gate = &(*gate).next {
 		if *gate == nil {
-			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, artifactOnly: ref.ArtifactOnly, unknownArtifactRoot: ref.UnknownArtifactRoot, chartSource: ref.ChartSource, materializer: materializer}
+			*gate = &readinessGate{expr: ref.ReadyExpr, artifact: ref.Artifact, artifactOnly: ref.ArtifactOnly, chartSource: ref.ChartSource, materializer: materializer}
 			return
 		}
-		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, ArtifactOnly: (*gate).artifactOnly, UnknownArtifactRoot: (*gate).unknownArtifactRoot, ChartSource: (*gate).chartSource}, ref) && (*gate).materializer == materializer {
+		if sameReadinessGate(manifest.DependencyRef{NamedResource: ref.NamedResource, ReadyExpr: (*gate).expr, Artifact: (*gate).artifact, ArtifactOnly: (*gate).artifactOnly, ChartSource: (*gate).chartSource}, ref) && (*gate).materializer == materializer {
 			return
 		}
 	}
@@ -610,7 +610,7 @@ func (r *ReadSet) Gates() iter.Seq[Gate] {
 				continue
 			}
 			for gate := details.gates; gate != nil; gate = gate.next {
-				if !yield(Gate{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, ArtifactOnly: gate.artifactOnly, UnknownArtifactRoot: gate.unknownArtifactRoot, ChartSource: gate.chartSource, Materializer: gate.materializer}) {
+				if !yield(Gate{NamedResource: input.Ref.NamedResource, ReadyExpr: gate.expr, Artifact: gate.artifact, ArtifactOnly: gate.artifactOnly, ChartSource: gate.chartSource, Materializer: gate.materializer}) {
 					return
 				}
 			}

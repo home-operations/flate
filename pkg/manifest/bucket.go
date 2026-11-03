@@ -44,13 +44,6 @@ func (b *Bucket) Named() NamedResource {
 	return NamedResource{Group: kindTable[kindBucket].Group, Kind: KindBucket, Namespace: b.Namespace, Name: b.Name}
 }
 
-// BootstrapAlias returns a local copy; a nil Git descriptor selects a derived frozen root.
-func (b *Bucket) BootstrapAlias(root string) (BaseManifest, *GitRepository) {
-	spec := b.BucketSpec
-	spec.Endpoint, spec.BucketName = "file://"+root, b.Name
-	return NewBucket(sourcev1.Bucket{Name: b.Name, Namespace: b.Namespace, Labels: b.Labels, Annotations: b.Annotations, Spec: spec}), nil
-}
-
 // Content returns the source inputs for the effective bucket endpoint.
 func (b *Bucket) Content(endpoint string, secure bool) any {
 	var auth []NamedResource

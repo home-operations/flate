@@ -253,7 +253,7 @@ func TestRun_AliasesNonDefaultNamespaceBootstrap(t *testing.T) {
 
 func TestRun_AdmittedScanCoordinates(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
+	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
 			assertAdmittedScanCoordinates(t, filepath.Join(t.TempDir(), "virtual"), kind, "")
@@ -281,7 +281,7 @@ func TestRun_AdmittedRelativeScanCoordinates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
+	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
 		t.Run(kind, func(t *testing.T) {
 			assertAdmittedScanCoordinates(t, filepath.Join(cwd, "virtual"), kind, "virtual")
 		})
@@ -296,7 +296,10 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 	body := testutil.KustomizationYAML("root", "flux-system", "  path: .\n  sourceRef: {kind: "+kind+", name: missing}\n")
 	input := &store.SourceArtifact{LocalPath: root, LocalRoot: root, FS: fstest.MapFS{"ks.yaml": {Data: []byte(body)}}}
 	source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "flux-system", Name: "missing"}
-	wantIDs := []string{manifest.BootstrapSourceID.String(), testutil.KustomizationID("flux-system", "root").String(), source.String()}
+	wantIDs := []string{manifest.BootstrapSourceID.String(), testutil.KustomizationID("flux-system", "root").String()}
+	if kind == manifest.KindGitRepository {
+		wantIDs = append(wantIDs, source.String())
+	}
 	slices.Sort(wantIDs)
 	run := func(scan string) store.SourceArtifact {
 		t.Helper()
@@ -316,13 +319,19 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 		}
 		slices.Sort(ids)
 		assert.Diff(t, ids, wantIDs)
-		status, present := st.GetStatus(source)
-		if !present || status.Status != store.StatusReady || status.String() != "local entry source" {
-			t.Fatalf("source readiness = %+v, present = %t", status, present)
-		}
-		alias, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		if !ok || alias.LocalRoot != root || alias.LocalPath == "" || !alias.InputAlias {
-			t.Fatalf("source artifact = %+v", alias)
+		alias := input
+		if kind == manifest.KindGitRepository {
+			status, present := st.GetStatus(source)
+			if !present || status.Status != store.StatusReady || status.String() != "local entry source" {
+				t.Fatalf("Git readiness = %+v", status)
+			}
+			var ok bool
+			alias, ok = st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			if !ok || alias.LocalRoot != root || alias.LocalPath == "" || !alias.InputAlias {
+				t.Fatalf("source artifact = %+v", alias)
+			}
+		} else if st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil {
+			t.Fatal("missing non-Git source became available")
 		}
 		got, err := fs.ReadFile(alias.FS, "ks.yaml")
 		if err != nil || string(got) != body {
@@ -343,79 +352,55 @@ func assertAdmittedScanCoordinates(t *testing.T, root, kind, scan string) {
 
 func TestRun_BootstrapOCIArtifactRoot(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{manifest.KindOCIRepository, manifest.KindBucket} {
-		for _, missing := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/missing_%t", kind, missing), func(t *testing.T) {
-				t.Parallel()
-				dir := t.TempDir()
-				p := "./apps/x"
-				if missing {
-					p = "./absent"
-				}
-				testutil.WriteFile(t, dir, "kubernetes/clusters/c0/ks.yaml", testutil.KustomizationYAML("parent", "flux-system", "  {path: "+p+", sourceRef: {kind: "+kind+", name: flux-system}}\n"))
-				if !missing {
-					testutil.WriteFile(t, dir, "kubernetes/clusters/c0/constraint.yaml", testutil.KustomizationYAML("consumer", "flux-system", "  path: ./consumer\n  sourceRef: {kind: "+kind+", name: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: payload}]}\n"))
-				}
-				testutil.WriteFile(t, dir, "kubernetes/apps/x/kustomization.yaml", "resources: [cm.yaml, child.yaml]\n")
-				testutil.WriteFile(t, dir, "kubernetes/apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: flux-system}\ndata: {K: value}\n")
-				testutil.WriteFile(t, dir, "kubernetes/apps/x/child.yaml", testutil.KustomizationYAML("child", "flux-system", "  path: ./consumer\n  sourceRef: {kind: "+kind+", name: flux-system}\n  postBuild: {substituteFrom: [{kind: ConfigMap, name: payload}]}\n"))
-				testutil.WriteFile(t, dir, "kubernetes/consumer/kustomization.yaml", "resources: [cm.yaml]\n")
-				testutil.WriteFile(t, dir, "kubernetes/consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\ndata: {value: '${K}'}\n")
-				testutil.WriteFile(t, dir, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\n")
-				st := store.New()
-				res, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "kubernetes/clusters/c0"), RepoRoot: dir, Store: st, WipeSecrets: true})
-				if err != nil {
-					t.Fatal(err)
-				}
-				source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "flux-system", Name: "flux-system"}
-				parent := testutil.KustomizationID("flux-system", "parent")
-				child := parent
-				child.Name = "child"
-				if missing {
-					if st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil {
-						t.Fatal("unresolved source aliased")
-					}
-					if owners, _ := res.Index.OwnersOfFile("kubernetes/apps/x/cm.yaml"); len(owners) != 0 {
-						t.Fatalf("unresolved source claimed files: %v", owners)
-					}
-					return
-				}
-				art, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-				if !ok || art.LocalRoot != filepath.Join(dir, "kubernetes") {
-					t.Fatalf("source = %+v", art)
-				}
-				if owners, _ := res.Index.OwnersOfFile("kubernetes/apps/x/cm.yaml"); !slices.Contains(owners, parent) {
-					t.Fatalf("subtree owners = %v", owners)
+	for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			testutil.WriteFile(t, dir, "entry/ks.yaml", testutil.KustomizationYAML("parent", "apps", "  path: ./apps/x\n  sourceRef: {kind: "+kind+", name: source}\n"))
+			testutil.WriteFile(t, dir, "apps/x/kustomization.yaml", "resources: [cm.yaml, child.yaml]\n")
+			testutil.WriteFile(t, dir, "apps/x/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: payload, namespace: apps}\ndata: {K: value}\n")
+			testutil.WriteFile(t, dir, "apps/x/child.yaml", testutil.KustomizationYAML("child", "apps", "  path: ./consumer\n  sourceRef: {kind: "+kind+", name: source}\n"))
+			testutil.WriteFile(t, dir, "consumer/kustomization.yaml", "resources: [cm.yaml]\n")
+			testutil.WriteFile(t, dir, "consumer/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: result}\n")
+			testutil.WriteFile(t, dir, "sibling/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unrelated}\n")
+			st := store.New()
+			res, err := discovery.Run(t.Context(), discovery.Config{Trees: testTrees(t), Path: filepath.Join(dir, "entry"), RepoRoot: dir, Store: st, WipeSecrets: true})
+			assert.NoError(t, err)
+			source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "source"}
+			parent := testutil.KustomizationID("apps", "parent")
+			payload := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "payload"}
+			if kind != manifest.KindGitRepository {
+				if st.GetObject(source) != nil || st.GetArtifact(source, store.ArtifactContent) != nil {
+					t.Fatal("missing non-Git source aliased")
 				}
 				if owners, _ := res.Index.OwnersOfFile("apps/x/cm.yaml"); len(owners) != 0 {
-					t.Fatalf("unrelated sibling owners = %v", owners)
+					t.Fatalf("missing source claimed owners: %v", owners)
 				}
-				record, ok := res.Index.Lookup(child)
-				if !ok || record.Parent != parent {
-					t.Fatalf("child record = %+v", record)
-				}
-				payload := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "payload"}
-				if producers := testutil.Owners(st.Productions(payload, res.Index)); !slices.Contains(producers, parent) {
-					t.Fatalf("subtree producers = %v", producers)
-				}
-				if readers := slices.Collect(res.Index.ReadersOfFile("kubernetes/apps/x/cm.yaml")); !slices.ContainsFunc(readers, func(r manifest.FileReader) bool { return r.Reader == parent }) {
-					t.Fatalf("subtree readers = %v", readers)
+				if producers := st.Productions(payload, res.Index); len(producers) != 0 {
+					t.Fatalf("missing source claimed producers: %v", producers)
 				}
 				if readers := slices.Collect(res.Index.ReadersOfFile("apps/x/cm.yaml")); len(readers) != 0 {
-					t.Fatalf("sibling readers = %v", readers)
+					t.Fatalf("missing source claimed readers: %v", readers)
 				}
-				for _, file := range []string{"kubernetes/apps/x/cm.yaml", "apps/x/cm.yaml"} {
-					selected := admissiontest.Filter(t, admissiontest.Config{Changes: change.NewSet([]string{file}), Index: res.Index, Inventory: st, Root: ""}).KeepNames()
-					consumer := child
-					consumer.Name = "consumer"
-					for _, id := range []manifest.NamedResource{parent, child, consumer} {
-						if got := slices.Contains(selected, id.String()); got != strings.HasPrefix(file, "kubernetes/") {
-							t.Fatalf("change %s selected %v; checking %s", file, selected, id)
-						}
-					}
-				}
-			})
-		}
+				return
+			}
+			art, ok := st.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+			if !ok || art.LocalRoot != dir {
+				t.Fatalf("Git source = %+v", art)
+			}
+			if owners, _ := res.Index.OwnersOfFile("apps/x/cm.yaml"); !slices.Contains(owners, parent) {
+				t.Fatalf("Git owners = %v", owners)
+			}
+			if producers := testutil.Owners(st.Productions(payload, res.Index)); !slices.Contains(producers, parent) {
+				t.Fatalf("Git producers = %v", producers)
+			}
+			if readers := slices.Collect(res.Index.ReadersOfFile("apps/x/cm.yaml")); !slices.ContainsFunc(readers, func(r manifest.FileReader) bool { return r.Reader == parent }) {
+				t.Fatalf("Git readers = %v", readers)
+			}
+			if owners, _ := res.Index.OwnersOfFile("sibling/cm.yaml"); len(owners) != 0 {
+				t.Fatalf("unrelated owners = %v", owners)
+			}
+		})
 	}
 }
 
@@ -647,7 +632,9 @@ spec:
 			want := []string{(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "home-kubernetes"}).String()}
 			for _, kind := range []string{manifest.KindGitRepository, manifest.KindOCIRepository, manifest.KindBucket} {
 				source := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "other", Name: "missing"}
-				want = append(want, source.String())
+				if kind == manifest.KindGitRepository {
+					want = append(want, source.String())
+				}
 				for _, name := range []string{"one", "two"} {
 					objects = append(objects, &manifest.Kustomization{Name: kind + name, Namespace: "other", Path: "./k8s/apps", SourceRef: kustomizev1.CrossNamespaceSourceReference{Kind: kind, Name: source.Name}})
 				}
@@ -1052,6 +1039,19 @@ spec: {url: "https://example.invalid/cluster.git", ref: {branch: unavailable}}
 				t.Fatal("source-qualified graph lost the nested repository namespace")
 			}
 
+			if strings.HasPrefix(scenario, "missing_") {
+				id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "flux-system", Name: sourceName}
+				if cfg.Store.GetObject(id) != nil || cfg.Store.GetArtifact(id, store.ArtifactContent) != nil {
+					t.Fatal("missing non-Git source became available")
+				}
+				if cfg.Store.GetObject(testutil.KustomizationID("flux-system", "child")) != nil {
+					t.Fatal("missing source exposed a decoy child")
+				}
+				if owners := ownersForTest(res.Index, "apps/cm.yaml"); len(owners) != 0 {
+					t.Fatalf("missing source acquired owners: %v", owners)
+				}
+				return
+			}
 			child := testutil.KustomizationID("flux-system", "child")
 			if cfg.Store.GetObject(child) == nil {
 				t.Fatal("entry path did not discover its child Kustomization")
@@ -1399,8 +1399,12 @@ spec:
 				}
 				ordinary := manifest.NamedResource{Group: manifest.SourceDomain, Kind: kind, Namespace: "apps", Name: "ordinary"}
 				artifact, ok := st.GetArtifact(ordinary, store.ArtifactContent).(*store.SourceArtifact)
-				if !ok || !artifact.InputAlias || st.GetObject(ordinary) == nil {
-					t.Fatalf("ordinary missing source was not aliased: %+v", artifact)
+				if kind == manifest.KindGitRepository {
+					if !ok || !artifact.InputAlias || st.GetObject(ordinary) == nil {
+						t.Fatalf("Git source was not aliased: %+v", artifact)
+					}
+				} else if ok || st.GetObject(ordinary) != nil {
+					t.Fatalf("missing non-Git source was aliased: %+v", artifact)
 				}
 			})
 		}

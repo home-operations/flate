@@ -151,49 +151,58 @@ func (w *inputWalk) pluginDirectory(
 	if err != nil {
 		return "", inputResult{}, err
 	}
-	selected := canonical.String()
-	var injected bool
-	if file, ok := kustomizationFileIn(w.fs, selected); ok {
-		key := w.location(&controlLocation{file: file, root: selected, pluginRoot: owner})
-		if prior, ok := w.visited[key]; ok {
-			if string(prior.out) != key.root {
-				selected = string(prior.out)
-				injected = true
-			}
-		} else {
-			snapshot, buildErr := w.fs.upper.Build()
-			if buildErr != nil {
-				return "", inputResult{}, buildErr
-			}
-			w.fs.upper = tree.NewBuilder(snapshot)
-			name := remoteResourcePrefix + manifest.Fingerprint([]string{key.file, key.root, key.pluginRoot})
-			if mountErr := w.fs.upper.Mount(name, snapshot); mountErr != nil {
-				return "", inputResult{}, mountErr
-			}
-			w.fs.origins = append(w.fs.origins, mountOrigin{path: name, source: "."})
-			mount := filepath.Join(w.fs.root, name)
-			rel, buildErr := filepath.Rel(w.fs.root, key.root)
-			if buildErr != nil {
-				return "", inputResult{}, buildErr
-			}
-			selected = filepath.Join(mount, rel)
-			scope.pluginRoot = owner
-			result, buildErr := w.directory(ctx, selected, &scope)
-			if buildErr != nil {
-				return "", inputResult{}, buildErr
-			}
-			if !result.injected {
-				selected = canonical.String()
-			}
-			observation := w.visited[key]
-			observation.out = []byte(selected)
-			w.visited[key] = observation
-		}
+	selected, injected, err := w.pluginView(ctx, canonical.String(), owner, &scope)
+	if err != nil {
+		return "", inputResult{}, err
 	}
 	rel, err := filepath.Rel(owner, selected)
 	result := replaced(selected != canonical.String())
 	result.injected = result.injected || injected
+	//nolint:wrapcheck // Plugin path diagnostics must retain the original filepath error.
 	return "./" + filepath.ToSlash(rel), result, err
+}
+
+func (w *inputWalk) pluginView(ctx context.Context, dir, owner string, scope *walkScope) (string, bool, error) {
+	file, ok := kustomizationFileIn(w.fs, dir)
+	if !ok {
+		return dir, false, nil
+	}
+	key := w.location(&controlLocation{file: file, root: dir, pluginRoot: owner})
+	if prior, ok := w.visited[key]; ok {
+		if string(prior.out) != key.root {
+			return string(prior.out), true, nil
+		}
+		return dir, false, nil
+	}
+	snapshot, buildErr := w.fs.upper.Build()
+	if buildErr != nil {
+		return "", false, buildErr
+	}
+	w.fs.upper = tree.NewBuilder(snapshot)
+	name := remoteResourcePrefix + manifest.Fingerprint([]string{key.file, key.root, key.pluginRoot})
+	if mountErr := w.fs.upper.Mount(name, snapshot); mountErr != nil {
+		return "", false, mountErr
+	}
+	w.fs.origins = append(w.fs.origins, mountOrigin{path: name, source: "."})
+	mount := filepath.Join(w.fs.root, name)
+	rel, buildErr := filepath.Rel(w.fs.root, key.root)
+	if buildErr != nil {
+		//nolint:wrapcheck // Plugin path diagnostics must retain the original filepath error.
+		return "", false, buildErr
+	}
+	selected := filepath.Join(mount, rel)
+	scope.pluginRoot = owner
+	result, buildErr := w.directory(ctx, selected, scope)
+	if buildErr != nil {
+		return "", false, buildErr
+	}
+	if !result.injected {
+		selected = dir
+	}
+	observation := w.visited[key]
+	observation.out = []byte(selected)
+	w.visited[key] = observation
+	return selected, false, nil
 }
 
 func (w *inputWalk) location(incoming *controlLocation) controlLocation {

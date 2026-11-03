@@ -79,6 +79,8 @@ type Options struct {
 }
 
 // Configure installs immutable setup before dispatch.
+//
+//nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
 func (c *Controller) Configure(opts Options) {
 	c.requireNotStarted("Configure")
 	c.DependencySubstitutions = opts.DependencySubstitutions
@@ -119,53 +121,24 @@ func (c *Controller) KeepEmitted(
 		reads.Init(c.Store, parent, nil)
 		defer reads.Retire()
 	}
-	incoming := child
-	if child.Obj != nil && parent != (manifest.NamedResource{}) && parent != child.Obj.Named() {
-		incoming.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
+	admission := emittedAdmission{
+		controller:       c,
+		filter:           f,
+		reads:            reads,
+		incoming:         child,
+		inferProductions: child.Obj != nil && parent == (manifest.NamedResource{}) && len(child.Productions) == 0,
 	}
-	var proof *store.ReadSet
-	defer func() { proof.Retire() }()
-prepare:
+	if child.Obj != nil && parent != (manifest.NamedResource{}) && parent != child.Obj.Named() {
+		admission.incoming.Productions = append(slices.Clone(child.Productions), manifest.Production{Owner: parent})
+	}
+	defer func() { admission.proof.Retire() }()
 	for {
-		proof.Retire()
-		proof = c.admissionProof(reads)
-		if incoming.Obj != nil && parent == (manifest.NamedResource{}) && len(child.Productions) == 0 {
-			incoming.Productions = proof.Promotions(incoming.Obj.Named(), nil)
-		}
-		proposal, err := c.loader.Prepare(ctx, incoming, proof, nil)
-		if err != nil {
-			return false, err
-		}
-		if !reads.Valid() {
-			return false, nil
-		}
-		if !proof.Valid() {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return false, fmt.Errorf("context: %w", err)
-		}
-		added, retry := f.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+		ready, retry, err := admission.prepare(ctx)
 		if retry {
 			continue
 		}
-		for _, id := range added {
-			c.Store.SetIncluded(id, true)
-		}
-		for _, input := range proposal.Objects {
-			if err := ctx.Err(); err != nil {
-				return false, fmt.Errorf("context: %w", err)
-			}
-			if !reads.Valid() {
-				return false, nil
-			}
-			if !proof.Valid() {
-				continue prepare
-			}
-			admitEmittedInput(proof, &input)
-		}
-		if !proof.Valid() {
-			continue
+		if err != nil || !ready {
+			return false, err
 		}
 		break
 	}
@@ -229,4 +202,57 @@ func (c *Controller) preGate(obj manifest.BaseManifest) bool {
 // filterActive reports whether a non-nil, enabled change filter is configured.
 func (c *Controller) filterActive() bool {
 	return c.filter != nil && c.filter.Enabled()
+}
+
+type emittedAdmission struct {
+	controller       *Controller
+	filter           *change.Filter
+	reads            *store.ReadSet
+	incoming         store.Child
+	proof            *store.ReadSet
+	inferProductions bool
+}
+
+func (a *emittedAdmission) prepare(ctx context.Context) (bool, bool, error) {
+	a.proof.Retire()
+	a.proof = a.controller.admissionProof(a.reads)
+	if a.inferProductions {
+		a.incoming.Productions = a.proof.Promotions(a.incoming.Obj.Named(), nil)
+	}
+	proposal, err := a.controller.loader.Prepare(ctx, a.incoming, a.proof, nil)
+	if err != nil {
+		return false, false, err
+	}
+	if !a.reads.Valid() {
+		return false, false, nil
+	}
+	if !a.proof.Valid() {
+		return false, true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, false, fmt.Errorf("context: %w", err)
+	}
+	added, retry := a.filter.AddEmitted(proposal.Needed, proposal.Selected, proposal.Dirty, proposal.Revision)
+	if retry {
+		return false, true, nil
+	}
+	for _, id := range added {
+		a.controller.Store.SetIncluded(id, true)
+	}
+	for _, input := range proposal.Objects {
+		if err := ctx.Err(); err != nil {
+			return false, false, fmt.Errorf("context: %w", err)
+		}
+		if !a.reads.Valid() {
+			return false, false, nil
+		}
+		if !a.proof.Valid() {
+			return false, true, nil
+		}
+		admitEmittedInput(a.proof, &input)
+	}
+	if !a.proof.Valid() {
+		return false, true, nil
+	}
+	return true, false, nil
 }

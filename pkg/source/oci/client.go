@@ -22,9 +22,10 @@ const dockerConfigJSONKey = ".dockerconfigjson"
 
 func (f *operation) acquire(
 	ctx context.Context,
-	access manifest.RegistryAccess,
+	accessValue *manifest.RegistryAccess,
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
+	access := *accessValue
 	if err := ctx.Err(); err != nil {
 		return nil, err //nolint:wrapcheck // Cancellation already identifies its cause; another operation prefix would add no resource information.
 	}
@@ -36,7 +37,7 @@ func (f *operation) acquire(
 		}
 	}
 	policy.Timeout = &access.Timeout
-	request, err := f.newRepoClient(ctx, access)
+	request, err := f.newRepoClient(ctx, new(access))
 	machine := func(ctx context.Context) (*store.SourceArtifact, error) {
 		machineRequest := request
 		machineRequest.client = &remote.Repository{Reference: request.client.Reference}
@@ -49,7 +50,7 @@ func (f *operation) acquire(
 			if registryCredentialsErr != nil {
 				return registryCredentialsErr
 			}
-			return f.configure(access, &machineRequest, *selected)
+			return f.configure(new(access), &machineRequest, *selected)
 		}, func(ctx context.Context, policy cache.Policy) (*store.SourceArtifact, error) {
 			return f.acquirePrepared(ctx, &access, &machineRequest, policy)
 		})
@@ -66,7 +67,11 @@ func (f *operation) acquire(
 	return f.acquirePrepared(ctx, &access, &request, policy)
 }
 
-func (f *operation) newRepoClient(ctx context.Context, access manifest.RegistryAccess) (registryAcquisition, error) {
+func (f *operation) newRepoClient(
+	ctx context.Context,
+	accessValue *manifest.RegistryAccess,
+) (registryAcquisition, error) {
+	access := *accessValue
 	owner := access.Owner
 	if access.URL == "" {
 		return registryAcquisition{}, manifest.NewError(manifest.ErrInput, nil, "missing url")
@@ -96,22 +101,23 @@ func (f *operation) newRepoClient(ctx context.Context, access manifest.RegistryA
 		)
 	}
 	request := registryAcquisition{client: client, resolved: resolved}
-	selected, err := f.resolveRegistryConfig(ctx, access, client.Reference.Host())
+	selected, err := f.resolveRegistryConfig(ctx, new(access), client.Reference.Host())
 	if err == nil && *selected == auth.EmptyCredential && access.SecretRef != nil {
 		err = source.MissingSecretErr(owner, access.SecretRef.Name, "no credentials for the source registry")
 	}
 	if err != nil {
 		return request, err
 	}
-	err = f.configure(access, &request, *selected)
+	err = f.configure(new(access), &request, *selected)
 	return request, err
 }
 
 func (f *operation) configure(
-	access manifest.RegistryAccess,
+	accessValue *manifest.RegistryAccess,
 	request *registryAcquisition,
 	cred auth.Credential,
 ) error {
+	access := *accessValue
 	var material any
 	request.anonymous = cred == auth.EmptyCredential
 	if !request.anonymous {
@@ -172,9 +178,10 @@ func (f *operation) acquirePrepared(
 // Machine credentials MUST wait for shared credential settlement to exhaust rendered Secrets.
 func (f *operation) resolveRegistryConfig(
 	ctx context.Context,
-	access manifest.RegistryAccess,
+	accessValue *manifest.RegistryAccess,
 	hostname string,
 ) (*auth.Credential, error) {
+	access := *accessValue
 	if access.SecretRef == nil {
 		return &auth.Credential{}, nil
 	}

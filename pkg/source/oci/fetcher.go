@@ -69,7 +69,7 @@ func (f *operation) fetchSource(
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
 	f.produce = func(ctx context.Context, request registryAcquisition, policy cache.Policy) (*store.SourceArtifact, error) {
-		return f.fetchLayer(ctx, repo, request, policy)
+		return f.fetchLayer(ctx, repo, new(request), policy)
 	}
-	return f.acquire(ctx, repo.RegistryAccess(), policy)
+	return f.acquire(ctx, new(repo.RegistryAccess()), policy)
 }

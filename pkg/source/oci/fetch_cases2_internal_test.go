@@ -2,7 +2,6 @@ package oci
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -22,7 +21,6 @@ import (
 
 	"github.com/home-operations/flate/internal/assert"
 	"github.com/home-operations/flate/internal/testutil/cachetest"
-	"github.com/home-operations/flate/pkg/source"
 	"github.com/home-operations/flate/pkg/store"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
@@ -427,16 +425,7 @@ func testFetcherRevalidationCase(t *testing.T, operation *string,
 	for _, phase := range []string{"initial", "unchanged", "reopened", "changed", "missing", "truncated", "resolve failure"} {
 		if phase == "missing" || phase == "truncated" {
 			payload := v2.layer
-			if (*operation) == sourcev1.OCILayerExtract {
-				newReaderGz, err := gzip.NewReader(bytes.NewReader(payload))
-				assert.NoError(t, err)
-
-				payload, err = io.ReadAll(newReaderGz)
-				{
-					joinErr := errors.Join(err, newReaderGz.Close())
-					assert.NoError(t, joinErr)
-				}
-			}
+			payload = revalidationPayload(t, payload, operation)
 			found := 0
 			err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 				return testFetcherRevalidationCaseCallback2(
@@ -501,33 +490,11 @@ func testFetcherRevalidationCase(t *testing.T, operation *string,
 		)
 		t.Logf("%s HEAD/manifest GET/layer GET=%d/%d/%d", phase, h, m, l)
 		got := sourcecache.AcquisitionIdentity(art.FS)
-		if phase == "initial" {
-			identity = got
-		} else if phase == "changed" {
-			assert.FatalIf(t, got == identity, "%s", "changed manifest retained content identity")
+		checkRevalidationIdentity(t, phase, &identity, got)
 
-			identity = got
-		} else {
-			assert.FatalIf(t, got != identity, "%s", "revalidation changed content identity")
-		}
-
-		if (*operation) == sourcev1.OCILayerExtract {
-			want := "version: v1\n"
-			if phase == "changed" || phase == "missing" || phase == "truncated" {
-				want = "version: v2\n"
-			}
-			{
-				got := mustReadFile(t, art.FS, "app.yaml")
-				assert.FatalIf(t, got != want, "%s output=%q", phase, got)
-			}
-		} else {
-			want := v1.layer
-			if phase == "changed" || phase == "missing" || phase == "truncated" {
-				want = v2.layer
-			}
-			got, err := fs.ReadFile(art.FS, source.OCICopiedLayerFilename)
-			assert.FatalIf(t, err != nil || !bytes.Equal(got, want), "%s copied layer error=%v", phase, err)
-		}
+		checkRevalidationOutput(t, revalidationOutput{
+			operation: *operation, phase: phase, v1: &v1, v2: &v2, art: art,
+		})
 	}
 }
 
@@ -551,7 +518,7 @@ func testFetcherCacheIsolatesSourcesCase(t *testing.T, testCaseInput testFetcher
 		change(&current, fetcher)
 	got, err := (&operation{Fetcher: fetcher}).fetchLayer(
 		t.Context(),
-		&current, (*testCaseInput.request), sourcecache.Policy{MaxAge: current.SourceInterval()},
+		&current, new((*testCaseInput.request)), sourcecache.Policy{MaxAge: current.SourceInterval()},
 	)
 	assert.NoError(t, err)
 

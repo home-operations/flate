@@ -86,7 +86,7 @@ func TestFetcher_ResolveTLS_NoCertSecret(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", nil)
 	repo.URL = "oci://registry.example/test"
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo.RegistryAccess())
+	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(repo.RegistryAccess()))
 	assert.NoError(t, err)
 
 	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{})
@@ -104,7 +104,7 @@ func TestFetcher_ResolveTLS_Insecure(t *testing.T) {
 	f := &Fetcher{Network: newTestNetwork(t)}
 	repo := ociRepo("o", func(s *sourcev1.OCIRepositorySpec) { s.Insecure = true })
 	repo.URL = "oci://registry.example/test"
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo.RegistryAccess())
+	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(repo.RegistryAccess()))
 	assert.NoError(t, err)
 
 	expected, err := f.Network.HTTPTransport(source.HTTPTransportConfig{Insecure: true})
@@ -135,8 +135,7 @@ func TestFetcher_ResolveTLS_FromSecret(t *testing.T) {
 	})
 	repo.URL = "oci://registry.example/test"
 	request, err := (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
-		t.Context(),
-		repo.RegistryAccess(),
+		t.Context(), new(repo.RegistryAccess()),
 	)
 	assert.NoError(t, err)
 

@@ -232,9 +232,9 @@ func TestFetcher_ResolveConfig_CredentialSnapshot(t *testing.T) {
 	repo := ociRepo("snapshot", func(s *sourcev1.OCIRepositorySpec) { s.URL = "oci://docker.io/library/test" })
 	selected, err := newTestNetwork(t).RegistryCredentials(t.Context(), path, "registry-1.docker.io")
 	assert.NoError(t, err)
-	request, err := op.newRepoClient(t.Context(), repo.RegistryAccess())
+	request, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
 	if err == nil {
-		err = op.configure(repo.RegistryAccess(), &request, *selected)
+		err = op.configure(new(repo.RegistryAccess()), &request, *selected)
 	}
 	assert.NoError(t, err)
 	write("second")
@@ -242,9 +242,9 @@ func TestFetcher_ResolveConfig_CredentialSnapshot(t *testing.T) {
 	assert.FatalIf(t, err != nil || cred.Password != "first", "credential was not frozen: %v", err)
 	selected, err = newTestNetwork(t).RegistryCredentials(t.Context(), path, "registry-1.docker.io")
 	assert.NoError(t, err)
-	next, err := op.newRepoClient(t.Context(), repo.RegistryAccess())
+	next, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
 	if err == nil {
-		err = op.configure(repo.RegistryAccess(), &next, *selected)
+		err = op.configure(new(repo.RegistryAccess()), &next, *selected)
 	}
 	assert.FatalIf(
 		t,
@@ -495,19 +495,15 @@ func testFetcherSecretReferencesCase(t *testing.T, tt *struct {
 	switch {
 	case tt.proxy:
 		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
-			t.Context(),
-			repo.RegistryAccess(),
+			t.Context(), new(repo.RegistryAccess()),
 		)
 	case tt.cert:
 		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).newRepoClient(
-			t.Context(),
-			repo.RegistryAccess(),
+			t.Context(), new(repo.RegistryAccess()),
 		)
 	default:
 		_, err = (&operation{Fetcher: f, secrets: fInputs.lookup(repo)}).resolveRegistryConfig(
-			t.Context(),
-			repo.RegistryAccess(),
-			"ghcr.io",
+			t.Context(), new(repo.RegistryAccess()), "ghcr.io",
 		)
 	}
 	if err == nil || errors.Is(err, manifest.ErrMissingSecret) != tt.wantMissing ||

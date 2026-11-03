@@ -422,7 +422,7 @@ func testFetcherSourceTimeoutCase(t *testing.T, tc *struct {
 		r.Timeout = &metav1.Duration{Duration: tc.timeout}
 	}
 	f := &Fetcher{Network: newTestNetwork(t), Cache: cachetest.New(t, "", sourcecache.New)}
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r.RegistryAccess())
+	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(r.RegistryAccess()))
 	assert.NoError(t, err)
 
 	stop := errors.New("controlled registry request")
@@ -443,7 +443,7 @@ func testFetcherSourceTimeoutCase(t *testing.T, tc *struct {
 			return nil, stop
 		}),
 	}
-	_, err = (&operation{Fetcher: f}).fetchLayer(t.Context(), r, request, sourcecache.Policy{})
+	_, err = (&operation{Fetcher: f}).fetchLayer(t.Context(), r, new(request), sourcecache.Policy{})
 	if calls.Load() == 0 || !errors.Is(err, stop) {
 		t.Fatalf("controlled registry request not reached: calls=%d error=%v", calls.Load(), err)
 	}
@@ -557,7 +557,7 @@ func testFetcherPullTimeoutCaseCallback(t *testing.T, testCaseInput testFetcherP
 		Reference: &sourcev1.OCIRepositoryRef{SemVer: "*"},
 		Timeout:   &metav1.Duration{Duration: 5 * time.Second},
 	}
-	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), r.RegistryAccess())
+	request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(r.RegistryAccess()))
 	assert.NoError(t, err)
 
 	blocked := true
@@ -640,7 +640,7 @@ func testFetcherPullTimeoutCaseCallbackCompletion(
 ) {
 	t.Helper()
 	_, (*captures.err) = (&operation{Fetcher: (*captures.f)}).fetchLayer(
-		t.Context(), (*captures.r), (*captures.request), sourcecache.Policy{MaxAge: time.Hour},
+		t.Context(), (*captures.r), new((*captures.request)), sourcecache.Policy{MaxAge: time.Hour},
 	)
 	if !errors.Is((*captures.err), context.DeadlineExceeded) || time.Since((*captures.start)) != 5*time.Second {
 		t.Fatalf(
@@ -669,7 +669,7 @@ func testFetcherPullTimeoutCaseCallbackCompletion(
 
 	acquired, (*captures.err) = (&operation{Fetcher: (*captures.f)}).fetchLayer(
 		t.Context(),
-		&longer, (*captures.request), sourcecache.Policy{MaxAge: time.Hour},
+		&longer, new((*captures.request)), sourcecache.Policy{MaxAge: time.Hour},
 	)
 	if (*captures.err) != nil || time.Since((*captures.start)) != 6*time.Second {
 		t.Fatalf("longer pull: elapsed=%v error=%v", time.Since((*captures.start)), (*captures.err))
@@ -696,7 +696,7 @@ func testFetcherPullTimeoutCaseCallbackCompletion(
 
 	warm, (*captures.err) = (&operation{Fetcher: (*captures.f)}).fetchLayer(
 		t.Context(),
-		&shorter, (*captures.request), sourcecache.Policy{MaxAge: time.Hour},
+		&shorter, new((*captures.request)), sourcecache.Policy{MaxAge: time.Hour},
 	)
 	assert.FatalIf(
 		t, (*captures.err) !=

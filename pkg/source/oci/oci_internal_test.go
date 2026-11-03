@@ -293,8 +293,7 @@ func testResolveRefSemverPrecedenceCase(t *testing.T, tc *struct {
 	t.Cleanup(srv.Close)
 	repo := &manifest.OCIRepository{URL: "oci://" + strings.TrimPrefix(srv.URL, "http://") + "/chart"}
 	request, err := (&operation{Fetcher: &Fetcher{Network: newTestNetwork(t)}}).newRepoClient(
-		t.Context(),
-		repo.RegistryAccess(),
+		t.Context(), new(repo.RegistryAccess()),
 	)
 	assert.NoError(t, err)
 

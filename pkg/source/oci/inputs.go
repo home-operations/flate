@@ -41,27 +41,7 @@ func (f *Fetcher) FetchInputs(
 			cache.BlobKey{Content: content},
 			policy,
 			func(ctx context.Context, w cache.ProducerInput) (cache.ProducerResult, error) {
-				tags, err := registry.Tags(ctx, request.client)
-				if err != nil {
-					return cache.ProducerResult{}, fmt.Errorf("list tags: %w", orasError(err))
-				}
-				selected, err := provider.SelectTags(tags)
-				if err != nil {
-					return cache.ProducerResult{}, err
-				}
-				inputs := make([]fluxopv1.ResourceSetInput, 0, len(selected))
-				for _, tag := range selected {
-					descriptor, err := request.client.Resolve(ctx, tag)
-					if err != nil {
-						return cache.ProducerResult{}, fmt.Errorf("resolve %s: %w", tag, orasError(err))
-					}
-					input, err := provider.TagInputs(tag, descriptor.Digest.String())
-					if err != nil {
-						return cache.ProducerResult{}, err
-					}
-					inputs = append(inputs, input)
-				}
-				return cache.ProducerResult{}, json.NewEncoder(w).Encode(inputs)
+				return produceRegistryInputs(ctx, &request, provider, w)
 			},
 		)
 		if err != nil {
@@ -76,5 +56,35 @@ func (f *Fetcher) FetchInputs(
 			Key:     key,
 		}, nil
 	}
-	return op.acquire(ctx, *plan.Registry, policy)
+	return op.acquire(ctx, new(*plan.Registry), policy)
+}
+
+func produceRegistryInputs(
+	ctx context.Context,
+	request *registryAcquisition,
+	provider *manifest.ResourceSetInputProvider,
+	w cache.ProducerInput,
+) (cache.ProducerResult, error) {
+	tags, err := registry.Tags(ctx, request.client)
+	if err != nil {
+		return cache.ProducerResult{}, fmt.Errorf("list tags: %w", orasError(err))
+	}
+	selected, err := provider.SelectTags(tags)
+	if err != nil {
+		return cache.ProducerResult{}, err
+	}
+	inputs := make([]fluxopv1.ResourceSetInput, 0, len(selected))
+	for _, tag := range selected {
+		descriptor, err := request.client.Resolve(ctx, tag)
+		if err != nil {
+			return cache.ProducerResult{}, fmt.Errorf("resolve %s: %w", tag, orasError(err))
+		}
+		input, err := provider.TagInputs(tag, descriptor.Digest.String())
+		if err != nil {
+			return cache.ProducerResult{}, err
+		}
+		inputs = append(inputs, input)
+	}
+	//nolint:wrapcheck // Preserve codec and cache writer error identity.
+	return cache.ProducerResult{}, json.NewEncoder(w).Encode(inputs)
 }

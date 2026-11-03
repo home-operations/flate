@@ -197,7 +197,7 @@ func testFetcherFailureSourceAndOperationCase(
 			t.Error(closeErr3)
 		}
 	})
-	request, err := (&operation{Fetcher: f}).newRepoClient(ctx, repo.RegistryAccess())
+	request, err := (&operation{Fetcher: f}).newRepoClient(ctx, new(repo.RegistryAccess()))
 	assert.NoError(t, err)
 
 	var original error
@@ -238,9 +238,7 @@ func testFetcherFailureSourceAndOperationCase(
 	retry := sourcecache.RetryConfig{Attempts: 3, MinWait: time.Nanosecond, MaxWait: time.Nanosecond}
 	_, err = (&operation{Fetcher: f}).fetchLayer(
 		ctx,
-		repo,
-		request,
-		sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
+		repo, new(request), sourcecache.Policy{MaxAge: repo.SourceInterval(), Retry: retry},
 	)
 	if failures.Load() != tc.attempts {
 		t.Fatalf("producer failures: got %d, want %d: %v", failures.Load(), tc.attempts, err)
@@ -347,7 +345,7 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 	_, (*captures.err) = (&operation{Fetcher: (*captures.f)}).fetchLayer(
 		(*captures.ctx),
 		(*captures.repo),
-		(*captures.request),
+		new((*captures.request)),
 		sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval(), Retry: (*captures.retry)},
 	)
 	if captures.requests.Load() != before || captures.failures.Load() != (*captures.tc).attempts {

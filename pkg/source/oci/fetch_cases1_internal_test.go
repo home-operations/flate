@@ -312,7 +312,7 @@ func TestFetcher_CacheIsolatesSources(t *testing.T) {
 		if body != "first" {
 			continue
 		}
-		request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), repo.RegistryAccess())
+		request, err := (&operation{Fetcher: f}).newRepoClient(t.Context(), new(repo.RegistryAccess()))
 		assert.NoError(t, err)
 
 		identities := map[string]string{art.Key: "original"}

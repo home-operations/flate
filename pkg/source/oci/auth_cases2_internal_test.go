@@ -79,9 +79,9 @@ func testFetcherResolveConfigCredentialPrecedenceCase(
 		).RegistryCredentials(t.Context(), f.RegistryConfig, tt.registry)
 		assert.NoError(t, err)
 	}
-	request, err := op.newRepoClient(t.Context(), repo.RegistryAccess())
+	request, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
 	if err == nil && selected != nil {
-		err = op.configure(repo.RegistryAccess(), &request, *selected)
+		err = op.configure(new(repo.RegistryAccess()), &request, *selected)
 	}
 	assert.NoError(t, err)
 
@@ -104,7 +104,7 @@ func testFetcherResolveConfigCredentialPrecedenceCase(
 		)
 		assert.FatalIf(t, err != nil || captured != want, "%s", "producer reread mutable credentials")
 
-		rotated, err := op.newRepoClient(t.Context(), repo.RegistryAccess())
+		rotated, err := op.newRepoClient(t.Context(), new(repo.RegistryAccess()))
 		assert.FatalIf(
 			t,
 			err != nil || cmp.Equal(request.material, rotated.material),
@@ -176,7 +176,7 @@ func testFetcherMachineCredentialsCase(t *testing.T, tc *struct {
 				return &manifest.Secret{StringData: map[string]any{dockerConfigJSONKey: tc.docker}}
 			},
 		}
-		selected, err = op.resolveRegistryConfig(t.Context(), repo.RegistryAccess(), "ghcr.io")
+		selected, err = op.resolveRegistryConfig(t.Context(), new(repo.RegistryAccess()), "ghcr.io")
 	}
 	assert.FatalIf(t, (err != nil) != tc.fail, "native lookup: %v", err)
 	if !tc.fail {

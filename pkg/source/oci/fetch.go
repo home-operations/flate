@@ -34,9 +34,10 @@ type registryAcquisition struct {
 func (f *operation) fetchLayer(
 	ctx context.Context,
 	repo *manifest.OCIRepository,
-	request registryAcquisition,
+	requestValue *registryAcquisition,
 	policy cache.Policy,
 ) (*store.SourceArtifact, error) {
+	request := *requestValue
 	var ref manifest.OCIRepositoryRef
 	if repo.Reference != nil {
 		ref = manifest.OCIRepositoryRef(*repo.Reference)
@@ -175,37 +176,49 @@ func (f *operation) produceLayer(
 			len(m.Layers),
 		)
 	}
-	r, err := client.Fetch(ctx, layer)
+	selected := selectedLayer{descriptor: layer, extract: repo.LayerOperation() == sourcev1.OCILayerExtract}
+	if err := selected.write(ctx, client, w); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+type selectedLayer struct {
+	descriptor ocispec.Descriptor
+	extract    bool
+}
+
+func (l *selectedLayer) write(ctx context.Context, client *remote.Repository, w cache.ProducerInput) error {
+	r, err := client.Fetch(ctx, l.descriptor)
 	if err != nil {
-		return result, fmt.Errorf("fetch layer: %w", orasError(err))
+		return fmt.Errorf("fetch layer: %w", orasError(err))
 	}
 	defer func() { _ = r.Close() }()
-	verified := content.NewVerifyReader(r, layer)
-	if repo.LayerOperation() == sourcev1.OCILayerExtract {
-		gz, err := gzip.NewReader(verified)
+	verified := content.NewVerifyReader(r, l.descriptor)
+	var reader io.Reader = verified
+	var compressed *gzip.Reader
+	if l.extract {
+		compressed, err = gzip.NewReader(verified)
 		if err != nil {
-			return result, fmt.Errorf("gzip: %w", orasError(err))
+			return fmt.Errorf("gzip: %w", orasError(err))
 		}
-		_, copyErr := io.Copy( //nolint:gosec // Flux source archives impose no decompressed size limit.
-			w,
-			gz,
-		)
-		closeErr := gz.Close()
-		if copyErr != nil {
-			return result, orasError(copyErr)
-		}
-		if closeErr != nil {
-			return result, closeErr //nolint:wrapcheck // The layer adapter preserves the upstream compression error contract.
-		}
-	} else {
-		if _, err := io.Copy(w, verified); err != nil {
-			return result, orasError(err)
-		}
+		reader = compressed
+	}
+	_, copyErr := io.Copy(w, reader)
+	var closeErr error
+	if compressed != nil {
+		closeErr = compressed.Close()
+	}
+	if copyErr != nil {
+		return orasError(copyErr)
+	}
+	if closeErr != nil {
+		return closeErr //nolint:wrapcheck // The layer adapter preserves the upstream compression error contract.
 	}
 	if _, err := io.Copy(io.Discard, verified); err != nil {
-		return result, fmt.Errorf("copy source content: %w", err)
+		return fmt.Errorf("copy source content: %w", err)
 	}
-	return result, verified.Verify() //nolint:wrapcheck // This adapter delegates the upstream error contract; its caller supplies the operation context.
+	return verified.Verify() //nolint:wrapcheck // Preserve the verifier's upstream error contract.
 }
 
 func orasError(err error) error {

@@ -533,7 +533,7 @@ type testFetcherInsecureRegistryConcurrentTailState struct {
 
 func testFetcherInsecureRegistryConcurrentTail(t *testing.T, scope *testFetcherInsecureRegistryConcurrentTailState) {
 	t.Helper()
-	(*scope.unblock).Do(func() { close((*scope.release)) })
+	scope.unblock.Do(func() { close((*scope.release)) })
 	for range 2 {
 		result := <-(*scope.done)
 		if result.name == "bad" {
@@ -545,11 +545,11 @@ func testFetcherInsecureRegistryConcurrentTail(t *testing.T, scope *testFetcherI
 			t.Fatalf("successful producer: artifact=%v error=%v", result.artifact, result.err)
 		}
 	}
-	if (*scope.tlsConnections).Load() != 2 {
-		t.Fatalf("initial HTTPS acquisitions=%d, want 2", (*scope.tlsConnections).Load())
+	if scope.tlsConnections.Load() != 2 {
+		t.Fatalf("initial HTTPS acquisitions=%d, want 2", scope.tlsConnections.Load())
 	}
-	(*scope.initial).Store(false)
-	(*scope.fail).Store(false)
+	scope.initial.Store(false)
+	scope.fail.Store(false)
 	recovered, err := (*scope.f).Fetch(
 		t.Context(),
 		(*scope.repos)["bad"],
@@ -557,26 +557,26 @@ func testFetcherInsecureRegistryConcurrentTail(t *testing.T, scope *testFetcherI
 		sourcecache.Policy{MaxAge: time.Hour},
 	)
 	if err != nil || recovered == nil || mustReadFile(t, recovered.FS, "app.yaml") != "concurrent\n" ||
-		(*scope.tlsConnections).Load() != 3 {
+		scope.tlsConnections.Load() != 3 {
 		t.Fatalf(
 			"failed producer recovery: artifact=%v error=%v HTTPS attempts=%d",
 			recovered,
 			err,
-			(*scope.tlsConnections).Load(),
+			scope.tlsConnections.Load(),
 		)
 	}
-	before := (*scope.requests).Load()
+	before := scope.requests.Load()
 	secure := *(*scope.repos)["good"]
 	secure.Insecure = false
 	got, err := (*scope.f).Fetch(t.Context(), &secure, (testInputs{}).readSet(&secure), sourcecache.Policy{})
-	if got != nil || !errors.Is(err, http.ErrSchemeMismatch) || (*scope.requests).Load() != before ||
-		(*scope.tlsConnections).Load() != 4 {
+	if got != nil || !errors.Is(err, http.ErrSchemeMismatch) || scope.requests.Load() != before ||
+		scope.tlsConnections.Load() != 4 {
 		t.Fatalf(
 			"protocol selection leaked: artifact=%v error=%v HTTP requests=%d HTTPS attempts=%d",
 			got,
 			err,
-			(*scope.requests).Load()-before,
-			(*scope.tlsConnections).Load(),
+			scope.requests.Load()-before,
+			scope.tlsConnections.Load(),
 		)
 	}
 }

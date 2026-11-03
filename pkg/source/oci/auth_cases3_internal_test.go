@@ -32,8 +32,8 @@ import (
 func testFetcherResolveTLSSnapshotRotationCase(
 	t *testing.T, testCaseInputValue *testFetcherResolveTLSSnapshotRotationCaseInputs,
 ) {
-	testCaseInput := *testCaseInputValue
 	t.Helper()
+	testCaseInput := *testCaseInputValue
 	if (*testCaseInput.wave) == "password" {
 		testCaseInput.password.
 			Store("second")
@@ -431,7 +431,7 @@ func testFetcherSyntheticCredentialContextCaseCompletion(
 		},
 	}
 	_, err := op.fetchSource(t.Context(), (*captures.repo), sourcecache.Policy{})
-	label := captures.expected.Kind + " " + (*captures.expected).NamespacedName()
+	label := captures.expected.Kind + " " + captures.expected.NamespacedName()
 	if (*(*captures.material)) == "provider" {
 		label = captures.expected.String()
 	}
@@ -484,6 +484,7 @@ func testFetcherBearerTokenReuseCaseCallback(
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		//nolint:errchkjson // Fixture payloads are encodable; client cancellation may fail their response writes.
 		_ = json.NewEncoder(w).
 			Encode(map[string]string{"token": (*testCaseInput.token)(r.Host, r.URL.Query().Get("scope"), secret)})
 		return

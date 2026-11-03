@@ -32,8 +32,6 @@ import (
 	"github.com/home-operations/flate/pkg/source/helmchart"
 )
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 	var failing atomic.Bool
 	testutil.StubDNS(t, func(context.Context, string) error {
@@ -49,7 +47,6 @@ func TestFetcher_OCIHelmRepositoryCredentials(t *testing.T) {
 		manifestBlob{data: art.config, mediaType: "application/vnd.cncf.flux.config.v1+json"},
 		manifestBlob{data: art.layer, mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"},
 	)
-	art.manifestDigest = sha256Digest(art.manifest)
 	upstream := startFakeRegistry(t, art.manifest, art.config, art.layer)
 	var failNext atomic.Bool
 	var failures atomic.Int32

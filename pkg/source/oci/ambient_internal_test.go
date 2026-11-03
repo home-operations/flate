@@ -124,8 +124,6 @@ func TestFetcher_HelmAmbientReload(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 	dockerDir := t.TempDir()
 	t.Setenv("DOCKER_CONFIG", dockerDir)
@@ -140,7 +138,7 @@ func TestFetcher_SuppliedRegistryIdentity(t *testing.T) {
 		SecretRef: &manifest.LocalObjectReference{Name: "auth"},
 	}
 	f := &Fetcher{Network: newTestNetwork(t)}
-	var identities []any
+	identities := make([]any, 0, 4)
 	for _, tc := range []struct{ path, password, repository string }{
 		{"first.yaml", "one", ""},
 		{"second.yaml", "one", ""},

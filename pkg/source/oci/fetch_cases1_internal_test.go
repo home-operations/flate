@@ -281,7 +281,7 @@ func mustReadFile(t *testing.T, input fs.FS, path string) string {
 	return string(b)
 }
 
-//nolint:paralleltest // Subtests share their parent acquisition fixture and observe its state in order.
+//nolint:paralleltest,tparallel // Children update shared acquisition identities before their parent advances source content.
 func TestFetcher_CacheIsolatesSources(t *testing.T) {
 	t.Parallel()
 
@@ -378,7 +378,6 @@ func TestFetcher_LayerDigestMismatchPublishesNothing(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Subtests share their parent acquisition fixture and observe its state in order.
 func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 	t.Parallel()
 
@@ -409,6 +408,7 @@ func TestFetcher_FailureSourceAndOperation(t *testing.T) {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s/%d", layerOperation, stage, tc.status), func(t *testing.T) {
+				t.Parallel()
 				testFetcherFailureSourceAndOperationCase(
 					t,
 

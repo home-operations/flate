@@ -523,6 +523,7 @@ func testFetcherRevalidationSelectedTagMetadataCaseCallback(
 			available = append(available, "v1.1.0")
 		}
 		w.Header().Set("Content-Type", "application/json")
+		//nolint:errchkjson // Fixture payloads are encodable; client cancellation may fail their response writes.
 		_ = json.NewEncoder(w).Encode(map[string]any{"name": "app", "tags": available})
 		return
 	case strings.Contains(r.URL.Path, "/manifests/") && r.Method == http.MethodHead:

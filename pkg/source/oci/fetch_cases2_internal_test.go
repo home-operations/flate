@@ -244,8 +244,8 @@ func testFetcherInsecureRegistryErrorsCaseCompletion(
 			Do(func() { close((*captures.release)) })
 	}
 	err := <-(*captures.result)
-	if err == nil || captures.plain.Load() != 0 || (*captures.connections).Load() != 1 {
-		t.Fatalf("error=%v HTTP attempts=%d connections=%d", err, captures.plain.Load(), (*captures.connections).Load())
+	if err == nil || captures.plain.Load() != 0 || captures.connections.Load() != 1 {
+		t.Fatalf("error=%v HTTP attempts=%d connections=%d", err, captures.plain.Load(), captures.connections.Load())
 	}
 	switch *(*captures.mode) {
 	case "response":

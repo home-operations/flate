@@ -350,7 +350,7 @@ func testFetcherFailureSourceAndOperationCaseCompletion(
 		(*captures.request),
 		sourcecache.Policy{MaxAge: (*captures.repo).SourceInterval(), Retry: (*captures.retry)},
 	)
-	if captures.requests.Load() != before || (*captures.failures).Load() != (*captures.tc).attempts {
+	if captures.requests.Load() != before || captures.failures.Load() != (*captures.tc).attempts {
 		t.Fatalf(
 			"replay fetched: requests=%d, want %d; failures=%d, want %d", captures.requests.
 				Load(), before, captures.failures.

@@ -215,8 +215,6 @@ func TestFetcher_ResolveConfig_CredentialPrecedence(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_CorruptDockerConfig(t *testing.T) {
 	dockerDir := t.TempDir()
 	t.Setenv("DOCKER_CONFIG", dockerDir)
@@ -317,7 +315,9 @@ func TestFetcher_SharedMachineFailure(t *testing.T) {
 	transport := previous.(*http.Transport).Clone()
 	http.DefaultTransport = transport //nolint:reassign // The test replaces the process transport to exercise offline acquisition and restores it afterward.
 	t.Cleanup(
-		func() { http.DefaultTransport = previous },
+		func() {
+			http.DefaultTransport = previous //nolint:reassign // The test must restore the process HTTP transport after credential acquisition.
+		},
 	)
 	synctest.Test(t, func(t *testing.T) {
 		testFetcherSharedMachineFailureCallback(t, testFetcherSharedMachineFailureCallbackInputs{transport: &transport})
@@ -397,8 +397,6 @@ func TestFetcher_ProviderMissingSecret(t *testing.T) {
 	)
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_ResolveConfig_RegistryFallback(t *testing.T) {
 	covering := `{"auths":{"ghcr.io":{"auth":"YWxpY2U6aHVudGVyMg=="}}}`
 	tests := []struct {

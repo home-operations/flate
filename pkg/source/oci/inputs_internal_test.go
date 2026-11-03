@@ -40,32 +40,32 @@ type testInputs struct {
 func (f testInputs) readSet(obj manifest.BaseManifest) *store.ReadSet {
 	s := store.New()
 	seen := make(map[manifest.NamedResource]bool)
-	var admit func(manifest.BaseManifest)
-	admit = func(obj manifest.BaseManifest) {
-		s.AddObject(obj)
-		for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-			if seen[ref.NamedResource] {
-				continue
-			}
-			seen[ref.NamedResource] = true
-			if ref.Kind == manifest.KindSecret && f.secrets != nil {
-				if sec := f.secrets(ref.Namespace, ref.Name); sec != nil {
-					clone := *sec
-					clone.Namespace, clone.Name = ref.Namespace, ref.Name
-					s.AddObject(&clone)
-				}
-			}
-			if ref.Kind == manifest.KindHelmRepository && f.repos != nil {
-				if repo := f.repos(ref.Namespace, ref.Name); repo != nil {
-					admit(repo)
-				}
-			}
-		}
-	}
-	admit(obj)
+	f.admit(s, seen, obj)
 	reads := new(store.ReadSet)
 	reads.Init(s, obj.Named(), nil)
 	return reads
+}
+
+func (f testInputs) admit(s *store.Store, seen map[manifest.NamedResource]bool, obj manifest.BaseManifest) {
+	s.AddObject(obj)
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if seen[ref.NamedResource] {
+			continue
+		}
+		seen[ref.NamedResource] = true
+		if ref.Kind == manifest.KindSecret && f.secrets != nil {
+			if sec := f.secrets(ref.Namespace, ref.Name); sec != nil {
+				clone := *sec
+				clone.Namespace, clone.Name = ref.Namespace, ref.Name
+				s.AddObject(&clone)
+			}
+		}
+		if ref.Kind == manifest.KindHelmRepository && f.repos != nil {
+			if repo := f.repos(ref.Namespace, ref.Name); repo != nil {
+				f.admit(s, seen, repo)
+			}
+		}
+	}
 }
 
 func (f testInputs) lookup(obj manifest.BaseManifest) source.SecretGetter {
@@ -197,8 +197,6 @@ func TestFetcher_InputsAuthentication(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Credential fixture helpers change the process environment.
-//nolint:paralleltest // Credential and DNS fixtures change process environment or resolver state.
 func TestFetcher_InputsMachineCredentialsReuse(t *testing.T) {
 	artifact := newFakeOCIArtifact(t, map[string]string{"app.yaml": "kind: ConfigMap"})
 	upstream := startFakeRegistry(t, artifact.manifest, artifact.config, artifact.layer)
@@ -365,7 +363,7 @@ func testFetcherInputsSelectionAndRefreshCase(
 		if run == 2 {
 			digest = second.manifestDigest
 		}
-		want := []map[string]any{}
+		want := make([]map[string]any, 0, 2)
 		for _, tag := range []string{"v1.2.0", "1.2.0"} {
 			want = append(
 				want,
@@ -498,9 +496,8 @@ func testFetcherInputsAuthenticationCase(t *testing.T, tc *struct {
 		cancel()
 	}
 	testFetcherInputsAuthenticationCaseCompletion(
-		t,
+		ctx, t,
 		&testFetcherInputsAuthenticationCaseCompletionInputs{
-			ctx:      &ctx,
 			tc:       &tc,
 			f:        &f,
 			provider: &provider,
@@ -511,16 +508,17 @@ func testFetcherInputsAuthenticationCase(t *testing.T, tc *struct {
 }
 
 func testFetcherInputsAuthenticationCaseCompletion(
+	ctx context.Context,
 	t *testing.T,
 	captures *testFetcherInputsAuthenticationCaseCompletionInputs,
 ) {
 	t.Helper()
 	if (*captures.tc).deadline {
 		var done context.CancelFunc
-		(*captures.ctx), done = context.WithDeadline((*captures.ctx), time.Unix(0, 0))
+		ctx, done = context.WithDeadline(ctx, time.Unix(0, 0))
 		defer done()
 	}
-	artifact, err := (*captures.f).FetchInputs((*captures.ctx), (*captures.provider), (*captures.reads), cache.Policy{})
+	artifact, err := (*captures.f).FetchInputs(ctx, (*captures.provider), (*captures.reads), cache.Policy{})
 	assert.FatalIf(
 		t,
 		artifact != nil || err == nil || errors.Is(err, manifest.ErrMissingSecret) != (*captures.tc).wantMissing,
@@ -571,12 +569,10 @@ func testFetcherInputsAuthenticationCaseCompletion(
 		err,
 	)
 	wantRequests := int32(1)
-	if (*captures.tc).missing || (*captures.tc).wiped || (*captures.tc).badAuth || (*(*captures.tc)).
-		badCert || (*captures.tc).
-		missingCert || (*captures.tc).
-		canceled || (*captures.tc).
-		deadline || (*captures.tc).
-		badMachine {
+	skipRequests := (*captures.tc).missing || (*captures.tc).wiped ||
+		(*captures.tc).badAuth || (*captures.tc).badCert || (*captures.tc).missingCert ||
+		(*captures.tc).canceled || (*captures.tc).deadline || (*captures.tc).badMachine
+	if skipRequests {
 		wantRequests = 0
 	}
 	if (*captures.tc).bearer {
@@ -716,157 +712,4 @@ func testFetcherInputsRetryCase(t *testing.T, stage *string,
 		wantHeads = 2
 	}
 	assert.Equal(t, heads.Load(), wantHeads)
-}
-
-type testFetcherInputsMachineCredentialsReuseCallbackInputs struct {
-	upstream **httptest.Server
-	password *atomic.Value
-	lists    *atomic.Int32
-	heads    *atomic.Int32
-}
-
-func testFetcherInputsMachineCredentialsReuseCallback(
-	w http.ResponseWriter,
-	r *http.Request,
-	testCaseInput testFetcherInputsMachineCredentialsReuseCallbackInputs,
-) {
-	user, pass, ok := r.BasicAuth()
-	if !ok || user != "fixture" || pass != testCaseInput.password.Load().(string) {
-		w.Header().Set("WWW-Authenticate", `Basic realm="fixture"`)
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	if strings.HasSuffix(r.URL.Path, "/tags/list") {
-		testCaseInput.lists.
-			Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"name":"fixture","tags":["1.0.0"]}`))
-		return
-	}
-	if r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/manifests/") {
-		testCaseInput.heads.
-			Add(1)
-	}
-	(*testCaseInput.upstream).
-		Config.Handler.ServeHTTP(w, r)
-}
-
-type testFetcherInputsSelectionAndRefreshCaseCallbackInputs struct {
-	t       **testing.T
-	first   *fakeOCIArtifact
-	second  *fakeOCIArtifact
-	changed *atomic.Bool
-	lists   *atomic.Int32
-	heads   *atomic.Int32
-}
-
-func testFetcherInputsSelectionAndRefreshCaseCallback(
-	w http.ResponseWriter,
-	r *http.Request,
-	testCaseInput testFetcherInputsSelectionAndRefreshCaseCallbackInputs,
-) {
-	if strings.HasSuffix(r.URL.Path, "/tags/list") {
-		testCaseInput.lists.
-			Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).
-			Encode(map[string]any{"name": "fixture", "tags": []string{"1.1.0", "v1.2.0", "1.2.0", "2.0.0", "dev", "1.0.0"}})
-		return
-	}
-	if strings.Contains(r.URL.Path, "/manifests/") {
-		testCaseInput.heads.
-			Add(1)
-		tag := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-		assert.ErrorIf((*testCaseInput.t), tag != "v1.2.0" && tag != "1.2.0", "resolved filtered-out tag %q", tag)
-		selected := (*testCaseInput.first)
-		if testCaseInput.changed.Load() {
-			selected = (*testCaseInput.second)
-		}
-		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
-		w.Header().Set("Docker-Content-Digest", selected.manifestDigest)
-		w.Header().Set("Content-Length", strconv.Itoa(len(selected.manifest)))
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	http.NotFound(w, r)
-}
-
-type testFetcherInputsAuthenticationCaseCallbackInputs struct {
-	t  **testing.T
-	tc **struct {
-		name   string
-		status int
-
-		challenge     bool
-		bearer        bool
-		machine       bool
-		badMachine    bool
-		secret        bool
-		missing       bool
-		wiped         bool
-		badAuth       bool
-		badCert       bool
-		missingCert   bool
-		canceled      bool
-		deadline      bool
-		invalidFilter bool
-		wantMissing   bool
-		wantAnonymous bool
-	}
-	requests *atomic.Int32
-}
-
-func testFetcherInputsAuthenticationCaseCallback(
-	w http.ResponseWriter,
-	r *http.Request,
-	testCaseInput testFetcherInputsAuthenticationCaseCallbackInputs,
-) {
-	testCaseInput.requests.
-		Add(1)
-	if (*testCaseInput.tc).bearer && r.URL.Path != "/token" {
-		w.Header().
-			Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="https://%s/token",service="fixture",scope="repository:fixture:pull"`, r.Host))
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	if (*testCaseInput.tc).invalidFilter {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"name":"fixture","tags":[]}`))
-		return
-	}
-	if (*testCaseInput.tc).challenge {
-		w.Header().Set("WWW-Authenticate", `Basic realm="fixture"`)
-	}
-	if !(*testCaseInput.tc).machine && !(*testCaseInput.tc).secret && r.Header.Get("Authorization") != "" {
-		(*testCaseInput.t).
-			Error("anonymous registry request supplied credentials")
-	}
-	w.WriteHeader((*testCaseInput.tc).status)
-}
-
-type testFetcherInputsAuthenticationCaseCompletionInputs struct {
-	ctx *context.Context
-	tc  **struct {
-		name          string
-		status        int
-		challenge     bool
-		bearer        bool
-		machine       bool
-		badMachine    bool
-		secret        bool
-		missing       bool
-		wiped         bool
-		badAuth       bool
-		badCert       bool
-		missingCert   bool
-		canceled      bool
-		deadline      bool
-		invalidFilter bool
-		wantMissing   bool
-		wantAnonymous bool
-	}
-	f        **Fetcher
-	provider **manifest.ResourceSetInputProvider
-	reads    **store.ReadSet
-	requests *atomic.Int32
 }

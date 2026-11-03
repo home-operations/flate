@@ -115,3 +115,44 @@ func TestSetArtifact_DroppedPayloadReplacesEqualKey(t *testing.T) {
 		t.Fatalf("dropped payload did not fire the artifact event: %d", events)
 	}
 }
+
+func TestSourceArtifact_HistoryIdentity(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Name: "content"}
+	for _, mode := range []string{"generation", "alias", "foreign", "unavailable", "stale"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			input := &SourceArtifact{Kind: id.Kind, URL: "https://fixture.invalid/repo", Key: "family", Content: "before", LocalPath: "/snapshot", FS: fstest.MapFS{}}
+			next := *input
+			next.Content, next.LocalPath = "after", "/other-snapshot"
+			if mode == "alias" {
+				input.InputAlias, next.InputAlias = true, true
+				input.LocalRoot, next.LocalRoot = "/origin", "/origin"
+			}
+			if mode == "foreign" {
+				next.URL = "https://fixture.invalid/other"
+			}
+			if mode == "unavailable" {
+				next.FS = nil
+			}
+			if mode == "stale" {
+				st := New()
+				object := &manifest.ConfigMap{Name: "input"}
+				st.AddObject(object)
+				var reads ReadSet
+				reads.Init(st, object.Named(), nil)
+				defer reads.Retire()
+				reads.GetObject(object.Named())
+				st.AddObject(&manifest.ConfigMap{Name: "input", Data: map[string]any{"value": "changed"}})
+				next.Reads = &reads
+			}
+			identity := next.HistoryIdentity(id)
+			assert.Equal(t, identity == input.HistoryIdentity(id), mode == "generation" || mode == "alias")
+			assert.Equal(t, identity == (manifest.SourceIdentity{}), mode == "unavailable" || mode == "stale")
+			if mode == "alias" {
+				bootstrap := &SourceArtifact{LocalPath: "/origin", FS: fstest.MapFS{}}
+				assert.Equal(t, identity, bootstrap.HistoryIdentity(manifest.BootstrapSourceID))
+			}
+		})
+	}
+}

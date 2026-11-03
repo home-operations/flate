@@ -90,15 +90,20 @@ func (r *blobRoot) current(owner *os.Root) (*os.Root, bool, error) {
 
 // Cache owns acquired generations until Close. Readers MUST finish before Close.
 type Cache struct {
-	root        *os.Root
-	blobRoots   [len(blobAlgorithms)]blobRoot
-	store       *oci.Store
-	locks       *keylock.KeyMap[string]
-	entries     sync.Map
-	persistBlob bool
+	root          *os.Root
+	blobRoots     [len(blobAlgorithms)]blobRoot
+	store         *oci.Store
+	locks         *keylock.KeyMap[string]
+	entries       sync.Map
+	persistBlob   bool
+	snapshot      atomic.Pointer[storeSnapshot]
+	snapshotState storeSnapshot
+	snapshotDirty atomic.Bool
 }
 
 type entry struct {
+	inventoryKey string
+	history      *historyRecord
 	// Descriptor fields MUST remain immutable after ready publishes them.
 	ready      atomic.Bool
 	fs         fs.FS
@@ -213,7 +218,11 @@ func (c *Cache) Blob(ctx context.Context, key BlobKey, policy Policy, produce fu
 	if key.Render == RenderPending && c.CanPersistRenders() && policy.MaxAge != 0 {
 		request.accepted = key.Content.(string)
 	}
-	e, id, err := c.acquire(ctx, request, policy, acquisitionCallbacks{validate: key.Validate, produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
+	var validate func(context.Context, *entry) (bool, error)
+	if key.Validate != nil {
+		validate = func(ctx context.Context, e *entry) (bool, error) { return key.Validate(ctx, e.fs) }
+	}
+	e, id, err := c.acquire(ctx, request, policy, acquisitionCallbacks{validate: validate, produce: func(ctx context.Context, c *Cache, staged *payload) (*entry, error) {
 		return producer.produce(ctx, c, staged, produce)
 	}})
 	if err != nil {
@@ -291,6 +300,9 @@ func (c *Cache) renderEnabled(ctx context.Context, content string) (bool, error)
 }
 
 func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acquisitionCallbacks) (*entry, error) {
+	if !key.memoryOnly {
+		c.prepareSnapshot()
+	}
 	var observed, rejected *entry
 	if v, ok := c.entries.Load(key.id); ok {
 		observed = v.(*entry)
@@ -373,11 +385,11 @@ func (c *Cache) acquireOnce(ctx context.Context, key acquireKey, callbacks acqui
 	return c.attempt(ctx, key, e, callbacks)
 }
 
-func (c *Cache) validCandidate(ctx context.Context, validate func(context.Context, fs.FS) (bool, error), e *entry) (bool, error) {
+func (c *Cache) validCandidate(ctx context.Context, validate func(context.Context, *entry) (bool, error), e *entry) (bool, error) {
 	if validate == nil {
 		return true, nil
 	}
-	valid, err := validate(ctx, e.fs)
+	valid, err := validate(ctx, e)
 	if err != nil {
 		return false, &CacheError{err}
 	}
@@ -608,7 +620,11 @@ func (c *Cache) fill(ctx context.Context, key acquireKey, previous *entry, callb
 		return e, err
 	}
 	if c.store != nil && !key.memoryOnly {
+		c.snapshotDirty.Store(true)
 		if err := c.store.Tag(ctx, stored, key.id); err != nil {
+			if snapshot := c.snapshot.Load(); snapshot != nil {
+				snapshot.failed.Store(true)
+			}
 			return nil, err
 		}
 		e.stored = stored
@@ -653,6 +669,8 @@ func (c *Cache) publish(ctx context.Context, tmp *os.File, payload digest.Digest
 				return stored, repair, err
 			}
 		}
+	} else {
+		c.snapshotDirty.Store(true)
 	}
 	return stored, "", nil
 }

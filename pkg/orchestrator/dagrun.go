@@ -63,7 +63,7 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 			}
 		}
 	}
-	if d.o.entryBinding == (discovery.Binding{}) && d.o.entryFailure == nil {
+	for d.o.entryBinding == (discovery.Binding{}) && d.o.entryFailure == nil {
 		root, binding, err := d.o.admission.BindEntry(ctx, d.o.store)
 		d.o.entryFailure = err
 		if root != nil {
@@ -73,8 +73,32 @@ func (d dagDispatcher) Sweep(ctx context.Context, quiescent bool) []schedule.Nod
 				return changed
 			}
 			d.o.store.AddObject(root)
+			if d.o.entryAdmissionPending {
+				d.o.entryFailure = d.o.installAdmission(ctx)
+			}
 			return slices.Collect(d.o.store.Sweep())
 		}
+		if producers := d.o.admission.EntryProducers(); len(producers) != 0 {
+			var reads store.ReadSet
+			reads.Init(d.o.store, manifest.NamedResource{}, nil)
+			for _, producer := range producers {
+				reads.RequireData(producer)
+			}
+			_, err := d.o.ksc.KeepEmitted(ctx, manifest.NamedResource{}, store.Child{}, &reads)
+			reads.Retire()
+			if err != nil {
+				d.o.entryFailure = err
+			}
+			changed = slices.Collect(d.o.store.Sweep())
+			if len(changed) != 0 {
+				return changed
+			}
+			continue
+		}
+		if d.o.entryAdmissionPending {
+			d.o.entryFailure = d.o.installAdmission(ctx)
+		}
+		break
 	}
 	d.o.classifyCompleted()
 	return slices.Collect(d.o.store.Sweep())

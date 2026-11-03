@@ -522,14 +522,18 @@ func recordTestRender(t *testing.T, cache *TreeCache, req RenderRequest, receipt
 	if receipt == nil {
 		t.Fatal("first render returned no receipt")
 	}
-	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: req.Spec.Named(), Receipt: receipt, Records: emptyRenderInventory}))
+	assert.NoError(t, cache.RecordRender(t.Context(), RenderAcceptance{Owner: req.Spec.Named(), Receipt: receipt}))
 	_, stored, hit := readTestRenderFrame(t, cache, receipt.Value().(renderFrame).header.Key)
 	if !hit {
 		t.Fatal("accepted render was not persisted")
 	}
 	replayed, replayReceipt, err := testutil.RenderMaps(Render(t.Context(), cache, req, sourcecache.RetryConfig{}))
 	assert.NoError(t, err)
-	if replayReceipt == nil || replayReceipt.Value().(renderFrame).identity == "" {
+	if replayReceipt == nil {
+		t.Fatal("unchanged input returned no receipt")
+	}
+	frame := replayReceipt.Value().(renderFrame)
+	if frame.raw == "" {
 		t.Fatal("unchanged input did not hit the accepted render cache")
 	}
 	assert.Diff(t, replayed, stored)

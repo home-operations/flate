@@ -38,7 +38,13 @@ type Occurrence struct {
 	facts       *occurrenceFacts
 }
 
+type producerFact struct {
+	identity manifest.NamedResource
+	facts    *occurrenceFacts
+}
+
 type occurrenceFacts struct {
+	declared                       string
 	source                         manifest.NamedResource
 	path                           string
 	hasPath, namespaced, uncertain bool
@@ -47,6 +53,8 @@ type occurrenceFacts struct {
 	catalog                        manifest.BaseManifest
 	reverse                        []manifest.NamedResource
 	refs                           []manifest.Reference
+	templateInputs                 []manifest.TemplateInput
+	templateObjects                []manifest.BaseManifest
 	roots                          []string
 	targets, authoredTargets       []manifest.ProducerTarget
 	needsCandidates                bool
@@ -54,6 +62,10 @@ type occurrenceFacts struct {
 	policy                         *manifest.EmissionPolicy
 	labels                         map[string]string
 	labeled                        bool
+}
+
+func (f *occurrenceFacts) opaque(targets []manifest.ProducerTarget) bool {
+	return f != nil && f.policy != nil && f.structural == nil && !f.hasPath && len(f.authoredTargets) == 0 && len(targets) == 0 && len(f.templateInputs) == 0 && len(f.templateObjects) == 0
 }
 
 // SourcePath returns the source and path in the occurrence's effective namespace.
@@ -71,12 +83,16 @@ func (o Occurrence) SourcePath() (manifest.NamedResource, string, bool) {
 	return manifest.Resolve(o.facts.source, "", o.Identity.Namespace), o.facts.path, o.facts.hasPath
 }
 
-func compactOccurrence(obj manifest.BaseManifest) Occurrence {
+func compactOccurrence(obj manifest.BaseManifest, projection manifest.TemplateProjection) Occurrence {
 	source, path, hasPath := obj.SourcePath()
 	targets := manifest.ProducerTargets(obj)
 	facts := &occurrenceFacts{source: source, path: path, hasPath: hasPath,
 		namespaced: manifest.KindOf(obj).Namespaced(), tracked: manifest.KindOf(obj).Tracked,
 		targets: targets, authoredTargets: targets, needsCandidates: manifest.ProducerNeedsCandidates(obj), roots: slices.Collect(manifest.RenderRoots(obj))}
+
+	facts.templateInputs = projection.Inputs
+	facts.templateObjects = projection.Objects
+	facts.targets = append(facts.targets, projection.Targets...)
 
 	generated, _ := manifest.GeneratedObjects(obj)
 	for _, child := range generated {
@@ -100,8 +116,10 @@ func compactOccurrence(obj manifest.BaseManifest) Occurrence {
 	}
 	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
 		facts.refs = append(facts.refs, ref.Clone())
+		if ref.AffectedInput() {
+			facts.reverse = append(facts.reverse, ref.NamedResource)
+		}
 	}
-	facts.reverse = slices.Collect(manifest.ContentInputs(obj, true))
 	id := obj.Named()
 	if manifest.HasEnvsubstReference(id.Name) {
 		id.Name, facts.uncertain = "", true
@@ -529,18 +547,33 @@ func (l *Loader) IsFileIndexed(id manifest.NamedResource) bool {
 // CatalogObject returns immutable reporting facts without hydrating or admitting the declaration.
 func (l *Loader) CatalogObject(id manifest.NamedResource) manifest.BaseManifest {
 	if occurrence, ok := l.occurrence(id); ok && occurrence.facts.catalog != nil {
-		obj := occurrence.facts.catalog
+		obj := occurrence.object
+		if obj == nil {
+			obj = occurrence.facts.catalog
+		}
 		if obj.Named() == id {
 			return obj
 		}
 		return manifest.CatalogObject(obj, id)
 	}
-	record, _ := l.Index.Lookup(id)
-	if obj := l.IndexedObject(id, record).Obj; obj != nil {
-		return manifest.CatalogObject(obj, id)
+	obj := l.candidates[id].Obj
+	if obj == nil {
+		record, _ := l.Index.Lookup(id)
+		obj = l.IndexedObject(id, record).Obj
 	}
-	if obj := l.Store.GetObject(id); obj != nil {
-		return manifest.CatalogObject(obj, id)
+	if obj == nil {
+		obj = l.Store.GetObject(id)
 	}
-	return nil
+	if obj == nil {
+		return nil
+	}
+	if snapshot := l.producerFacts.Load(); snapshot != nil {
+		if cached, known := (*snapshot)[obj]; known && cached.facts.catalog != nil {
+			obj = cached.facts.catalog
+			if obj.Named() == id {
+				return obj
+			}
+		}
+	}
+	return manifest.CatalogObject(obj, id)
 }

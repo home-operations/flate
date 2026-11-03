@@ -63,7 +63,7 @@ func benchmarkTemplateAppTemplateChart(b *testing.B, acquired bool) {
 	for b.Loop() {
 		out, receipt1, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(ctx, (hr).Named(), receipt1, emptyRenderInventory); recordErr != nil {
+			if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt1, Records: emptyRenderInventory}); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -94,7 +94,7 @@ func BenchmarkTemplate_AppTemplateChartMemory(b *testing.B) {
 	for b.Loop() {
 		out, receipt2, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(ctx, (hr).Named(), receipt2, emptyRenderInventory); recordErr != nil {
+			if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt2, Records: emptyRenderInventory}); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}
@@ -162,7 +162,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			hr.ChartValuesFiles = []string{"config/prod.yaml"}
 			first, receipt3, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err == nil {
-				if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt3, emptyRenderInventory); recordErr != nil {
+				if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt3, Records: emptyRenderInventory}); recordErr != nil {
 					b.Fatal(recordErr)
 				}
 			}
@@ -175,7 +175,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			}
 			second, receipt4, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 			if err == nil {
-				if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt4, emptyRenderInventory); recordErr != nil {
+				if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt4, Records: emptyRenderInventory}); recordErr != nil {
 					b.Fatal(recordErr)
 				}
 			}
@@ -204,7 +204,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 				}
 				out, receipt5, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				if err == nil {
-					if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt5, emptyRenderInventory); recordErr != nil {
+					if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt5, Records: emptyRenderInventory}); recordErr != nil {
 						b.Fatal(recordErr)
 					}
 				}
@@ -218,7 +218,7 @@ func BenchmarkTemplate_SourceValues(b *testing.B) {
 			for b.Loop() {
 				_, receipt6, err := cli.Template(b.Context(), hr, nil, RenderOptions{Options: Options{}, Sources: cliSources})
 				if err == nil {
-					if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt6, emptyRenderInventory); recordErr != nil {
+					if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt6, Records: emptyRenderInventory}); recordErr != nil {
 						b.Fatal(recordErr)
 					}
 				}
@@ -264,7 +264,7 @@ spec:
 				for b.Loop() {
 					_, receipt7, err := cli.Template(b.Context(), hr, nil, RenderOptions{SkipCRDs: true, Sources: cliSources})
 					if err == nil {
-						if recordErr := cli.RecordRender(b.Context(), (hr).Named(), receipt7, emptyRenderInventory); recordErr != nil {
+						if recordErr := cli.RecordRender(b.Context(), RenderAcceptance{Owner: (hr).Named(), Receipt: receipt7, Records: emptyRenderInventory}); recordErr != nil {
 							b.Fatal(recordErr)
 						}
 					}
@@ -306,7 +306,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 	ctx := context.Background()
 	_, receipt8, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 	if err == nil {
-		if recordErr := cli.RecordRender(ctx, (hr).Named(), receipt8, emptyRenderInventory); recordErr != nil {
+		if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt8, Records: emptyRenderInventory}); recordErr != nil {
 			b.Fatal(recordErr)
 		}
 	}
@@ -323,7 +323,7 @@ func benchmarkTemplateCommonMetadataVariants(b *testing.B, acquired bool) {
 		hr.CommonMetadata = &helmv2.CommonMetadata{Labels: map[string]string{"rev": fmt.Sprintf("%d", i)}}
 		out, receipt9, err := cli.Template(ctx, hr, values, RenderOptions{Options: Options{}, Sources: cliSources})
 		if err == nil {
-			if recordErr := cli.RecordRender(ctx, (hr).Named(), receipt9, emptyRenderInventory); recordErr != nil {
+			if recordErr := cli.RecordRender(ctx, RenderAcceptance{Owner: (hr).Named(), Receipt: receipt9, Records: emptyRenderInventory}); recordErr != nil {
 				b.Fatal(recordErr)
 			}
 		}

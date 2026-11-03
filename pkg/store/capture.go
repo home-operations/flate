@@ -20,6 +20,7 @@ type ReadSet struct {
 	store        *Store
 	id           manifest.NamedResource
 	inputs       *Input
+	last         *Input
 	local        Input
 	spare        *Input
 	capacity     int
@@ -87,7 +88,7 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 	r.local.details.Store(&r.localDetails)
 	clear(inputs)
 	r.store, r.id, r.capacity = s, id, len(inputs)
-	r.inputs, r.spare, r.warnings, r.produced = nil, nil, nil, nil
+	r.inputs, r.last, r.spare, r.warnings, r.produced = nil, nil, nil, nil, nil
 	r.advisories = AdvisoryEvidence{}
 	r.spareDetails, r.byID = nil, nil
 	for i := range inputs {
@@ -96,16 +97,21 @@ func (r *ReadSet) Init(s *Store, id manifest.NamedResource, inputs []Input) {
 }
 
 func (r *ReadSet) input(id manifest.NamedResource) *Input {
+	if r.last != nil && r.last.Ref.NamedResource == id {
+		return r.last
+	}
 	index := 0
 	if r.byID != nil {
 		var found bool
 		index, found = slices.BinarySearchFunc(*r.byID, id, func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) })
 		if found {
-			return (*r.byID)[index]
+			r.last = (*r.byID)[index]
+			return r.last
 		}
 	} else {
 		for input := r.inputs; input != nil; input = input.next {
 			if input.Ref.NamedResource == id {
+				r.last = input
 				return input
 			}
 		}
@@ -121,6 +127,10 @@ func (r *ReadSet) input(id manifest.NamedResource) *Input {
 				block[i].input.details.Store(&block[i].details)
 				block[i].input.next, r.spare = r.spare, &block[i].input
 			}
+			if r.byID == nil && r.capacity >= 64 {
+				r.indexInputs(r.capacity)
+				index, _ = slices.BinarySearchFunc(*r.byID, id, func(input *Input, id manifest.NamedResource) int { return input.Ref.Compare(id) })
+			}
 		}
 		input, r.spare = r.spare, r.spare.next
 	}
@@ -129,6 +139,7 @@ func (r *ReadSet) input(id manifest.NamedResource) *Input {
 	if r.byID != nil {
 		*r.byID = slices.Insert(*r.byID, index, input)
 	}
+	r.last = input
 	return input
 }
 
@@ -174,18 +185,22 @@ func (r *ReadSet) reserve(count int) {
 		inputs[i].next, r.spare = r.spare, &inputs[i]
 	}
 	if r.byID == nil && allocations > 2 {
-		length := 0
-		for input := r.inputs; input != nil; input = input.next {
-			length++
-		}
-		index := make([]*Input, 0, length+count)
-		for input := r.inputs; input != nil; input = input.next {
-			index = append(index, input)
-		}
-		slices.SortStableFunc(index, func(a, b *Input) int { return a.Ref.Compare(b.Ref.NamedResource) })
-		index = slices.CompactFunc(index, func(a, b *Input) bool { return a.Ref.NamedResource == b.Ref.NamedResource })
-		r.byID = &index
+		r.indexInputs(count)
 	}
+}
+
+func (r *ReadSet) indexInputs(spare int) {
+	length := 0
+	for input := r.inputs; input != nil; input = input.next {
+		length++
+	}
+	index := make([]*Input, 0, length+spare)
+	for input := r.inputs; input != nil; input = input.next {
+		index = append(index, input)
+	}
+	slices.SortStableFunc(index, func(a, b *Input) int { return a.Ref.Compare(b.Ref.NamedResource) })
+	index = slices.CompactFunc(index, func(a, b *Input) bool { return a.Ref.NamedResource == b.Ref.NamedResource })
+	r.byID = &index
 }
 
 func (r *ReadSet) observe(input *Input, kind facet, generation uint64) {
@@ -243,6 +258,9 @@ func (r *ReadSet) GetDeclaration(id manifest.NamedResource) manifest.BaseManifes
 // Capture records a caller-owned named input without reconstructing its identity index.
 func (r *ReadSet) Capture(input *Input) manifest.BaseManifest {
 	if input.derived&32 == 0 {
+		if r.last != nil && r.last.Ref.NamedResource == input.Ref.NamedResource {
+			r.last = input
+		}
 		input.next, r.inputs = r.inputs, input
 		input.derived |= 32
 		if r.byID != nil {
@@ -374,7 +392,7 @@ func (r *ReadSet) GetArtifact(id manifest.NamedResource, read ArtifactRead) Arti
 	input := r.input(id)
 	details := r.details(input)
 	if input.derived&4 == 0 {
-		r.GetObject(id)
+		r.Capture(input)
 		if input.object.head == nil {
 			return r.store.GetArtifact(id, read)
 		}
@@ -436,7 +454,8 @@ func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.Disc
 	input := r.input(id)
 	data, _ := r.Capture(input).(manifest.Data)
 	supplied, path := r.store.suppliedObject(id)
-	productions := r.Productions(id, index)
+	input.derived |= 64
+	productions := r.productions(input, index)
 	var candidates []manifest.ReferenceData
 	if len(productions) != 0 {
 		candidates = r.store.referenceData(id, index, productions, r)
@@ -527,6 +546,21 @@ func (r *ReadSet) GetEmission(id manifest.NamedResource) (manifest.BaseManifest,
 
 // ID identifies the execution that owns these inputs.
 func (r *ReadSet) ID() manifest.NamedResource { return r.id }
+
+// Inputs yields the concrete identities captured by the completed execution.
+// The owning output MUST keep the read set immutable throughout iteration.
+func (r *ReadSet) Inputs() iter.Seq[manifest.NamedResource] {
+	return func(yield func(manifest.NamedResource) bool) {
+		if r == nil {
+			return
+		}
+		for input := r.inputs; input != nil; input = input.next {
+			if input.Ref.Name != "" && !yield(input.Ref.NamedResource) {
+				return
+			}
+		}
+	}
+}
 
 // Require retains each distinct readiness gate in the execution footprint.
 func (r *ReadSet) Require(ref manifest.DependencyRef) {

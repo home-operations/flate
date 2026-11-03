@@ -12,7 +12,7 @@ const (
 	ociLock = "oci.lock"
 )
 
-func indexPath() string { return filepath.Join(ociDir, ocispec.ImageIndexFile) }
+func indexPath() string { return ociDir + string(filepath.Separator) + ocispec.ImageIndexFile }
 
 func blobDir() string { return ociDir + string(filepath.Separator) + ocispec.ImageBlobsDir }
 

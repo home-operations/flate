@@ -46,10 +46,11 @@ type document struct {
 
 type parsedObject struct {
 	store.Child
-	outcome manifest.DocOccurrence
-	item    int
-	fact    *Occurrence
-	version string
+	outcome  manifest.DocOccurrence
+	item     int
+	fact     *Occurrence
+	version  string
+	declared string
 }
 
 type pathState uint8
@@ -64,7 +65,9 @@ const (
 
 // documentReader caches positive and negative results by absolute source-view directory.
 type documentReader struct {
-	cache      map[string]document
+	projections *manifest.ProducerProjections
+	cache       map[string]document
+	// Views MUST stay shared when discovery copies a reader.
 	views      map[string]fs.FS
 	artifacts  map[string]*store.SourceArtifact
 	parsed     *ParsedInputs
@@ -178,6 +181,10 @@ func (r *documentReader) setSources(mounted map[string]*store.SourceArtifact) []
 }
 
 func (l *Loader) refreshSources() {
+	l.documents.projections = l.Options.Projections
+	if l.documents.projections == nil {
+		l.documents.projections = &l.projections
+	}
 	l.documents.parsed = nil
 	if inputs := l.Options.ParsedInputs; inputs != nil && inputs.wipeSecrets == l.Options.WipeSecrets && inputs.compact == l.documents.compact {
 		l.documents.parsed = inputs
@@ -245,6 +252,9 @@ func (r documentReader) input(file string) (fs.FS, string) {
 }
 
 func (r documentReader) mountedRoot(file string) string {
+	if len(r.views) == 0 {
+		return ""
+	}
 	for root := file; ; root = filepath.Dir(root) {
 		if _, exists := r.views[root]; exists {
 			return root

@@ -343,8 +343,20 @@ func TestCapture_StableSegmentLifetime(t *testing.T) {
 	s := New()
 	var reads ReadSet
 	reads.Init(s, ownerID("reader"), nil)
-	for i := range 33 {
+	first := reads.input(ownerID("a"))
+	for i := range 129 {
 		reads.GetObject(ownerID(string(rune('a' + i))))
+	}
+	if reads.input(ownerID("a")) != first {
+		t.Fatal("unreserved growth replaced the first capture")
+	}
+	for i := 128; i >= 0; i-- {
+		id := ownerID(string(rune('a' + i)))
+		captured := reads.input(id)
+		reads.GetObject(id)
+		if reads.input(id) != captured {
+			t.Fatal("repeated lookup replaced an unreserved capture")
+		}
 	}
 	if !reads.Valid() {
 		t.Fatal("segment growth changed original registrations")
@@ -1689,4 +1701,30 @@ func TestReadSet_ProducedArtifact(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCapture_DirectAndNamedReads(t *testing.T) {
+	t.Parallel()
+	st := New()
+	first, other := emissionChild("first", "first"), emissionChild("other", "other")
+	st.AddObject(first.Obj)
+	st.AddObject(other.Obj)
+	var reads ReadSet
+	reads.Init(st, ownerID("reader"), nil)
+	defer reads.Close()
+	input := Input{Ref: manifest.DependencyRef{NamedResource: first.Obj.Named()}}
+	assert.Equal(t, reads.Capture(&input), first.Obj)
+	assert.Equal(t, reads.last == nil, true)
+	assert.Equal(t, reads.GetObject(first.Obj.Named()), first.Obj)
+	assert.Equal(t, reads.last == &input, true)
+	second := Input{Ref: manifest.DependencyRef{NamedResource: other.Obj.Named()}}
+	assert.Equal(t, reads.Capture(&second), other.Obj)
+	assert.Equal(t, reads.last == &input, true)
+	assert.Equal(t, reads.GetObject(other.Obj.Named()), other.Obj)
+	assert.Equal(t, reads.last == &second, true)
+	replacement := Input{Ref: manifest.DependencyRef{NamedResource: other.Obj.Named()}}
+	assert.Equal(t, reads.Capture(&replacement), other.Obj)
+	assert.Equal(t, reads.last == &replacement, true)
+	st.AddObject(emissionChild("first", "changed").Obj)
+	assert.Equal(t, reads.Valid(), false)
 }

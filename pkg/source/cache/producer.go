@@ -22,7 +22,7 @@ import (
 
 type acquisitionCallbacks struct {
 	produce  func(context.Context, *Cache, *payload) (*entry, error)
-	validate func(context.Context, fs.FS) (bool, error)
+	validate func(context.Context, *entry) (bool, error)
 }
 
 type acquisitionProducer interface {

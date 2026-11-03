@@ -229,7 +229,7 @@ func TestFinalize_ProjectedDeclarationCount(t *testing.T) {
 	info, _ := o.store.GetStatus(projected)
 	assert.Equal(t, info.Outcome(), store.OutcomeSuspended)
 	raw := testutil.HelmReleaseID("", "child")
-	record, known := o.index.Lookup(raw)
+	record, known := o.index.Lookup(projected)
 	assert.Equal(t, known && record.Declaration != nil, true)
 	assert.Equal(t, o.store.GetObject(raw) == nil, true)
 	parent, _ := o.store.GetStatus(record.Parent)

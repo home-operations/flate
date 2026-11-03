@@ -51,35 +51,82 @@ spec: {path: ./sibling, targetNamespace: sibling, components: [../shared]}
 
 func TestAdmission_MissingInputWaitsForKnownOwner(t *testing.T) {
 	t.Parallel()
-	for _, complete := range []bool{false, true} {
-		t.Run(map[bool]string{false: "pending", true: "complete"}[complete], func(t *testing.T) {
+	for _, tc := range []struct {
+		name                                        string
+		complete, optional, generated, allowMissing bool
+	}{{name: "pending"}, {name: "complete", complete: true}, {name: "optional", complete: true, optional: true}, {name: "generated", complete: true, generated: true}, {name: "allowed", complete: true, allowMissing: true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
 			st := store.New()
 			st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{}})
-			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: manifest.KindConfigMap, Name: "missing"}}}
+			kind := manifest.KindConfigMap
+			if tc.generated {
+				kind = manifest.KindSecret
+			}
+			consumer := &manifest.HelmRelease{Name: "consumer", Namespace: "apps", ValuesFrom: []manifest.ValuesReference{{Kind: kind, Name: "missing", Optional: tc.optional}}}
 			owner := &manifest.Kustomization{Name: "owner", Namespace: "apps", Path: "./owned"}
 			opaque := &manifest.HelmRelease{Name: "opaque", Namespace: "apps"}
 			st.AddObjects([]manifest.BaseManifest{consumer, owner, opaque})
-			if complete {
-				st.RecordEmitted(owner.Named(), &store.Emission{Complete: true}, nil)
+			if tc.complete {
+				output := &store.Emission{Complete: true}
+				if tc.generated {
+					output.Children = []store.Child{{Obj: &manifest.RawObject{APIVersion: "external-secrets.io/v1", Kind: "ExternalSecret", Name: "missing", Namespace: "apps"}}}
+				}
+				st.RecordEmitted(owner.Named(), output, nil)
 				st.UpdateStatus(owner.Named(), store.StatusInfo{Status: store.StatusReady})
 			}
 			l := New(st)
 			l.SourceRoot = root
 			l.Options.Filter = change.NewFilter()
+			if tc.allowMissing {
+				l.Options.AllowMissingKinds = []string{kind}
+			}
 			l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{consumer.Named()}}
 			l.Index = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
 				consumer.Named(): {Parent: owner.Named(), Productions: []manifest.Production{{Owner: owner.Named(), Source: manifest.BootstrapSourceID}}},
 			}}
-			occurrence := compactOccurrence(opaque)
+			occurrence := compactOccurrence(opaque, manifest.ProjectProducer(opaque))
 			occurrence.Declaration.Source = root
 			l.locations = map[manifest.NamedResource]Occurrence{opaque.Named(): occurrence}
 			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, slices.Contains(proposal.Needed, owner.Named()), true)
-			assert.Equal(t, slices.Contains(proposal.Needed, opaque.Named()), complete)
+			assert.Equal(t, slices.Contains(proposal.Needed, opaque.Named()), tc.complete && !tc.optional && !tc.generated && !tc.allowMissing)
 			assert.Equal(t, slices.Contains(proposal.Selected, opaque.Named()), false)
 		})
 	}
+}
+
+func TestAdmission_DeclaredChartSourceNamespace(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	st := store.New()
+	st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: root, FS: fstest.MapFS{
+		"flux/kustomization.yaml": {Data: []byte("namespace: apps\nresources: [owner.yaml]\n")},
+		"flux/owner.yaml":         {Data: []byte("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata: {name: owner}\nspec: {path: ./app, targetNamespace: apps}\n")},
+		"app/kustomization.yaml":  {Data: []byte("resources: [source.yaml, release.yaml]\n")},
+		"app/source.yaml":         {Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart}\nspec: {url: oci://fixture.invalid/chart}\n")},
+		"app/release.yaml":        {Data: []byte("apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata: {name: consumer}\nspec: {chartRef: {kind: OCIRepository, name: chart}}\n")},
+	}})
+	opaque := &manifest.HelmRelease{Name: "opaque", Namespace: "apps"}
+	st.AddObject(opaque)
+	l := New(st)
+	l.SourceRoot = root
+	l.Options.Selection = manifest.Selection{Changed: true}
+	l.Options.Filter = change.NewFilter()
+	l.Options.Changes = change.NewSet([]string{"app/release.yaml"})
+	_, err := l.Load(t.Context(), root)
+	assert.NoError(t, err)
+	assert.NoError(t, l.FinalizeIndex(t.Context(), root, false))
+	id := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindOCIRepository, Namespace: "apps", Name: "chart"}
+	record, known := l.Index.Lookup(id)
+	if !known {
+		t.Fatalf("declared chart source is missing: index=%+v", l.Index.Records)
+	}
+	assert.Equal(t, record.Authored.Namespace, "")
+	proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+	assert.NoError(t, err)
+	assert.Equal(t, slices.Contains(proposal.Needed, id), true)
+	assert.Equal(t, slices.Contains(proposal.Needed, opaque.Named()), false)
 }

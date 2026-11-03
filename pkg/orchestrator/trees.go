@@ -14,6 +14,7 @@ import (
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/discovery"
 	"github.com/home-operations/flate/pkg/helm"
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
 	sourcecache "github.com/home-operations/flate/pkg/source/cache"
@@ -33,7 +34,6 @@ type Tree struct {
 	Input           *store.SourceArtifact
 	BaseInput       *store.SourceArtifact
 	ExternalChanges *change.Set
-	entry           *discovery.Entry
 }
 
 // Rendered retains one tree's completed output, warnings and attributed error.
@@ -81,7 +81,7 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 	cfg.chartFetcher = helmchart.New(&oci.Fetcher{Cache: cfg.Cache, Network: cfg.Network, RegistryConfig: cfg.RegistryConfig}, helmchart.Config{
 		Cache: cfg.Cache, Network: cfg.Network, Concurrency: cfg.Concurrency, DisableChartDigestTracking: cfg.HelmOptions.DisableChartDigestTracking})
 	budget := task.NewBounded(cfg.Concurrency)
-	trees, err = prepareTrees(ctx, trees, cfg, budget)
+	trees, err = prepareTrees(ctx, trees)
 	if err != nil {
 		for _, tree := range trees {
 			result := Rendered{ID: tree.ID, Result: &Result{}}
@@ -100,6 +100,17 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		return results, err
 	}
 	results = make([]Rendered, len(trees))
+	defer func() {
+		if err != nil {
+			for _, result := range results {
+				if result.Orchestrator != nil {
+					result.stop()
+				}
+			}
+		}
+	}()
+	var projections manifest.ProducerProjections
+	cfg.projections = &projections
 	stores := make([]*store.Store, len(trees))
 	byID := make(map[manifest.TreeID]int, len(trees))
 	var wg sync.WaitGroup
@@ -114,16 +125,40 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		wg.Go(func() {
 			o := newOrchestrator(cfg, tree, budget.Fork())
 			stores[i] = o.store
-			if failure := o.discover(ctx); failure != nil {
-				results[i].Result = &Result{Warnings: o.store.Warnings()}
-				results[i].Err = &treeError{id: tree.ID, err: failure, attributed: len(results) > 1}
-				o.stop()
-				return
-			}
 			results[i].Orchestrator = o
+			if failure := o.discover(ctx); failure != nil {
+				warnings := o.store.Warnings()
+				if o.loader != nil && o.session == nil {
+					warnings = tree.Input.Warnings
+				}
+				results[i].Result = &Result{Warnings: warnings}
+				results[i].Err = &treeError{id: tree.ID, err: failure, attributed: len(results) > 1}
+			}
 		})
 	}
 	wg.Wait()
+	projections.Clear()
+	for i, result := range results {
+		if result.Err == nil {
+			continue
+		}
+		o := result.Orchestrator
+		if o.loader != nil && o.session == nil {
+			err = errors.Join(err, result.Err)
+		}
+		o.stop()
+		results[i].Orchestrator = nil
+	}
+	if err != nil {
+		for i, result := range results {
+			if result.Orchestrator != nil {
+				results[i].Result = &Result{Warnings: result.store.Warnings()}
+				result.stop()
+				results[i].Orchestrator = nil
+			}
+		}
+		return results, err
+	}
 	constructionRound := 0
 	requalify := map[manifest.ClusterID]bool{}
 	for {
@@ -170,7 +205,11 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 					continue
 				}
 			}
-			changes = changes.WithReaders(before, after)
+			resolved, err := changes.WithReaders(ctx, before, after)
+			if err != nil {
+				return results, err
+			}
+			changes = resolved
 			current.cfg.ExternalChanges = changes
 			if other != nil {
 				other.cfg.ExternalChanges = changes
@@ -185,7 +224,11 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 			wg.Go(func() {
 				o.preparation = nil
 				o.loader.Options.Changes = o.cfg.ExternalChanges
-				proposal, failure := o.loader.Prepare(ctx, store.Child{}, nil, nil)
+				failure := o.lookupHistory(ctx)
+				var proposal *loader.Admission
+				if failure == nil {
+					proposal, failure = o.loader.Prepare(ctx, store.Child{}, nil, o.history)
+				}
 				advanced := false
 				if failure == nil {
 					advanced, failure = o.session.Advance(ctx, proposal)
@@ -295,16 +338,36 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 			if o.cfg.ID.Side == manifest.TreeHead {
 				before, after = after, before
 			}
-			o.cfg.ExternalChanges = changes.WithReaders(before, after)
+			resolved, err := changes.WithReaders(ctx, before, after)
+			if err != nil {
+				return results, err
+			}
+			o.cfg.ExternalChanges = resolved
 		} else {
 			projectedOther := projectEntryReaders(other.index, other.entryBinding, o.entryBinding)
 			projectedCurrent := projectEntryReaders(o.index, o.entryBinding, other.entryBinding)
 			if o.cfg.ID.Side == manifest.TreeBase {
-				o.cfg.ExternalChanges = changes.WithReaders(o.index, projectedOther)
-				other.cfg.ExternalChanges = changes.WithReaders(projectedCurrent, other.index)
+				resolved, err := changes.WithReaders(ctx, o.index, projectedOther)
+				if err != nil {
+					return results, err
+				}
+				o.cfg.ExternalChanges = resolved
+				resolved, err = changes.WithReaders(ctx, projectedCurrent, other.index)
+				if err != nil {
+					return results, err
+				}
+				other.cfg.ExternalChanges = resolved
 			} else {
-				o.cfg.ExternalChanges = changes.WithReaders(projectedOther, o.index)
-				other.cfg.ExternalChanges = changes.WithReaders(other.index, projectedCurrent)
+				resolved, err := changes.WithReaders(ctx, projectedOther, o.index)
+				if err != nil {
+					return results, err
+				}
+				o.cfg.ExternalChanges = resolved
+				resolved, err = changes.WithReaders(ctx, other.index, projectedCurrent)
+				if err != nil {
+					return results, err
+				}
+				other.cfg.ExternalChanges = resolved
 			}
 		}
 	}
@@ -315,7 +378,11 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		}
 		wg.Go(func() {
 			o.completeBootstrap()
-			if failure := o.buildChangeFilter(ctx); failure != nil {
+			failure := o.buildChangeFilter(ctx)
+			if failure == nil {
+				failure = o.installAdmission(ctx)
+			}
+			if failure != nil {
 				results[i].Result = &Result{Warnings: o.store.Warnings()}
 				results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
 				o.stop()
@@ -324,18 +391,6 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 		})
 	}
 	wg.Wait()
-	for i := range results {
-		o := results[i].Orchestrator
-		if o == nil || o.loader == nil {
-			continue
-		}
-		if failure := o.installAdmission(ctx); failure != nil {
-			results[i].Result = &Result{Warnings: o.store.Warnings()}
-			results[i].Err = &treeError{id: results[i].ID, err: failure, attributed: len(results) > 1}
-			o.stop()
-			results[i].Orchestrator = nil
-		}
-	}
 	for i := range results {
 		o := results[i].Orchestrator
 		if o == nil {
@@ -373,10 +428,8 @@ func RenderTrees(ctx context.Context, trees []Tree, cfg Config) (results []Rende
 	return results, err
 }
 
-func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Service) ([]Tree, error) {
+func prepareTrees(ctx context.Context, trees []Tree) ([]Tree, error) {
 	trees = slices.Clone(trees)
-	inputs := source.NewHTTPInputs(cfg.Cache, cfg.Network, budget)
-	defer inputs.Close()
 	admitted := make(map[string]*store.SourceArtifact)
 	for i := range trees {
 		tree := &trees[i]
@@ -407,10 +460,7 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 		}
 	}
 	changes := make(map[[2]*store.SourceArtifact]*change.Set)
-	var planned []Tree
-	sides := make(map[manifest.TreeSide]bool)
-	for _, tree := range trees {
-		sides[tree.ID.Side] = true
+	for i, tree := range trees {
 		for _, opposite := range trees {
 			if opposite.ID.Cluster == tree.ID.Cluster && opposite.ID.Side != tree.ID.Side {
 				tree.BaseInput = opposite.Input
@@ -431,27 +481,16 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 				tree.ExternalChanges, changes[pair] = set, set
 			}
 		}
-		selection := cfg.Selection
-		selection.Changed = selection.Changed || tree.ExternalChanges != nil
-		entries, err := discovery.Plan(ctx, discovery.Config{Selection: selection, Input: tree.Input, Path: tree.Path, RepoRoot: tree.RepoRoot, SelfURLs: tree.SelfURLs, WipeSecrets: cfg.WipeSecrets, RemoteInputs: &inputs, RemoteRetry: cfg.SourceRetry})
-		if err != nil {
-			return trees, &treeError{id: tree.ID, err: err}
-		}
-		for _, entry := range entries {
-			side := tree
-			side.Input, side.Path, side.entry = entry.Input, entry.Path, &entry
-			planned = append(planned, side)
-		}
+		trees[i] = tree
 	}
-	byID := make(map[manifest.TreeID]Tree, len(planned))
-	for _, tree := range planned {
-		if _, exists := byID[tree.ID]; exists {
-			return nil, manifest.NewError(manifest.ErrInput, nil, fmt.Sprintf("duplicate planned tree %s/%d", tree.ID.Cluster, tree.ID.Side))
-		}
+	byID := make(map[manifest.TreeID]Tree, len(trees))
+	sides := make(map[manifest.TreeSide]bool)
+	for _, tree := range trees {
 		byID[tree.ID] = tree
+		sides[tree.ID.Side] = true
 	}
 	if len(sides) == 2 {
-		for _, tree := range planned {
+		for _, tree := range trees {
 			other := tree.ID
 			other.Side = manifest.TreeHead - other.Side
 			if _, present := byID[other]; !present {
@@ -461,12 +500,12 @@ func prepareTrees(ctx context.Context, trees []Tree, cfg Config, budget *task.Se
 			}
 		}
 	}
-	planned = planned[:0]
+	trees = trees[:0]
 	for _, tree := range byID {
-		planned = append(planned, tree)
+		trees = append(trees, tree)
 	}
-	slices.SortFunc(planned, func(a, b Tree) int { return a.ID.Compare(b.ID) })
-	return planned, nil
+	slices.SortFunc(trees, func(a, b Tree) int { return a.ID.Compare(b.ID) })
+	return trees, nil
 }
 
 type treeError struct {

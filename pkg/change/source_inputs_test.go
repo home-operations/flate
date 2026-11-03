@@ -22,6 +22,6 @@ func TestSet_SourceInputsIgnoreUnqualifiedCollision(t *testing.T) {
 	changes.groupSources()
 	for source := range changes.Sources() {
 		delta, _, _ := changes.ForSource(source)
-		assert.Equal(t, len(maps.Collect(delta.Inputs())), 0)
+		assert.Equal(t, len(maps.Collect(delta.Inputs(manifest.NamedResource{}))), 0)
 	}
 }

@@ -407,7 +407,11 @@ func (c *Cache) publishOutcome(ctx context.Context, id string, o *outcome, remot
 	if err != nil {
 		return ocispec.Descriptor{}, &CacheError{errors.Join(remote, err)}
 	}
+	c.snapshotDirty.Store(true)
 	if err := c.store.Tag(ctx, desc, id); err != nil {
+		if snapshot := c.snapshot.Load(); snapshot != nil {
+			snapshot.failed.Store(true)
+		}
 		return ocispec.Descriptor{}, &CacheError{errors.Join(remote, err)}
 	}
 	return desc, nil
@@ -422,6 +426,8 @@ func (c *Cache) pushOutcomeBlob(ctx context.Context, mediaType string, data []by
 		if err != nil {
 			return ocispec.Descriptor{}, err
 		}
+	} else {
+		c.snapshotDirty.Store(true)
 	}
 	return desc, nil
 }

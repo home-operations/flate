@@ -44,6 +44,7 @@ func (p Production) Materializer(target NamedResource) NamedResource {
 type DiscoveryRecord struct {
 	Application   string                     // Accepted applier document; valid only for its owning render receipt.
 	Declaration   BaseManifest               `json:"-"` // Immutable parsed input; absence does not imply publication.
+	Declared      string                     `json:"-"` // Complete authored fingerprint; empty when declaration evidence is unknown.
 	Authored      NamedResource              // Proven raw identity; zero for generated records.
 	Path          string                     // Absolute raw resource path; empty for generated or projected records.
 	File          string                     // Diff coordinate; generator records use the declaration file.
@@ -54,22 +55,25 @@ type DiscoveryRecord struct {
 	Parent        NamedResource              // Strict structural parent, excluding peers with the same claimed path.
 	Productions   []Production               // Immutable source-qualified contributor evidence.
 	ReferenceData []ReferenceData            // Borrowed lookup candidates qualified by their production.
+	StaticOutput  bool                       // Discovery derives this producer's output without accepted history.
 	Pinned        bool                       // The Kustomization reads a committed local source artifact.
 	ContentRoots  map[NamedResource][]string `json:"-"` // Source-qualified render locations; no authored-file authority.
 }
 
 // FileReader identifies a consumer and the source supplying its file input.
 type FileReader struct {
-	Reader, Source NamedResource
-	Exact          bool // Source-file reads exclude descendants and establish no render ownership.
+	Reader, Source, Declaration NamedResource
+	Exact                       bool // Source-file reads exclude descendants and establish no render ownership.
+	Materialize                 bool // The producer supplies another reader, not the changed content itself.
 }
 
 // DiscoveryIndex owns immutable discovery records, canonical claims and file readers.
 // Construction writes these maps directly before publication; queries never mutate them.
 type DiscoveryIndex struct {
-	Records map[NamedResource]DiscoveryRecord // Authored and projected identities.
-	Claims  map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
-	Readers map[string][]FileReader           // Graph and declared source-input readers by file or missing directory.
+	Records         map[NamedResource]DiscoveryRecord // Authored and projected identities.
+	Claims          map[string][]NamedResource        // Local-tree path claimants by slash-terminated prefix.
+	Readers         map[string][]FileReader           // Graph and declared source-input readers by file or missing directory.
+	CompleteSources map[NamedResource]bool            // Sources whose declared-object census completed without missing input.
 }
 
 // Lookup returns the borrowed record for id and reports whether it exists.
@@ -127,7 +131,7 @@ func (i *DiscoveryIndex) OwnersOfFile(file string) (owners, ancestors []NamedRes
 		}
 	}
 	for reader := range i.ReadersOfFile(file) {
-		if !reader.Exact {
+		if reader.Declaration == (NamedResource{}) && !reader.Exact && !reader.Materialize {
 			owners = appendUnique(owners, reader.Reader)
 		}
 	}
@@ -143,7 +147,7 @@ func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[FileReader] {
 		if i == nil {
 			return
 		}
-		for current := file; current != "" && current != "." && current != "/"; current = path.Dir(current) {
+		for current := file; current != "" && current != "/"; current = path.Dir(current) {
 			for _, id := range i.Readers[current] {
 				if id.Exact && current != file {
 					continue
@@ -151,6 +155,9 @@ func (i *DiscoveryIndex) ReadersOfFile(file string) iter.Seq[FileReader] {
 				if !yield(id) {
 					return
 				}
+			}
+			if current == "." {
+				break
 			}
 		}
 	}

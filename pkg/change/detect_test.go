@@ -480,6 +480,58 @@ func TestDetect_OneSidedInputEvidence(t *testing.T) {
 
 func TestSet_WithReaders(t *testing.T) {
 	t.Parallel()
+	for _, scenario := range []string{"move", "changed", "added", "removed", "partial", "ambiguous content"} {
+		t.Run("declaration "+scenario, func(t *testing.T) {
+			t.Parallel()
+			declaration := &manifest.ConfigMap{Name: "settings", Namespace: "apps", Data: map[string]any{"value": "same"}}
+			reader := testutil.HelmReleaseID("apps", "reader")
+			var indexes [2]*manifest.DiscoveryIndex
+			inputs := [2]*store.SourceArtifact{}
+			for side, file := range []string{"old.yaml", "new.yaml"} {
+				body := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: same}\n"
+				object := *declaration
+				if scenario == "changed" && side == 1 {
+					body = strings.ReplaceAll(body, "same", "different")
+					object.Data = map[string]any{"value": "different"}
+				}
+				files := fstest.MapFS{file: {Data: []byte(body)}}
+				indexes[side] = &manifest.DiscoveryIndex{
+					Records: map[manifest.NamedResource]manifest.DiscoveryRecord{object.Named(): {File: file}},
+					Readers: map[string][]manifest.FileReader{file: {
+						{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: object.Named(), Exact: true},
+						{Reader: testutil.KustomizationID("apps", []string{"old-owner", "new-owner"}[side]), Source: manifest.BootstrapSourceID},
+					}},
+					CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+				}
+				if scenario == "added" && side == 0 || scenario == "removed" && side == 1 {
+					files = fstest.MapFS{}
+					indexes[side].Records = nil
+					indexes[side].Readers = nil
+				}
+				if scenario == "partial" && side == 1 {
+					indexes[side].CompleteSources = nil
+				}
+				if scenario == "ambiguous content" && side == 1 {
+					files[file].Data = append(files[file].Data, []byte("---\n"+strings.ReplaceAll(body, "same", "conflicting"))...)
+				}
+				inputs[side] = &store.SourceArtifact{FS: files}
+			}
+			set, err := Detect(t.Context(), inputs[0], inputs[1])
+			assert.NoError(t, err)
+			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
+			changed, known := resolved.DeclarationChanged(manifest.TreeBase, manifest.BootstrapSourceID, declaration.Named(), nil)
+			assert.Equal(t, known, scenario != "partial" && scenario != "ambiguous content")
+			if known {
+				assert.Equal(t, changed, scenario != "move")
+			}
+			_, selected := resolved.inputs[reader]
+			assert.Equal(t, selected, scenario != "move")
+			repeated, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
+			assert.Diff(t, repeated.inputs, resolved.inputs)
+		})
+	}
 	for _, tc := range []struct {
 		name, file, body string
 		before           bool
@@ -518,12 +570,178 @@ func TestSet_WithReaders(t *testing.T) {
 				input.Unbound = false
 				want[id] = input
 			}
-			resolved := set.WithReaders(indexes[0], indexes[1])
+			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
 			assert.Diff(t, resolved.inputs, want)
 			assert.Diff(t, set.inputs, original)
-			assert.Diff(t, set.WithReaders(indexes[0], indexes[1]).inputs, want)
+			repeated, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
+			assert.Diff(t, repeated.inputs, want)
 		})
 	}
+}
+
+func TestSet_WithReadersBuildInputs(t *testing.T) {
+	t.Parallel()
+	child := &manifest.Kustomization{Name: "child", Namespace: "flux-system"}
+	reader := testutil.HelmReleaseID("apps", "reader")
+	inputs := [2]*store.SourceArtifact{}
+	indexes := [2]*manifest.DiscoveryIndex{}
+	for side := range inputs {
+		inputs[side] = &store.SourceArtifact{LocalPath: t.TempDir(), FS: fstest.MapFS{"control.yaml": {Data: fmt.Appendf(nil, "resources: [side-%d.yaml]\n", side)}}}
+		indexes[side] = &manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				child.Named(): {File: "child.yaml", Inputs: []string{"control.yaml"}},
+				reader:        {File: "nested/release.yaml", Parent: child.Named()},
+			},
+			CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+		}
+	}
+	changes, err := Detect(t.Context(), inputs[0], inputs[1])
+	assert.NoError(t, err)
+	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1])
+	assert.NoError(t, err)
+	changed, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, child.Named(), nil)
+	assert.Equal(t, known, false)
+	assert.Equal(t, changed, false)
+	for _, id := range []manifest.NamedResource{child.Named(), reader} {
+		assert.Equal(t, qualified.inputs[id].File, "control.yaml")
+	}
+}
+
+func TestSet_WithReadersUnindexedDeclarationMove(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"equal", "changed", "namespace", "partial"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			body := "apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart}\nspec: {url: oci://fixture.invalid/chart}\n"
+			current := body
+			if scenario == "changed" {
+				current = strings.ReplaceAll(current, "fixture.invalid/chart", "fixture.invalid/other")
+			}
+			if scenario == "namespace" {
+				current = strings.ReplaceAll(current, "name: chart", "name: chart, namespace: other")
+			}
+			inputs := [2]*store.SourceArtifact{
+				{LocalPath: t.TempDir(), FS: fstest.MapFS{"outside/source.yaml": {Data: []byte(body)}}},
+				{LocalPath: t.TempDir(), FS: fstest.MapFS{"entry/source.yaml": {Data: []byte(current)}}},
+			}
+			docs, err := manifest.DecodeDocs(strings.NewReader(current), manifest.IncidentalDocuments)
+			assert.NoError(t, err)
+			defer manifest.ReleaseDoc(docs[0].Document)
+			authored := manifest.DocIdentity(docs[0].Document)
+			id := manifest.Resolve(authored, "", "flux-system")
+			reader := manifest.NamedResource{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "apps", Name: "reader"}
+			indexes := [2]*manifest.DiscoveryIndex{
+				{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{}, CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: scenario != "partial"}},
+				{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {Authored: authored, File: "entry/source.yaml"}}, CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true}, Readers: map[string][]manifest.FileReader{"entry/source.yaml": {{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: id, Exact: true}}}},
+			}
+			changes, err := Detect(t.Context(), inputs[0], inputs[1])
+			assert.NoError(t, err)
+			for _, reverse := range []bool{false, true} {
+				before, after := indexes[0], indexes[1]
+				if reverse {
+					before, after = after, before
+					changes, err = Detect(t.Context(), inputs[1], inputs[0])
+					assert.NoError(t, err)
+				}
+				qualified, err := changes.WithReaders(t.Context(), before, after)
+				assert.NoError(t, err)
+				changed, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, id, nil)
+				assert.Equal(t, known, scenario != "partial")
+				if known {
+					assert.Equal(t, changed, scenario != "equal")
+				}
+				prepared := manifest.DeepCopyMap(docs[0].Document)
+				manifest.EnsureMetadata(prepared)["namespace"] = id.Namespace
+				side := manifest.TreeHead
+				if reverse {
+					side = manifest.TreeBase
+				}
+				changed, known = qualified.DeclarationChanged(side, manifest.BootstrapSourceID, id, prepared)
+				if known {
+					assert.Equal(t, changed, scenario != "equal")
+				}
+				_, selected := maps.Collect(qualified.Inputs(manifest.NamedResource{}))[reader]
+				assert.Equal(t, selected, scenario != "equal")
+			}
+		})
+	}
+}
+
+func TestSet_WithReadersPreservesDeclarationOwners(t *testing.T) {
+	t.Parallel()
+	root := testutil.KustomizationID("apps", "root")
+	driver := testutil.KustomizationID("apps", "driver")
+	child := testutil.KustomizationID("apps", "child")
+	foreign := testutil.KustomizationID("apps", "foreign")
+	other := manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "sources", Name: "other"}
+	index := &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+		root:    {File: "entry/root.yaml", Path: "/tree/entry/root.yaml"},
+		driver:  {File: "app/driver.yaml", Parent: root, Productions: []manifest.Production{{Owner: root, Source: manifest.BootstrapSourceID}}},
+		child:   {Authored: child, File: "declarations/child.yaml", Parent: driver, Productions: []manifest.Production{{Owner: driver, Source: manifest.BootstrapSourceID}}},
+		foreign: {File: "entry/root.yaml", Path: "/other/entry/root.yaml", Productions: []manifest.Production{{Source: other}}},
+	}, Readers: map[string][]manifest.FileReader{
+		"leaf/kustomization.yaml": {{Reader: child, Source: manifest.BootstrapSourceID}},
+	}}
+	for _, before := range []bool{false, true} {
+		t.Run(fmt.Sprint(before), func(t *testing.T) {
+			t.Parallel()
+			set := NewSet([]string{"entry/root.yaml", "leaf/kustomization.yaml"})
+			set.oneSided[0] = map[string]map[manifest.NamedResource]string{"leaf/kustomization.yaml": nil}
+			indexes := [2]*manifest.DiscoveryIndex{index, nil}
+			if !before {
+				indexes = [2]*manifest.DiscoveryIndex{nil, index}
+				set.oneSided[1], set.oneSided[0] = set.oneSided[0], nil
+			}
+			resolved, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
+			want := InputChange{File: "entry/root.yaml", Declarations: []string{"app/driver.yaml", "declarations/child.yaml", "entry/root.yaml"}, Productions: []manifest.Production{{Owner: driver, Declaration: driver, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}, {Owner: root, Declaration: root, Authored: child, Source: manifest.BootstrapSourceID, File: "declarations/child.yaml"}}}
+			assert.Diff(t, resolved.inputs[child], want)
+			_, admitted := resolved.inputs[foreign]
+			assert.Equal(t, admitted, false)
+			assert.Equal(t, len(set.inputs), 0)
+			repeated, err := set.WithReaders(t.Context(), indexes[0], indexes[1])
+			assert.NoError(t, err)
+			assert.Diff(t, repeated.inputs, resolved.inputs)
+		})
+	}
+	t.Run("prepared evidence preserves direct paths", func(t *testing.T) {
+		t.Parallel()
+		id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+		reader := testutil.HelmReleaseID("apps", "reader")
+		stores := [2]*store.Store{store.New(), store.New()}
+		artifacts := [2]*store.SourceArtifact{}
+		indexes := [2]*manifest.DiscoveryIndex{}
+		prepared := [2]map[manifest.NamedResource]store.Child{}
+		for side, file := range []string{"old.yaml", "new.yaml"} {
+			doc := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "settings", "namespace": "apps"}, "data": map[string]any{"value": "same"}}
+			object, _, _, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{})
+			assert.NoError(t, err)
+			artifacts[side] = &store.SourceArtifact{FS: fstest.MapFS{file: {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: settings, namespace: apps}\ndata: {value: same}\n")}}}
+			indexes[side] = &manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{id: {File: file, Productions: []manifest.Production{{Source: manifest.BootstrapSourceID, File: file}}}}, Readers: map[string][]manifest.FileReader{file: {{Reader: reader, Source: manifest.BootstrapSourceID, Declaration: id, Exact: true}, {Reader: root, Source: manifest.BootstrapSourceID, Exact: true}}}, CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true}}
+			stores[side].SetArtifact(manifest.BootstrapSourceID, artifacts[side])
+			stores[side].SetDiscoveryIndex(indexes[side])
+			prepared[side] = map[manifest.NamedResource]store.Child{id: {Obj: object, Doc: doc}}
+		}
+		set, err := Detect(t.Context(), artifacts[0], artifacts[1])
+		assert.NoError(t, err)
+		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1])
+		assert.NoError(t, err)
+		_, direct := set.inputs[root]
+		_, named := set.inputs[reader]
+		assert.Equal(t, direct, true)
+		assert.Equal(t, named, false)
+		set, err = set.WithDeclarations(t.Context(), stores[0], stores[1], prepared)
+		assert.NoError(t, err)
+		set, err = set.WithReaders(t.Context(), indexes[0], indexes[1])
+		assert.NoError(t, err)
+		_, direct = set.inputs[root]
+		_, named = set.inputs[reader]
+		assert.Equal(t, direct, true)
+		assert.Equal(t, named, false)
+	})
+
 }
 
 func TestDetect_OneSidedInputIgnorePolicies(t *testing.T) {
@@ -927,4 +1145,51 @@ func (f *directoryBodyFS) Open(name string) (fs.File, error) {
 		}
 	}
 	return file, err
+}
+
+func TestSet_WithReadersChangedDeclarations(t *testing.T) {
+	t.Parallel()
+	inputs := [2]*store.SourceArtifact{}
+	indexes := [2]*manifest.DiscoveryIndex{}
+	readers := [2]*digestReadFS{}
+	changed := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "changed"}
+	stable := manifest.NamedResource{Kind: manifest.KindConfigMap, Name: "stable"}
+	for side := range inputs {
+		readers[side] = &digestReadFS{FS: fstest.MapFS{
+			"changed.yaml": {Data: fmt.Appendf(nil, "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: changed}\ndata: {value: side-%d}\n", side)},
+			"stable.yaml":  {Data: []byte("apiVersion: v1\nkind: ConfigMap\nmetadata: {name: stable}\ndata: {value: same}\n")},
+		}}
+		inputs[side] = &store.SourceArtifact{FS: readers[side]}
+		indexes[side] = &manifest.DiscoveryIndex{
+			Records: map[manifest.NamedResource]manifest.DiscoveryRecord{
+				changed: {File: "changed.yaml"}, stable: {File: "stable.yaml"},
+			},
+			CompleteSources: map[manifest.NamedResource]bool{manifest.BootstrapSourceID: true},
+		}
+	}
+	changes, err := Detect(t.Context(), inputs[0], inputs[1])
+	assert.NoError(t, err)
+	for side, reader := range readers {
+		reader.opens.Store(0)
+		declared, _, err := collectInput(t.Context(), reader, "changed.yaml", true)
+		assert.NoError(t, err)
+		record := indexes[side].Records[changed]
+		record.Declared = declared[changed]
+		indexes[side].Records[changed] = record
+	}
+	qualified, err := changes.WithReaders(t.Context(), indexes[0], indexes[1])
+	assert.NoError(t, err)
+	for _, reader := range readers {
+		assert.Equal(t, reader.opens.Load(), int64(1))
+	}
+	different, known := qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, changed, nil)
+	assert.Equal(t, different && known, true)
+	_, known = qualified.DeclarationChanged(manifest.TreeHead, manifest.BootstrapSourceID, stable, nil)
+	assert.Equal(t, known, false)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = changes.WithReaders(ctx, indexes[0], indexes[1])
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WithReaders error = %v, want canceled", err)
+	}
 }

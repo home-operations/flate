@@ -700,6 +700,48 @@ func TestSelect_RequiredFailureOutsideOutputNamespace(t *testing.T) {
 	}
 }
 
+func TestSelect_ChangedParentExcludesUnselectedFailure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		selected bool
+		named    bool
+	}{
+		{name: "needed child"},
+		{name: "selected child", selected: true},
+		{name: "named parent", named: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			child := &manifest.HelmRelease{Name: "child", Namespace: "apps"}
+			run := selectedRun(&Result{Failed: map[manifest.NamedResource]store.StatusInfo{
+				child.Named(): {Status: store.StatusFailed, Message: "child failed"},
+			}})
+			run.store.AddObject(parent)
+			run.store.AddObject(child)
+			publishFixture(t, run.store, parent.Named(), []manifest.NamedResource{child.Named()})
+			run.filter = change.NewFilter()
+			selected := []manifest.NamedResource{parent.Named()}
+			if tc.selected {
+				selected = append(selected, child.Named())
+			}
+			_, retry := run.filter.AddEmitted([]manifest.NamedResource{child.Named()}, selected, nil, 0)
+			assert.Equal(t, retry, false)
+			name := ""
+			if tc.named {
+				name = parent.Name
+			}
+			run.Err = &FailuresError{Message: "child failed"}
+			result, err, remainder := Select([]Rendered{run}, run.Err, []manifest.NamedResource{testutil.KustomizationID("", name), testutil.HelmReleaseID("", name)}, nil)
+			assert.Equal(t, err != nil, tc.selected || tc.named)
+			assert.NoError(t, remainder)
+			_, failed := result[0].Failed[child.Named()]
+			assert.Equal(t, failed, tc.selected || tc.named)
+		})
+	}
+}
+
 func TestSelect_PreparedStatusesExcludeOffRosterPrerequisites(t *testing.T) {
 	t.Parallel()
 	victim := testutil.KustomizationID("flux-system", "victim")

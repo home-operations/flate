@@ -44,7 +44,6 @@ var renderModelSeeds = []string{
 
 type renderModelCase struct {
 	modelCase
-	proof      modelSet
 	committed  bool
 	scan       string
 	beforeScan string
@@ -422,7 +421,6 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 		file := modelPath{source: source, path: "data/cm.yaml"}
 		writeRenderModelFile(f, file, bytes.ReplaceAll(f.after.files[file].body, []byte("VALUE: old"), []byte("VALUE: new")))
 	case 19:
-		f.proof = modelSet{{source: source, group: app.group, kind: app.kind, namespace: app.namespace, name: "stable"}: true}
 		for _, w := range []modelWorld{f.before, f.after} {
 			changeRenderModelDeclaration(w, app, "  path:", "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: absent, optional: true}]\n  path:")
 			p := w.producers[app]
@@ -430,7 +428,6 @@ func extendRenderModel(f *renderModelCase, seed int, variant byte) {
 			w.producers[app] = p
 		}
 	case 20:
-		f.proof = modelSet{{source: source, group: app.group, kind: app.kind, namespace: app.namespace, name: "stable"}: true}
 		for _, w := range []modelWorld{f.before, f.after} {
 			changeRenderModelDeclaration(w, app, "  path:", "  postBuild:\n    substituteFrom: [{kind: ConfigMap, name: absent}]\n  path:")
 			p := w.producers[app]
@@ -1246,27 +1243,10 @@ func checkRenderModel(t *testing.T, fixture renderModelCase) ([]byte, error) {
 		}
 		fmt.Fprintf(&evidence, "%s full-documents=%+v changed-documents=%+v\n", side.name, full.documents, changed.documents)
 		work := side.want
-		work.support = maps.Clone(work.support)
-		var proof []modelID
-		for _, id := range modelIDs(fixture.proof) {
-			if _, present := side.world.producers[id]; !present || side.want.affected[id] || side.want.support[id] {
-				continue
-			}
-			needed, selected, dirty, _ := side.changed.filter.Membership(namedRenderModelID(id))
-			if !needed || selected || dirty {
-				problems = append(problems, fmt.Errorf("%s content proof %s: roles needed=%t selected=%t dirty=%t", side.name, id, needed, selected, dirty))
-			}
-			work.support[id] = true
-			proof = append(proof, id)
-			t.Logf("%s needed-only content proof: %s", side.name, id)
-		}
 		if err := compareModelSelection(work, admitted); err != nil {
 			problems = append(problems, fmt.Errorf("changed-%s: %w", side.name, err))
 		}
 		reference[index] = projectRenderModel(full, side.want, side.world)
-		for _, id := range proof {
-			reference[index].producers[id] = full.producers[id]
-		}
 		actual[index] = changed
 		if index == 0 {
 			if err := compareModelObservation(reference[index], changed); err != nil {

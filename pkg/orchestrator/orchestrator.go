@@ -84,6 +84,7 @@ type Config struct {
 	// Network shares compatible HTTP transports and connection-timeout facts for this invocation.
 	Network      *source.Network
 	chartFetcher *helmchart.Fetcher
+	projections  *manifest.ProducerProjections
 	// HelmClient must borrow Cache; both remain caller-owned when supplied.
 	HelmClient *helm.Client
 	// StatusListener receives concurrent tree-qualified store events and must not block.
@@ -142,11 +143,12 @@ type Orchestrator struct {
 	repoRoot string
 
 	// index is immutable after discovery.
-	index          *manifest.DiscoveryIndex
-	entryDiscovery *discovery.Result
-	entryBinding   discovery.Binding
-	entryFailure   error
-	admission      *discovery.Admission
+	index                 *manifest.DiscoveryIndex
+	entryDiscovery        *discovery.Result
+	entryBinding          discovery.Binding
+	entryAdmissionPending bool
+	entryFailure          error
+	admission             *discovery.Admission
 
 	// orphans retain skipped failures for the completed result.
 	orphans map[manifest.NamedResource]string
@@ -192,6 +194,7 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	if o.cfg.Selection.Changed || len(o.cfg.Selection.Roots) != 0 {
 		o.filter = change.NewFilter()
 		o.loader = loader.New(st)
+		o.loader.Options.AllowMissingKinds = cfg.AllowMissingKinds
 		o.loader.Options.Selection, o.loader.Options.Changes, o.loader.Options.Filter = o.cfg.Selection, tree.ExternalChanges, o.filter
 	}
 	if cfg.StatusListener != nil {
@@ -210,7 +213,7 @@ func newOrchestrator(cfg Config, tree Tree, ts *task.Service) *Orchestrator {
 	o.src.Fetchers[manifest.KindExternalArtifact] = source.Wrap(manifest.KindExternalArtifact, &external.Fetcher{})
 	o.ksc = kustomization.New(st, ts, trees, cfg.WipeSecrets)
 	o.hrc = helmrelease.New(base.New(st, ts), cfg.HelmClient, cfg.HelmOptions, cfg.WipeSecrets)
-	o.rsc = resourcesetctrl.New(st, ts, cfg.WipeSecrets)
+	o.rsc = resourcesetctrl.New(st, ts, cfg.Cache, cfg.WipeSecrets)
 	o.agc = artifactgenerator.New(st, ts, cfg.Cache)
 	o.controllers = base.Controllers{Kustomization: o.ksc, HelmRelease: o.hrc, ResourceSet: o.rsc, Source: o.src, ArtifactGenerator: o.agc}
 	o.depGraph = newDependencyGraph()
@@ -273,7 +276,7 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	config := discovery.Config{
 		Selection: o.cfg.Selection, Loader: o.loader,
 		Path: o.cfg.Path, RepoRoot: o.cfg.RepoRoot, SelfURLs: o.cfg.SelfURLs, Input: o.cfg.Input,
-		Store: o.store, WipeSecrets: o.cfg.WipeSecrets, Entry: o.cfg.entry,
+		Store: o.store, WipeSecrets: o.cfg.WipeSecrets,
 		Trees: o.ksc.Trees, RemoteInputs: &o.inputs, RemoteRetry: o.cfg.SourceRetry,
 		StrictSubstitutions: o.cfg.StrictSubstitutions, SkipKinds: o.cfg.HelmOptions.SkipResourceKinds(),
 	}
@@ -281,6 +284,13 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 	var err error
 	if o.loader != nil {
 		if o.session == nil {
+			planning := config
+			planning.Loader, planning.Projections = nil, o.cfg.projections
+			entries, failure := discovery.Plan(ctx, planning)
+			if failure != nil {
+				return failure
+			}
+			config.Entry, config.Input = &entries[0], entries[0].Input
 			o.session, err = discovery.Begin(ctx, config)
 			if err != nil {
 				return err
@@ -294,7 +304,6 @@ func (o *Orchestrator) discover(ctx context.Context) error {
 		res, err = discovery.Run(ctx, config)
 	}
 
-	o.cfg.entry = nil
 	if err != nil {
 		return err
 	}

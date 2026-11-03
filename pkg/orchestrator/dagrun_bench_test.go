@@ -15,7 +15,7 @@ func BenchmarkDAGDispatch_ResourceSet(b *testing.B) {
 	for _, mode := range []string{"controller", "dispatcher", "observation_reads"} {
 		b.Run(mode, func(b *testing.B) {
 			s := store.New()
-			c := resourceset.New(s, task.NewBounded(2), true)
+			c := resourceset.New(s, task.NewBounded(2), nil, true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
 

@@ -48,6 +48,7 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 			l.Index.Records[id] = record
 		}
 	}
+	l.projectTemplates()
 	var claims []manifest.KSClaim
 	if l.scopes != nil {
 		claims = slices.DeleteFunc(l.scopes.claims, func(c manifest.KSClaim) bool {
@@ -79,16 +80,17 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 		}
 	}
 	for id, r := range l.Index.Files() {
+		kind := id.KindInfo()
 		if origin := l.documents.localPath(r.Path); origin != r.Path {
 			rel, _ := filepath.Rel(repoRoot, origin)
 			r.File = filepath.ToSlash(rel)
 		}
-		if id.KindInfo().Parent {
+		if kind.Parent && (r.Path != "" || r.Parent == (manifest.NamedResource{})) {
 			if parent, ok := manifest.StrictParent(claims, r.File, id, own[id]); ok {
 				r.Parent = parent
 			}
 		}
-		if id.KindInfo().Structural {
+		if kind.Structural {
 			if ks, ok := l.Store.Get[*manifest.Kustomization](id); ok {
 				_, r.Pinned, _ = SourceView(l.Store, ks.SourceID(), repoRoot)
 			}
@@ -103,13 +105,46 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 	if err := l.finalizeRecords(ctx, repoRoot, emittedFiles); err != nil {
 		return err
 	}
+	if err := l.resolvePaths(ctx); err != nil {
+		return err
+	}
+	if l.Options.Selection.Changed {
+		clear(l.Index.CompleteSources)
+		markComplete := func(source manifest.NamedResource) {
+			if l.Index.CompleteSources == nil {
+				l.Index.CompleteSources = map[manifest.NamedResource]bool{}
+			}
+			l.Index.CompleteSources[source] = true
+		}
+		if l.scopes.complete {
+			if l.documents.bootstrap != "" {
+				markComplete(manifest.BootstrapSourceID)
+			}
+			for _, source := range l.scopes.sources {
+				if source.ready && !source.external && source.artifact != nil {
+					markComplete(source.id)
+				}
+			}
+		}
+	}
 	for file, doc := range l.documents.cache {
+		incomplete := doc.decodeErr != nil || slices.ContainsFunc(doc.objects, func(object parsedObject) bool { return object.outcome.Err != nil })
+		if l.Options.Selection.Changed && incomplete {
+			root := l.documents.mountedRoot(file)
+			for source := range l.Index.CompleteSources {
+				input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
+				if source == manifest.BootstrapSourceID && root == repoRoot || input != nil && input.LocalPath == root {
+					delete(l.Index.CompleteSources, source)
+				}
+			}
+		}
 		doc.terminal = l.terminalInput(file)
 		l.documents.cache[file] = doc
 	}
 	for _, ids := range l.Index.Claims {
 		slices.SortFunc(ids, manifest.NamedResource.Compare)
 	}
+
 	if l.documents.compact {
 		l.derived, l.indexDerived = l.construction, true
 		if !freeze {
@@ -124,11 +159,12 @@ func (l *Loader) FinalizeIndex(ctx context.Context, repoRoot string, freeze bool
 }
 
 func (l *Loader) freezeConstruction() {
-	l.bindings = map[manifest.NamedResource]*store.SourceArtifact{}
+	bindings := map[manifest.NamedResource]admissionSource{}
 	for source := range l.Options.Changes.Sources() {
 		input, _ := l.Store.GetArtifact(source, store.ArtifactContent).(*store.SourceArtifact)
-		l.bindings[source] = input
+		bindings[source] = admissionSource{initial: input}
 	}
+	l.bindings.Store(&bindings)
 	l.inputReaders = map[manifest.NamedResource][]manifest.NamedResource{}
 	for _, object := range l.Store.Objects() {
 		id := object.Named()
@@ -185,4 +221,28 @@ func (l *Loader) freezeConstruction() {
 	l.frozen = true
 	l.Store.SetDiscoveryIndex(l.Index)
 	l.scopes, l.facts, l.Options.ParsedInputs, l.documents.parsed = nil, nil, nil, nil
+}
+
+// Retire releases admission readers while preserving completed owners' read tracking.
+func (l *Loader) Retire() {
+	l.Options.HistoryOwners = nil
+	l.inputReaders, l.inputObjects = nil, nil
+	l.templateTargets = nil
+	l.producerFacts.Store(nil)
+	if !l.Options.Filter.Enabled() {
+		l.documents = documentReader{}
+		l.facts, l.scopes, l.Options.ParsedInputs = nil, nil, nil
+		l.candidates, l.admitted, l.locations, l.roots = nil, nil, nil, nil
+		l.bindings.Store(nil)
+		l.projections.Clear()
+		return
+	}
+	for file, readers := range l.Index.Readers {
+		readers = slices.DeleteFunc(readers, func(reader manifest.FileReader) bool { return !l.Options.Filter.ShouldReconcile(reader.Reader) })
+		if len(readers) == 0 {
+			delete(l.Index.Readers, file)
+		} else {
+			l.Index.Readers[file] = readers
+		}
+	}
 }

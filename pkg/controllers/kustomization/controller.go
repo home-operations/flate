@@ -141,7 +141,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 			if err != nil {
 				return err
 			}
-			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
+			return c.recordRender(ctx, ks, source, &attempt)
 		}
 	} else if err := c.run.Checkpoint(); err != nil {
 		return err
@@ -164,7 +164,7 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 			if err != nil {
 				return err
 			}
-			return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
+			return c.recordRender(ctx, ks, source, &attempt)
 		}
 	}
 	if err := kustomize.Shape(ks, docs, c.strictSubstitutions); err != nil {
@@ -176,10 +176,22 @@ func (c *execution) render(ctx context.Context, ks *manifest.Kustomization, sour
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.Trees.RecordRender(ctx, kustomize.RenderAcceptance{Owner: id, Receipt: attempt.Render, Records: attempt.Footprint(), DependencySubstitutions: c.DependencySubstitutions})
+	return c.recordRender(ctx, ks, source, &attempt)
 }
 
-// PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.
+func (c *execution) recordRender(ctx context.Context, ks *manifest.Kustomization, source *store.SourceArtifact, attempt *store.Emission) error {
+	acceptance := kustomize.RenderAcceptance{Owner: ks.Named(), Receipt: attempt.Render, Entry: ks.EntryReceipt, DependencySubstitutions: c.DependencySubstitutions}
+	acceptance.Sources = attempt.SourcePaths()
+	if ks.EntryReceipt != nil {
+		acceptance.Sources = c.Store.ChildSourcePaths(ks.Named(), attempt.Children, nil)
+	}
+	if acceptance.Sources != nil {
+		acceptance.Source, acceptance.Records = source.HistoryIdentity(ks.SourceID()), attempt.Footprint()
+	}
+	return c.Trees.RecordRender(ctx, acceptance)
+}
+
+// PreviousRender returns the entry applier inventory without rendering or acquiring sources.
 func (c *Controller) PreviousRender(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet) (iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord], bool) {
 	ks, ok := obj.(*manifest.Kustomization)
 	if !ok || ctx.Err() != nil {

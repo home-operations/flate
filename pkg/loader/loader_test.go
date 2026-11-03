@@ -674,14 +674,14 @@ func TestLoader_DiscoveryRecordsSourceRefs(t *testing.T) {
 	assert.Equal(t, len(l.documents.cache[path].objects), 1)
 	ksPath := filepath.Join(dir, "ks.yaml")
 	testutil.WriteFile(t, dir, "ks.yaml", testutil.KustomizationYAML("app", "apps", "  {path: ./apps}\n"))
-	if _, err := l.loadFile(ksPath); err != nil {
+	if _, err := l.loadFile(t.Context(), ksPath); err != nil {
 		t.Fatal(err)
 	}
 	assert.Equal(t, len(l.documents.cache[ksPath].objects), 1)
 	for _, kind := range []string{manifest.KindConfigMap, manifest.KindSecret} {
 		file := filepath.Join(dir, kind+".yaml")
 		testutil.WriteFile(t, dir, kind+".yaml", "apiVersion: v1\nkind: "+kind+"\nmetadata: {name: data, namespace: apps}\n")
-		if _, err := l.loadFile(file); err != nil {
+		if _, err := l.loadFile(t.Context(), file); err != nil {
 			t.Fatal(err)
 		}
 		assert.Equal(t, len(l.documents.cache[file].objects), 1)
@@ -1365,7 +1365,7 @@ func TestLoader_WarningConditions(t *testing.T) {
 				l.documents.views[root] = unreadableListingFS{FS: os.DirFS(root)}
 			}
 			w := traversal{documents: l.documents, policy: traversalAdmission, loader: l, directories: map[string]struct{}{}}
-			w.walk(t.Context().Err, graphVisit{root: root, file: root}, nil)
+			w.walk(t.Context(), graphVisit{root: root, file: root}, nil)
 			assert.NoError(t, w.err)
 			warnings := st.Warnings()
 			if site == "sibling" || site == "component" || site == "kustomization" {

@@ -5,10 +5,73 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
+	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+type admissionSources struct {
+	names    []*admissionSource
+	bindings map[manifest.NamedResource]*admissionSource
+	storage  []admissionSource
+	changed  bool
+}
+
+type admissionSource struct {
+	source                     manifest.NamedResource
+	changes, delta, comparison *change.Set
+	snapshots                  [2]*store.SourceArtifact
+	declarations               [2]manifest.BaseManifest
+	declaration                manifest.BaseManifest
+	input, initial             *store.SourceArtifact
+	origin                     string
+	toIndex                    string
+	paths                      []string
+	bound, paired              bool
+}
+
+var admissionSourcePool = sync.Pool{New: func() any {
+	return &admissionSources{bindings: map[manifest.NamedResource]*admissionSource{}}
+}}
+
+func (c *admissionClosure) comparisonSources() *admissionSources {
+	if c.comparisons == nil {
+		c.comparisons = admissionSourcePool.Get().(*admissionSources)
+		count := 0
+		for range c.loader.Options.Changes.Sources() {
+			count++
+		}
+		c.comparisons.storage = slices.Grow(c.comparisons.storage, count+1)
+		for source := range c.loader.Options.Changes.Sources() {
+			changes, snapshots, declarations := c.loader.Options.Changes.ForSource(source)
+			c.comparisons.storage = append(c.comparisons.storage, admissionSource{source: source, changes: changes, snapshots: snapshots, declarations: declarations})
+		}
+		for i := range c.comparisons.storage {
+			evidence := &c.comparisons.storage[i]
+			c.comparisons.names = append(c.comparisons.names, evidence)
+			c.comparisons.bindings[evidence.source] = evidence
+		}
+		slices.SortFunc(c.comparisons.names, func(a, b *admissionSource) int { return a.source.Compare(b.source) })
+	}
+	return c.comparisons
+}
+
+func (c *admissionClosure) sourceEvidence(source manifest.NamedResource) *admissionSource {
+	if source == (manifest.NamedResource{}) {
+		source = manifest.BootstrapSourceID
+	}
+	comparisons := c.comparisonSources()
+	if evidence, known := comparisons.bindings[source]; known {
+		return evidence
+	}
+	changes, snapshots, declarations := c.loader.Options.Changes.ForSource(source)
+	comparisons.storage = append(comparisons.storage, admissionSource{source: source, changes: changes, snapshots: snapshots, declarations: declarations})
+	evidence := &comparisons.storage[len(comparisons.storage)-1]
+	comparisons.bindings[source] = evidence
+	return evidence
+}
 
 func (c *admissionClosure) sources(id manifest.NamedResource) iter.Seq[manifest.NamedResource] {
 	return func(yield func(manifest.NamedResource) bool) {
@@ -39,13 +102,16 @@ func (c *admissionClosure) sources(id manifest.NamedResource) iter.Seq[manifest.
 
 func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		delta, input, paired := c.delta(source)
-		if delta == nil {
+		evidence := c.boundSource(source)
+		if evidence.delta == nil {
 			return
 		}
-		for _, file := range delta.Paths() {
-			if paired {
-				_, file = c.coordinates(manifest.Production{Source: source, File: file, Path: filepath.Join(input.LocalPath, filepath.FromSlash(file))})
+		if evidence.paths == nil {
+			evidence.paths = evidence.delta.Paths()
+		}
+		for _, file := range evidence.paths {
+			if evidence.paired {
+				_, file = c.coordinates(manifest.Production{Source: source, File: file, Path: filepath.Join(evidence.input.LocalPath, filepath.FromSlash(file))})
 			}
 			if !yield(file) {
 				return
@@ -55,7 +121,8 @@ func (c *admissionClosure) sourceFiles(source manifest.NamedResource) iter.Seq[s
 }
 
 func (c *admissionClosure) changedClaim(reader manifest.FileReader, file string) bool {
-	delta, input, paired := c.delta(reader.Source)
+	evidence := c.boundSource(reader.Source)
+	delta, input, paired := evidence.delta, evidence.input, evidence.paired
 	if delta == nil {
 		return false
 	}
@@ -64,8 +131,34 @@ func (c *admissionClosure) changedClaim(reader manifest.FileReader, file string)
 	if !changed {
 		return false
 	}
+	contentChanged := func(reader manifest.FileReader) bool {
+		if reader.Declaration == (manifest.NamedResource{}) {
+			return true
+		}
+		if changed, known := c.declarationChanged(reader.Declaration, c.object(reader.Declaration)); known && !changed {
+			return false
+		}
+		object := c.object(reader.Reader)
+		matched := false
+		for ref := range c.references(reader.Reader, object) {
+			if ref.NamedResource != reader.Declaration || !c.reverse(reader.Reader, object, ref) {
+				continue
+			}
+			matched = true
+			if changed, known := c.outputChanged(reader.Reader, ref, object); !known || changed {
+				return true
+			}
+		}
+		return !matched
+	}
+	if !contentChanged(reader) {
+		return false
+	}
 	for actual := range c.loader.Index.ReadersOfFile(file) {
 		if actual.Reader == reader.Reader {
+			if !contentChanged(actual) {
+				continue
+			}
 			qualified, _, _ := c.delta(actual.Source)
 			if qualified == delta {
 				return true
@@ -74,7 +167,7 @@ func (c *admissionClosure) changedClaim(reader manifest.FileReader, file string)
 	}
 	if roots, known := record.ContentRoots[reader.Source]; known {
 		if input != nil {
-			relative, err := filepath.Rel(input.OriginPath(input.LocalPath), filepath.Join(c.loader.SourceRoot, filepath.FromSlash(file)))
+			relative, err := filepath.Rel(evidence.origin, filepath.Join(c.loader.SourceRoot, filepath.FromSlash(file)))
 			if err != nil {
 				return false
 			}
@@ -88,8 +181,10 @@ func (c *admissionClosure) changedClaim(reader manifest.FileReader, file string)
 }
 
 func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResource) bool {
-	for source := range c.loader.Options.Changes.Sources() {
-		delta, input, paired := c.delta(source)
+	for i := range c.comparisonSources().names {
+		evidence := c.bindSource(c.comparisons.names[i])
+		source := evidence.source
+		delta, input, paired := evidence.delta, evidence.input, evidence.paired
 		if delta == nil {
 			continue
 		}
@@ -100,7 +195,7 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 		}) {
 			continue
 		}
-		for id, changed := range delta.Inputs() {
+		for id, changed := range delta.Inputs(dependency) {
 			if id.Group != dependency.Group || id.Kind != dependency.Kind || id.Name != dependency.Name || id.Namespace != "" && id.Namespace != dependency.Namespace {
 				continue
 			}
@@ -127,10 +222,8 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 				if input == nil {
 					continue
 				}
-				origin := input.OriginPath(input.LocalPath)
-				base, err := filepath.Rel(c.loader.SourceRoot, origin)
-				base = filepath.ToSlash(base)
-				if err != nil || base != "." && file != base && !strings.HasPrefix(file, base+"/") {
+				base := filepath.ToSlash(evidence.toIndex)
+				if base == "" || base != "." && file != base && !strings.HasPrefix(file, base+"/") {
 					continue
 				}
 				_, origins, _ := delta.ForSource(manifest.BootstrapSourceID)
@@ -145,15 +238,14 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 			if id.Namespace != "" {
 				return true
 			}
-			for readerSource := range c.sources(consumer) {
-				if readerSource == source {
+			readerSource := c.source(consumer)
+			if readerSource == source {
+				return true
+			}
+			if source == manifest.BootstrapSourceID {
+				_, artifact, paired := c.delta(readerSource)
+				if !paired && artifact != nil && artifact.OriginPath(artifact.LocalPath) == c.loader.SourceRoot {
 					return true
-				}
-				if source == manifest.BootstrapSourceID {
-					_, artifact, paired := c.delta(readerSource)
-					if !paired && artifact != nil && artifact.OriginPath(artifact.LocalPath) == c.loader.SourceRoot {
-						return true
-					}
 				}
 			}
 		}
@@ -164,7 +256,8 @@ func (c *admissionClosure) changedInput(consumer, dependency manifest.NamedResou
 func (c *admissionClosure) coordinates(p manifest.Production) (relative, indexed string) {
 	relative, indexed = p.File, p.File
 	if filepath.IsAbs(p.Path) {
-		art, _ := c.objects.GetArtifact(p.Source, store.ArtifactContent).(*store.SourceArtifact)
+		evidence := c.boundSource(p.Source)
+		art := evidence.input
 		root := c.loader.SourceRoot
 		if art != nil {
 			root = art.LocalPath
@@ -174,11 +267,18 @@ func (c *admissionClosure) coordinates(p manifest.Production) (relative, indexed
 			return "", ""
 		}
 		relative = filepath.ToSlash(rel)
-		rel, err = filepath.Rel(c.loader.SourceRoot, art.OriginPath(p.Path))
-		if err != nil {
-			return "", ""
+		indexed = relative
+		if evidence.toIndex != "." {
+			physical := p.Path
+			if art != nil && evidence.origin != art.LocalPath {
+				physical = filepath.Join(evidence.origin, rel)
+			}
+			rel, err = filepath.Rel(c.loader.SourceRoot, physical)
+			if err != nil {
+				return "", ""
+			}
+			indexed = filepath.ToSlash(rel)
 		}
-		indexed = filepath.ToSlash(rel)
 	}
 	return relative, indexed
 }
@@ -205,8 +305,8 @@ func (c *admissionClosure) changedProduction(p manifest.Production) bool {
 
 func (c *admissionClosure) reverse(id manifest.NamedResource, object manifest.BaseManifest, ref manifest.Reference) bool {
 	if object != nil {
-		for input := range manifest.ContentInputs(object, true) {
-			if input == ref.NamedResource {
+		for input := range manifest.References(object, manifest.ReferenceRelations) {
+			if input.AffectedInput() && input.NamedResource == ref.NamedResource {
 				return true
 			}
 		}

@@ -31,9 +31,9 @@ func Prepare(doc manifest.DocOccurrence, opts manifest.ParseDocOptions) (store.C
 	return store.Child{Obj: obj, Doc: authoritative}, doc, changed
 }
 
-func (r documentReader) parseFile(path string, opts manifest.ParseDocOptions) ([]store.Child, error) {
+func (r documentReader) parseFile(ctx context.Context, path string, opts manifest.ParseDocOptions) ([]store.Child, error) {
 	if r.compact && r.coordinate == nil {
-		facts, err := r.censusFile(path, opts)
+		facts, err := r.censusFile(ctx, path, opts)
 		var children []store.Child
 		for _, fact := range facts {
 			if fact.Obj != nil && fact.outcome.Err == nil && !fact.fact.facts.uncertain {
@@ -123,6 +123,10 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 				continue
 			}
 			version := manifest.DocAPIVersion(leaf.Document)
+			declared := ""
+			if r.compact && r.coordinate == nil {
+				declared = manifest.Fingerprint(manifest.WithoutOwnershipLabels(leaf.Document))
+			}
 			child, outcome, _ := Prepare(leaf, opts)
 			if outcome.Err != nil {
 				yield(parsedObject{Child: child, outcome: outcome, item: item, version: version})
@@ -144,7 +148,7 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 				manifest.ReleaseDoc(leaf.Document)
 				child.Doc, outcome.Document = nil, nil
 			}
-			yield(parsedObject{Child: child, outcome: outcome, item: item, version: version})
+			yield(parsedObject{Child: child, outcome: outcome, item: item, version: version, declared: declared})
 		}
 		if collection {
 			manifest.ReleaseDoc(occurrence.Document)
@@ -156,18 +160,26 @@ func (r documentReader) decodeFileObjects(path string, opts manifest.ParseDocOpt
 	return nil
 }
 
-func (r documentReader) censusFile(path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
+func (r documentReader) censusFile(ctx context.Context, path string, opts manifest.ParseDocOptions) ([]parsedObject, error) {
 	r.restore(path)
 	if cached := r.cache[path]; cached.objects != nil || cached.decodeErr != nil {
 		return cached.objects, cached.decodeErr
 	}
 	facts := []parsedObject{}
+	var projectionErr error
 	err := r.decodeFileObjects(path, opts, true, func(child parsedObject) {
 		if child.outcome.Err != nil {
 			facts = append(facts, child)
 			return
 		}
-		o := compactOccurrence(child.Obj)
+		projection, err := r.projections.Project(ctx, child.Obj)
+		if err != nil {
+			projectionErr = err
+			manifest.ReleaseDoc(child.Doc)
+			return
+		}
+		o := compactOccurrence(child.Obj, projection)
+		o.facts.declared = child.declared
 		origin := r.localPath(path)
 		root := r.mountedRoot(origin)
 		file, _ := filepath.Rel(root, origin)
@@ -181,6 +193,27 @@ func (r documentReader) censusFile(path string, opts manifest.ParseDocOptions) (
 		outcome.Document = nil
 		facts = append(facts, parsedObject{Obj: structural, fact: &o, outcome: outcome, version: child.version})
 	})
+	if projectionErr != nil {
+		err = projectionErr
+	}
+	if len(facts) > 1 {
+		declared := map[manifest.NamedResource]string{}
+		for _, child := range facts {
+			if child.fact == nil {
+				continue
+			}
+			id, fingerprint := child.fact.Authored, child.fact.facts.declared
+			if previous, known := declared[id]; known && previous != fingerprint {
+				fingerprint = ""
+			}
+			declared[id] = fingerprint
+		}
+		for _, child := range facts {
+			if child.fact != nil {
+				child.fact.facts.declared = declared[child.fact.Authored]
+			}
+		}
+	}
 	cached := r.cache[path]
 	cached.objects, cached.decodeErr = facts, err
 	r.cache[path] = cached

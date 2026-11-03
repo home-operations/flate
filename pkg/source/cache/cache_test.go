@@ -2471,3 +2471,49 @@ func TestAcquire_MemoryRetirement(t *testing.T) {
 		})
 	}
 }
+
+func TestNew_SnapshotStartsAtOCIUse(t *testing.T) {
+	t.Parallel()
+	c, err := New(t.Context(), t.TempDir())
+	assert.NoError(t, err)
+	defer func() { assert.NoError(t, c.Close()) }()
+	if c.snapshot.Load() != nil {
+		t.Fatal("unused cache retained an OCI snapshot")
+	}
+	_, err = c.acquireOnce(t.Context(), acquireKey{id: "missing", lookupOnly: true}, acquisitionCallbacks{})
+	if !errors.Is(err, errdef.ErrNotFound) {
+		t.Fatalf("lookup error = %v, want not found", err)
+	}
+	if c.snapshot.Load() == nil {
+		t.Fatal("OCI lookup did not prepare a reusable snapshot")
+	}
+	assert.NoError(t, c.Close())
+	owners.Lock()
+	_, published := owners.indexes[c.root.Name()]
+	owners.Unlock()
+	if published {
+		t.Fatal("read-only lookup published a snapshot")
+	}
+
+	root := t.TempDir()
+	c, err = New(t.Context(), root)
+	assert.NoError(t, err)
+	key := ArchiveKey{Content: "snapshot publication", Policy: "fixed"}
+	fill := producer(orderedArchive(t, "file", "content"), ocispec.Descriptor{})
+	_, _, _, err = c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, fill)
+	assert.NoError(t, err)
+	snapshot := c.snapshot.Load()
+	assert.NoError(t, c.Close())
+	index := snapshot.index
+	c, err = New(t.Context(), root)
+	assert.NoError(t, err)
+	if c.snapshot.Load() != snapshot {
+		t.Fatal("unchanged index did not reuse the published snapshot")
+	}
+	_, _, _, err = c.Acquire(t.Context(), key, Policy{MaxAge: Forever}, nil)
+	assert.NoError(t, err)
+	assert.NoError(t, c.Close())
+	if &snapshot.index[0] != &index[0] {
+		t.Fatal("read-only run captured the snapshot files again")
+	}
+}

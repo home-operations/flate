@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
+	"github.com/home-operations/flate/internal/resourcesetinput"
 	"github.com/home-operations/flate/pkg/manifest"
 )
 
@@ -169,14 +170,14 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 	if err != nil {
 		return nil, fmt.Errorf("convert template to YAML: %w", err)
 	}
-	pt, err := parseTemplate(string(yamlBytes))
+	pt, err := resourcesetinput.Parse(string(yamlBytes))
 	if err != nil {
 		return nil, err
 	}
 
 	out := make([]map[string]any, 0, len(inputs))
 	for _, in := range defaultNilInput(inputs) {
-		rendered, err := executeTemplate(pt, in)
+		rendered, err := pt.Execute(in)
 		if err != nil {
 			return nil, err
 		}
@@ -193,13 +194,13 @@ func renderResources(raw *apix.JSON, inputs []map[string]any) ([]map[string]any,
 }
 
 func renderResourcesTemplate(tmplStr string, inputs []map[string]any) ([]map[string]any, error) {
-	pt, err := parseTemplate(tmplStr)
+	pt, err := resourcesetinput.Parse(tmplStr)
 	if err != nil {
 		return nil, err
 	}
 	var out []map[string]any
 	for _, in := range defaultNilInput(inputs) {
-		rendered, err := executeTemplate(pt, in)
+		rendered, err := pt.Execute(in)
 		if err != nil {
 			return nil, err
 		}

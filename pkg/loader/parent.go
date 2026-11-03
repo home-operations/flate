@@ -198,7 +198,12 @@ func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (roo
 	if ref.Name == "" || ref == manifest.BootstrapSourceID {
 		return repoRoot, false, false
 	}
-	if art, ok := s.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact); ok && art.FS != nil {
+	art, _ := s.GetArtifact(ref, store.ArtifactContent).(*store.SourceArtifact)
+	return sourceView(ref, repoRoot, art, s.GetObject(ref))
+}
+
+func sourceView(ref manifest.NamedResource, repoRoot string, art *store.SourceArtifact, object manifest.BaseManifest) (root string, pinned, external bool) {
+	if art != nil && art.FS != nil {
 		if art.LocalPath == repoRoot {
 			return repoRoot, false, false
 		}
@@ -207,7 +212,7 @@ func SourceView(s sourceStore, ref manifest.NamedResource, repoRoot string) (roo
 			return art.LocalPath, art.Content != "" && !art.InputAlias, false
 		}
 	}
-	if s.GetObject(ref) != nil {
+	if object != nil {
 		return repoRoot, false, true
 	}
 	return repoRoot, false, ref.CanBindLocal()

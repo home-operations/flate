@@ -40,7 +40,7 @@ func TestDAGDispatch_ResourceSetDedup(t *testing.T) {
 	t.Parallel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := resourceset.New(s, tasks, true)
+	c := resourceset.New(s, tasks, nil, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -93,7 +93,7 @@ func TestDAGDispatch_ResourceSetClassification(t *testing.T) {
 				t.Parallel()
 				s := store.New()
 				tasks := task.NewBounded(2)
-				c := resourceset.New(s, tasks, true)
+				c := resourceset.New(s, tasks, nil, true)
 				c.Configure(base.Options{})
 				c.StartLifecycle()
 				rs := &manifest.ResourceSet{Name: "matrix", Namespace: "ns", Inputs: []fluxopv1.ResourceSetInput{{}}, ResourcesTemplate: `apiVersion: v1
@@ -174,7 +174,7 @@ data: {key: fixed}
 					fresh.ResourcesTemplate = "<< .missing.field >>"
 					s.AddObject(&fresh)
 				}
-				c = resourceset.New(s, tasks, true)
+				c = resourceset.New(s, tasks, nil, true)
 				c.Configure(opts)
 				c.StartLifecycle()
 
@@ -265,7 +265,7 @@ data: {key: fixed}
 					s.AddObject(child)
 				}
 			}
-			c := resourceset.New(s, tasks, true)
+			c := resourceset.New(s, tasks, nil, true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
 			result := (dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}).Dispatch(t.Context(), child.Named(), manifest.DrainNone)
@@ -296,7 +296,7 @@ func TestDAGDispatch_ConcurrentResourceSetUpdate(t *testing.T) {
 	defer cancel()
 	s := store.New()
 	tasks := task.NewBounded(2)
-	c := resourceset.New(s, tasks, true)
+	c := resourceset.New(s, tasks, nil, true)
 	c.Configure(base.Options{})
 	c.StartLifecycle()
 
@@ -501,7 +501,7 @@ data: {value: rendered}
 				t.Fatal("fixture K unexpectedly emitted")
 			}
 			var publications atomic.Int64
-			c := resourceset.New(s, tasks, true)
+			c := resourceset.New(s, tasks, nil, true)
 			c.Configure(base.Options{})
 			c.StartLifecycle()
 			d := dagDispatcher{&Orchestrator{store: s, rsc: c, controllers: base.Controllers{ResourceSet: c}}}

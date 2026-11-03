@@ -1,0 +1,4 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: payload, namespace: apps}
+data: {value: unchanged}

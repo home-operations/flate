@@ -1,0 +1,8 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: unrelated, namespace: apps}
+spec:
+  chart:
+    spec:
+      chart: ./charts/demo
+      sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}

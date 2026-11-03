@@ -1,6 +1,7 @@
 package change
 
 import (
+	"maps"
 	"testing"
 	"testing/fstest"
 
@@ -8,6 +9,87 @@ import (
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
+
+func TestWithDeclarations_OneSidedInput(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name              string
+		side              int
+		changed, produced bool
+	}{
+		{name: "added", side: 1, changed: true},
+		{name: "removed", side: 0, changed: true},
+		{name: "unchanged", side: 1},
+		{name: "unaccepted", side: 1, changed: true, produced: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stores := [2]*store.Store{store.New(), store.New()}
+			input := &manifest.OCIRepository{Name: "chart", Namespace: "apps"}
+			input.URL = "oci://fixture.invalid/chart"
+			for side, st := range stores {
+				files := fstest.MapFS{}
+				if side == tc.side {
+					files["input.yaml"] = &fstest.MapFile{Data: []byte("apiVersion: source.toolkit.fluxcd.io/v1\nkind: OCIRepository\nmetadata: {name: chart, namespace: apps}\nspec: {url: oci://fixture.invalid/chart}\n")}
+					production := manifest.Production{Authored: input.Named(), Source: manifest.BootstrapSourceID, File: "input.yaml"}
+					if tc.produced {
+						production.Owner = manifest.NamedResource{Kind: manifest.KindHelmRelease, Name: "emitter"}
+					}
+					st.SetDiscoveryIndex(&manifest.DiscoveryIndex{Records: map[manifest.NamedResource]manifest.DiscoveryRecord{input.Named(): {Productions: []manifest.Production{production}}}})
+					st.AddObject(input)
+				}
+				st.SetArtifact(manifest.BootstrapSourceID, &store.SourceArtifact{LocalPath: t.TempDir(), FS: files})
+			}
+			paths := []string{}
+			if tc.changed {
+				paths = append(paths, "input.yaml")
+			}
+			changes, err := Qualify(t.Context(), NewSet(paths), stores[0], stores[1])
+			assert.NoError(t, err)
+			frozen, err := changes.WithDeclarations(t.Context(), stores[0], stores[1], [2]map[manifest.NamedResource]store.Child{})
+			assert.NoError(t, err)
+			delta, _, _ := frozen.ForSource(manifest.BootstrapSourceID)
+			got := maps.Collect(delta.Inputs(manifest.NamedResource{}))
+			want := map[manifest.NamedResource]InputChange{}
+			if tc.changed && !tc.produced {
+				want[input.Named()] = InputChange{File: "input.yaml"}
+			}
+			assert.Diff(t, got, want)
+			original, _, _ := changes.ForSource(manifest.BootstrapSourceID)
+			assert.Equal(t, len(maps.Collect(original.Inputs(manifest.NamedResource{}))), 0)
+		})
+	}
+}
+
+func TestInputs_QualifiedIdentity(t *testing.T) {
+	t.Parallel()
+	id := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "apps", Name: "settings"}
+	unqualified, foreign, other := id, id, id
+	unqualified.Namespace, foreign.Namespace, other.Name = "", "other", "unrelated"
+	set := &Set{inputs: map[manifest.NamedResource]InputChange{
+		id: {File: "apps.yaml"}, unqualified: {File: "implicit.yaml"},
+		foreign: {File: "foreign.yaml"}, other: {File: "unrelated.yaml"},
+	}}
+	for _, tc := range []struct {
+		name  string
+		query manifest.NamedResource
+		want  map[manifest.NamedResource]InputChange
+	}{
+		{name: "namespace", query: id, want: map[manifest.NamedResource]InputChange{id: set.inputs[id], unqualified: set.inputs[unqualified]}},
+		{name: "unknown namespace", query: unqualified, want: map[manifest.NamedResource]InputChange{id: set.inputs[id], unqualified: set.inputs[unqualified], foreign: set.inputs[foreign]}},
+		{name: "all", want: set.inputs},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			inputs := set.Inputs(tc.query)
+			assert.Diff(t, maps.Collect(inputs), tc.want)
+			assert.Diff(t, maps.Collect(inputs), tc.want)
+			calls := 0
+			inputs(func(manifest.NamedResource, InputChange) bool { calls++; return false })
+			assert.Equal(t, calls, 1)
+		})
+	}
+}
 
 func TestWithDeclarations_LocalApplicabilityAndSelectedKey(t *testing.T) {
 	t.Parallel()

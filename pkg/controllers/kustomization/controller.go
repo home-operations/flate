@@ -75,6 +75,8 @@ func New(s *store.Store, t *task.Service, trees *kustomize.TreeCache, wipeSecret
 // Configure installs the post-bootstrap state. Panics if called after
 // StartLifecycle — encodes the invariant that reconcile-shaping config is
 // read-only once the controller is dispatching.
+//
+//nolint:gocritic // Configure snapshots the public value options before concurrent dispatch.
 func (c *Controller) Configure(opts Options, retry cache.RetryConfig) {
 	c.Controller.Configure(opts.Options)
 	c.retry = retry
@@ -181,7 +183,7 @@ func (c *execution) render(
 		if err != nil {
 			return err
 		}
-		return c.recordRender(ctx, &attempt, acceptance)
+		return c.recordRender(ctx, &attempt, &acceptance)
 	}
 
 	if err := kustomize.Shape(ks, docs, c.strictSubstitutions); err != nil {
@@ -197,13 +199,13 @@ func (c *execution) render(
 	if err := c.run.Emit(ctx, id, &attempt, nil); err != nil {
 		return err
 	}
-	return c.recordRender(ctx, &attempt, acceptance)
+	return c.recordRender(ctx, &attempt, &acceptance)
 }
 
 func (c *execution) recordRender(
 	ctx context.Context,
 	attempt *store.Emission,
-	acceptance kustomize.RenderAcceptance,
+	acceptance *kustomize.RenderAcceptance,
 ) error {
 	acceptance.Receipt, acceptance.Reads, acceptance.OutputReads = attempt.Render, attempt.Reads, attempt.OutputReads
 	acceptance.Records = attempt.Footprint()
@@ -211,7 +213,7 @@ func (c *execution) recordRender(
 	if acceptance.Entry != nil {
 		acceptance.Sources = c.Store.ChildSourcePaths(acceptance.Owner, attempt.Children, nil)
 	}
-	return c.Trees.RecordRender(ctx, acceptance)
+	return c.Trees.RecordRender(ctx, *acceptance)
 }
 
 // PreviousRender prepares the immutable candidate with captured inputs without reconciling or acquiring sources.

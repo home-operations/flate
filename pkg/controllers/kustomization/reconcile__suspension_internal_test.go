@@ -466,27 +466,7 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 		assert.FatalIf(t, len(s.Productions(exclusive, l.Index)) == 0, "%v", "missing frozen coverage")
 	}
 	for _, id := range []manifest.NamedResource{shared, exclusive} {
-		{
-			pValues := s.Productions(id, l.Index)
-			for pIndex := range pValues {
-				p := pValues[pIndex]
-
-				if p.Path != "" {
-					loader.Promote(
-						t.Context(),
-						s,
-						id,
-						loader.PromoteOptions{
-							Record: p,
-							Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
-						},
-					)
-				}
-			}
-		}
-		{
-			assert.FatalIf(t, s.GetObject(id) == nil, "missing promoted seed %s", id)
-		}
+		promoteSourceCoverage(t, s, l.Index, id)
 	}
 
 	q := &manifest.Kustomization{Name: "q", Namespace: "apps"}
@@ -697,5 +677,30 @@ func testReconcileSourceCoverageUsesRenderedArtifactCase(
 			"%v",
 			"complete empty did not retire only its contribution",
 		)
+	}
+}
+
+func promoteSourceCoverage(t *testing.T, s *store.Store, index *manifest.DiscoveryIndex, id manifest.NamedResource) {
+	t.Helper()
+	{
+		pValues := s.Productions(id, index)
+		for pIndex := range pValues {
+			p := pValues[pIndex]
+
+			if p.Path != "" {
+				loader.Promote(
+					t.Context(),
+					s,
+					id,
+					loader.PromoteOptions{
+						Record: p,
+						Admit:  func(manifest.BaseManifest) (bool, error) { return true, nil },
+					},
+				)
+			}
+		}
+	}
+	{
+		assert.FatalIf(t, s.GetObject(id) == nil, "missing promoted seed %s", id)
 	}
 }

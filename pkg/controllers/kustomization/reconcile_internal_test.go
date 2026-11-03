@@ -652,79 +652,125 @@ spec:
 		}
 	}
 	published := make(map[manifest.NamedResource]map[string]any)
+	verifySubstitutionPublications(
+		t,
+		&substitutionPublications{
+			testCaseInput: &testCaseInput,
+			c:             &c,
+			s:             &s,
+			spec:          &spec,
+			ks:            &ks,
+			childID:       &childID,
+			authored:      &authored,
+			published:     &published,
+		},
+	)
+}
+
+type substitutionPublications struct {
+	testCaseInput **struct {
+		name      string
+		strategy  kustomizev1.SubstituteStrategy
+		postBuild map[string]any
+		disabled  string
+		input     string
+		want      string
+		reference string
+	}
+	c         **Controller
+	s         **store.Store
+	spec      *map[string]any
+	ks        **manifest.Kustomization
+	childID   *manifest.NamedResource
+	authored  *map[string]any
+	published *map[manifest.NamedResource]map[string]any
+}
+
+func verifySubstitutionPublications(t *testing.T, scope *substitutionPublications) {
+	t.Helper()
 	for run := range 2 {
 		for _, id := range []manifest.NamedResource{
-			childID,
+			(*scope.childID),
 			{Group: manifest.SourceDomain, Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "source"},
 			{Group: manifest.HelmReleaseDomain, Kind: manifest.KindHelmRelease, Namespace: "flux-system", Name: "release"},
 		} {
-			obj, doc, held := s.GetEmission(id)
+			obj, doc, held := (*scope.s).GetEmission(id)
 			held.Finish()
 			{
 				assert.FatalIf(
 					t,
-					obj == nil || doc == nil || s.EmissionOwner(id) != ks.Named(),
+					obj == nil || doc == nil || (*scope.s).EmissionOwner(id) != (*scope.ks).Named(),
 					"missing published child %s: %v %v",
 					id,
 					obj,
 					doc,
 				)
 			}
-			var fields []string
-			typedSpec := doc["spec"].(map[string]any)
-			switch obj := obj.(type) {
-			case *manifest.Kustomization:
-				fields = []string{
-					obj.Path,
-					obj.SourceRef.Name,
-					obj.SourceRef.Namespace,
-					typedSpec["path"].(string),
-					typedSpec["sourceRef"].(map[string]any)["name"].(string),
-					typedSpec["sourceRef"].(map[string]any)["namespace"].(string),
-				}
-				assert.Equal(t, obj.SourceID().Name, testCaseInput.want)
-				assert.Equal(t, obj.SourceID().Namespace, testCaseInput.want)
-			case *manifest.GitRepository:
-				fields = []string{obj.Reference.Branch, typedSpec["ref"].(map[string]any)["branch"].(string)}
-			case *manifest.HelmRelease:
-				ref := typedSpec["valuesFrom"].([]any)[0].(map[string]any)
-				fields = []string{
-					obj.ValuesFrom[0].Name,
-					obj.ValuesFrom[0].ValuesKey,
-					ref["name"].(string),
-					ref["valuesKey"].(string),
-				}
-				assert.Equal(t, obj.ValuesFrom[0].Optional, true)
-			default:
-				t.Fatalf("unexpected child %T", obj)
-			}
-			for _, got := range fields {
-				assert.Equal(t, got, testCaseInput.want)
-			}
-			for ref := range manifest.References(obj, manifest.ReferenceRelations) {
-				if ref.Use == "source" && id.Kind == manifest.KindKustomization || ref.Use == "valuesFrom" {
-					assert.Equal(t, ref.Name, testCaseInput.want)
-				}
-			}
+			scope.checkChild(t, obj, doc, id)
 			if run == 0 {
-				published[id] = manifest.DeepCopyMap(doc)
+				(*scope.published)[id] = manifest.DeepCopyMap(doc)
 			} else {
-				assert.Diff(t, doc, published[id])
+				assert.Diff(t, doc, (*scope.published)[id])
 			}
 		}
-		assert.Diff(t, spec, authored)
+		assert.Diff(t, (*scope.spec), (*scope.authored))
 		if run == 0 {
 			info := controllertest.DispatchToFixpoint(
 				t.Context(),
 				t,
 				controllertest.Dispatch{
-					Tasks:         c.Tasks,
-					Store:         s,
-					ID:            ks.Named(),
-					ReconcileNode: c.ReconcileNode,
+					Tasks:         (*scope.c).Tasks,
+					Store:         (*scope.s),
+					ID:            (*scope.ks).Named(),
+					ReconcileNode: (*scope.c).ReconcileNode,
 				},
 			)
 			assert.Equal(t, info.Status, store.StatusReady)
+		}
+	}
+}
+
+func (p *substitutionPublications) checkChild(
+	t *testing.T,
+	obj manifest.BaseManifest,
+	doc map[string]any,
+	id manifest.NamedResource,
+) {
+	t.Helper()
+	var fields []string
+	typedSpec := doc["spec"].(map[string]any)
+	switch obj := obj.(type) {
+	case *manifest.Kustomization:
+		fields = []string{
+			obj.Path,
+			obj.SourceRef.Name,
+			obj.SourceRef.Namespace,
+			typedSpec["path"].(string),
+			typedSpec["sourceRef"].(map[string]any)["name"].(string),
+			typedSpec["sourceRef"].(map[string]any)["namespace"].(string),
+		}
+		assert.Equal(t, obj.SourceID().Name, (*p.testCaseInput).want)
+		assert.Equal(t, obj.SourceID().Namespace, (*p.testCaseInput).want)
+	case *manifest.GitRepository:
+		fields = []string{obj.Reference.Branch, typedSpec["ref"].(map[string]any)["branch"].(string)}
+	case *manifest.HelmRelease:
+		ref := typedSpec["valuesFrom"].([]any)[0].(map[string]any)
+		fields = []string{
+			obj.ValuesFrom[0].Name,
+			obj.ValuesFrom[0].ValuesKey,
+			ref["name"].(string),
+			ref["valuesKey"].(string),
+		}
+		assert.Equal(t, obj.ValuesFrom[0].Optional, true)
+	default:
+		t.Fatalf("unexpected child %T", obj)
+	}
+	for _, got := range fields {
+		assert.Equal(t, got, (*p.testCaseInput).want)
+	}
+	for ref := range manifest.References(obj, manifest.ReferenceRelations) {
+		if ref.Use == "source" && id.Kind == manifest.KindKustomization || ref.Use == "valuesFrom" {
+			assert.Equal(t, ref.Name, (*p.testCaseInput).want)
 		}
 	}
 }

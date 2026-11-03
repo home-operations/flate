@@ -18,33 +18,38 @@ func BenchmarkSubstitutionProvider_Lookup(b *testing.B) {
 			name = "supplied"
 		}
 		b.Run(name, func(b *testing.B) {
-			st := store.New()
-			cm := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
-			c := New(st, nil, nil, false)
-			opts := Options{}
-			if supplied {
-				snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: cm}})
-				if err != nil {
-					b.Fatal(err)
-				}
-				st.SetSupplied(snapshot)
-			} else {
-				st.AddObject(cm)
-			}
-			c.Configure(opts, sourcecache.RetryConfig{})
-			execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
-			defer execution.run.Close()
-			provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
-			expected := provider.Data(cm.Named())
-			if expected == nil {
-				b.Fatal("lookup failed")
-			}
-			b.ReportAllocs()
-			for b.Loop() {
-				if provider.Data(cm.Named()) != expected {
-					b.Fatal("lookup failed")
-				}
-			}
+			benchmarkSubstitutionLookup(b, &supplied)
 		})
+	}
+}
+
+func benchmarkSubstitutionLookup(b *testing.B, supplied *bool) {
+	b.Helper()
+	st := store.New()
+	cm := &manifest.ConfigMap{Name: "external", Namespace: "apps"}
+	c := New(st, nil, nil, false)
+	opts := Options{}
+	if *supplied {
+		snapshot, err := store.NewSupplied([]store.SuppliedObject{{Object: cm}})
+		if err != nil {
+			b.Fatal(err)
+		}
+		st.SetSupplied(snapshot)
+	} else {
+		st.AddObject(cm)
+	}
+	c.Configure(opts, sourcecache.RetryConfig{})
+	execution := c.newExecution(testutil.KustomizationID("apps", "consumer"))
+	defer execution.run.Close()
+	provider := values.NewStoreProvider(&execution.run.Reads, c.WipeSecrets)
+	expected := provider.Data(cm.Named())
+	if expected == nil {
+		b.Fatal("lookup failed")
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if provider.Data(cm.Named()) != expected {
+			b.Fatal("lookup failed")
+		}
 	}
 }

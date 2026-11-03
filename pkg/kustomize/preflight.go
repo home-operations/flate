@@ -72,14 +72,15 @@ type inputPath struct {
 
 func preflightRemoteResources(ctx context.Context, cache *TreeCache, memFS *treeFS, subPath string) error {
 	w := inputWalk{cache: cache, fs: memFS, visited: make(map[controlLocation]controlObservation)}
-	_, err := w.directory(ctx, subPath, walkScope{})
+	_, err := w.directory(ctx, subPath, &walkScope{})
 	if err != nil {
 		err = manifest.NewError(manifest.ErrFlux, fmt.Errorf("preflight: %w", err), "")
 	}
 	return err
 }
 
-func (w *inputWalk) directory(ctx context.Context, dir string, scope walkScope) (inputResult, error) {
+func (w *inputWalk) directory(ctx context.Context, dir string, incoming *walkScope) (inputResult, error) {
+	scope := *incoming
 	canonical, _, err := w.fs.CleanedAbs(dir)
 	if err != nil {
 		return inputResult{}, err
@@ -90,9 +91,9 @@ func (w *inputWalk) directory(ctx context.Context, dir string, scope walkScope) 
 	}
 	loc := scope
 	loc.controlLocation = controlLocation{file: file, root: canonical.String(), pluginRoot: scope.pluginRoot}
-	key := w.location(loc.controlLocation)
+	key := w.location(&loc.controlLocation)
 	if prior, ok := w.visited[key]; ok {
-		w.reuse(prior, scope)
+		w.reuse(&prior, &scope)
 		return inputResult{}, nil // Preserve the graph so Build still rejects cycles.
 	}
 	body, err := w.fs.ReadFile(file)
@@ -143,8 +144,9 @@ func (w *inputWalk) directory(ctx context.Context, dir string, scope walkScope) 
 func (w *inputWalk) pluginDirectory(
 	ctx context.Context,
 	dir, owner string,
-	scope walkScope,
+	incoming *walkScope,
 ) (string, inputResult, error) {
+	scope := *incoming
 	canonical, _, err := w.fs.CleanedAbs(dir)
 	if err != nil {
 		return "", inputResult{}, err
@@ -152,7 +154,7 @@ func (w *inputWalk) pluginDirectory(
 	selected := canonical.String()
 	var injected bool
 	if file, ok := kustomizationFileIn(w.fs, selected); ok {
-		key := w.location(controlLocation{file: file, root: selected, pluginRoot: owner})
+		key := w.location(&controlLocation{file: file, root: selected, pluginRoot: owner})
 		if prior, ok := w.visited[key]; ok {
 			if string(prior.out) != key.root {
 				selected = string(prior.out)
@@ -176,7 +178,7 @@ func (w *inputWalk) pluginDirectory(
 			}
 			selected = filepath.Join(mount, rel)
 			scope.pluginRoot = owner
-			result, buildErr := w.directory(ctx, selected, scope)
+			result, buildErr := w.directory(ctx, selected, &scope)
 			if buildErr != nil {
 				return "", inputResult{}, buildErr
 			}
@@ -194,7 +196,8 @@ func (w *inputWalk) pluginDirectory(
 	return "./" + filepath.ToSlash(rel), result, err
 }
 
-func (w *inputWalk) location(loc controlLocation) controlLocation {
+func (w *inputWalk) location(incoming *controlLocation) controlLocation {
+	loc := *incoming
 	for _, coordinate := range []*string{&loc.file, &loc.root, &loc.pluginRoot} {
 		if *coordinate == "" {
 			continue
@@ -282,7 +285,7 @@ func (w *inputWalk) resourceOperand(
 		if result.rewritten {
 			setPlainScalar(node, path.replacement)
 		}
-		child, err := w.directory(ctx, path.file, loc)
+		child, err := w.directory(ctx, path.file, &loc)
 		result.injected = result.injected || child.injected
 		return result, err
 	}
@@ -307,7 +310,7 @@ func (w *inputWalk) pluginOperand(ctx context.Context, loc walkScope, node *yaml
 	if path.descriptor.URL != "" {
 		loc.parents = append(loc.parents, path.descriptor)
 	}
-	dir, result, err := w.pluginDirectory(ctx, path.file, loc.root, loc)
+	dir, result, err := w.pluginDirectory(ctx, path.file, loc.root, &loc)
 	result.rewritten = result.rewritten || path.replacement != ""
 	result.injected = result.injected || path.replacement != ""
 	if err == nil && result.rewritten {
@@ -339,7 +342,8 @@ func (w *inputWalk) recordRemote(descriptor remoteInput, observed *remoteIdentit
 	}
 }
 
-func (w *inputWalk) reuse(prior controlObservation, scope walkScope) {
+func (w *inputWalk) reuse(previous *controlObservation, incoming *walkScope) {
+	prior, scope := *previous, *incoming
 	if w.fs.rec == nil {
 		return
 	}
@@ -460,10 +464,10 @@ func (w *inputWalk) plugins(
 	body []byte,
 	resources []*resource.Resource,
 ) ([]byte, inputResult, error) {
-	key := w.location(loc.controlLocation)
+	key := w.location(&loc.controlLocation)
 	key.field, key.indices = manifest.Fingerprint(body), [2]int{}
 	if prior, ok := w.visited[key]; ok {
-		w.reuse(prior, loc)
+		w.reuse(&prior, &loc)
 		return prior.out, replaced(prior.out != nil), nil
 	}
 	if resources == nil {

@@ -610,14 +610,14 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 	originalDir := filepath.Join(root, "view", gitPath)
 	nestedDir := filepath.Join(alias, gitPath)
 	original := walk.location(
-		controlLocation{
+		&controlLocation{
 			file:       filepath.Join(originalDir, "foreign"),
 			root:       originalDir,
 			pluginRoot: filepath.Join(root, "view"),
 		},
 	)
 	nested := walk.location(
-		controlLocation{file: filepath.Join(nestedDir, "foreign"), root: nestedDir, pluginRoot: alias},
+		&controlLocation{file: filepath.Join(nestedDir, "foreign"), root: nestedDir, pluginRoot: alias},
 	)
 	{
 		assert.FatalIf(

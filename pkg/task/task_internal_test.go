@@ -11,7 +11,6 @@ import (
 	"github.com/home-operations/flate/internal/assert"
 )
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestNewBounded_LimitsConcurrentBodies(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -72,7 +71,6 @@ func TestNewBounded_Unbounded(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestService_BlockTillDone(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -121,7 +119,6 @@ func TestService_PanicCountedAndRecovered(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestYieldSlot_AllowsChildrenWhenParentsFillPool(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

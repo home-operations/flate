@@ -39,7 +39,7 @@ type Service struct {
 //
 // Sized for I/O-bound work: helm template / oras pull / git clone all
 // release the worker briefly while blocked on the network. A sensible
-// default is runtime.NumCPU() * 4, but callers know their workload
+// default is [runtime.NumCPU]() * 4, but callers know their workload
 // better than the package does.
 func NewBounded(workers int) *Service {
 	s := &Service{}

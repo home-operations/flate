@@ -55,7 +55,7 @@ func TestResolvePreRenderValuesFrom_FailedChartRefTerminates(t *testing.T) {
 	t.Parallel()
 	c, s := newTestControllerWithOptions(
 		t,
-		base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+		&base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
 	)
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	s.AddObject(chart)
@@ -254,7 +254,7 @@ func TestController_AllowMissingKindsAdmission(t *testing.T) {
 	} {
 		t.Run(tc.kind+"/"+tc.allowed, func(t *testing.T) {
 			t.Parallel()
-			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{tc.allowed}})
+			c, st := newTestControllerWithOptions(t, &base.Options{AllowMissingKinds: []string{tc.allowed}})
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
 			testutil.WriteFile(
@@ -313,7 +313,7 @@ func TestPreviousRender_AllowMissingKindsAdmission(t *testing.T) {
 	for _, kind := range []string{manifest.KindSecret, manifest.KindConfigMap} {
 		t.Run(kind, func(t *testing.T) {
 			t.Parallel()
-			c, st := newTestControllerWithOptions(t, base.Options{AllowMissingKinds: []string{kind}})
+			c, st := newTestControllerWithOptions(t, &base.Options{AllowMissingKinds: []string{kind}})
 			c.Helm = helm.NewClient(cachetest.New(t, t.TempDir(), sourcecache.New))
 			dir := t.TempDir()
 			testutil.WriteFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: fixture\nversion: 1.0.0\n")
@@ -423,7 +423,7 @@ metadata: {name: demo}
 data:
   greeting: {{ .Values.greeting | default "fallback" | quote }}
 `)
-	c, st := newTestControllerWithOptions(t, base.Options{})
+	c, st := newTestControllerWithOptions(t, &base.Options{})
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -540,7 +540,7 @@ func testControllerValuesFromMixedProductionPrecedenceCase(
 ) {
 	t.Helper()
 
-	c, s := newTestControllerWithOptions(t, base.Options{})
+	c, s := newTestControllerWithOptions(t, &base.Options{})
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "apps", Name: "values"}
 	owner := manifest.NamedResource{
 		Group:     manifest.FluxKustomizeDomain,
@@ -628,7 +628,7 @@ func testControllerPrepareRequiresDeclarationCase(
 
 	c, st := newTestControllerWithOptions(
 		t,
-		base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+		&base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
 	)
 	parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
 	input := &manifest.HelmRelease{

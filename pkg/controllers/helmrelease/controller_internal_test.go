@@ -43,7 +43,7 @@ func newTestController(t *testing.T, l *loader.Loader) (*Controller, *store.Stor
 	if l != nil {
 		opts.Filter, opts.Loader = l.Options.Filter, l
 	}
-	return newTestControllerWithOptions(t, opts)
+	return newTestControllerWithOptions(t, &opts)
 }
 
 func newTestControllerWithParentOf(
@@ -51,10 +51,10 @@ func newTestControllerWithParentOf(
 	parentOf map[manifest.NamedResource]manifest.NamedResource,
 ) (*Controller, *store.Store) {
 	t.Helper()
-	return newTestControllerWithOptions(t, base.Options{Index: parentIndexForTest(parentOf)})
+	return newTestControllerWithOptions(t, &base.Options{Index: parentIndexForTest(parentOf)})
 }
 
-func newTestControllerWithOptions(t *testing.T, opts base.Options) (*Controller, *store.Store) {
+func newTestControllerWithOptions(t *testing.T, opts *base.Options) (*Controller, *store.Store) {
 	t.Helper()
 	st := store.New()
 	if opts.Loader != nil {
@@ -68,7 +68,7 @@ func newTestControllerWithOptions(t *testing.T, opts base.Options) (*Controller,
 	{
 		assert.FatalIf(t, c.Controller != controller, "%v", "constructor replaced the supplied base controller")
 	}
-	c.Configure(opts)
+	c.Configure(*opts)
 	c.StartLifecycle()
 	t.Cleanup(func() {
 		ts.BlockTillDone()
@@ -214,7 +214,7 @@ data:
 
 	c, st := newTestControllerWithOptions(
 		t,
-		base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+		&base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
 	)
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
@@ -382,7 +382,7 @@ func TestController_ValuesOmissionPreservesRequiredChartFailure(t *testing.T) {
 	t.Parallel()
 	c, st := newTestControllerWithOptions(
 		t,
-		base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
+		&base.Options{AllowMissingKinds: []string{manifest.KindSecret, manifest.KindConfigMap}},
 	)
 	chart := &manifest.HelmChartSource{Name: "chart", Namespace: "apps"}
 	st.AddObject(chart)
@@ -442,289 +442,359 @@ func testReconcileSharedChartSourceCompletesCase(
 	t.Helper()
 
 	synctest.Test(t, func(t *testing.T) {
-		c, st := newTestController(t, nil)
-		tasks := task.NewBounded((*testCaseInput.workers))
-		c.Tasks = tasks
-		repository := &manifest.HelmRepository{
-			Name:      "bitnami",
-			Namespace: "flux-system",
-			URL:       "https://charts.example/bitnami",
-		}
-		st.AddObject(repository)
-		st.UpdateStatus(
-			repository.Named(),
-			store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
-		)
-		consumers := make([]*manifest.HelmRelease, 40)
-		for i := range consumers {
-			consumers[i] = &manifest.HelmRelease{Name: fmt.Sprintf("redis-%02d", i), Namespace: "apps"}
-		}
-		source := manifest.NamedResource{
-			Group:     manifest.SourceDomain,
-			Kind:      manifest.KindHelmChart,
-			Namespace: "flux-system",
-			Name:      "shared",
-		}
-		st.AddObject(
-			&manifest.HelmChartSource{
-				Name:      source.Name,
-				Namespace: source.Namespace,
-				Chart:     "redis",
-				Version:   "1.0.0",
-				SourceRef: sourcev1.LocalHelmChartSourceReference{
-					Kind: manifest.KindHelmRepository,
-					Name: repository.Name,
-				},
-			},
-		)
-		for _, hr := range consumers {
-			hr.ChartRef = &helmv2.CrossNamespaceSourceReference{
-				Kind:      manifest.KindHelmChart,
-				Name:      source.Name,
-				Namespace: source.Namespace,
-			}
-			st.AddObject(hr)
-		}
-		sourceStarted := make(chan struct{})
-		sourceRelease := make(chan struct{})
-		releaseSource := sync.OnceFunc(func() { close(sourceRelease) })
-		defer releaseSource()
-		parked := make(chan manifest.NamedResource, len(consumers))
-		dispatch := chartSourceDispatcher{
-			store: st,
-			dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
-				if id == source {
-					close(sourceStarted)
-					tasks.YieldSlot(func() { <-sourceRelease })
-					if testCaseInput.tc.status == store.StatusReady {
-						st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{
-							"chart/Chart.yaml": &fstest.MapFile{
-								Data: []byte("apiVersion: v2\nname: redis\nversion: 1.0.0\n"),
-							},
-							"chart/templates/output.yaml": &fstest.MapFile{
-								Data: []byte(
-									"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\ndata: {value: complete}\n",
-								),
-							},
-							"chart/templates/authored.yaml": &fstest.MapFile{
-								Data: []byte(
-									"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: 'authored-{{ .Release.Name }}', namespace: flux-system}\nspec: {chart: redis, version: 1.0.0, interval: 1m, sourceRef: {kind: HelmRepository, name: bitnami}}\n",
-								),
-							},
-						}})
-					}
-					st.UpdateStatus(
-						id,
-						store.StatusInfo{Status: testCaseInput.tc.status, Reason: "", Message: "source finished"},
-					)
-					return schedule.Result{}
-				}
-				ex := c.newExecution(id)
-				ex.run.Dispatch(
-					ctx,
-					level,
-					ex,
-					func(ex *execution, ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
-						_, err := ex.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
-						if _, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
-							parked <- id
-						}
-						return err
-					},
-				)
-				return schedule.Result{Assessment: &ex.run}
-			},
-		}
-
-		s := schedule.New(tasks, dispatch)
-		unsub := st.AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
-			if id == source {
-				s.OnArrival(id, true)
-			}
-		}, false)
-		defer unsub()
-		s.Seed([]schedule.NodeID{source})
-		done := make(chan error, 1)
-		go func() { done <- s.Run(t.Context()) }()
-		<-sourceStarted
-		for _, hr := range consumers {
-			s.OnArrival(hr.Named(), true)
-		}
-		{
-			{
-				info, ok := st.GetStatus(source)
-				assert.ErrorIf(
-					t,
-					ok,
-					"consumer wrote synthetic status = %+v, want no Ready condition",
-					info,
-				)
-			}
-		}
-		for range consumers {
-			<-parked
-		}
-		synctest.Wait()
-		{
-			{
-				_, ok := st.GetObject(source).(*manifest.HelmChartSource)
-				assert.FatalIf(t, !ok, "%v", "typed synthetic child unavailable while H is incomplete")
-			}
-		}
-		for _, hr := range consumers {
-			_, _, partial := st.GetEmission(hr.Named())
-			if len(partial.Children) != 0 || len(partial.Manifests) != 0 {
-				t.Fatalf(
-					"synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v",
-					hr.Named(),
-					partial.Children,
-					partial.Manifests,
-				)
-			}
-		}
-		releaseSource()
-		{
-			{
-				err := <-done
-				assert.FatalIf(t, err != nil, "%v", err)
-			}
-		}
-		{
-			info, ok := st.GetStatus(
-				source,
-			)
-			assert.ErrorIf(t, !ok || info.Status != testCaseInput.tc.status ||
-				info.Message != "source finished", "source status = %+v (ok=%v), want preserved %v", info, ok, testCaseInput.tc.status)
-		}
-		for _, hr := range consumers {
-			if testCaseInput.tc.status == store.StatusReady {
-				var renders int
-				stopRender := st.AddListener(
-					store.EventStatusUpdated,
-					func(id manifest.NamedResource, payload any) {
-						if info, ok := payload.(store.StatusInfo); id == hr.Named() && ok &&
-							info.Message == "rendering" {
-							renders++
-						}
-					},
-					false,
-				)
-				initialRun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
-				if initialRun.Outcome() == schedule.Blocked {
-					t.Fatal(initialRun.Blocked)
-				}
-				before := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-				var reader store.ReadSet
-				reader.Init(st, manifest.NamedResource{Kind: "Observer", Name: hr.Name}, nil)
-				reader.GetArtifact(hr.Named(), store.ArtifactContent)
-				var arrivals, artifacts, statuses int
-				stopObjects := st.AddListener(
-					store.EventObjectAdded,
-					func(manifest.NamedResource, any) { arrivals++ },
-					false,
-				)
-				stopArtifacts := st.AddListener(
-					store.EventArtifactUpdated,
-					func(id manifest.NamedResource, _ any) {
-						if id == hr.Named() {
-							artifacts++
-						}
-					},
-					false,
-				)
-				stopStatus := st.AddListener(
-					store.EventStatusUpdated,
-					func(id manifest.NamedResource, _ any) {
-						if id == hr.Named() {
-							statuses++
-						}
-					},
-					false,
-				)
-				rerun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
-				initialRun.Retire()
-				stopObjects()
-				stopArtifacts()
-				stopStatus()
-				stopRender()
-				after := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
-				valid := reader.Valid()
-				reader.Retire()
-				defer rerun.Close()
-				if rerun.Outcome() == schedule.Blocked || !valid || arrivals != 0 || artifacts != 0 ||
-					statuses != 0 ||
-					renders != 1 {
-					t.Fatalf(
-						"equal H rerun: unresolved=%t authority=%t object/artifact/status events=%d/%d/%d renders=%d",
-						rerun.Outcome() == schedule.Blocked,
-						valid,
-						arrivals,
-						artifacts,
-						statuses,
-						renders,
-					)
-				}
-				{
-					assert.FatalIf(t, !after.Complete || before.Fingerprint != after.Fingerprint ||
-						!cmp.Equal(
-							before.Manifests,
-							after.Manifests,
-						), "%v", "equal H rerun changed accepted content or completeness")
-				}
-			} else {
-				st.UpdateFailure(
-					hr.Named(),
-					manifest.NewError(manifest.ErrInput, nil, "H failed after partial work"),
-				)
-			}
-			_, _, retained := st.GetEmission(hr.Named())
-			wantDocs := 0
-			if testCaseInput.tc.status == store.StatusReady {
-				wantDocs = 2
-			}
-			{
-				assert.FatalIf(
-					t,
-					st.GetObject(source) == nil || len(retained.Manifests) != wantDocs,
-					"%v",
-					"actual H completion lost C or output",
-				)
-			}
-			authored := false
-			for _, doc := range retained.Manifests {
-				if manifest.DocKind(doc.Document) == manifest.KindHelmChart {
-					name, namespace := manifest.DocMetadata(doc.Document)
-					{
-						assert.FatalIf(t, name == source.Name, "%v", "synthetic C leaked to output")
-					}
-					authored = true
-					{
-						{
-							_, ok := st.GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: name}).(*manifest.HelmChartSource)
-							assert.FatalIf(t, !ok, "%v", "authored C lost typed admission")
-						}
-					}
-				}
-			}
-			{
-				assert.FatalIf(
-					t,
-					authored != (testCaseInput.tc.status == store.StatusReady),
-					"%v",
-					"authored C document was dropped",
-				)
-			}
-			{
-				assert.FatalIf(
-					t,
-					st.GetObject(source) == nil,
-					"%v",
-					"synthetic C unavailable after H completes",
-				)
-			}
-			if info, ok := st.GetStatus(hr.Named()); !ok || info.Status != testCaseInput.tc.status {
-				t.Errorf("consumer %s status = %+v (ok=%v), want %v", hr.Named(), info, ok, testCaseInput.tc.status)
-			}
-		}
+		runSharedChartSource(t, &testCaseInput)
 	})
+}
+
+func runSharedChartSource(t *testing.T, inputs *testReconcileSharedChartSourceCompletesCaseInputs) {
+	t.Helper()
+	c, st := newTestController(t, nil)
+	tasks := task.NewBounded((*inputs.workers))
+	c.Tasks = tasks
+	repository := &manifest.HelmRepository{
+		Name:      "bitnami",
+		Namespace: "flux-system",
+		URL:       "https://charts.example/bitnami",
+	}
+	st.AddObject(repository)
+	st.UpdateStatus(
+		repository.Named(),
+		store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
+	)
+	consumers := make([]*manifest.HelmRelease, 40)
+	for i := range consumers {
+		consumers[i] = &manifest.HelmRelease{Name: fmt.Sprintf("redis-%02d", i), Namespace: "apps"}
+	}
+	source := manifest.NamedResource{
+		Group:     manifest.SourceDomain,
+		Kind:      manifest.KindHelmChart,
+		Namespace: "flux-system",
+		Name:      "shared",
+	}
+	st.AddObject(
+		&manifest.HelmChartSource{
+			Name:      source.Name,
+			Namespace: source.Namespace,
+			Chart:     "redis",
+			Version:   "1.0.0",
+			SourceRef: sourcev1.LocalHelmChartSourceReference{
+				Kind: manifest.KindHelmRepository,
+				Name: repository.Name,
+			},
+		},
+	)
+	for _, hr := range consumers {
+		hr.ChartRef = &helmv2.CrossNamespaceSourceReference{
+			Kind:      manifest.KindHelmChart,
+			Name:      source.Name,
+			Namespace: source.Namespace,
+		}
+		st.AddObject(hr)
+	}
+	sourceStarted := make(chan struct{})
+	sourceRelease := make(chan struct{})
+	releaseSource := sync.OnceFunc(func() { close(sourceRelease) })
+	defer releaseSource()
+	parked := make(chan manifest.NamedResource, len(consumers))
+	dispatch := chartSourceDispatcher{
+		store: st,
+		dispatch: func(ctx context.Context, id schedule.NodeID, level manifest.DrainLevel) schedule.Result {
+			if id == source {
+				close(sourceStarted)
+				tasks.YieldSlot(func() { <-sourceRelease })
+				if inputs.tc.status == store.StatusReady {
+					st.SetArtifact(id, &store.SourceArtifact{FS: fstest.MapFS{
+						"chart/Chart.yaml": &fstest.MapFile{
+							Data: []byte("apiVersion: v2\nname: redis\nversion: 1.0.0\n"),
+						},
+						"chart/templates/output.yaml": &fstest.MapFile{
+							Data: []byte(
+								"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: '{{ .Release.Name }}'}\ndata: {value: complete}\n",
+							),
+						},
+						"chart/templates/authored.yaml": &fstest.MapFile{
+							Data: []byte(
+								"apiVersion: source.toolkit.fluxcd.io/v1\nkind: HelmChart\nmetadata: {name: 'authored-{{ .Release.Name }}', namespace: flux-system}\nspec: {chart: redis, version: 1.0.0, interval: 1m, sourceRef: {kind: HelmRepository, name: bitnami}}\n",
+							),
+						},
+					}})
+				}
+				st.UpdateStatus(
+					id,
+					store.StatusInfo{Status: inputs.tc.status, Reason: "", Message: "source finished"},
+				)
+				return schedule.Result{}
+			}
+			ex := c.newExecution(id)
+			ex.run.Dispatch(
+				ctx,
+				level,
+				ex,
+				func(ex *execution, ctx context.Context, hr *manifest.HelmRelease, level manifest.DrainLevel) error {
+					_, err := ex.run.RequireRefresh(ctx, hr, manifest.GateArtifacts, level)
+					if _, ok := errors.AsType[*depwait.ErrBlocked](err); ok {
+						parked <- id
+					}
+					return err
+				},
+			)
+			return schedule.Result{Assessment: &ex.run}
+		},
+	}
+
+	runSharedChartSchedule(
+		t,
+		&sharedChartScheduleInputs{
+			inputs:        &inputs,
+			c:             &c,
+			st:            &st,
+			tasks:         &tasks,
+			consumers:     &consumers,
+			source:        &source,
+			sourceStarted: &sourceStarted,
+			releaseSource: &releaseSource,
+			parked:        &parked,
+			dispatch:      &dispatch,
+		},
+	)
+}
+
+type sharedChartScheduleInputs struct {
+	inputs        **testReconcileSharedChartSourceCompletesCaseInputs
+	c             **Controller
+	st            **store.Store
+	tasks         **task.Service
+	consumers     *[]*manifest.HelmRelease
+	source        *manifest.NamedResource
+	sourceStarted *chan struct{}
+	releaseSource *func()
+	parked        *chan manifest.NamedResource
+	dispatch      *chartSourceDispatcher
+}
+
+func runSharedChartSchedule(t *testing.T, scope *sharedChartScheduleInputs) {
+	t.Helper()
+	s := schedule.New((*scope.tasks), (*scope.dispatch))
+	unsub := (*scope.st).AddListener(store.EventObjectAdded, func(id manifest.NamedResource, _ any) {
+		if id == (*scope.source) {
+			s.OnArrival(id, true)
+		}
+	}, false)
+	defer unsub()
+	s.Seed([]schedule.NodeID{(*scope.source)})
+	done := make(chan error, 1)
+	go func() { done <- s.Run(t.Context()) }()
+	<-(*scope.sourceStarted)
+	for _, hr := range *scope.consumers {
+		s.OnArrival(hr.Named(), true)
+	}
+	{
+		{
+			info, ok := (*scope.st).GetStatus((*scope.source))
+			assert.ErrorIf(
+				t,
+				ok,
+				"consumer wrote synthetic status = %+v, want no Ready condition",
+				info,
+			)
+		}
+	}
+	for range *scope.consumers {
+		<-(*scope.parked)
+	}
+	synctest.Wait()
+	{
+		{
+			_, ok := (*scope.st).GetObject((*scope.source)).(*manifest.HelmChartSource)
+			assert.FatalIf(t, !ok, "%v", "typed synthetic child unavailable while H is incomplete")
+		}
+	}
+	for _, hr := range *scope.consumers {
+		_, _, partial := (*scope.st).GetEmission(hr.Named())
+		if len(partial.Children) != 0 || len(partial.Manifests) != 0 {
+			t.Fatalf(
+				"synthetic child lost incomplete inventory semantics for %s: children=%+v manifests=%v",
+				hr.Named(),
+				partial.Children,
+				partial.Manifests,
+			)
+		}
+	}
+	(*scope.releaseSource)()
+	{
+		{
+			err := <-done
+			assert.FatalIf(t, err != nil, "%v", err)
+		}
+	}
+	{
+		info, ok := (*scope.st).GetStatus(
+			(*scope.source),
+		)
+		assert.ErrorIf(t, !ok || info.Status != (*scope.inputs).tc.status ||
+			info.Message != "source finished", "source status = %+v (ok=%v), want preserved %v", info, ok, (*scope.inputs).tc.status)
+	}
+	checkSharedChartConsumers(t, scope)
+}
+
+func checkSharedChartConsumers(t *testing.T, scope *sharedChartScheduleInputs) {
+	t.Helper()
+	for _, hr := range *scope.consumers {
+		if (*scope.inputs).tc.status == store.StatusReady {
+			replay := prepareSharedChartRerun(t, (*scope.c), (*scope.st), hr)
+			defer replay.run.Close()
+			if replay.run.Outcome() == schedule.Blocked || !replay.valid || replay.arrivals != 0 ||
+				replay.artifacts != 0 ||
+				replay.statuses != 0 ||
+				replay.renders != 1 {
+				t.Fatalf(
+					"equal H rerun: unresolved=%t authority=%t object/artifact/status events=%d/%d/%d renders=%d",
+					replay.run.Outcome() == schedule.Blocked,
+					replay.valid,
+					replay.arrivals,
+					replay.artifacts,
+					replay.statuses,
+					replay.renders,
+				)
+			}
+			{
+				assert.FatalIf(t, !replay.after.Complete || replay.before.Fingerprint != replay.after.Fingerprint ||
+					!cmp.Equal(
+						replay.before.Manifests,
+						replay.after.Manifests,
+					), "%v", "equal H rerun changed accepted content or completeness")
+			}
+		} else {
+			(*scope.st).UpdateFailure(
+				hr.Named(),
+				manifest.NewError(manifest.ErrInput, nil, "H failed after partial work"),
+			)
+		}
+		scope.checkInventory(t, hr)
+	}
+}
+
+type sharedChartRerun struct {
+	run                                    *base.Execution
+	before, after                          *store.Emission
+	valid                                  bool
+	arrivals, artifacts, statuses, renders int
+}
+
+func prepareSharedChartRerun(t *testing.T, c *Controller, st *store.Store, hr *manifest.HelmRelease) sharedChartRerun {
+	t.Helper()
+	var renders int
+	stopRender := st.AddListener(
+		store.EventStatusUpdated,
+		func(id manifest.NamedResource, payload any) {
+			if info, ok := payload.(store.StatusInfo); id == hr.Named() && ok &&
+				info.Message == "rendering" {
+				renders++
+			}
+		},
+		false,
+	)
+	initialRun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
+	if initialRun.Outcome() == schedule.Blocked {
+		t.Fatal(initialRun.Blocked)
+	}
+	before := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+	var reader store.ReadSet
+	reader.Init(st, manifest.NamedResource{Kind: "Observer", Name: hr.Name}, nil)
+	reader.GetArtifact(hr.Named(), store.ArtifactContent)
+	var arrivals, artifacts, statuses int
+	stopObjects := st.AddListener(
+		store.EventObjectAdded,
+		func(manifest.NamedResource, any) { arrivals++ },
+		false,
+	)
+	stopArtifacts := st.AddListener(
+		store.EventArtifactUpdated,
+		func(id manifest.NamedResource, _ any) {
+			if id == hr.Named() {
+				artifacts++
+			}
+		},
+		false,
+	)
+	stopStatus := st.AddListener(
+		store.EventStatusUpdated,
+		func(id manifest.NamedResource, _ any) {
+			if id == hr.Named() {
+				statuses++
+			}
+		},
+		false,
+	)
+	rerun := c.ReconcileNode(t.Context(), hr.Named(), manifest.DrainNone)
+	initialRun.Retire()
+	stopObjects()
+	stopArtifacts()
+	stopStatus()
+	stopRender()
+	after := st.GetArtifact(hr.Named(), store.ArtifactContent).(*store.Emission)
+	valid := reader.Valid()
+	reader.Retire()
+	return sharedChartRerun{
+		run:       rerun,
+		before:    before,
+		after:     after,
+		valid:     valid,
+		arrivals:  arrivals,
+		artifacts: artifacts,
+		statuses:  statuses,
+		renders:   renders,
+	}
+}
+
+func (s *sharedChartScheduleInputs) checkInventory(t *testing.T, hr *manifest.HelmRelease) {
+	t.Helper()
+	_, _, retained := (*s.st).GetEmission(hr.Named())
+	wantDocs := 0
+	if (*s.inputs).tc.status == store.StatusReady {
+		wantDocs = 2
+	}
+	{
+		assert.FatalIf(
+			t,
+			(*s.st).GetObject((*s.source)) == nil || len(retained.Manifests) != wantDocs,
+			"%v",
+			"actual H completion lost C or output",
+		)
+	}
+	authored := false
+	for _, doc := range retained.Manifests {
+		if manifest.DocKind(doc.Document) == manifest.KindHelmChart {
+			name, namespace := manifest.DocMetadata(doc.Document)
+			{
+				assert.FatalIf(t, name == s.source.Name, "%v", "synthetic C leaked to output")
+			}
+			authored = true
+			{
+				{
+					_, ok := (*s.st).GetObject(manifest.NamedResource{Group: manifest.SourceDomain, Kind: manifest.KindHelmChart, Namespace: namespace, Name: name}).(*manifest.HelmChartSource)
+					assert.FatalIf(t, !ok, "%v", "authored C lost typed admission")
+				}
+			}
+		}
+	}
+	{
+		assert.FatalIf(
+			t,
+			authored != ((*s.inputs).tc.status == store.StatusReady),
+			"%v",
+			"authored C document was dropped",
+		)
+	}
+	{
+		assert.FatalIf(
+			t,
+			(*s.st).GetObject((*s.source)) == nil,
+			"%v",
+			"synthetic C unavailable after H completes",
+		)
+	}
+	if info, ok := (*s.st).GetStatus(hr.Named()); !ok || info.Status != (*s.inputs).tc.status {
+		t.Errorf("consumer %s status = %+v (ok=%v), want %v", hr.Named(), info, ok, (*s.inputs).tc.status)
+	}
 }

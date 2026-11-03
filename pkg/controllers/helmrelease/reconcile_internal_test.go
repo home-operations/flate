@@ -186,7 +186,7 @@ func TestReconcile_ParentGateViaResolverFunc(t *testing.T) {
 	// a Store render ownership lookup).
 	c, st := newTestControllerWithOptions(
 		t,
-		base.Options{
+		&base.Options{
 			Index: parentIndexForTest(map[manifest.NamedResource]manifest.NamedResource{hr.Named(): parent.Named()}),
 		},
 	)

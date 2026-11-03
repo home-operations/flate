@@ -44,7 +44,7 @@ data:
   fallback: {{ .Values.missing | default "fallback" | quote }}
 `)
 
-	c, st := newTestControllerWithOptions(t, base.Options{})
+	c, st := newTestControllerWithOptions(t, &base.Options{})
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -150,7 +150,7 @@ func TestController_MissingValuesFromNoProducerFailsWithoutFlag(t *testing.T) {
 	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml",
 		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}-cm\n")
 
-	c, st := newTestControllerWithOptions(t, base.Options{})
+	c, st := newTestControllerWithOptions(t, &base.Options{})
 	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
 	st.AddObject(src)
 	st.SetArtifact(src.Named(), &store.SourceArtifact{
@@ -617,7 +617,7 @@ func replayKey(content any) string {
 func TestRawProducerIndex_StoreListener(t *testing.T) {
 	t.Parallel()
 
-	c, st := newTestControllerWithOptions(t, base.Options{})
+	c, st := newTestControllerWithOptions(t, &base.Options{})
 	target := manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "default", Name: "app-values"}
 	{
 		{

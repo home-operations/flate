@@ -122,7 +122,7 @@ func (w *inputWalk) directory(ctx context.Context, dir string, incoming *walkSco
 	observation := controlObservation{out: []byte(canonical.String()), parent: scope.observation}
 	w.visited[key] = observation
 	loc.observation = key
-	result, err := w.references(ctx, loc, refs)
+	result, err := w.references(ctx, &loc, refs)
 	observation = w.visited[key]
 	if loc.pluginRoot != "" && !result.injected {
 		observation.out = []byte(key.root)
@@ -213,9 +213,10 @@ func (w *inputWalk) location(incoming *controlLocation) controlLocation {
 
 func (w *inputWalk) references(
 	ctx context.Context,
-	loc walkScope,
+	incoming *walkScope,
 	refs []kustomizeinput.Reference,
 ) (inputResult, error) {
+	loc := *incoming
 	var result inputResult
 	for _, ref := range refs {
 		next := loc
@@ -226,19 +227,19 @@ func (w *inputWalk) references(
 		var err error
 		switch ref.Role {
 		case kustomizeinput.Resource, kustomizeinput.Component:
-			c, err = w.resourceOperand(ctx, next, &node, ref.Role)
+			c, err = w.resourceOperand(ctx, &next, &node, ref.Role)
 		case kustomizeinput.Configuration:
 			if ref.Inline {
 				var out []byte
-				out, c, err = w.plugins(ctx, next, []byte(ref.Path), ref.Resources)
+				out, c, err = w.plugins(ctx, &next, []byte(ref.Path), ref.Resources)
 				if c.rewritten {
 					node.Value = string(out)
 				}
 			} else {
-				c, err = w.pluginOperand(ctx, next, &node)
+				c, err = w.pluginOperand(ctx, &next, &node)
 			}
 		default:
-			c, err = w.fileOperand(ctx, next, &node)
+			c, err = w.fileOperand(ctx, &next, &node)
 		}
 		if err != nil {
 			return inputResult{}, fmt.Errorf(
@@ -258,8 +259,9 @@ func (w *inputWalk) references(
 	return result, nil
 }
 
-func (w *inputWalk) fileOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
-	path, err := w.filePath(ctx, loc, node.Value)
+func (w *inputWalk) fileOperand(ctx context.Context, incoming *walkScope, node *yaml.Node) (inputResult, error) {
+	loc := *incoming
+	path, err := w.filePath(ctx, &loc, node.Value)
 	result := replaced(path.replacement != "")
 	if err == nil && result.rewritten {
 		setPlainScalar(node, path.replacement)
@@ -269,11 +271,12 @@ func (w *inputWalk) fileOperand(ctx context.Context, loc walkScope, node *yaml.N
 
 func (w *inputWalk) resourceOperand(
 	ctx context.Context,
-	loc walkScope,
+	incoming *walkScope,
 	node *yaml.Node,
 	role kustomizeinput.Role,
 ) (inputResult, error) {
-	path, err := w.resourcePath(ctx, loc, node.Value, role)
+	loc := *incoming
+	path, err := w.resourcePath(ctx, &loc, node.Value, role)
 	if err != nil {
 		return inputResult{}, err
 	}
@@ -291,7 +294,7 @@ func (w *inputWalk) resourceOperand(
 	}
 	if loc.pluginRoot != "" {
 		loc.root = loc.pluginRoot
-		return w.pluginFile(ctx, loc, node, path)
+		return w.pluginFile(ctx, &loc, node, &path)
 	}
 	if result.rewritten {
 		setPlainScalar(node, path.replacement)
@@ -299,13 +302,14 @@ func (w *inputWalk) resourceOperand(
 	return result, nil
 }
 
-func (w *inputWalk) pluginOperand(ctx context.Context, loc walkScope, node *yaml.Node) (inputResult, error) {
-	path, err := w.resourcePath(ctx, loc, node.Value, kustomizeinput.Configuration)
+func (w *inputWalk) pluginOperand(ctx context.Context, incoming *walkScope, node *yaml.Node) (inputResult, error) {
+	loc := *incoming
+	path, err := w.resourcePath(ctx, &loc, node.Value, kustomizeinput.Configuration)
 	if err != nil {
 		return inputResult{}, err
 	}
 	if !path.directory {
-		return w.pluginFile(ctx, loc, node, path)
+		return w.pluginFile(ctx, &loc, node, &path)
 	}
 	if path.descriptor.URL != "" {
 		loc.parents = append(loc.parents, path.descriptor)
@@ -319,7 +323,8 @@ func (w *inputWalk) pluginOperand(ctx context.Context, loc walkScope, node *yaml
 	return result, err
 }
 
-func (w *inputWalk) acquire(ctx context.Context, descriptor remoteInput, scope walkScope) (fs.FS, error) {
+func (w *inputWalk) acquire(ctx context.Context, descriptor remoteInput, incoming *walkScope) (fs.FS, error) {
+	scope := *incoming
 	acquired, identity, err := descriptor.acquire(ctx, w.cache, w.fs)
 	w.recordRemote(descriptor, &identity, &scope)
 	return acquired, err
@@ -353,7 +358,8 @@ func (w *inputWalk) reuse(previous *controlObservation, incoming *walkScope) {
 	}
 }
 
-func (w *inputWalk) filePath(ctx context.Context, loc walkScope, raw string) (inputPath, error) {
+func (w *inputWalk) filePath(ctx context.Context, incoming *walkScope, raw string) (inputPath, error) {
+	loc := *incoming
 	file := raw
 	if !filepath.IsAbs(file) {
 		file = filepath.Join(loc.root, file)
@@ -362,7 +368,7 @@ func (w *inputWalk) filePath(ctx context.Context, loc walkScope, raw string) (in
 		return inputPath{file: file}, nil
 	}
 	descriptor := remoteInput{Operation: remoteHTTP, URL: raw}
-	acquired, err := w.acquire(ctx, descriptor, loc)
+	acquired, err := w.acquire(ctx, descriptor, &loc)
 	if err != nil {
 		return inputPath{}, err
 	}
@@ -376,16 +382,17 @@ func (w *inputWalk) filePath(ctx context.Context, loc walkScope, raw string) (in
 
 func (w *inputWalk) resourcePath(
 	ctx context.Context,
-	loc walkScope,
+	incoming *walkScope,
 	raw string,
 	role kustomizeinput.Role,
 ) (inputPath, error) {
+	loc := *incoming
 	spec, git := kustomizeinput.ParseGitBase(raw)
 	var file inputPath
 	var fileErr error
 	var body []byte
 	if _, _, http := kustomizeinput.CutHTTPScheme(raw); http && role != kustomizeinput.Component {
-		file, fileErr = w.filePath(ctx, loc, raw)
+		file, fileErr = w.filePath(ctx, &loc, raw)
 		if fileErr == nil {
 			var err error
 			body, err = w.fs.ReadFile(file.file)
@@ -400,7 +407,7 @@ func (w *inputWalk) resourcePath(
 		}
 	}
 	if git {
-		dest, err := w.fetchGitBase(ctx, spec, loc)
+		dest, err := w.fetchGitBase(ctx, spec, &loc)
 		if err != nil && fileErr != nil {
 			if _, parseErr := kio.FromBytes(
 				body,
@@ -424,17 +431,18 @@ func (w *inputWalk) resourcePath(
 			},
 		}, err
 	}
-	path, err := w.filePath(ctx, loc, raw)
+	path, err := w.filePath(ctx, &loc, raw)
 	path.directory = err == nil && path.replacement == "" && w.fs.IsDir(path.file)
 	return path, err
 }
 
 func (w *inputWalk) pluginFile(
 	ctx context.Context,
-	loc walkScope,
+	incoming *walkScope,
 	node *yaml.Node,
-	path inputPath,
+	source *inputPath,
 ) (inputResult, error) {
+	loc, path := *incoming, *source
 	loc.controlLocation = controlLocation{file: path.file, root: loc.root, remote: path.replacement != ""}
 	if path.descriptor.URL != "" {
 		loc.parents = append(loc.parents, path.descriptor)
@@ -443,7 +451,7 @@ func (w *inputWalk) pluginFile(
 	if err != nil {
 		return inputResult{}, err
 	}
-	out, result, err := w.plugins(ctx, loc, body, nil)
+	out, result, err := w.plugins(ctx, &loc, body, nil)
 	if err != nil {
 		return inputResult{}, err
 	}
@@ -460,10 +468,11 @@ func (w *inputWalk) pluginFile(
 
 func (w *inputWalk) plugins(
 	ctx context.Context,
-	loc walkScope,
+	incoming *walkScope,
 	body []byte,
 	resources []*resource.Resource,
 ) ([]byte, inputResult, error) {
+	loc := *incoming
 	key := w.location(&loc.controlLocation)
 	key.field, key.indices = manifest.Fingerprint(body), [2]int{}
 	if prior, ok := w.visited[key]; ok {
@@ -502,7 +511,7 @@ func (w *inputWalk) plugins(
 			)
 		}
 		refs, _ := kustomizeinput.Plugin(doc)
-		c, err := w.references(ctx, loc, refs)
+		c, err := w.references(ctx, &loc, refs)
 		if err != nil {
 			return nil, inputResult{}, err
 		}

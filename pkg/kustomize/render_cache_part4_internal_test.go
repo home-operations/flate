@@ -472,7 +472,7 @@ func testRenderRemoteCacheLocalAttributionSourceLinkToInjectedFile(t *testing.T)
 				_, err := walk.acquire(
 					t.Context(),
 					remoteInput{Operation: remoteHTTP, URL: srv.URL},
-					walkScope{},
+					&walkScope{},
 				)
 				assert.NoError(t, err)
 			}
@@ -591,7 +591,7 @@ func testRenderRemoteCacheLocalAttributionNestedSnapshotObservations(t *testing.
 	gitPath, err := walk.fetchGitBase(
 		t.Context(),
 		kustomizeinput.GitBase{RepoURL: "file:///example.invalid/o/repo.git"},
-		walkScope{root: filepath.Join(root, "view")},
+		&walkScope{root: filepath.Join(root, "view")},
 	)
 	{
 		assert.NoError(t, err)

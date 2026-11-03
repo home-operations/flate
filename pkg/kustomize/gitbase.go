@@ -10,7 +10,12 @@ import (
 )
 
 // fetchGitBase mounts the whole repository so local parent references retain their coordinates.
-func (w *inputWalk) fetchGitBase(ctx context.Context, spec kustomizeinput.GitBase, scope walkScope) (string, error) {
+func (w *inputWalk) fetchGitBase(
+	ctx context.Context,
+	spec kustomizeinput.GitBase,
+	incoming *walkScope,
+) (string, error) {
+	scope := *incoming
 	input := w.fs
 	descriptor := remoteInput{
 		Operation:  remoteGit,
@@ -27,7 +32,7 @@ func (w *inputWalk) fetchGitBase(ctx context.Context, spec kustomizeinput.GitBas
 		rel, err := filepath.Rel(scope.root, filepath.Join(dest, spec.SubPath))
 		return "./" + filepath.ToSlash(rel), err
 	}
-	acquired, err := w.acquire(ctx, descriptor, scope)
+	acquired, err := w.acquire(ctx, descriptor, &scope)
 	if err != nil {
 		return "", err
 	}

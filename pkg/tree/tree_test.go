@@ -526,34 +526,39 @@ func testTreeReturnedSlicesAreCallerOwnedCase(
 	for range *testCaseInput {
 		wg.Go(func() {
 			<-start
-			for range 32 {
-				data, err := tr.ReadFile("alias")
-				if err != nil || string(data) != "alpha" {
-					t.Errorf("ReadFile: %q, %v", data, err)
-					return
-				}
-				data[0] = '!'
-				entries, err := tr.ReadDir("dir")
-				if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
-					t.Errorf("ReadDir: %v, %v", entries, err)
-					return
-				}
-				entries[0] = nil
-				f, err := tr.Open("dir")
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				entries, err = f.(fs.ReadDirFile).ReadDir(-1)
-				f.Close()
-				if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
-					t.Errorf("handle ReadDir: %v, %v", entries, err)
-					return
-				}
-				entries[0] = nil
-			}
+			mutateReturnedSlices(t, tr)
 		})
 	}
 	close(start)
 	wg.Wait()
+}
+
+func mutateReturnedSlices(t *testing.T, tr *tree.Tree) {
+	t.Helper()
+	for range 32 {
+		data, err := tr.ReadFile("alias")
+		if err != nil || string(data) != "alpha" {
+			t.Errorf("ReadFile: %q, %v", data, err)
+			return
+		}
+		data[0] = '!'
+		entries, err := tr.ReadDir("dir")
+		if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
+			t.Errorf("ReadDir: %v, %v", entries, err)
+			return
+		}
+		entries[0] = nil
+		f, err := tr.Open("dir")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		entries, err = f.(fs.ReadDirFile).ReadDir(-1)
+		f.Close()
+		if err != nil || len(entries) != 2 || entries[0].Name() != "a +@日本.yaml" {
+			t.Errorf("handle ReadDir: %v, %v", entries, err)
+			return
+		}
+		entries[0] = nil
+	}
 }

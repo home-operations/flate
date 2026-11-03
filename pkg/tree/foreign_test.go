@@ -153,65 +153,10 @@ func assertMountView(t *testing.T, tr *tree.Tree, contract mountContract) {
 			t.Errorf("Stat(%q) mode = %v, want %v", want.name, info.Mode(), want.mode)
 		}
 		if want.mode.IsDir() {
-			entries, readDirErr := fs.ReadDir(tr, want.name)
-			if readDirErr != nil {
-				t.Errorf("ReadDir(%q): %v", want.name, readDirErr)
-				continue
-			}
-			var names, wantNames []string
-			for _, child := range contract.entries {
-				if child.name != "." && path.Dir(child.name) == want.name {
-					wantNames = append(wantNames, path.Base(child.name))
-				}
-			}
-			slices.Sort(wantNames)
-			for _, entry := range entries {
-				names = append(names, entry.Name())
-				listed, err := entry.Info()
-				actual, statErr := fs.Stat(tr, path.Join(want.name, entry.Name()))
-				if err != nil || statErr != nil {
-					t.Errorf("listed %q metadata: Info=%v Stat=%v", entry.Name(), err, statErr)
-				} else if listed.Mode() != actual.Mode() || listed.Size() != actual.Size() {
-					t.Errorf("listed %q metadata disagrees with Stat", entry.Name())
-				}
-			}
-			{
-				assert.ErrorIf(
-					t,
-					!slices.Equal(names, wantNames),
-					"ReadDir(%q) = %v, want %v",
-					want.name,
-					names,
-					wantNames,
-				)
-			}
+			assertMountedDirectory(t, tr, contract, want)
 			continue
 		}
-		data, err := fs.ReadFile(tr, want.name)
-		{
-			assert.ErrorIf(
-				t,
-				err != nil || string(data) != want.data,
-				"ReadFile(%q) = %q, %v; want %q",
-				want.name,
-				data,
-				err,
-				want.data,
-			)
-		}
-		file, err := tr.Open(want.name)
-		if err != nil {
-			t.Errorf("Open(%q): %v", want.name, err)
-			continue
-		}
-		opened, statErr := file.Stat()
-		data, readErr := io.ReadAll(file)
-		closeErr := file.Close()
-		if statErr != nil || readErr != nil || closeErr != nil || string(data) != want.data {
-			t.Errorf("opened %q = %q, Stat=%v Read=%v Close=%v", want.name, data, statErr, readErr, closeErr)
-		} else if opened.Mode() != want.mode || opened.Size() != int64(len(want.data)) {
-			t.Errorf("opened %q metadata = %v, %d", want.name, opened.Mode(), opened.Size())
-		}
+		assertMountedFile(t, tr, want)
 	}
 	assertMountViewCompletion(t, tr, &contract, &wantWalk)
 }
@@ -482,7 +427,7 @@ func testBuilderStackedForeignRemovalsCase(t *testing.T, testCaseInput *testBuil
 
 func assertMountViewCompletion(t *testing.T, tr *tree.Tree, contract *mountContract, wantWalk *[]string) {
 	t.Helper()
-	for _, name := range (*contract).missing {
+	for _, name := range contract.missing {
 		{
 			_, err := fs.ReadFile(tr, name)
 			assert.ErrorIf(t, !errors.Is(err, fs.ErrNotExist), "ReadFile(%q) = %v, want ErrNotExist", name, err)
@@ -521,5 +466,72 @@ func assertMountViewCompletion(t *testing.T, tr *tree.Tree, contract *mountContr
 				)
 			}
 		}
+	}
+}
+
+func assertMountedDirectory(t *testing.T, tr *tree.Tree, contract mountContract, want mountEntry) {
+	t.Helper()
+	entries, readDirErr := fs.ReadDir(tr, want.name)
+	if readDirErr != nil {
+		t.Errorf("ReadDir(%q): %v", want.name, readDirErr)
+		return
+	}
+	names := make([]string, 0, len(entries))
+	var wantNames []string
+	for _, child := range contract.entries {
+		if child.name != "." && path.Dir(child.name) == want.name {
+			wantNames = append(wantNames, path.Base(child.name))
+		}
+	}
+	slices.Sort(wantNames)
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+		listed, err := entry.Info()
+		actual, statErr := fs.Stat(tr, path.Join(want.name, entry.Name()))
+		if err != nil || statErr != nil {
+			t.Errorf("listed %q metadata: Info=%v Stat=%v", entry.Name(), err, statErr)
+		} else if listed.Mode() != actual.Mode() || listed.Size() != actual.Size() {
+			t.Errorf("listed %q metadata disagrees with Stat", entry.Name())
+		}
+	}
+	{
+		assert.ErrorIf(
+			t,
+			!slices.Equal(names, wantNames),
+			"ReadDir(%q) = %v, want %v",
+			want.name,
+			names,
+			wantNames,
+		)
+	}
+}
+
+func assertMountedFile(t *testing.T, tr *tree.Tree, want mountEntry) {
+	t.Helper()
+
+	data, err := fs.ReadFile(tr, want.name)
+	{
+		assert.ErrorIf(
+			t,
+			err != nil || string(data) != want.data,
+			"ReadFile(%q) = %q, %v; want %q",
+			want.name,
+			data,
+			err,
+			want.data,
+		)
+	}
+	file, err := tr.Open(want.name)
+	if err != nil {
+		t.Errorf("Open(%q): %v", want.name, err)
+		return
+	}
+	opened, statErr := file.Stat()
+	data, readErr := io.ReadAll(file)
+	closeErr := file.Close()
+	if statErr != nil || readErr != nil || closeErr != nil || string(data) != want.data {
+		t.Errorf("opened %q = %q, Stat=%v Read=%v Close=%v", want.name, data, statErr, readErr, closeErr)
+	} else if opened.Mode() != want.mode || opened.Size() != int64(len(want.data)) {
+		t.Errorf("opened %q metadata = %v, %d", want.name, opened.Mode(), opened.Size())
 	}
 }

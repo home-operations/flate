@@ -2,7 +2,6 @@ package schedule_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"testing/synctest"
 
 	"github.com/home-operations/flate/internal/assert"
-	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/internal/testutil/controllertest"
 	"github.com/home-operations/flate/pkg/controllers/base"
 	"github.com/home-operations/flate/pkg/manifest"
@@ -70,7 +68,16 @@ func runScaleDAG(t *testing.T, workers, producers int) {
 			}
 		}
 	}
-	runScaleDAGCompletion(t, &runScaleDAGCompletionState{workers: &workers, producers: &producers, objects: &objects, deps: &deps, ids: &ids})
+	runScaleDAGCompletion(
+		t,
+		&runScaleDAGCompletionState{
+			workers:   &workers,
+			producers: &producers,
+			objects:   &objects,
+			deps:      &deps,
+			ids:       &ids,
+		},
+	)
 }
 
 func (d *registeredDispatcher) Dispatch(
@@ -168,7 +175,6 @@ func TestScheduler_RegisteredFailureRecovery(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_RegisteredIrrelevantPublication(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -257,75 +263,12 @@ func testSchedulerRegisteredDependencyGraphsCase(
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			objects := make([]manifest.BaseManifest, 0, len(tc.graph))
-			counts := make(map[string]*atomic.Int64, len(tc.graph))
-			for name := range tc.graph {
-				objects = append(objects, &manifest.Kustomization{Name: name, Namespace: "ns"})
-				counts[name] = &atomic.Int64{}
-			}
-			s, st := registeredScheduler(
-				t, (*testCaseInput), objects,
-				func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-					deps := make([]manifest.DependencyRef, 0, len(tc.graph[id.Name]))
-					for _, dep := range tc.graph[id.Name] {
-						deps = append(
-							deps,
-							manifest.DependencyRef{NamedResource: testutil.KustomizationID("ns", dep)},
-						)
-					}
-					if err := e.Require(ctx, deps, level); err != nil {
-						return err
-					}
-					counts[id.Name].Add(1)
-					return nil
-				},
+			runRegisteredDependencyGraph(
+				t,
+				runRegisteredDependencyGraphInputs{testCaseInput: &testCaseInput, tc: &tc},
 			)
-			if tc.name == "cycle" {
-				for _, obj := range objects {
-					st.SetPreflight(obj.Named(), "dependency cycle detected")
-				}
-			}
-			assert.NoError(t, s.Run(t.Context()))
-			for name := range tc.graph {
-				status, ok := st.GetStatus(testutil.KustomizationID("ns", name))
-				assert.Equal(t, ok, true)
-				assert.Equal(t, status.Status, tc.want)
-				var wantBlockers []manifest.NamedResource
-				if tc.want == store.StatusFailed && tc.name != "cycle" {
-					for _, name := range tc.graph[name] {
-						wantBlockers = append(wantBlockers, testutil.KustomizationID("ns", name))
-					}
-					slices.SortFunc(wantBlockers, func(a, b manifest.NamedResource) int { return a.Compare(b) })
-				}
-				assert.Diff(t, status.BlockedBy(), wantBlockers)
-
-				{
-					assert.ErrorIf(
-						t,
-						tc.want == store.StatusFailed && status.Message == "",
-						"%s: terminal failure has no diagnostic",
-						name,
-					)
-				}
-				wantRenders := int64(0)
-				if tc.want == store.StatusReady {
-					wantRenders = 1
-				}
-				assert.Equal(t, counts[name].Load(), wantRenders)
-			}
-			assert.Equal(t, len(s.Results()), len(tc.graph))
-			assert.Equal(t, t.Context().Err(), nil)
-			failures := st.FailedResources()
-			if tc.want == store.StatusFailed {
-				assert.Equal(t, len(failures), len(tc.graph))
-				for name := range tc.graph {
-					_, ok := failures[testutil.KustomizationID("ns", name)]
-					assert.Equal(t, ok, true)
-				}
-			} else {
-				assert.Equal(t, len(failures), 0)
-			}
-		})
+		},
+		)
 	}
 }
 
@@ -413,97 +356,12 @@ func testSchedulerRegisteredFailureRecoveryCase(
 	for _, data := range []bool{false, true} {
 		t.Run(fmt.Sprintf("data=%v", data), func(t *testing.T) {
 			t.Parallel()
-			synctest.Test(t, func(t *testing.T) {
-				consumer := &manifest.Kustomization{Name: "consumer", Namespace: "ns"}
-				driver := &manifest.Kustomization{Name: "driver", Namespace: "ns"}
-				dependency := &manifest.Kustomization{Name: "dependency", Namespace: "ns"}
-				read, published, failed := make(chan struct{}), make(chan struct{}), make(chan struct{})
-				var runs atomic.Int64
-				var st *store.Store
-				s, current := registeredScheduler(
-					t, (*testCaseInput), []manifest.BaseManifest{consumer, driver, dependency},
-					func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-						if id == dependency.Named() {
-							if e.Reads.GetObject(id).(*manifest.Kustomization).Path == "recovered" {
-								return nil
-							}
-							return manifest.NewError(manifest.ErrInput, nil, "initial failure")
-						}
-						if id == driver.Named() {
-							e.Tasks.YieldSlot(func() { <-read })
-							if data {
-								st.AddObject(
-									&manifest.ConfigMap{
-										Name:      "late",
-										Namespace: "ns",
-										Data:      map[string]any{"value": "ready"},
-									},
-								)
-							} else {
-								replacement := dependency.Clone()
-								replacement.Path = "recovered"
-								st.AddObject(replacement)
-								st.UpdateStatus(
-									dependency.Named(),
-									store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
-								)
-							}
-							close(published)
-							return nil
-						}
-						if !data {
-							e.Tasks.YieldSlot(func() { <-failed })
-						}
-						run := runs.Add(1)
-						var err error
-						if data {
-							if e.Reads.GetObject(
-								manifest.NamedResource{
-									Kind:      manifest.KindConfigMap,
-									Namespace: "ns",
-									Name:      "late",
-								},
-							) == nil {
-								err = manifest.NewError(manifest.ErrInput, nil, "data unavailable")
-							}
-						} else {
-							err = e.Require(
-								ctx,
-								[]manifest.DependencyRef{{NamedResource: dependency.Named()}},
-								level,
-							)
-						}
-						if run == 1 {
-							close(read)
-							e.Tasks.YieldSlot(func() { <-published })
-						}
-						return err
-					},
-				)
-				st = current
-				u := st.AddListener(store.EventStatusUpdated, func(id manifest.NamedResource, payload any) {
-					if id == dependency.Named() && payload.(store.StatusInfo).Status == store.StatusFailed {
-						close(failed)
-					}
-				}, false)
-				defer u()
-				assert.NoError(t, s.Run(t.Context()))
-				status, _ := st.GetStatus(consumer.Named())
-				assert.Equal(t, status.Status, store.StatusReady)
-				assert.Equal(t, runs.Load(), int64(2))
-				assert.Equal(t, t.Context().Err(), nil)
-				assert.Equal(t, len(status.BlockedBy()), 0)
-				assert.Equal(t, len(s.Results()), 3)
-				failures := st.FailedResources()
-				if data {
-					assert.Equal(t, len(failures), 1)
-					_, failedDependency := failures[dependency.Named()]
-					assert.Equal(t, failedDependency, true)
-				} else {
-					assert.Equal(t, len(failures), 0)
-				}
-			})
-		})
+			runRegisteredFailureRecovery(
+				t,
+				runRegisteredFailureRecoveryInputs{testCaseInput: &testCaseInput, data: &data},
+			)
+		},
+		)
 	}
 }
 
@@ -514,124 +372,12 @@ func testSchedulerRegisteredFixpointBoundCase(
 	t.Helper()
 
 	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		x, y := &manifest.Kustomization{
-			Name:      "x",
-			Namespace: "ns",
-		}, &manifest.Kustomization{
-			Name:      "y",
-			Namespace: "ns",
-		}
-		started, held := make(chan struct{}, 2), make(chan struct{}, 2)
-		release := make(chan struct{})
-		var active, total atomic.Int64
-		counts := map[schedule.NodeID]*atomic.Int64{x.Named(): {}, y.Named(): {}}
-		s, st := registeredScheduler(
+		runRegisteredFixpointFeedback(
 			t,
-			4,
-			[]manifest.BaseManifest{x, y},
-			func(ctx context.Context, e *base.Execution, id schedule.NodeID, level manifest.DrainLevel) error {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				active.Add(1)
-				defer active.Add(-1)
-				run, count := counts[id].Add(1), total.Add(1)
-				other := x.Named()
-				if id == other {
-					other = y.Named()
-				}
-				e.Reads.GetObject(
-					manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "ns", Name: other.Name},
-				)
-				if run == 1 {
-					started <- struct{}{}
-					e.Tasks.YieldSlot(func() { <-release })
-				}
-				if (*testCaseInput) && count >= 80 {
-					held <- struct{}{}
-					<-ctx.Done()
-				}
-				_, _, next := e.Reads.GetEmission(id)
-				defer next.Finish()
-				child := &manifest.ConfigMap{Name: id.Name, Namespace: "ns", Data: map[string]any{"value": run}}
-				next.Children = []store.Child{{Obj: child, Doc: child.Snapshot()}}
-				next.Manifests, next.Complete = testutil.DocumentOccurrences(
-					[]map[string]any{child.Snapshot()},
-				), true
-				e.Emit(t.Context(), id, &next, nil)
-				if *testCaseInput {
-					return e.Require(ctx, []manifest.DependencyRef{{NamedResource: other}}, level)
-				}
-				return nil
-			},
+			runRegisteredFixpointFeedbackInputs{testCaseInput: &testCaseInput},
 		)
-		c := base.New(st, nil)
-		for _, obj := range []*manifest.Kustomization{x, y} {
-			child := &manifest.ConfigMap{
-				Name:      obj.Name,
-				Namespace: "ns",
-				Data:      map[string]any{"value": int64(0)},
-			}
-			controllertest.Emit(
-				t.Context(),
-				c,
-				obj.Named(),
-				&store.Emission{Children: []store.Child{{Obj: child, Doc: child.Snapshot()}}, Complete: true},
-			)
-		}
-		done := make(chan error, 1)
-		go func() { done <- s.Run(ctx) }()
-		<-started
-		<-started
-		assert.Equal(t, active.Load(), int64(2))
-		close(release)
-		if *testCaseInput {
-			<-held
-			synctest.Wait()
-			{
-				got := active.Load()
-				assert.FatalIf(t, got < 1 || got > 2, "active feedback executions = %d, want one or two", got)
-			}
-			cancel()
-		}
-		err := <-done
-		assert.Equal(t, active.Load(), int64(0))
-		if *testCaseInput {
-			assert.Equal(t, errors.Is(err, context.Canceled), true)
-			{
-				got := total.Load()
-				assert.FatalIf(
-					t,
-					got < 80 || got > 81,
-					"feedback executions = %d, want the threshold plus at most one in-flight peer",
-					got,
-				)
-			}
-		} else {
-			if err == nil || !strings.Contains(err.Error(), "exceeded 32 redispatches") || ctx.Err() != nil {
-				t.Fatalf(
-					"registered terminal feedback did not hit its bound: error=%v context=%v runs=%d",
-					err,
-					ctx.Err(),
-					total.Load(),
-				)
-			}
-			for id, runs := range counts {
-				{
-					got := runs.Load()
-					assert.ErrorIf(
-						t,
-						got > 33,
-						"%s: %d executions exceeds the initial execution plus 32 successors",
-						id,
-						got,
-					)
-				}
-			}
-		}
-	})
+	},
+	)
 }
 
 func testSchedulerRegisteredSelectionCase(t *testing.T, testCaseInput *bool,

@@ -106,7 +106,6 @@ func TestScheduler_WakeOrder(t *testing.T) {
 	}
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_RunDispatchPanic(t *testing.T) {
 	t.Parallel()
 	for _, workers := range []int{2, 16} {
@@ -201,7 +200,6 @@ func TestScheduler_InvalidAcceptance(t *testing.T) {
 	assert.Equal(t, s.Results()[id].Assessment == fresh, true)
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_RetirementPrecedesStructuralBoundary(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -229,7 +227,6 @@ func TestScheduler_RetirementPrecedesStructuralBoundary(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_SettleBoundedRetainedAssessment(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -323,7 +320,6 @@ func TestScheduler_SettleArrivalRestartsNormalDispatch(t *testing.T) {
 	assert.Equal(t, len(s.Results()), 2)
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_RunSettleCancellation(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -382,7 +378,6 @@ func TestScheduler_FinalReclamationCanceled(t *testing.T) {
 	assert.Diff(t, canceled, []bool{false, true})
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_UnprogressedInvalidAssessment(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

@@ -98,7 +98,6 @@ func TestScheduler_CallbacksOutsideMutex(t *testing.T) {
 	assert.Equal(t, runs.Load(), int64(2))
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestRedispatch_SlotWaitPreservesContent(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

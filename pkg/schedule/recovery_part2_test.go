@@ -15,7 +15,6 @@ import (
 	"github.com/home-operations/flate/pkg/task"
 )
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -98,7 +97,6 @@ func TestScheduler_RegisteredOverlappingLifetimes(t *testing.T) {
 	})
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_RegisteredLateDeclaration(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
@@ -194,7 +192,6 @@ func (ts *completedTasks) Go(ctx context.Context, name string, fn func(context.C
 	})
 }
 
-//nolint:paralleltest // Subtests share a synctest bubble and cannot run in parallel.
 func TestScheduler_RegisteredCompletedPublication(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

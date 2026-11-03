@@ -18,9 +18,9 @@ func SeedFor(releaseName, releaseNamespace string) []byte {
 
 // stream is the single deterministic randomness source a render's overrides
 // share: a ChaCha8 keyed by the seed. Its Read returns exactly len(p) bytes
-// with a nil error — the contract crypto/rand-style consumers (crypto/rand.Int,
-// [io.ReadFull], and, in the cert tier, rsa.GenerateKey / x509.CreateCertificate)
-// expect from an io.Reader. All consumers MUST use Read: interleaving Read
+// with a nil error — the contract crypto/rand-style consumers ([crypto/rand.Int],
+// [io.ReadFull], and, in the cert tier, [rsa.GenerateKey] / [x509.CreateCertificate])
+// expect from an [io.Reader]. All consumers MUST use Read: interleaving Read
 // and Uint64 has no specified ordering guarantee. Fixed-seed vectors pin the
 // byte sequence.
 //

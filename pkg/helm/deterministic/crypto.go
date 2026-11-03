@@ -44,16 +44,15 @@ func encryptAES(s *stream, password, plaintext string) (string, error) {
 	}
 	padding := aes.BlockSize - len(plaintext)%aes.BlockSize
 	ciphertext := make([]byte, aes.BlockSize+len(plaintext)+padding)
-	//nolint:gosec // Seeded IVs are reproducible offline render placeholders, never live encryption keys.
 	iv, content := ciphertext[:aes.BlockSize], ciphertext[aes.BlockSize:]
 	_, _ = s.Read(iv)
 	copy(content, plaintext)
 	for i := len(plaintext); i < len(content); i++ {
 		content[i] = byte(padding)
 	}
+	//nolint:gosec // The seeded IV must reproduce offline render placeholders.
 	cipher.NewCBCEncrypter(block, iv).
 		CryptBlocks(content, content)
-		//nolint:gosec // The seeded IV is an offline render placeholder and must be reproducible.
 
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }

@@ -285,7 +285,8 @@ func testCertFuncsDeterministicAndValidCase(t *testing.T, testCaseInput *testCer
 
 	cert := mustParseCert(t, got.Cert)
 	assert.Equal(t, cert.Subject.CommonName, cfg.cn)
-	ips, dns := []any{}, []any{}
+	ips := make([]any, 0, len(cert.IPAddresses))
+	dns := make([]any, 0, len(cert.DNSNames))
 	for _, ip := range cert.IPAddresses {
 		ips = append(ips, ip.String())
 	}

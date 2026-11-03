@@ -17,7 +17,8 @@ import (
 //nolint:gochecknoglobals // Time-based template functions and certificate generation share one immutable epoch.
 var fixedTime = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
-var sprigDurationRound = sprig.TxtFuncMap()["durationRound"].(func(any) string) //nolint:errcheck // Sprig registers durationRound with this exact function signature.
+//nolint:errcheck,gochecknoglobals // Sprig's fixed function signature is memoized to avoid rebuilding the function map per call.
+var sprigDurationRound = sprig.TxtFuncMap()["durationRound"].(func(any) string)
 
 // Unrecognized date arguments MUST use fixedTime rather than the wall clock.
 // Empty or "Local" zones MUST resolve to UTC; explicit named zones stay honored.

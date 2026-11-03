@@ -196,25 +196,8 @@ func (k *Kustomization) mapDependsOn(name, namespace func(string) string) *Kusto
 }
 
 func (k *Kustomization) references(yield func(Reference) bool, view ReferenceView) {
-	authoredSource := k.SourceRef.Kind != "" || k.SourceRef.Name != ""
-	implicitSource := view == ReferenceAll && k.Path != ""
-	if authoredSource || implicitSource {
-		src := k.SourceID()
-		content := src.Kind != "" && src.Name != ""
-		use := sourceKey
-		if !content && k.Path != "" {
-			src = BootstrapSourceID
-			use = ""
-		}
-		if (view == ReferenceAll || use != "") && !yield(Reference{
-			NamedResource: src,
-			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
-			ArtifactStages: GateInputs | GateArtifacts,
-
-			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",
-		}) {
-			return
-		}
+	if !k.sourceReference(yield, view) {
+		return
 	}
 	for i := range k.DependsOn {
 		dep := &k.DependsOn[i]
@@ -356,4 +339,28 @@ func (*Kustomization) outputFields() string {
 		"spec.healthCheckExprs.apiVersion spec.healthCheckExprs.kind spec.healthCheckExprs.current " +
 		"spec.healthCheckExprs.failed spec.healthCheckExprs.inProgress\n" +
 		" spec.dependsOn.name spec.dependsOn.namespace spec.dependsOn.readyExpr"
+}
+
+func (k *Kustomization) sourceReference(yield func(Reference) bool, view ReferenceView) bool {
+	authoredSource := k.SourceRef.Kind != "" || k.SourceRef.Name != ""
+	implicitSource := view == ReferenceAll && k.Path != ""
+	if authoredSource || implicitSource {
+		src := k.SourceID()
+		content := src.Kind != "" && src.Name != ""
+		use := sourceKey
+		if !content && k.Path != "" {
+			src = BootstrapSourceID
+			use = ""
+		}
+		if (view == ReferenceAll || use != "") && !yield(Reference{
+			NamedResource: src,
+			Use:           use, Content: content, Gate: GateInputs | GateArtifacts, Artifact: true,
+			ArtifactStages: GateInputs | GateArtifacts,
+
+			NamespaceDefault: use != "" && k.SourceRef.Namespace == "",
+		}) {
+			return false
+		}
+	}
+	return true
 }

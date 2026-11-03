@@ -256,36 +256,9 @@ func (p *ResourceSetInputProvider) InputPlan() (ProviderInputPlan, error) {
 
 // SelectTags applies flux-operator's filters, stable ordering and limit to registry tags.
 func (p *ResourceSetInputProvider) SelectTags(tags []string) ([]string, error) {
-	var include, exclude *regexp.Regexp
-	var constraint *semver.Constraints
-	if filter := p.Filter; filter != nil {
-		for _, field := range []struct {
-			name, pattern string
-			target        **regexp.Regexp
-		}{
-			{"includeBranch", filter.IncludeBranch, &include},
-			{"includeTag", filter.IncludeTag, &include},
-			{"includeEnvironment", filter.IncludeEnvironment, &include},
-			{"excludeBranch", filter.ExcludeBranch, &exclude},
-			{"excludeTag", filter.ExcludeTag, &exclude},
-			{"excludeEnvironment", filter.ExcludeEnvironment, &exclude},
-		} {
-			if field.pattern == "" {
-				continue
-			}
-			compiled, err := regexp.Compile(field.pattern)
-			if err != nil {
-				return nil, NewError(ErrInput, fmt.Errorf("invalid %s regex: %w", field.name, err), "")
-			}
-			*field.target = compiled
-		}
-		if filter.Semver != "" {
-			var err error
-			constraint, err = semver.NewConstraint(filter.Semver)
-			if err != nil {
-				return nil, NewError(ErrInput, fmt.Errorf("invalid semver expression: %w", err), "")
-			}
-		}
+	include, exclude, constraint, err := p.tagFilters()
+	if err != nil {
+		return nil, err
 	}
 	type parsedTag struct {
 		name    string
@@ -423,3 +396,40 @@ func (p *ResourceSetInputProvider) kind() KindInfo {
 const (
 	semverSeparatorCount = 2
 )
+
+func (p *ResourceSetInputProvider) tagFilters() (*regexp.Regexp, *regexp.Regexp, *semver.Constraints, error) {
+	var include, exclude *regexp.Regexp
+	var constraint *semver.Constraints
+	filter := p.Filter
+	if filter == nil {
+		return nil, nil, nil, nil
+	}
+	for _, field := range []struct {
+		name, pattern string
+		target        **regexp.Regexp
+	}{
+		{"includeBranch", filter.IncludeBranch, &include},
+		{"includeTag", filter.IncludeTag, &include},
+		{"includeEnvironment", filter.IncludeEnvironment, &include},
+		{"excludeBranch", filter.ExcludeBranch, &exclude},
+		{"excludeTag", filter.ExcludeTag, &exclude},
+		{"excludeEnvironment", filter.ExcludeEnvironment, &exclude},
+	} {
+		if field.pattern == "" {
+			continue
+		}
+		compiled, err := regexp.Compile(field.pattern)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrInput, fmt.Errorf("invalid %s regex: %w", field.name, err), "")
+		}
+		*field.target = compiled
+	}
+	if filter.Semver != "" {
+		var err error
+		constraint, err = semver.NewConstraint(filter.Semver)
+		if err != nil {
+			return nil, nil, nil, NewError(ErrInput, fmt.Errorf("invalid semver expression: %w", err), "")
+		}
+	}
+	return include, exclude, constraint, nil
+}

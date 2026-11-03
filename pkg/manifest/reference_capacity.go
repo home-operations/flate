@@ -22,17 +22,21 @@ func (h *HelmRelease) ReferenceCapacity() (int, int) {
 		if h.chartDeclaration != nil {
 			n++
 		}
-	} else if template := h.HelmReleaseSpec.Chart; template != nil {
-		if template.Kind == KindOCIRepository {
-			n++
-			for _, ref := range []*LocalObjectReference{template.Spec.SecretRef, template.Spec.CertSecretRef, template.Spec.ProxySecretRef} {
-				if ref != nil {
-					n++
-				}
+		return n, len(h.ValuesFrom)
+	}
+	template := h.HelmReleaseSpec.Chart
+	if template == nil {
+		return n, len(h.ValuesFrom)
+	}
+	if template.Kind == KindOCIRepository {
+		n++
+		for _, ref := range []*LocalObjectReference{template.Spec.SecretRef, template.Spec.CertSecretRef, template.Spec.ProxySecretRef} {
+			if ref != nil {
+				n++
 			}
-		} else {
-			n += chartTemplateSourceCapacity
 		}
+	} else {
+		n += chartTemplateSourceCapacity
 	}
 	return n, len(h.ValuesFrom)
 }

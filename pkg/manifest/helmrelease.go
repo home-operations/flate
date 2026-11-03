@@ -364,71 +364,8 @@ func parseHelmRelease(doc map[string]any) (*HelmRelease, error) {
 }
 
 func (h *HelmRelease) references(yield func(Reference) bool) {
-	if h.HelmReleaseSpec.Chart != nil || h.ChartRef != nil {
-		projection := h.chartProjection()
-		source := h.Chart.Source
-		if source.Name == "" {
-			source = projection.declared
-		} else {
-			source = Resolve(source, "", h.Namespace)
-		}
-		if declared := projection.declared; declared.Name != "" {
-			stage := GateStage(0)
-			artifact := source == declared
-			if artifact {
-				stage = GateArtifacts
-			}
-			if h.ChartRef != nil && declared.Group == SourceDomain && declared.Kind == KindHelmChart {
-				stage |= GateInputs
-			}
-			namespaceDefault := h.HelmReleaseSpec.Chart != nil
-			if h.ChartRef != nil {
-				namespaceDefault = h.ChartRef.Namespace == ""
-			} else if h.HelmReleaseSpec.Chart != nil && h.HelmReleaseSpec.Chart.Spec.SourceRef != nil {
-				namespaceDefault = h.HelmReleaseSpec.Chart.Spec.SourceRef.Namespace == ""
-			}
-			if !yield(
-				Reference{
-					NamespaceDefault: namespaceDefault,
-					NamedResource:    declared,
-					Use:              chartKey,
-					Content:          true,
-					Gate:             stage,
-					Artifact:         artifact,
-					ChartSource:      artifact,
-					ArtifactStages:   GateArtifacts,
-				},
-			) {
-				return
-			}
-		}
-		if backing := projection.backing; backing.Source.Name != "" {
-			path, files := backing.sourceInputs(h.ChartValuesFiles)
-			artifact := source == backing.Source
-			stage := GateStage(0)
-			if artifact {
-				stage = GateArtifacts
-			}
-			if !yield(
-				Reference{
-					NamespaceDefault: h.Chart.Source.Namespace == "",
-					NamedResource:    backing.Source,
-					Use:              sourceKey,
-					Content:          true,
-					Files:            files,
-					ChartPath:        path,
-					Gate:             stage,
-					Artifact:         artifact,
-					ChartSource:      artifact,
-					ArtifactStages:   GateArtifacts,
-				},
-			) {
-				return
-			}
-		}
-		if !credentialReferences(yield, h.Namespace, projection.credentials[:]...) {
-			return
-		}
+	if (h.HelmReleaseSpec.Chart != nil || h.ChartRef != nil) && !h.chartReferences(yield) {
+		return
 	}
 
 	for i := range h.DependsOn {
@@ -520,4 +457,72 @@ func (*HelmRelease) outputFields() string {
 		"spec.rollback.recreate spec.rollback.force spec.rollback.cleanupOnFail spec.rollback.serverSideApply\n" +
 		"spec.uninstall.timeout spec.uninstall.disableHooks spec.uninstall.keepHistory spec.uninstall.disableWait " +
 		"spec.uninstall.deletionPropagation"
+}
+
+func (h *HelmRelease) chartReferences(yield func(Reference) bool) bool {
+	projection := h.chartProjection()
+	source := h.Chart.Source
+	if source.Name == "" {
+		source = projection.declared
+	} else {
+		source = Resolve(source, "", h.Namespace)
+	}
+	if declared := projection.declared; declared.Name != "" && !yield(h.declaredChartReference(source, declared)) {
+		return false
+	}
+	if backing := projection.backing; backing.Source.Name != "" {
+		path, files := backing.sourceInputs(h.ChartValuesFiles)
+		artifact := source == backing.Source
+		stage := GateStage(0)
+		if artifact {
+			stage = GateArtifacts
+		}
+		if !yield(
+			Reference{
+				NamespaceDefault: h.Chart.Source.Namespace == "",
+				NamedResource:    backing.Source,
+				Use:              sourceKey,
+				Content:          true,
+				Files:            files,
+				ChartPath:        path,
+				Gate:             stage,
+				Artifact:         artifact,
+				ChartSource:      artifact,
+				ArtifactStages:   GateArtifacts,
+			},
+		) {
+			return false
+		}
+	}
+	if !credentialReferences(yield, h.Namespace, projection.credentials[:]...) {
+		return false
+	}
+	return true
+}
+
+func (h *HelmRelease) declaredChartReference(source, declared NamedResource) Reference {
+	stage := GateStage(0)
+	artifact := source == declared
+	if artifact {
+		stage = GateArtifacts
+	}
+	if h.ChartRef != nil && declared.Group == SourceDomain && declared.Kind == KindHelmChart {
+		stage |= GateInputs
+	}
+	namespaceDefault := h.HelmReleaseSpec.Chart != nil
+	if h.ChartRef != nil {
+		namespaceDefault = h.ChartRef.Namespace == ""
+	} else if h.HelmReleaseSpec.Chart != nil && h.HelmReleaseSpec.Chart.Spec.SourceRef != nil {
+		namespaceDefault = h.HelmReleaseSpec.Chart.Spec.SourceRef.Namespace == ""
+	}
+	return Reference{
+		NamespaceDefault: namespaceDefault,
+		NamedResource:    declared,
+		Use:              chartKey,
+		Content:          true,
+		Gate:             stage,
+		Artifact:         artifact,
+		ChartSource:      artifact,
+		ArtifactStages:   GateArtifacts,
+	}
 }

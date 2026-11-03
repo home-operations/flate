@@ -102,9 +102,9 @@ func TestClassify_CoreStates(t *testing.T) {
 		{
 			{
 				got := w.Classify(t.Context(), statusless, level)
-				assert.ErrorIf( //nolint:govet // This assertion compares the complete classification, including its error field.
+				assert.ErrorIf(
 					t,
-					!reflect.DeepEqual(
+					!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
 						got,
 						want,
 					),
@@ -290,9 +290,9 @@ func TestClassify_DependencyFailureRetainsCause(t *testing.T) {
 				manifest.DependencyRef{NamedResource: b},
 				manifest.DrainForce,
 			)
-			assert.FatalIf( //nolint:govet // This assertion compares the complete classification, including its error field.
+			assert.FatalIf(
 				t,
-				!reflect.DeepEqual(
+				!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
 					got,
 					next,
 				),
@@ -508,9 +508,9 @@ func testClassifyCoreStatesCase3(t *testing.T, testCaseInput testClassifyCoreSta
 		{
 			{
 				got := testCaseInput.w.Classify(t.Context(), dep, level)
-				assert.FatalIf( //nolint:govet // This assertion compares the complete classification, including its error field.
+				assert.FatalIf(
 					t,
-					!reflect.DeepEqual(
+					!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
 						got,
 						want,
 					),
@@ -566,7 +566,7 @@ func testClassifyOrdinaryPromotionCase(t *testing.T, testCaseInput *struct {
 			), "%v", "classification lost the captured dependency subject")
 	}
 	if promotion.calls != 1 ||
-		!reflect.DeepEqual(
+		!reflect.DeepEqual( //nolint:govet // The complete classification, including its error field, MUST be compared.
 			got,
 			testCaseInput.want,
 		) {

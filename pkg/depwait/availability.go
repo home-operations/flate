@@ -29,6 +29,8 @@ type availability struct {
 }
 
 // Available waits for offline materializers without making their failure a required cause.
+//
+//nolint:gocritic // The SDK accepts a value snapshot; a pointer would share caller-owned policy fields.
 func (w *Waiter) Available(ctx context.Context, dep DataDependency, level manifest.DrainLevel) availability {
 	var pending []manifest.NamedResource
 	if reads, ok := w.Store.(*store.ReadSet); ok && dep.Input.Data == nil {

@@ -150,7 +150,7 @@ func (c *Client) prepareTemplate(
 		Wipe:         input.WipeSecrets,
 		Dependencies: input.DependencySubstitutions,
 	}
-	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(binding) {
+	if loaded.record != nil && loaded.record.key == key && loaded.record.binding.same(&binding) {
 		binding = loaded.record.binding
 	} else {
 		binding.Options.SkipKinds = nil
@@ -643,7 +643,7 @@ func (r *templateRequest) validate(
 			return false, ociChartVersionErr2
 		}
 	}
-	if !record.binding.same(r.binding) || record.receipt == nil {
+	if !record.binding.same(&r.binding) || record.receipt == nil {
 		fresh := *record
 		fresh.binding = r.binding
 		frame := record.frame

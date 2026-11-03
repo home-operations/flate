@@ -178,7 +178,7 @@ func TestPreviousRender_SourceBinding(t *testing.T) {
 			assert.NoError(t, err)
 			stored, err := decodeFrame(wire)
 			assert.NoError(t, err)
-			accepted, err := encodeAccepted(changed.Named(), stored, emptyRenderInventory)
+			accepted, err := encodeAccepted(changed.Named(), &stored, emptyRenderInventory)
 			assert.NoError(t, err)
 			_, _, _, err = renderer.cache.Blob(
 				t.Context(),

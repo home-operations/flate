@@ -363,7 +363,7 @@ func testTemplateAcceptedHistoryDurableName(
 	assert.NoError(t, encodeFrameErr)
 	invalidFrame, encodeFrameErr := decodeFrame(invalidReceipt)
 	assert.NoError(t, encodeFrameErr)
-	accepted, encodeFrameErr := encodeAccepted((*(*testCaseInput).hr).Named(), invalidFrame, maps.All((*records)))
+	accepted, encodeFrameErr := encodeAccepted((*(*testCaseInput).hr).Named(), &invalidFrame, maps.All((*records)))
 	assert.NoError(t, encodeFrameErr)
 	_, _, _, encodeFrameErr = isolated.cache.Blob(
 		t.Context(), (*(*testCaseInput).key), cache.Policy{MaxAge: 0},

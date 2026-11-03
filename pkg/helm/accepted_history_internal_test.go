@@ -46,9 +46,9 @@ func TestRenderReceipt_Domains(t *testing.T) {
 			Productions:  []manifest.Production{{Owner: owner, Source: source}, {Owner: owner, Source: source}},
 		},
 	}
-	accepted, err := encodeAccepted(owner, frame, maps.All(records))
+	accepted, err := encodeAccepted(owner, &frame, maps.All(records))
 	assert.NoError(t, err)
-	again, err := encodeAccepted(owner, frame, maps.All(records))
+	again, err := encodeAccepted(owner, &frame, maps.All(records))
 	assert.NoError(t, err)
 	assert.Equal(t, bytes.Equal(accepted, again), true)
 	frame, err = decodeFrame(append(bytes.Clone(receipt), accepted...))
@@ -114,7 +114,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 		},
 		)
 	}
-	empty, err := encodeAccepted(owner, frame, emptyRenderInventory)
+	empty, err := encodeAccepted(owner, &frame, emptyRenderInventory)
 	assert.NoError(t, err)
 	frame, err = decodeFrame(append(bytes.Clone(receipt), empty...))
 	assert.NoError(t, err)
@@ -132,7 +132,7 @@ func TestRenderReceipt_Domains(t *testing.T) {
 
 func encodeAccepted(
 	owner manifest.NamedResource,
-	frame renderFrame,
+	frame *renderFrame,
 	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 ) ([]byte, error) {
 	accepted, err := prepareAccepted(owner, frame, records)
@@ -316,11 +316,11 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 		}
 	}
 	frame := renderFrame{raw: "raw"}
-	got, err := prepareAccepted(a, frame, oneShot)
+	got, err := prepareAccepted(a, &frame, oneShot)
 	assert.NoError(t, err)
 	want, err := prepareAccepted(
 		a,
-		frame,
+		&frame,
 		maps.All(map[manifest.NamedResource]manifest.DiscoveryRecord{a: record, b: record}),
 	)
 	assert.NoError(t, err)
@@ -336,7 +336,7 @@ func TestAcceptedRender_OneShotCanonicalInventory(t *testing.T) {
 	{
 		assert.FatalIf(t, !got.equal(&want), "%s", "caller mutation changed the prepared inventory")
 	}
-	_, err = prepareAccepted(a, frame, func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
+	_, err = prepareAccepted(a, &frame, func(yield func(manifest.NamedResource, manifest.DiscoveryRecord) bool) {
 		if yield(a, record) {
 			yield(a, record)
 		}
@@ -355,7 +355,7 @@ func TestRenderReceipt_CompactBacking(t *testing.T) {
 	assert.NoError(t, err)
 	frame, err := decodeFrame(raw)
 	assert.NoError(t, err)
-	accepted, err := encodeAccepted(owner, frame, emptyRenderInventory)
+	accepted, err := encodeAccepted(owner, &frame, emptyRenderInventory)
 	assert.NoError(t, err)
 	wire := make([]byte, 0, len(raw)+len(accepted)+(1<<20))
 	wire = append(wire, raw...)
@@ -456,7 +456,7 @@ func TestRenderReceipt_FrameBounds(t *testing.T) {
 		},
 		)
 	}
-	accepted, err := encodeAccepted(owner, frame, emptyRenderInventory)
+	accepted, err := encodeAccepted(owner, &frame, emptyRenderInventory)
 	assert.NoError(t, err)
 	for _, tc := range []struct {
 		name string
@@ -617,7 +617,7 @@ func testAcceptedRenderExactValueCase(t *testing.T, testCaseInput *testAcceptedR
 	{
 		assert.FatalIf(
 			t,
-			testCaseInput.original.equal(&changed) || changed.equal(&(*testCaseInput.original)),
+			testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
 			"%s",
 			"changed accepted value compared equal",
 		)
@@ -641,11 +641,11 @@ func testAcceptedRenderExactValueCase2(t *testing.T, testCaseInput *testAccepted
 	t.Helper()
 
 	changed := (*testCaseInput.copyValue)(t, (*testCaseInput.original))
-	testCaseInput.component.mutate((*testCaseInput.location).selectID(&changed))
+	testCaseInput.component.mutate(testCaseInput.location.selectID(&changed))
 	{
 		assert.FatalIf(
 			t,
-			testCaseInput.original.equal(&changed) || changed.equal(&(*testCaseInput.original)),
+			testCaseInput.original.equal(&changed) || changed.equal(testCaseInput.original),
 			"%s",
 			"changed full identity compared equal",
 		)

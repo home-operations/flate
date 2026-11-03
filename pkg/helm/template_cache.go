@@ -145,7 +145,7 @@ type templateBinding struct {
 	Dependencies values.DependencySubstitutions    `json:"Dependencies"`
 }
 
-func (a templateBinding) same(b templateBinding) bool {
+func (a *templateBinding) same(b *templateBinding) bool {
 	if !a.Policy.Equal(b.Policy) || a.Source != b.Source || a.Kind != b.Kind || a.URL != b.URL || a.Path != b.Path ||
 		a.Root != b.Root ||
 		a.Key != b.Key ||
@@ -181,7 +181,7 @@ func equalRenderFrame(a, b any) bool {
 	if !ok || !other || left.header.Key != right.header.Key || !bytes.Equal(left.output, right.output) {
 		return false
 	}
-	return left.binding.same(right.binding)
+	return left.binding.same(&right.binding)
 }
 
 type acceptedRoot struct {
@@ -296,19 +296,8 @@ func decodeFrame(data []byte) (renderFrame, error) {
 		//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
 		return frame, nil
 	}
-	{
-		itemValues := accepted.Records
-		for i := range itemValues {
-			item := itemValues[i]
-			if i > 0 && accepted.Records[i-1].ID.Compare(item.ID) >= 0 {
-				return frame, nil
-			}
-			for j, root := range item.Roots {
-				if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
-					return frame, nil
-				}
-			}
-		}
+	if !accepted.ordered() {
+		return frame, nil
 	}
 	frame.accepted, frame.acceptedKey = &accepted, manifest.Fingerprint(accepted)
 	return frame, nil
@@ -316,14 +305,13 @@ func decodeFrame(data []byte) (renderFrame, error) {
 
 func prepareAccepted(
 	owner manifest.NamedResource,
-	frame renderFrame,
+	frame *renderFrame,
 	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
 ) (acceptedRender, error) {
 	accepted := acceptedRender{Version: 1, Complete: true, Owner: owner, Raw: frame.raw}
 	{
 		//nolint:gocritic // The iterator supplies immutable value snapshots.
 		for id, record := range records {
-
 			item := acceptedRecord{ID: id, Record: record}
 			item.Record.ContentRoots = nil
 			item.Record.Inputs = slices.Clone(record.Inputs)
@@ -396,6 +384,8 @@ type renderPublication struct {
 }
 
 // WriteTo writes the render frame and accepted inventory.
+//
+//nolint:gocritic // A publication is a value snapshot so encoding never mutates its accepted frame.
 func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 	if p.frame.encoded == nil {
 		encoded, err := encodeFrame(p.frame.header, p.frame.output)
@@ -405,7 +395,11 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 		p.frame.encoded = encoded
 	}
 	if !p.accepted.Complete {
-		return io.Copy(w, bytes.NewReader(p.frame.encoded))
+		n, err := io.Copy(w, bytes.NewReader(p.frame.encoded))
+		if err != nil {
+			return n, fmt.Errorf("write helm render frame: %w", err)
+		}
+		return n, nil
 	}
 	data, err := json.Marshal(p.accepted)
 	if err != nil {
@@ -414,7 +408,11 @@ func (p renderPublication) WriteTo(w io.Writer) (int64, error) {
 	if len(data) > frameHeaderLimit {
 		return 0, manifest.NewError(manifest.ErrFlux, nil, "accepted helm render exceeds frame limit")
 	}
-	return io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+	n, err := io.Copy(w, io.MultiReader(bytes.NewReader(p.frame.encoded), bytes.NewReader(data)))
+	if err != nil {
+		return n, fmt.Errorf("write accepted helm render: %w", err)
+	}
+	return n, nil
 }
 
 // RenderAcceptance binds an accepted inventory to its source paths.
@@ -426,6 +424,8 @@ type RenderAcceptance struct {
 }
 
 // RecordRender persists a receipt only with a complete accepted inventory.
+//
+//nolint:gocritic // Preserve the public value API and its accepted-inventory snapshot.
 func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
 	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
 	if receipt == nil || records == nil {
@@ -460,7 +460,7 @@ func (c *Client) RecordRender(ctx context.Context, acceptance RenderAcceptance) 
 	var accepted acceptedRender
 	content := frame.raw
 	if acceptance.Sources != nil {
-		accepted, err = prepareAccepted(owner, frame, records)
+		accepted, err = prepareAccepted(owner, &frame, records)
 		if err != nil {
 			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted helm render: %w", err), "")
 		}
@@ -500,42 +500,18 @@ func (c *Client) lookupRender(ctx context.Context, loaded *chartDescription, key
 		record = nil
 	}
 	if record == nil {
-		reader, _, lookup, err := c.cache.Blob(
-			ctx,
-			cache.BlobKey{Content: key, Render: cache.RenderAccepted},
-			cache.Policy{MaxAge: cache.Forever},
-			nil,
-		)
-		if errors.Is(err, errdef.ErrNotFound) {
-			//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
-			return nil, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("lookup helm render cache: %w", err)
-		}
-		identity := cache.AcquisitionIdentity(reader)
-		data, err := fs.ReadFile(reader, "content")
-		if err != nil {
-			return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
-		}
-		frame, err := decodeFrame(data)
-		if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
-			//nolint:nilerr // Invalid cache metadata must remain a miss so the renderer can rebuild.
-			return nil, nil
-		}
-		frame.lookup = lookup
-		record = &renderRecord{
-			key:      key,
-			identity: identity,
-			Output:   frame.output,
-			Analysis: frame.header.Analysis,
-			frame:    frame,
-		}
-	}
-	if record.Analysis.RequiresLoader {
-		if err := c.decodeChart(ctx, loaded); err != nil {
+		var err error
+		record, err = c.readRender(ctx, key)
+		if err != nil || record == nil {
 			return nil, err
 		}
+	}
+	var chartErr error
+	if record.Analysis.RequiresLoader {
+		chartErr = c.decodeChart(ctx, loaded)
+	}
+	if chartErr != nil {
+		return nil, chartErr
 	}
 	if loaded.oci != nil && record != loaded.record {
 		if _, err := ociChartVersion(record.Analysis.Version, loaded.artifact.Revision); err != nil {
@@ -579,3 +555,54 @@ func (c *Client) PreviousRender(
 }
 
 const framePrefixSize = 12
+
+func (a *acceptedRender) ordered() bool {
+	itemValues := a.Records
+	for i := range itemValues {
+		item := itemValues[i]
+		if i > 0 && a.Records[i-1].ID.Compare(item.ID) >= 0 {
+			return false
+		}
+		for j, root := range item.Roots {
+			if j > 0 && item.Roots[j-1].Source.Compare(root.Source) >= 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (c *Client) readRender(ctx context.Context, key string) (*renderRecord, error) {
+	reader, _, lookup, err := c.cache.Blob(
+		ctx,
+		cache.BlobKey{Content: key, Render: cache.RenderAccepted},
+		cache.Policy{MaxAge: cache.Forever},
+		nil,
+	)
+	if errors.Is(err, errdef.ErrNotFound) {
+		//nolint:nilnil // An unavailable receipt is a cache miss, not a render failure.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup helm render cache: %w", err)
+	}
+	identity := cache.AcquisitionIdentity(reader)
+	data, err := fs.ReadFile(reader, "content")
+	if err != nil {
+		return nil, manifest.NewError(manifest.ErrFlux, fmt.Errorf("read helm render cache: %w", err), "")
+	}
+	frame, err := decodeFrame(data)
+	if err != nil || frame.header.Key != key || frame.header.Analysis == nil {
+		//nolint:nilerr,nilnil // Invalid frame metadata is an ordinary cache miss.
+		return nil, nil
+	}
+	frame.lookup = lookup
+	record := &renderRecord{
+		key:      key,
+		identity: identity,
+		Output:   frame.output,
+		Analysis: frame.header.Analysis,
+		frame:    frame,
+	}
+	return record, nil
+}

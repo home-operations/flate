@@ -197,7 +197,10 @@ func (c *execution) render(ctx context.Context, rs *manifest.ResourceSet) error 
 		}
 	}
 	if c.cache == nil || !c.cache.CanPersistRenders() {
-		return ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("context: %w", err)
+		}
+		return nil
 	}
 	sources := attempt.SourcePaths()
 	if sources == nil {

@@ -254,161 +254,7 @@ func benchmarkDirtyRerunIndependentWritersSegment(b *testing.B) {
 	for _, order := range []string{"UV", "VU"} {
 		for _, workers := range []int{2, 16, runtime.NumCPU() * 4} {
 			b.Run(fmt.Sprintf("%s/workers=%d", order, workers), func(b *testing.B) {
-				s := store.New()
-				tasks := task.NewBounded(workers)
-				var renders, dispatches atomic.Int64
-				var assessments [2]*base.Execution
-				defer func() {
-					for _, execution := range assessments {
-						if execution != nil {
-							execution.Close()
-						}
-					}
-				}()
-				c := New(s, tasks, nil, true)
-				c.Configure(base.Options{})
-				c.StartLifecycle()
-
-				sets := [2]*manifest.ResourceSet{
-					independentWriterFixture("u", "blue"),
-					independentWriterFixture("v", "green"),
-				}
-				for _, rs := range sets {
-					s.AddObject(rs)
-				}
-				for i, color := range []string{"blue", "green"} {
-					s.AddObject(
-						&manifest.ResourceSetInputProvider{
-							Name:      fmt.Sprintf("selected-%d", i),
-							Namespace: "ns",
-							Labels:    map[string]string{"color": color},
-						},
-					)
-				}
-				commitOrder := []int{0, 1}
-				if order == "VU" {
-					commitOrder = []int{1, 0}
-				}
-				generation := 0
-				var expected [2]struct {
-					fingerprint string
-					manifests   []manifest.DocOccurrence
-				}
-				b.ReportAllocs()
-				for b.Loop() {
-					for i := range sets {
-						p, _ := s.Get[*manifest.ResourceSetInputProvider](
-							manifest.NamedResource{
-								Group:     manifest.FluxOperatorDomain,
-								Kind:      manifest.KindResourceSetInputProvider,
-								Namespace: "ns",
-								Name:      fmt.Sprintf("selected-%d", i),
-							},
-						)
-						fresh := *p
-						fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{
-							{"revision": {Raw: []byte(strconv.Itoa(generation))}},
-						}
-						s.AddObject(&fresh)
-					}
-					var artifacts [2]*store.Emission
-					var errs [2]error
-					for i, rs := range sets {
-						tasks.Go(b.Context(), "render", func(context.Context) {
-							execution := c.newExecution(rs.Named())
-							defer execution.run.Close()
-							resolve := resourceset.StoreResolver(s)
-							var fp string
-							docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
-								var err error
-								fp, _, err = execution.run.FingerprintDedup(
-									b.Context(),
-									rs.Named(),
-									content,
-									&store.Emission{},
-								)
-								return false, err
-							})
-							renders.Add(1)
-							errs[i] = err
-							artifacts[i] = &store.Emission{Manifests: docs, Fingerprint: fp}
-						})
-					}
-					tasks.BlockTillDone()
-					for _, i := range commitOrder {
-						if errs[i] != nil {
-							b.Fatal(errs[i])
-						}
-						id := sets[i].Named()
-						outcomes := artifacts[i].Manifests
-						sets[i].EmissionPolicy().Stamp(outcomes)
-						_, _, next := s.GetEmission(id)
-						next.Children, next.Manifests, next.Failures = c.ParseChildren(
-							c.Store.GetObject(id),
-							outcomes,
-							manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace},
-						)
-						next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
-						controllertest.Emit(b.Context(), c.Controller, id, &next)
-						expected[i].fingerprint, expected[i].manifests = next.Fingerprint, next.Manifests
-						next.Finish()
-						s.UpdateStatus(
-							sets[i].Named(),
-							store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
-						)
-					}
-					for range 32 {
-						for _, i := range commitOrder {
-							docs := make([]manifest.DocOccurrence, len(artifacts[i].Manifests))
-							for j, doc := range artifacts[i].Manifests {
-								docs[j] = doc
-								docs[j].Document = manifest.DeepCopyMap(doc.Document)
-							}
-							publishResourceSetDocuments(b, c, sets[i].Named(), docs)
-							tasks.Go(b.Context(), "equal", func(ctx context.Context) {
-								dispatches.Add(1)
-								next := c.ReconcileNode(ctx, sets[i].Named(), manifest.DrainNone)
-								if previous := assessments[i]; previous != nil {
-									previous.Retire()
-								}
-								assessments[i] = next
-							})
-						}
-						tasks.BlockTillDone()
-					}
-					for range s.Sweep() {
-					}
-					generation++
-				}
-				if tasks.Failures() != 0 || renders.Load() != int64(2*b.N) || dispatches.Load() != int64(64*b.N) {
-					b.Fatalf(
-						"panics=%d renders=%d dispatches=%d, want renders=%d dispatches=%d",
-						tasks.Failures(),
-						renders.Load(),
-						dispatches.Load(),
-						2*b.N,
-						64*b.N,
-					)
-				}
-				for i, rs := range sets {
-					info, _ := s.GetStatus(rs.Named())
-					if info.Status != store.StatusReady {
-						b.Fatal("writer did not finish Ready")
-					}
-					current, ok := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
-					if !ok || !current.Complete || len(current.Children) != 2 ||
-						current.Fingerprint != expected[i].fingerprint ||
-						!cmp.Equal(current.Manifests, expected[i].manifests) {
-						b.Fatal("equal publications changed the complete two-document inventory")
-					}
-					for _, child := range current.Children {
-						if s.GetObject(child.Obj.Named()) == nil {
-							b.Fatalf("rendered identity %s is missing", child.Obj.Named())
-						}
-					}
-				}
-				b.ReportMetric(float64(renders.Load())/float64(b.N), "renders/op")
-				b.ReportMetric(float64(dispatches.Load())/float64(b.N), "dispatches/op")
+				benchmarkDirtyRerunIndependentWritersCase(b, &order, &workers)
 			})
 		}
 	}
@@ -423,86 +269,308 @@ func benchmarkReadRegistrationCollectionSegment(b *testing.B) {
 			}
 			for _, workers := range []int{2, 16, runtime.NumCPU() * 4} {
 				b.Run(fmt.Sprintf("providers=%d/%s/workers=%d", count, mode, workers), func(b *testing.B) {
-					s := store.New()
-					tasks := task.NewBounded(workers)
-					c := New(s, tasks, nil, true)
-					c.Configure(base.Options{})
-					c.StartLifecycle()
-
-					rs := selectorFixture("consumer", "blue")
-					s.AddObject(rs)
-					var pivot *manifest.ResourceSetInputProvider
-					for i := range count {
-						color := "blue"
-						if mode == "empty" || mode == "nonmatching" && i == 0 {
-							color = "red"
-						}
-						p := &manifest.ResourceSetInputProvider{
-							Name:      fmt.Sprintf("provider-%05d", i),
-							Namespace: "ns",
-							Labels:    map[string]string{"color": color},
-						}
-						s.AddObject(p)
-						if i == 0 {
-							pivot = p
-						}
-					}
-					versions := [2]*manifest.ResourceSetInputProvider{}
-					for i := range versions {
-						fresh := *pivot
-						fresh.Labels = map[string]string{"color": pivot.Labels["color"], "revision": strconv.Itoa(i)}
-						if mode == "membership" && i == 0 {
-							fresh.Labels["color"] = "red"
-						}
-						versions[i] = &fresh
-					}
-					assessment := c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone)
-					defer func() { assessment.Close() }()
-					var renders atomic.Int64
-					unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
-						if id == rs.Named() {
-							renders.Add(1)
-						}
-					}, false)
-					defer unsub()
-					generation := 0
-					b.ReportAllocs()
-					for b.Loop() {
-						started, written := make(chan struct{}), make(chan struct{})
-						start := sync.OnceFunc(func() { close(started) })
-						for worker := range workers - 1 {
-							tasks.Go(b.Context(), "collection", func(ctx context.Context) {
-								if worker == 0 {
-									defer start()
-									start()
-									tasks.YieldSlot(func() { <-written })
-									next := c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone)
-									assessment.Retire()
-									assessment = next
-								} else {
-									s.GetObject(pivot.Named())
-								}
-							})
-						}
-						tasks.Go(b.Context(), "metadata", func(context.Context) {
-							defer close(written)
-							tasks.YieldSlot(func() { <-started })
-							s.AddObject(versions[generation%2])
-						})
-						tasks.BlockTillDone()
-						for range s.Sweep() {
-						}
-						generation++
-					}
-					if tasks.Failures() != 0 {
-						b.Fatal("worker panicked")
-					}
-					info, _ := s.GetStatus(rs.Named())
-					if info.Status != store.StatusReady {
-						b.Fatal("collection did not finish Ready")
-					}
-					b.ReportMetric(float64(renders.Load())/float64(b.N), "renders/op")
+					benchmarkReadRegistrationCollectionCase(b, &count, &mode, &workers)
 				})
+			}
+		}
+	}
+}
+
+func benchmarkReadRegistrationCollectionCase(b *testing.B, count *int, mode *string, workers *int) {
+	b.Helper()
+	s := store.New()
+	tasks := task.NewBounded(*workers)
+	c := New(s, tasks, nil, true)
+	c.Configure(base.Options{})
+	c.StartLifecycle()
+
+	rs := selectorFixture("consumer", "blue")
+	s.AddObject(rs)
+	pivot, versions := registrationProviders(s, count, mode)
+	assessment := c.ReconcileNode(b.Context(), rs.Named(), manifest.DrainNone)
+	defer func() { assessment.Close() }()
+	var renders atomic.Int64
+	unsub := s.AddListener(store.EventArtifactUpdated, func(id manifest.NamedResource, _ any) {
+		if id == rs.Named() {
+			renders.Add(1)
+		}
+	}, false)
+	defer unsub()
+	generation := 0
+	b.ReportAllocs()
+	for b.Loop() {
+		started, written := make(chan struct{}), make(chan struct{})
+		start := sync.OnceFunc(func() { close(started) })
+		for worker := range *workers - 1 {
+			tasks.Go(b.Context(), "collection", func(ctx context.Context) {
+				if worker == 0 {
+					defer start()
+					start()
+					tasks.YieldSlot(func() { <-written })
+					next := c.ReconcileNode(ctx, rs.Named(), manifest.DrainNone)
+					assessment.Retire()
+					assessment = next
+				} else {
+					s.GetObject(pivot.Named())
+				}
+			})
+		}
+		tasks.Go(b.Context(), "metadata", func(context.Context) {
+			defer close(written)
+			tasks.YieldSlot(func() { <-started })
+			s.AddObject(versions[generation%2])
+		})
+		tasks.BlockTillDone()
+		for range s.Sweep() {
+		}
+		generation++
+	}
+	if tasks.Failures() != 0 {
+		b.Fatal("worker panicked")
+	}
+	info, _ := s.GetStatus(rs.Named())
+	if info.Status != store.StatusReady {
+		b.Fatal("collection did not finish Ready")
+	}
+	b.ReportMetric(float64(renders.Load())/float64(b.N), "renders/op")
+}
+
+func benchmarkDirtyRerunIndependentWritersCase(b *testing.B, order *string, workers *int) {
+	b.Helper()
+	s := store.New()
+	tasks := task.NewBounded(*workers)
+	var renders, dispatches atomic.Int64
+	var assessments [2]*base.Execution
+	defer func() {
+		for _, execution := range assessments {
+			if execution != nil {
+				execution.Close()
+			}
+		}
+	}()
+	c := New(s, tasks, nil, true)
+	c.Configure(base.Options{})
+	c.StartLifecycle()
+
+	sets := [2]*manifest.ResourceSet{
+		independentWriterFixture("u", "blue"),
+		independentWriterFixture("v", "green"),
+	}
+	for _, rs := range sets {
+		s.AddObject(rs)
+	}
+	for i, color := range []string{"blue", "green"} {
+		s.AddObject(
+			&manifest.ResourceSetInputProvider{
+				Name:      fmt.Sprintf("selected-%d", i),
+				Namespace: "ns",
+				Labels:    map[string]string{"color": color},
+			},
+		)
+	}
+	commitOrder := []int{0, 1}
+	if *order == "VU" {
+		commitOrder = []int{1, 0}
+	}
+	generation := 0
+	var expected [2]struct {
+		fingerprint string
+		manifests   []manifest.DocOccurrence
+	}
+	b.ReportAllocs()
+	runIndependentWriterRounds(
+		b,
+		&independentWriterRounds{
+			s:           &s,
+			tasks:       &tasks,
+			renders:     &renders,
+			dispatches:  &dispatches,
+			assessments: &assessments,
+			c:           &c,
+			sets:        &sets,
+			commitOrder: &commitOrder,
+			generation:  &generation,
+			expected:    &expected,
+		},
+	)
+	if tasks.Failures() != 0 || renders.Load() != int64(2*b.N) || dispatches.Load() != int64(64*b.N) {
+		b.Fatalf(
+			"panics=%d renders=%d dispatches=%d, want renders=%d dispatches=%d",
+			tasks.Failures(),
+			renders.Load(),
+			dispatches.Load(),
+			2*b.N,
+			64*b.N,
+		)
+	}
+	assertIndependentWriterOutputs(b, s, &sets, &expected)
+	b.ReportMetric(float64(renders.Load())/float64(b.N), "renders/op")
+	b.ReportMetric(float64(dispatches.Load())/float64(b.N), "dispatches/op")
+}
+
+func registrationProviders(
+	s *store.Store,
+	count *int,
+	mode *string,
+) (*manifest.ResourceSetInputProvider, [2]*manifest.ResourceSetInputProvider) {
+	var pivot *manifest.ResourceSetInputProvider
+	for i := range *count {
+		color := "blue"
+		if *mode == "empty" || *mode == "nonmatching" && i == 0 {
+			color = "red"
+		}
+		p := &manifest.ResourceSetInputProvider{
+			Name:      fmt.Sprintf("provider-%05d", i),
+			Namespace: "ns",
+			Labels:    map[string]string{"color": color},
+		}
+		s.AddObject(p)
+		if i == 0 {
+			pivot = p
+		}
+	}
+	versions := [2]*manifest.ResourceSetInputProvider{}
+	for i := range versions {
+		fresh := *pivot
+		fresh.Labels = map[string]string{"color": pivot.Labels["color"], "revision": strconv.Itoa(i)}
+		if *mode == "membership" && i == 0 {
+			fresh.Labels["color"] = "red"
+		}
+		versions[i] = &fresh
+	}
+	return pivot, versions
+}
+
+type independentWriterRounds struct {
+	s           **store.Store
+	tasks       **task.Service
+	renders     *atomic.Int64
+	dispatches  *atomic.Int64
+	assessments *[2]*base.Execution
+	c           **Controller
+	sets        *[2]*manifest.ResourceSet
+	commitOrder *[]int
+	generation  *int
+	expected    *[2]struct {
+		fingerprint string
+		manifests   []manifest.DocOccurrence
+	}
+}
+
+func runIndependentWriterRounds(b *testing.B, scope *independentWriterRounds) {
+	b.Helper()
+	for b.Loop() {
+		for i := range *scope.sets {
+			p, _ := (*scope.s).Get[*manifest.ResourceSetInputProvider](
+				manifest.NamedResource{
+					Group:     manifest.FluxOperatorDomain,
+					Kind:      manifest.KindResourceSetInputProvider,
+					Namespace: "ns",
+					Name:      fmt.Sprintf("selected-%d", i),
+				},
+			)
+			fresh := *p
+			fresh.Status.ExportedInputs = []fluxopv1.ResourceSetInput{
+				{"revision": {Raw: []byte(strconv.Itoa((*scope.generation)))}},
+			}
+			(*scope.s).AddObject(&fresh)
+		}
+		var artifacts [2]*store.Emission
+		var errs [2]error
+		for i, rs := range *scope.sets {
+			(*scope.tasks).Go(b.Context(), "render", func(context.Context) {
+				execution := (*scope.c).newExecution(rs.Named())
+				defer execution.run.Close()
+				resolve := resourceset.StoreResolver((*scope.s))
+				var fp string
+				docs, _, err := renderProviders(rs, resolve, func(content any) (bool, error) {
+					var err error
+					fp, _, err = execution.run.FingerprintDedup(
+						b.Context(),
+						rs.Named(),
+						content,
+						&store.Emission{},
+					)
+					return false, err
+				})
+				scope.renders.Add(1)
+				errs[i] = err
+				artifacts[i] = &store.Emission{Manifests: docs, Fingerprint: fp}
+			})
+		}
+		(*scope.tasks).BlockTillDone()
+		for _, i := range *scope.commitOrder {
+			if errs[i] != nil {
+				b.Fatal(errs[i])
+			}
+			id := scope.sets[i].Named()
+			outcomes := artifacts[i].Manifests
+			scope.sets[i].EmissionPolicy().Stamp(outcomes)
+			_, _, next := (*scope.s).GetEmission(id)
+			next.Children, next.Manifests, next.Failures = (*scope.c).ParseChildren(
+				(*scope.c).Store.GetObject(id),
+				outcomes,
+				manifest.ParseDocOptions{WipeSecrets: true, DefaultNamespace: id.Namespace},
+			)
+			next.Fingerprint, next.Complete = artifacts[i].Fingerprint, true
+			controllertest.Emit(b.Context(), (*scope.c).Controller, id, &next)
+			scope.expected[i].fingerprint, scope.expected[i].manifests = next.Fingerprint, next.Manifests
+			next.Finish()
+			(*scope.s).UpdateStatus(
+				scope.sets[i].Named(),
+				store.StatusInfo{Status: store.StatusReady, Reason: "", Message: ""},
+			)
+		}
+		scope.republish(b, &artifacts)
+		for range (*scope.s).Sweep() {
+		}
+		(*scope.generation)++
+	}
+}
+
+func (w *independentWriterRounds) republish(b *testing.B, artifacts *[2]*store.Emission) {
+	b.Helper()
+	for range 32 {
+		for _, i := range *w.commitOrder {
+			docs := make([]manifest.DocOccurrence, len(artifacts[i].Manifests))
+			for j, doc := range artifacts[i].Manifests {
+				docs[j] = doc
+				docs[j].Document = manifest.DeepCopyMap(doc.Document)
+			}
+			publishResourceSetDocuments(b, (*w.c), w.sets[i].Named(), docs)
+			(*w.tasks).Go(b.Context(), "equal", func(ctx context.Context) {
+				w.dispatches.Add(1)
+				next := (*w.c).ReconcileNode(ctx, w.sets[i].Named(), manifest.DrainNone)
+				if previous := w.assessments[i]; previous != nil {
+					previous.Retire()
+				}
+				w.assessments[i] = next
+			})
+		}
+		(*w.tasks).BlockTillDone()
+	}
+}
+
+func assertIndependentWriterOutputs(b *testing.B, s *store.Store, sets *[2]*manifest.ResourceSet, expected *[2]struct {
+	fingerprint string
+	manifests   []manifest.DocOccurrence
+},
+) {
+	b.Helper()
+	for i, rs := range *sets {
+		info, _ := s.GetStatus(rs.Named())
+		if info.Status != store.StatusReady {
+			b.Fatal("writer did not finish Ready")
+		}
+		current, ok := s.GetArtifact(rs.Named(), store.ArtifactContent).(*store.Emission)
+		if !ok || !current.Complete || len(current.Children) != 2 ||
+			current.Fingerprint != expected[i].fingerprint ||
+			!cmp.Equal(current.Manifests, expected[i].manifests) {
+			b.Fatal("equal publications changed the complete two-document inventory")
+		}
+		for _, child := range current.Children {
+			if s.GetObject(child.Obj.Named()) == nil {
+				b.Fatalf("rendered identity %s is missing", child.Obj.Named())
 			}
 		}
 	}

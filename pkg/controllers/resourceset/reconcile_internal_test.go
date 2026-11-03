@@ -144,52 +144,20 @@ func testReconcileParentUpdateDuringRenderCase(
 		}
 		publish(docB)
 	})
-	tasks.Go(t.Context(), "render", func(context.Context) {
-		defer close(rendered)
-		runState = c.newExecution(id)
-		defer runState.run.Close()
-		if (*testCaseInput) == "capture" {
-			runState.run.Dispatch(t.Context(), manifest.DrainNone, runState, (*execution).reconcile)
-			return
-		}
-		_, _, attempt := runState.run.Reads.GetEmission(id)
-		docs, warnings, err := renderProviders(
-			rs,
-			resourceset.StoreResolver(&runState.run.Reads),
-			func(content any) (bool, error) {
-				fp, hit, err := runState.run.FingerprintDedup(t.Context(), id, content, &store.Emission{})
-				if hit || err != nil {
-					return hit, err
-				}
-				attempt.Fingerprint = fp
-				close(started)
-				tasks.YieldSlot(func() { <-resume })
-				return false, nil
-			},
-		)
-		defer attempt.Finish()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		{
-			warningValues := warnings
-			for warningIndex := range warningValues {
-				warning := warningValues[warningIndex]
-
-				runState.run.Reads.AddWarning(warning)
-			}
-		}
-		children, retained := testutil.ParseChildren(
-			c,
-			c.Store.GetObject(id),
-			testutil.DocumentMaps(docs),
-			manifest.ParseDocOptions{},
-		)
-		attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(retained)
-		attempt.Complete = true
-		runState.run.Emit(t.Context(), id, &attempt, nil)
-	})
+	startReplacementRender(
+		t,
+		&replacementRenderInputs{
+			testCaseInput: &testCaseInput,
+			tasks:         &tasks,
+			c:             &c,
+			started:       &started,
+			resume:        &resume,
+			rendered:      &rendered,
+			id:            &id,
+			rs:            &rs,
+			runState:      &runState,
+		},
+	)
 	tasks.BlockTillDone()
 	if tasks.Failures() != 0 {
 		t.Fatalf("task failures = %d", tasks.Failures())
@@ -377,4 +345,71 @@ func testReconcileProviderInventorySettlementCase(
 	}
 	publish(&broken)
 	check(0, store.StatusFailed)
+}
+
+type replacementRenderInputs struct {
+	testCaseInput **string
+	tasks         **task.Service
+	c             **Controller
+	started       *chan struct{}
+	resume        *chan struct{}
+	rendered      *chan struct{}
+	id            *manifest.NamedResource
+	rs            **manifest.ResourceSet
+	runState      **execution
+}
+
+func startReplacementRender(t *testing.T, scope *replacementRenderInputs) {
+	t.Helper()
+	(*scope.tasks).Go(t.Context(), "render", func(context.Context) {
+		defer close((*scope.rendered))
+		(*scope.runState) = (*scope.c).newExecution((*scope.id))
+		defer (*scope.runState).run.Close()
+		if (*(*scope.testCaseInput)) == "capture" {
+			(*scope.runState).run.Dispatch(t.Context(), manifest.DrainNone, (*scope.runState), (*execution).reconcile)
+			return
+		}
+		_, _, attempt := (*scope.runState).run.Reads.GetEmission((*scope.id))
+		docs, warnings, err := renderProviders(
+			(*scope.rs),
+			resourceset.StoreResolver(&(*scope.runState).run.Reads),
+			func(content any) (bool, error) {
+				fp, hit, err := (*scope.runState).run.FingerprintDedup(
+					t.Context(),
+					(*scope.id),
+					content,
+					&store.Emission{},
+				)
+				if hit || err != nil {
+					return hit, err
+				}
+				attempt.Fingerprint = fp
+				close((*scope.started))
+				(*scope.tasks).YieldSlot(func() { <-(*scope.resume) })
+				return false, nil
+			},
+		)
+		defer attempt.Finish()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		{
+			warningValues := warnings
+			for warningIndex := range warningValues {
+				warning := warningValues[warningIndex]
+
+				(*scope.runState).run.Reads.AddWarning(warning)
+			}
+		}
+		children, retained := testutil.ParseChildren(
+			(*scope.c),
+			(*scope.c).Store.GetObject((*scope.id)),
+			testutil.DocumentMaps(docs),
+			manifest.ParseDocOptions{},
+		)
+		attempt.Children, attempt.Manifests = children, testutil.DocumentOccurrences(retained)
+		attempt.Complete = true
+		(*scope.runState).run.Emit(t.Context(), (*scope.id), &attempt, nil)
+	})
 }

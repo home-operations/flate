@@ -134,6 +134,11 @@ func (l *Loader) Prepare(ctx context.Context, incoming store.Child, reads *store
 	return &closure.result, nil
 }
 
+func (c *admissionClosure) selectsChild(id manifest.NamedResource) bool {
+	selection := c.loader.Options.Selection
+	return selection.Matches(id) || selection.Roots[0].Name != "" || selection.Roots[0].Namespace == ""
+}
+
 func (c *admissionClosure) evaluate(ctx context.Context, reads *store.ReadSet) (*Admission, error) {
 	defer func() {
 		if c.comparisons != nil {
@@ -202,7 +207,10 @@ func (c *admissionClosure) evaluate(ctx context.Context, reads *store.ReadSet) (
 		}
 		for _, production := range c.productions(id) {
 			parent := c.role(production.Owner)
-			if (parent.selected && parent.dirty && (!production.Owner.ReportHidden() || !c.loader.IsFileIndexed(id)) || c.changedProduction(production) && eligible) && !c.unchangedDeclaration(id, production.Owner, c.incoming.Obj) {
+			inherited := parent.selected && parent.dirty && c.selectsChild(id)
+			inherited = inherited && (!production.Owner.ReportHidden() || !c.loader.IsFileIndexed(id))
+			selected := inherited || c.changedProduction(production) && eligible
+			if selected && !c.unchangedDeclaration(id, production.Owner, c.incoming.Obj) {
 				role.needed, role.selected, role.dirty = true, true, true
 			}
 		}
@@ -1193,7 +1201,7 @@ func (c *admissionClosure) start(ctx context.Context, materializers func(materia
 	slices.Sort(c.proposal.Namespaces)
 	c.proposal.Namespaces = slices.Compact(c.proposal.Namespaces)
 	for i, target := range c.loader.Options.Selection.Roots {
-		if !known[i] {
+		if !known[i] || target.Name == "" && target.Namespace != "" {
 			materializers(materializerDemand{target: target, source: c.loader.SourceRoot}, manifest.NamedResource{})
 		}
 	}
@@ -1440,6 +1448,9 @@ func (c *admissionClosure) walk(ctx context.Context, materializers func(material
 		if role.selected && role.dirty && c.loader.Store.HasInventory(id) {
 			_, _, output := c.objects.GetEmission(id)
 			for _, child := range output.Children {
+				if !c.selectsChild(child.Obj.Named()) {
+					continue
+				}
 				if id.ReportHidden() && c.loader.IsFileIndexed(child.Obj.Named()) {
 					continue
 				}

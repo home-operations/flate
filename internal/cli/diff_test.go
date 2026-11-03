@@ -244,8 +244,8 @@ spec:
 		{name: "current/apps", side: "current", namespace: "apps", orig: orig, current: current},
 		{name: "orig/apps", side: "orig", namespace: "apps", orig: current, current: orig},
 		{name: "current failed", side: "current", orig: orig, current: failed, wantCode: 1},
-		{name: "current failed/apps", side: "current", namespace: "apps", orig: orig, current: failed},
-		{name: "orig failed/apps", side: "orig", namespace: "apps", orig: failed, current: orig},
+		{name: "current failed/apps", side: "current", namespace: "apps", orig: orig, current: failed, wantCode: 1},
+		{name: "orig failed/apps", side: "orig", namespace: "apps", orig: failed, current: orig, wantCode: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr, code := runCLI(t, "diff", "all", "--path", tc.current, "--path-orig", tc.orig,

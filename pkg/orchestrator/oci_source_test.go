@@ -19,10 +19,12 @@ type generatedOCIFetcher struct {
 	root      string
 	err       error
 	fetched   atomic.Bool
+	calls     atomic.Int64
 	wantRetry sourcecache.RetryConfig
 }
 
 func (f *generatedOCIFetcher) Fetch(ctx context.Context, obj manifest.BaseManifest, reads *store.ReadSet, policy sourcecache.Policy) (*store.SourceArtifact, error) {
+	f.calls.Add(1)
 	if reads == nil {
 		return nil, fmt.Errorf("missing captured inputs")
 	}

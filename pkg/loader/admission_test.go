@@ -414,6 +414,117 @@ func TestAdmission_IncomingChildPublicationPreservesProof(t *testing.T) {
 	}
 }
 
+func TestAdmission_EmittedNamespaceChildren(t *testing.T) {
+	t.Parallel()
+	for _, scope := range []string{"namespace", "named", "all"} {
+		t.Run(scope, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			selected := &manifest.Kustomization{Name: "selected", Namespace: "apps"}
+			selected.SourceRef.Kind, selected.SourceRef.Name, selected.SourceRef.Namespace = manifest.KindOCIRepository, "required", "monitoring"
+			excluded := &manifest.Kustomization{Name: "excluded", Namespace: "monitoring"}
+			excluded.Path, excluded.TargetNamespace = "excluded", "monitoring"
+			required := &manifest.OCIRepository{Name: "required", Namespace: "monitoring"}
+			st.AddObjects([]manifest.BaseManifest{parent, selected})
+			l := New(st)
+			l.Options.Filter = change.NewFilter()
+			root := parent.Named()
+			switch scope {
+			case "namespace":
+				root.Name = ""
+			case "all":
+				root = manifest.NamedResource{}
+			}
+			if scope != "all" {
+				l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{root}}
+			}
+			allChildren := scope != "namespace"
+			initial, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			assert.NoError(t, err)
+			_, retry := l.Options.Filter.AddEmitted(initial.Needed, initial.Selected, initial.Dirty, initial.Revision)
+			assert.Equal(t, retry, false)
+			children := []store.Child{}
+			for _, obj := range []manifest.BaseManifest{selected, excluded, required} {
+				incoming := store.Child{Obj: obj, Productions: []manifest.Production{{Owner: parent.Named()}}}
+				proposal, err := l.Prepare(t.Context(), incoming, nil, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Contains(proposal.Selected, obj.Named()), obj == selected || allChildren)
+				assert.Equal(t, slices.Contains(proposal.Needed, obj.Named()), obj != excluded || allChildren)
+				children = append(children, incoming)
+			}
+			st.RecordEmitted(parent.Named(), &store.Emission{Children: children, Complete: true}, nil)
+			l.Options.Filter = change.NewFilter()
+			proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, slices.Contains(proposal.Selected, excluded.Named()), allChildren)
+			assert.Equal(t, slices.Contains(proposal.Needed, excluded.Named()), allChildren)
+			assert.Equal(t, slices.Contains(proposal.Selected, required.Named()), allChildren)
+			assert.Equal(t, slices.Contains(proposal.Needed, required.Named()), true)
+			_, _, batch := st.GetEmission(parent.Named())
+			defer batch.Finish()
+			assert.Equal(t, len(batch.Children), 3)
+		})
+	}
+	for _, tc := range []struct {
+		name      string
+		inherited bool
+		stored    bool
+	}{
+		{name: "incoming inherited", inherited: true},
+		{name: "incoming changed production"},
+		{name: "stored inherited", inherited: true, stored: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st := store.New()
+			parent := &manifest.Kustomization{Name: "parent", Namespace: "apps"}
+			stable := &manifest.Kustomization{Name: "stable", Namespace: "apps"}
+			changed := &manifest.Kustomization{Name: "changed", Namespace: "apps", Path: "changed"}
+			st.AddObject(parent)
+			l := New(st)
+			l.Options.Filter = change.NewFilter()
+			l.Options.Changes = change.NewSet([]string{"production.yaml", "changed.yaml"})
+			root := parent.Named()
+			root.Name = ""
+			l.Options.Selection = manifest.Selection{Roots: []manifest.NamedResource{root}, Changed: true}
+			var selected []manifest.NamedResource
+			if tc.inherited {
+				selected = append(selected, parent.Named())
+			}
+			_, retry := l.Options.Filter.AddEmitted([]manifest.NamedResource{parent.Named()}, selected, selected, 0)
+			assert.Equal(t, retry, false)
+			var children []store.Child
+			for _, obj := range []*manifest.Kustomization{stable, changed} {
+				declaration := obj.Clone()
+				declaration.Path = ""
+				production := manifest.Production{Owner: parent.Named(), Declaration: obj.Named(), Source: manifest.BootstrapSourceID, File: "production.yaml"}
+				l.Index.Records[obj.Named()] = manifest.DiscoveryRecord{
+					File: obj.Name + ".yaml", Builder: "kustomization.yaml", Declaration: declaration,
+					Productions: []manifest.Production{production},
+				}
+				children = append(children, store.Child{Obj: obj, Productions: []manifest.Production{production}})
+			}
+			if tc.stored {
+				st.RecordEmitted(parent.Named(), &store.Emission{Children: children, Complete: true}, nil)
+				proposal, err := l.Prepare(t.Context(), store.Child{}, nil, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Contains(proposal.Selected, stable.Named()), false)
+				assert.Equal(t, slices.Contains(proposal.Dirty, stable.Named()), false)
+				assert.Equal(t, slices.Contains(proposal.Selected, changed.Named()), true)
+				assert.Equal(t, slices.Contains(proposal.Dirty, changed.Named()), true)
+				return
+			}
+			for _, child := range children {
+				proposal, err := l.Prepare(t.Context(), child, nil, nil)
+				assert.NoError(t, err)
+				assert.Equal(t, slices.Contains(proposal.Selected, child.Obj.Named()), child.Obj == changed)
+				assert.Equal(t, slices.Contains(proposal.Dirty, child.Obj.Named()), child.Obj == changed)
+			}
+		})
+	}
+}
+
 func TestAdmission_ReadonlyDeclarationsAfterConstruction(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

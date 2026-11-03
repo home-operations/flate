@@ -133,6 +133,7 @@ func (w *inputWalk) directory(ctx context.Context, dir string, incoming *walkSco
 	}
 	out, err := yaml.Marshal(&doc)
 	if err != nil {
+		//nolint:wrapcheck // Preflight must retain the original YAML error value and diagnostic.
 		return inputResult{}, err
 	}
 	return result, w.fs.WriteFile(file, out)
@@ -247,6 +248,8 @@ func (w *inputWalk) references(
 			} else {
 				c, err = w.pluginOperand(ctx, &next, &node)
 			}
+		case kustomizeinput.File:
+			fallthrough
 		default:
 			c, err = w.fileOperand(ctx, &next, &node)
 		}
@@ -544,10 +547,12 @@ func (w *inputWalk) plugins(
 		}
 		result = result.merge(c)
 		if err := encoder.Encode(doc); err != nil {
+			//nolint:wrapcheck // Preflight must retain the original YAML error value and diagnostic.
 			return nil, inputResult{}, err
 		}
 	}
 	if err := encoder.Close(); err != nil {
+		//nolint:wrapcheck // Preflight must retain the original YAML error value and diagnostic.
 		return nil, inputResult{}, err
 	}
 	observation := w.visited[key]

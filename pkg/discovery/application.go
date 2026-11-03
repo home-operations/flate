@@ -467,39 +467,22 @@ func (a *Admission) qualifyEntry(
 ) ([]manifest.BaseManifest, error) {
 	repoRoot := a.input.LocalPath
 	var appliers []manifest.BaseManifest
-	qualify := func(obj manifest.BaseManifest, application manifest.EntryApplication, resolved entryResolution) error {
-		artifact := resolved.artifact
-		if artifact == nil {
-			var err error
-			resolved, err = a.resolve(ctx, application.Source, resolved.object)
-			if err != nil {
-				return err
-			}
-			artifact = resolved.artifact
-		}
-		if artifact == nil {
-			return nil
-		}
-		root, pinned, external := loader.SourceView(resolved, application.Source, repoRoot)
-		if pinned || external {
-			return nil
-		}
-		target := filepath.Join(root, manifest.NormalizeClaimBase(application.Path))
-		if safepath.Contains(root, target) && artifact.OriginPath(target) == a.input.OriginPath(a.path) {
-			appliers = append(appliers, obj)
-		}
-		return nil
-	}
 	for _, obj := range objects {
 		applier, ok := obj.(entryApplication)
 		if !ok {
 			continue
 		}
 		application, valid := applier.EntryApplication()
-		if valid {
-			if err := qualify(obj, application, a.applicationSource(st, &application)); err != nil {
-				return nil, err
-			}
+		if !valid {
+			continue
+		}
+		resolved := a.applicationSource(st, &application)
+		qualified, err := a.qualifyApplication(ctx, &application, &resolved, repoRoot)
+		if err != nil {
+			return nil, err
+		}
+		if qualified {
+			appliers = append(appliers, obj)
 		}
 	}
 	for evidence := a.applications.Load(); evidence != nil; evidence = evidence.next {
@@ -511,19 +494,52 @@ func (a *Admission) qualifyEntry(
 				continue
 			}
 		}
-		if err := qualify(evidence.object, evidence.application, evidence.source); err != nil {
+		obj, application, resolved := evidence.object, evidence.application, evidence.source
+		qualified, err := a.qualifyApplication(ctx, &application, &resolved, repoRoot)
+		if err != nil {
 			return nil, err
+		}
+		if qualified {
+			appliers = append(appliers, obj)
 		}
 	}
 	slices.SortStableFunc(appliers, func(a, b manifest.BaseManifest) int { return a.Named().Compare(b.Named()) })
 	return slices.CompactFunc(appliers, func(a, b manifest.BaseManifest) bool { return a.Named() == b.Named() }), nil
 }
 
-func (r entryResolution) GetObject(manifest.NamedResource) manifest.BaseManifest {
+func (a *Admission) qualifyApplication(
+	ctx context.Context,
+	application *manifest.EntryApplication,
+	resolved *entryResolution,
+	repoRoot string,
+) (bool, error) {
+	artifact := resolved.artifact
+	if artifact == nil {
+		var err error
+		*resolved, err = a.resolve(ctx, application.Source, resolved.object)
+		if err != nil {
+			return false, err
+		}
+		artifact = resolved.artifact
+	}
+	if artifact == nil {
+		return false, nil
+	}
+	root, pinned, external := loader.SourceView(resolved, application.Source, repoRoot)
+	if pinned || external {
+		return false, nil
+	}
+	target := filepath.Join(root, manifest.NormalizeClaimBase(application.Path))
+	return safepath.Contains(root, target) && artifact.OriginPath(target) == a.input.OriginPath(a.path), nil
+}
+
+//nolint:ireturn // loader.SourceView requires this manifest interface signature.
+func (r *entryResolution) GetObject(manifest.NamedResource) manifest.BaseManifest {
 	return r.object
 }
 
-func (r entryResolution) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact {
+//nolint:ireturn // loader.SourceView requires this artifact interface signature.
+func (r *entryResolution) GetArtifact(manifest.NamedResource, store.ArtifactRead) store.Artifact {
 	if r.artifact == nil {
 		return nil
 	}
@@ -596,6 +612,15 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 			return nil, Binding{}, err
 		}
 	}
+	root, binding := a.bindApplication(st, root, owner)
+	return root, binding, nil
+}
+
+func (a *Admission) bindApplication(
+	st *store.Store,
+	root *manifest.Kustomization,
+	owner manifest.BaseManifest,
+) (*manifest.Kustomization, Binding) {
 	key := root.Named()
 	if candidate, ok := owner.(*manifest.Kustomization); ok && len(candidate.DependsOn) == 0 &&
 		(candidate.PostBuild == nil || len(candidate.PostBuild.SubstituteFrom) == 0) {
@@ -621,33 +646,34 @@ func (a *Admission) BindEntry(ctx context.Context, st *store.Store) (*manifest.K
 		Key:      key,
 		Path:     manifest.NormalizeClaimBase(root.Path),
 		Entry:    evidence,
-	}, nil
+	}
 }
 
 func (q *entryQualification) reusePrevious(ctx context.Context, st *store.Store, a *Admission) bool {
-	if q.previous.Receipt != nil {
-		for _, id := range q.refresh {
-			status, _ := st.GetStatus(id)
-			if status.Outcome() == store.OutcomeFailed || status.Outcome() == store.OutcomeSkipped {
-				q.previous = kustomize.EntryEvidence{}
-				break
-			}
-			if status.Outcome() != store.OutcomePassed {
-				return false
-			}
-		}
-		if q.previous.Receipt != nil && q.trees.EntryValid(ctx, q.previous, st) {
-			object, _, _, err := manifest.ParseDoc(q.previous.Application, manifest.ParseDocOptions{})
-			if err == nil && object != nil && ctx.Err() == nil {
-				a.addApplication(st, object, true)
-				q.receipt = q.previous.Receipt
-				accepted := q.previous
-				q.accepted = &accepted
-				slog.Debug("discovery: entry application reused", "producer", q.previous.Owner)
-			}
-		}
-		q.previous = kustomize.EntryEvidence{}
+	if q.previous.Receipt == nil {
+		return true
 	}
+	for _, id := range q.refresh {
+		status, _ := st.GetStatus(id)
+		if status.Outcome() == store.OutcomeFailed || status.Outcome() == store.OutcomeSkipped {
+			q.previous = kustomize.EntryEvidence{}
+			break
+		}
+		if status.Outcome() != store.OutcomePassed {
+			return false
+		}
+	}
+	if q.previous.Receipt != nil && q.trees.EntryValid(ctx, q.previous, st) {
+		object, _, _, err := manifest.ParseDoc(q.previous.Application, manifest.ParseDocOptions{})
+		if err == nil && object != nil && ctx.Err() == nil {
+			a.addApplication(st, object, true)
+			q.receipt = q.previous.Receipt
+			accepted := q.previous
+			q.accepted = &accepted
+			slog.Debug("discovery: entry application reused", "producer", q.previous.Owner)
+		}
+	}
+	q.previous = kustomize.EntryEvidence{}
 	return true
 }
 

@@ -383,6 +383,7 @@ func (w *inputWalk) filePath(ctx context.Context, incoming *walkScope, raw strin
 	}
 	body, err := fs.ReadFile(acquired, "content")
 	if err != nil {
+		//nolint:wrapcheck // Remote resource reads must preserve the original filesystem diagnostic.
 		return inputPath{}, err
 	}
 	file, err = w.mount(body)
@@ -401,18 +402,13 @@ func (w *inputWalk) resourcePath(
 	var fileErr error
 	var body []byte
 	if _, _, http := kustomizeinput.CutHTTPScheme(raw); http && role != kustomizeinput.Component {
-		file, fileErr = w.filePath(ctx, &loc, raw)
-		if fileErr == nil {
-			var err error
-			body, err = w.fs.ReadFile(file.file)
-			if err != nil {
-				return inputPath{}, err
-			}
-			if _, fileErr = kustomizeinput.Resources(body); fileErr == nil || !git {
-				return file, nil
-			}
-		} else if !git {
-			return inputPath{}, fileErr
+		var terminalErr error
+		file, body, fileErr, terminalErr = w.httpResource(ctx, &loc, raw, git)
+		if terminalErr != nil {
+			return inputPath{}, terminalErr
+		}
+		if fileErr == nil || !git {
+			return file, nil
 		}
 	}
 	if git {
@@ -443,6 +439,28 @@ func (w *inputWalk) resourcePath(
 	path, err := w.filePath(ctx, &loc, raw)
 	path.directory = err == nil && path.replacement == "" && w.fs.IsDir(path.file)
 	return path, err
+}
+
+// Overlay read errors must stop preflight; acquisition and parse errors may enter Git fallback.
+func (w *inputWalk) httpResource(
+	ctx context.Context,
+	loc *walkScope,
+	raw string,
+	git bool,
+) (inputPath, []byte, error, error) {
+	file, fileErr := w.filePath(ctx, loc, raw)
+	if fileErr != nil {
+		if !git {
+			return file, nil, fileErr, fileErr
+		}
+		return file, nil, fileErr, nil
+	}
+	body, err := w.fs.ReadFile(file.file)
+	if err != nil {
+		return file, body, nil, err
+	}
+	_, fileErr = kustomizeinput.Resources(body)
+	return file, body, fileErr, nil
 }
 
 func (w *inputWalk) pluginFile(

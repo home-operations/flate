@@ -144,6 +144,8 @@ Leaf packages (`tree`, `manifest`, `task`, `schedule` behind its `Dispatcher` se
 
 ## Code style
 
+Limits are 140 characters/line, 60 statements/function, 100 lines/function, nesting 4, cognitive-complexity 30, and 800 nonblank/noncomment lines/file, with long conditions using named predicates or owning-type methods, while fixed `new-from-rev` filtering can miss function-length, cognitive-complexity, and file-length findings outside changed lines during body-only edits.
+
 - **Go.** The version is `go.mod`'s directive, pinned to the lowest patch; `.mise/config.toml`
   pins the toolchain. Write idiomatic Go for it: `slices`, `maps`, `cmp.Or`, `strings.Cut`,
   `for range N`, `min`/`max`, generics constrained on `manifest.BaseManifest`, `errors.AsType`.

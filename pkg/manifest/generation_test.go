@@ -147,17 +147,75 @@ func TestReferences_InlineTemplateNoAllocations(t *testing.T) {
 
 func TestHelmRelease_HistoryTemplatePolicy(t *testing.T) {
 	t.Parallel()
-	hr := &HelmRelease{Name: "app", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{Chart: &helmv2.HelmChartTemplate{Kind: KindOCIRepository,
-		ObjectMeta: &helmv2.HelmChartTemplateObjectMeta{Labels: map[string]string{"label": "one"}, Annotations: map[string]string{"annotation": "one"}},
-		Spec: helmv2.HelmChartTemplateSpec{OCIRepositorySpec: sourcev1.OCIRepositorySpec{URL: "oci://registry.example/app", Reference: &sourcev1.OCIRepositoryRef{Tag: "one"},
-			Interval: &metav1.Duration{Duration: time.Minute}, Timeout: &metav1.Duration{Duration: time.Minute}, Ignore: new("one"),
-			SecretRef: &LocalObjectReference{Name: "auth"}, CertSecretRef: &LocalObjectReference{Name: "cert"}, ProxySecretRef: &LocalObjectReference{Name: "proxy"},
-			LayerSelector: &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy}, Verify: &sourcev1.OCIRepositoryVerification{Provider: "cosign", SecretRef: &LocalObjectReference{Name: "key"}}}}}}}
+	hr := &HelmRelease{Name: "app", Namespace: "apps", HelmReleaseSpec: helmv2.HelmReleaseSpec{
+		Chart: &helmv2.HelmChartTemplate{Kind: KindOCIRepository,
+			ObjectMeta: &helmv2.HelmChartTemplateObjectMeta{
+				Labels: map[string]string{"label": "one"}, Annotations: map[string]string{"annotation": "one"},
+			},
+			Spec: helmv2.HelmChartTemplateSpec{
+				Chart: "chart", Version: "one", ReconcileStrategy: "ChartVersion", ValuesFiles: []string{"first", "second"},
+				SourceRef: &helmv2.CrossNamespaceObjectReference{
+					APIVersion: "v1", Kind: KindHelmRepository, Namespace: "charts", Name: "repository",
+				},
+				OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+					URL: "oci://registry.example/app", Reference: &sourcev1.OCIRepositoryRef{Tag: "one"},
+					Interval: &metav1.Duration{Duration: time.Minute}, Timeout: &metav1.Duration{Duration: time.Minute},
+					Ignore: new("one"), SecretRef: &LocalObjectReference{Name: "auth"},
+					CertSecretRef: &LocalObjectReference{Name: "cert"}, ProxySecretRef: &LocalObjectReference{Name: "proxy"},
+					LayerSelector: &sourcev1.OCILayerSelector{Operation: sourcev1.OCILayerCopy},
+					Verify: &sourcev1.OCIRepositoryVerification{
+						Provider: "cosign", SecretRef: &LocalObjectReference{Name: "key"},
+						TrustedRootSecretRef: &LocalObjectReference{Name: "trusted"},
+						MatchOIDCIdentity: []sourcev1.OIDCIdentityMatch{
+							{Issuer: "issuer", Subject: "subject"}, {Issuer: "other", Subject: "other"},
+						},
+					},
+				},
+			},
+		},
+	}}
 	before := hr.HistoryPolicy()
 	for _, tc := range []struct {
 		name   string
 		change func(*helmv2.HelmChartTemplate)
 	}{
+		{"kind", func(t *helmv2.HelmChartTemplate) { t.Kind = KindHelmChart }},
+		{"chart", func(t *helmv2.HelmChartTemplate) { t.Spec.Chart = "other" }},
+		{"version", func(t *helmv2.HelmChartTemplate) { t.Spec.Version = "other" }},
+		{"strategy", func(t *helmv2.HelmChartTemplate) { t.Spec.ReconcileStrategy = "Revision" }},
+		{"missing values", func(t *helmv2.HelmChartTemplate) { t.Spec.IgnoreMissingValuesFiles = true }},
+		{"source API", func(t *helmv2.HelmChartTemplate) { t.Spec.SourceRef.APIVersion = "other" }},
+		{"source kind", func(t *helmv2.HelmChartTemplate) { t.Spec.SourceRef.Kind = "other" }},
+		{"source name", func(t *helmv2.HelmChartTemplate) { t.Spec.SourceRef.Name = "other" }},
+		{"source namespace", func(t *helmv2.HelmChartTemplate) { t.Spec.SourceRef.Namespace = "other" }},
+		{"source presence", func(t *helmv2.HelmChartTemplate) { t.Spec.SourceRef = nil }},
+		{"values file", func(t *helmv2.HelmChartTemplate) { t.Spec.ValuesFiles[0] = "other" }},
+		{"values order", func(t *helmv2.HelmChartTemplate) { slices.Reverse(t.Spec.ValuesFiles) }},
+		{"values length", func(t *helmv2.HelmChartTemplate) { t.Spec.ValuesFiles = t.Spec.ValuesFiles[:1] }},
+		{"metadata presence", func(t *helmv2.HelmChartTemplate) { t.ObjectMeta = nil }},
+		{"digest", func(t *helmv2.HelmChartTemplate) { t.Spec.Reference.Digest = "other" }},
+		{"semver", func(t *helmv2.HelmChartTemplate) { t.Spec.Reference.SemVer = "other" }},
+		{"semver filter", func(t *helmv2.HelmChartTemplate) { t.Spec.Reference.SemverFilter = "other" }},
+		{"reference presence", func(t *helmv2.HelmChartTemplate) { t.Spec.Reference = nil }},
+		{"media type", func(t *helmv2.HelmChartTemplate) { t.Spec.LayerSelector.MediaType = "other" }},
+		{"selector presence", func(t *helmv2.HelmChartTemplate) { t.Spec.LayerSelector = nil }},
+		{"auth presence", func(t *helmv2.HelmChartTemplate) { t.Spec.SecretRef = nil }},
+		{"cert presence", func(t *helmv2.HelmChartTemplate) { t.Spec.CertSecretRef = nil }},
+		{"proxy presence", func(t *helmv2.HelmChartTemplate) { t.Spec.ProxySecretRef = nil }},
+		{"interval presence", func(t *helmv2.HelmChartTemplate) { t.Spec.Interval = nil }},
+		{"timeout presence", func(t *helmv2.HelmChartTemplate) { t.Spec.Timeout = nil }},
+		{"ignore presence", func(t *helmv2.HelmChartTemplate) { t.Spec.Ignore = nil }},
+		{"verification presence", func(t *helmv2.HelmChartTemplate) { t.Spec.Verify = nil }},
+		{"verification provider", func(t *helmv2.HelmChartTemplate) { t.Spec.Verify.Provider = "other" }},
+		{"verification key presence", func(t *helmv2.HelmChartTemplate) { t.Spec.Verify.SecretRef = nil }},
+		{"trusted root", func(t *helmv2.HelmChartTemplate) { t.Spec.Verify.TrustedRootSecretRef.Name = "other" }},
+		{"trusted root presence", func(t *helmv2.HelmChartTemplate) { t.Spec.Verify.TrustedRootSecretRef = nil }},
+		{"OIDC issuer", func(t *helmv2.HelmChartTemplate) { t.Spec.Verify.MatchOIDCIdentity[0].Issuer = "other" }},
+		{"OIDC subject", func(t *helmv2.HelmChartTemplate) { t.Spec.Verify.MatchOIDCIdentity[0].Subject = "other" }},
+		{"OIDC order", func(t *helmv2.HelmChartTemplate) { slices.Reverse(t.Spec.Verify.MatchOIDCIdentity) }},
+		{"OIDC length", func(t *helmv2.HelmChartTemplate) {
+			t.Spec.Verify.MatchOIDCIdentity = t.Spec.Verify.MatchOIDCIdentity[:1]
+		}},
 		{"url", func(t *helmv2.HelmChartTemplate) { t.Spec.URL += "/other" }},
 		{"ref", func(t *helmv2.HelmChartTemplate) { t.Spec.Reference.Tag = "other" }},
 		{"selector", func(t *helmv2.HelmChartTemplate) { t.Spec.LayerSelector.Operation = sourcev1.OCILayerExtract }},
@@ -179,6 +237,10 @@ func TestHelmRelease_HistoryTemplatePolicy(t *testing.T) {
 			t.Parallel()
 			changed := hr.Clone()
 			tc.change(changed.HelmReleaseSpec.Chart)
+			originalTemplate, changedTemplate := hr.HelmReleaseSpec.Chart, changed.HelmReleaseSpec.Chart
+			if equalChartTemplate(originalTemplate, changedTemplate) || equalChartTemplate(changedTemplate, originalTemplate) {
+				t.Fatal("changed template compared equal")
+			}
 			if before.Equal(changed.HistoryPolicy()) || !before.Equal(hr.HistoryPolicy()) {
 				t.Fatal("template policy change reused history or mutated its predecessor")
 			}
@@ -202,5 +264,40 @@ func TestEqual_HelmReleaseProjectionCache(t *testing.T) {
 	clone.ChartRef.Name = "other"
 	if Equal(hr, clone) {
 		t.Fatal("changed chart declaration compared equal")
+	}
+}
+
+func TestEqualChartTemplate_OptionalValues(t *testing.T) {
+	t.Parallel()
+	if !equalChartTemplate(nil, nil) || equalChartTemplate(nil, &helmv2.HelmChartTemplate{}) {
+		t.Fatal("template presence differs")
+	}
+	if equalChartTemplate(&helmv2.HelmChartTemplate{}, nil) {
+		t.Fatal("template presence comparison is asymmetric")
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*helmv2.HelmChartTemplate)
+	}{
+		{"values", func(c *helmv2.HelmChartTemplate) { c.Spec.ValuesFiles = []string{} }},
+		{"labels", func(c *helmv2.HelmChartTemplate) { c.ObjectMeta.Labels = map[string]string{} }},
+		{"annotations", func(c *helmv2.HelmChartTemplate) { c.ObjectMeta.Annotations = map[string]string{} }},
+		{"OIDC identities", func(c *helmv2.HelmChartTemplate) { c.Spec.Verify.MatchOIDCIdentity = []sourcev1.OIDCIdentityMatch{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			original := &helmv2.HelmChartTemplate{ObjectMeta: &helmv2.HelmChartTemplateObjectMeta{},
+				Spec: helmv2.HelmChartTemplateSpec{OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+					Verify: &sourcev1.OCIRepositoryVerification{},
+				}}}
+			changed := original.DeepCopy()
+			tc.mutate(changed)
+			if !equalChartTemplate(original, changed) || !equalChartTemplate(changed, original) {
+				t.Fatal("nil and empty collection semantics differ")
+			}
+		})
+	}
+	if !equalChartTemplate(&helmv2.HelmChartTemplate{}, &helmv2.HelmChartTemplate{}) {
+		t.Fatal("absent optional fields differ")
 	}
 }

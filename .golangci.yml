@@ -6,15 +6,21 @@ run:
 linters:
   default: standard
   enable:
+    - containedctx
     - depguard
     - errorlint
     - forbidigo
+    - gocritic
+    - godox
     - gosec
+    - ireturn
     - intrange
     - misspell
     - modernize
+    - nakedret
     - nolintlint
     - revive
+    - sloglint
     - thelper
     - tparallel
     - unconvert
@@ -22,6 +28,22 @@ linters:
     - usestdlibvars
     - usetesting
   settings:
+    gocritic:
+      disable-all: true
+      enabled-checks:
+        - commentedOutCode
+    godox:
+      keywords: [TODO, FIXME, legacy]
+    ireturn:
+      allow:
+        - error
+        - '^github\.com/home-operations/flate/pkg/schedule\.Dispatcher$'
+        - '^github\.com/home-operations/flate/pkg/values\.Provider$'
+    nakedret:
+      max-func-lines: 0
+    sloglint:
+      static-msg: true
+      kv-only: true
     errorlint:
       errorf: true
       asserts: true
@@ -29,13 +51,22 @@ linters:
     # The dependency flow from AGENTS.md "Layout": a package may import only the layers below it.
     depguard:
       rules:
+        stdlib-tests:
+          files: ["$all"]
+          deny:
+            - pkg: github.com/stretchr/testify
+              desc: tests use the standard testing package
+            - pkg: github.com/onsi/ginkgo
+              desc: tests use the standard testing package
+            - pkg: github.com/onsi/gomega
+              desc: tests use the standard testing package
         tree-stdlib-only:
           list-mode: strict
-          files: ["**/pkg/tree/**"]
+          files: ["**/pkg/tree/**", "!$test"]
           allow: ["$gostd"]
         claimpath-stdlib-only:
           list-mode: strict
-          files: ["**/internal/claimpath/**"]
+          files: ["**/internal/claimpath/**", "!$test"]
           allow: ["$gostd"]
         leaf:
           files:
@@ -50,11 +81,12 @@ linters:
             - "**/internal/kustpath/**"
             - "**/internal/kustomizeinput/**"
             - "**/internal/resourcesetinput/**"
+            - "!$test"
           deny:
             - pkg: github.com/home-operations/flate/pkg
               desc: leaf packages import nothing from pkg/
         store:
-          files: ["**/pkg/store/**"]
+          files: ["**/pkg/store/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/pkg/loader
               desc: store sits below loader, values, depwait, change and source
@@ -85,7 +117,7 @@ linters:
         schedule:
           # A leaf behind its Dispatcher seam: stdlib, manifest and task only.
           list-mode: strict
-          files: ["**/pkg/schedule/**"]
+          files: ["**/pkg/schedule/**", "!$test"]
           allow:
             - $gostd
             - github.com/home-operations/flate/pkg/manifest
@@ -97,6 +129,7 @@ linters:
             - "**/pkg/depwait/**"
             - "**/pkg/change/**"
             - "**/pkg/source/**"
+            - "!$test"
           deny:
             - pkg: github.com/home-operations/flate/pkg/kustomize
               desc: below the render layer
@@ -116,7 +149,7 @@ linters:
               desc: below the orchestrator
         diffprep:
           list-mode: strict
-          files: ["**/internal/diffprep/**"]
+          files: ["**/internal/diffprep/**", "!$test"]
           allow:
             - $gostd
             - github.com/home-operations/flate/pkg/manifest
@@ -128,7 +161,7 @@ linters:
             - go.yaml.in/yaml/v3
             - sigs.k8s.io/yaml
         output:
-          files: ["**/internal/output/**"]
+          files: ["**/internal/output/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/pkg/diff
               desc: output consumes diffprep, never the SDK boundary
@@ -142,13 +175,14 @@ linters:
             - "**/pkg/baseline/**"
             - "**/pkg/resourceset/**"
             - "**/pkg/diff/**"
+            - "!$test"
           deny:
             - pkg: github.com/home-operations/flate/pkg/controllers
               desc: below the controllers
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
         controllers-base:
-          files: ["**/pkg/controllers/base/**"]
+          files: ["**/pkg/controllers/base/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/pkg/controllers/helmrelease
               desc: base is below the kind controllers
@@ -163,12 +197,12 @@ linters:
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: below the orchestrator
         controllers:
-          files: ["**/pkg/controllers/**"]
+          files: ["**/pkg/controllers/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/pkg/orchestrator
               desc: controllers are below the orchestrator
         no-upward-to-cli:
-          files: ["**/pkg/**"]
+          files: ["**/pkg/**", "!$test"]
           deny:
             - pkg: github.com/home-operations/flate/internal/cli
               desc: pkg/ never imports internal/cli
@@ -185,6 +219,17 @@ linters:
           msg: logging is log/slog only
     revive:
       rules:
+        - name: line-length-limit
+          arguments: [140]
+        - name: function-length
+          arguments: [60, 100]
+        - name: max-control-nesting
+          arguments: [4]
+        - name: cognitive-complexity
+          arguments: [30]
+        - name: file-length-limit
+          arguments: [{ max: 800, skipComments: true, skipBlankLines: true }]
+        - name: use-any
         - name: argument-limit
           arguments: [4]
         - name: blank-imports
@@ -202,6 +247,7 @@ linters:
         - name: package-comments
         - name: range
         - name: receiver-naming
+          arguments: [{ maxLength: 2 }]
         - name: redefines-builtin-id
         - name: superfluous-else
         - name: time-naming
@@ -216,10 +262,9 @@ linters:
       allow-unused: false
   exclusions:
     rules:
-      # Tests cross layers for fixtures and live in external test packages; usetesting governs their contexts.
+      # usetesting governs contexts in tests.
       - path: _test\.go
         linters:
-          - depguard
           - forbidigo
       # internal/cli owns context.Background and the process's stdout.
       - path: ^(internal/cli|cmd)/
@@ -250,3 +295,6 @@ linters:
       # canonical.
       - path: _test\.go
         text: "SA5011"
+
+issues:
+  new-from-rev: a99ff8b5072d67b45e4959817dd00fbf7b5c3873

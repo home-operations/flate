@@ -24,7 +24,14 @@ func equalChartTemplate(a, b *helmv2.HelmChartTemplate) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.Kind != b.Kind || a.Spec.Chart != b.Spec.Chart || a.Spec.Version != b.Spec.Version || a.Spec.ReconcileStrategy != b.Spec.ReconcileStrategy || a.Spec.IgnoreMissingValuesFiles != b.Spec.IgnoreMissingValuesFiles || !equalValue(a.Spec.SourceRef, b.Spec.SourceRef) || !slices.Equal(a.Spec.ValuesFiles, b.Spec.ValuesFiles) {
+	chartIdentity := a.Kind == b.Kind && a.Spec.Chart == b.Spec.Chart && a.Spec.Version == b.Spec.Version &&
+		a.Spec.ReconcileStrategy == b.Spec.ReconcileStrategy
+	if !chartIdentity {
+		return false
+	}
+	chartInputs := a.Spec.IgnoreMissingValuesFiles == b.Spec.IgnoreMissingValuesFiles &&
+		equalValue(a.Spec.SourceRef, b.Spec.SourceRef) && slices.Equal(a.Spec.ValuesFiles, b.Spec.ValuesFiles)
+	if !chartInputs {
 		return false
 	}
 	if a.ObjectMeta == nil || b.ObjectMeta == nil {
@@ -35,13 +42,34 @@ func equalChartTemplate(a, b *helmv2.HelmChartTemplate) bool {
 		return false
 	}
 	x, y := &a.Spec.OCIRepositorySpec, &b.Spec.OCIRepositorySpec
-	if x.URL != y.URL || x.Provider != y.Provider || x.ServiceAccountName != y.ServiceAccountName || x.Insecure != y.Insecure || x.Suspend != y.Suspend || !equalValue(x.Reference, y.Reference) || !equalValue(x.LayerSelector, y.LayerSelector) || !equalValue(x.SecretRef, y.SecretRef) || !equalValue(x.CertSecretRef, y.CertSecretRef) || !equalValue(x.ProxySecretRef, y.ProxySecretRef) || !equalValue(x.Interval, y.Interval) || !equalValue(x.Timeout, y.Timeout) || !equalValue(x.Ignore, y.Ignore) {
+	ociIdentity := x.URL == y.URL && x.Provider == y.Provider && x.ServiceAccountName == y.ServiceAccountName
+	if !ociIdentity {
+		return false
+	}
+	ociPolicy := x.Insecure == y.Insecure && x.Suspend == y.Suspend
+	if !ociPolicy {
+		return false
+	}
+	references := equalValue(x.Reference, y.Reference) && equalValue(x.LayerSelector, y.LayerSelector)
+	if !references {
+		return false
+	}
+	credentials := equalValue(x.SecretRef, y.SecretRef) && equalValue(x.CertSecretRef, y.CertSecretRef) &&
+		equalValue(x.ProxySecretRef, y.ProxySecretRef)
+	if !credentials {
+		return false
+	}
+	timing := equalValue(x.Interval, y.Interval) && equalValue(x.Timeout, y.Timeout) && equalValue(x.Ignore, y.Ignore)
+	if !timing {
 		return false
 	}
 	if x.Verify == nil || y.Verify == nil {
 		return x.Verify == y.Verify
 	}
-	return x.Verify.Provider == y.Verify.Provider && equalValue(x.Verify.SecretRef, y.Verify.SecretRef) && equalValue(x.Verify.TrustedRootSecretRef, y.Verify.TrustedRootSecretRef) && slices.Equal(x.Verify.MatchOIDCIdentity, y.Verify.MatchOIDCIdentity)
+	verification := x.Verify.Provider == y.Verify.Provider && equalValue(x.Verify.SecretRef, y.Verify.SecretRef) &&
+		equalValue(x.Verify.TrustedRootSecretRef, y.Verify.TrustedRootSecretRef) &&
+		slices.Equal(x.Verify.MatchOIDCIdentity, y.Verify.MatchOIDCIdentity)
+	return verification
 }
 
 func equalValue[T comparable](a, b *T) bool {

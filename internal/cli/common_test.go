@@ -298,7 +298,7 @@ func TestResolveBaseline_DebugRevision(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(output.Bytes(), &record))
 	delete(record, "time")
 	assert.Diff(t, record, map[string]any{
-		"level": "DEBUG", "msg": "baseline", "source": "explicit --base=HEAD",
+		"level": "DEBUG", "msg": "cli: baseline", "source": "explicit --base=HEAD",
 		"rev": pin.String()[:7], "path_orig": c.pathOrig,
 	})
 }

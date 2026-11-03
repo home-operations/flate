@@ -170,7 +170,7 @@ func resolveBaseline(ctx context.Context, c *commonFlags, autoFallback bool) err
 	c.pathOrigSelfURLs = res.SelfURLs
 	c.selfURLs = res.SelfURLs
 	rev := res.BaseInput.Revision
-	slog.Debug("baseline", "source", res.Source.Metadata["baseline-selection"], "rev", rev[:min(len(rev), 7)], "path_orig", c.pathOrig)
+	slog.Debug("cli: baseline", "source", res.Source.Metadata["baseline-selection"], "rev", rev[:min(len(rev), 7)], "path_orig", c.pathOrig)
 	return nil
 }
 

@@ -60,6 +60,23 @@ type DiscoveryRecord struct {
 	ContentRoots  map[NamedResource][]string `json:"-"` // Source-qualified render locations; no authored-file authority.
 }
 
+// Equal compares the record facts retained by accepted renders.
+func (r DiscoveryRecord) Equal(other DiscoveryRecord) bool {
+	if r.Application != other.Application || r.Authored != other.Authored || r.Path != other.Path || r.File != other.File {
+		return false
+	}
+	if r.Parent != other.Parent || r.Builder != other.Builder || r.Pinned != other.Pinned || r.StaticOutput != other.StaticOutput {
+		return false
+	}
+	if (r.Inputs == nil) != (other.Inputs == nil) || !slices.Equal(r.Inputs, other.Inputs) {
+		return false
+	}
+	if (r.Refs == nil) != (other.Refs == nil) || !slices.Equal(r.Refs, other.Refs) {
+		return false
+	}
+	return (r.Productions == nil) == (other.Productions == nil) && slices.Equal(r.Productions, other.Productions)
+}
+
 // FileReader identifies a consumer and the source supplying its file input.
 type FileReader struct {
 	Reader, Source, Declaration NamedResource

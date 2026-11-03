@@ -427,6 +427,8 @@ type RenderAcceptance struct {
 }
 
 // RecordRender persists accepted output and optional entry applier evidence.
+//
+//nolint:gocritic // Preserve the public value API and its accepted-inventory snapshot.
 func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptance) error {
 	owner, receipt, records := acceptance.Owner, acceptance.Receipt, acceptance.Records
 	if receipt == nil {
@@ -462,53 +464,14 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 	if records != nil {
 		sources = acceptance.Sources
 	}
-	if sources != nil {
-		sources = slices.Clone(sources)
-		source := acceptance.Source
-		for _, file := range frame.header.Reads.Files {
-			sources = append(sources, manifest.SourceEvidence{Source: source, Path: file.Path})
-		}
-		for _, node := range frame.header.Reads.Nodes {
-			if node.Kind == kindFile {
-				sources = append(sources, manifest.SourceEvidence{Source: source, Path: node.Path})
-			}
-		}
-	}
+	sources = collectRenderSources(&frame, acceptance.Source, sources)
 	if !c.owner.CanPersistRenders() {
 		//nolint:wrapcheck // Cancellation must preserve the caller-visible sentinel identity.
 		return ctx.Err()
 	}
-	var err error
-	if frame.header.Binding == "" {
-		frame.header.Binding = manifest.Fingerprint(frame.binding)
-	}
-	if frame.encoded == nil && frame.raw == "" {
-		frame.encoded, err = encodeFrame(&frame.header, frame.output)
-		if err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode render frame: %w", err), "")
-		}
-	}
-	if frame.raw == "" {
-		frame.raw = manifest.Fingerprint(
-			frame.encoded[12 : framePrefixSize+int(binary.BigEndian.Uint32(frame.encoded[8:framePrefixSize]))],
-		)
-	}
-	var accepted acceptedRender
-	var data []byte
-	content := frame.raw
-	if records != nil {
-		accepted, err = prepareAccepted(owner, &frame, manifest.Fingerprint(finalContent), records)
-		if err != nil {
-			return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
-		}
-		content = frame.acceptedKey
-		if frame.accepted == nil || content == "" || !frame.accepted.equal(&accepted) {
-			data, err = json.Marshal(accepted)
-			if err != nil {
-				return manifest.NewError(manifest.ErrFlux, fmt.Errorf("encode accepted kustomize render: %w", err), "")
-			}
-			content = manifest.Fingerprint(data)
-		}
+	publication, content, err := prepareRenderPublication(&frame, owner, finalContent, records)
+	if err != nil {
+		return err
 	}
 	return sourcecache.RecordInventory(
 		ctx,
@@ -518,9 +481,82 @@ func (c *TreeCache) RecordRender(ctx context.Context, acceptance RenderAcceptanc
 			Lookup:     frame.lookup,
 			Acceptance: content,
 			History:    sourcecache.RenderHistory{Owner: owner, Sources: sources},
-			Content:    renderPublication{frame: frame, accepted: accepted, data: data},
+			Content:    publication,
 		},
 	)
+}
+
+func collectRenderSources(
+	f *renderFrame,
+	source manifest.SourceIdentity,
+	sources []manifest.SourceEvidence,
+) []manifest.SourceEvidence {
+	if sources == nil {
+		return nil
+	}
+	sources = slices.Clone(sources)
+	for _, file := range f.header.Reads.Files {
+		sources = append(sources, manifest.SourceEvidence{Source: source, Path: file.Path})
+	}
+	for _, node := range f.header.Reads.Nodes {
+		if node.Kind == kindFile {
+			sources = append(sources, manifest.SourceEvidence{Source: source, Path: node.Path})
+		}
+	}
+	return sources
+}
+
+func prepareRenderPublication(
+	f *renderFrame,
+	owner manifest.NamedResource,
+	finalContent renderContent,
+	records iter.Seq2[manifest.NamedResource, manifest.DiscoveryRecord],
+) (renderPublication, string, error) {
+	var err error
+	if f.header.Binding == "" {
+		f.header.Binding = manifest.Fingerprint(f.binding)
+	}
+	if f.encoded == nil && f.raw == "" {
+		f.encoded, err = encodeFrame(&f.header, f.output)
+		if err != nil {
+			return renderPublication{}, "", manifest.NewError(
+				manifest.ErrFlux,
+				fmt.Errorf("encode render frame: %w", err),
+				"",
+			)
+		}
+	}
+	if f.raw == "" {
+		f.raw = manifest.Fingerprint(
+			f.encoded[12 : framePrefixSize+int(binary.BigEndian.Uint32(f.encoded[8:framePrefixSize]))],
+		)
+	}
+	var accepted acceptedRender
+	var data []byte
+	content := f.raw
+	if records != nil {
+		accepted, err = prepareAccepted(owner, f, manifest.Fingerprint(finalContent), records)
+		if err != nil {
+			return renderPublication{}, "", manifest.NewError(
+				manifest.ErrFlux,
+				fmt.Errorf("encode accepted kustomize render: %w", err),
+				"",
+			)
+		}
+		content = f.acceptedKey
+		if f.accepted == nil || content == "" || !f.accepted.equal(&accepted) {
+			data, err = json.Marshal(accepted)
+			if err != nil {
+				return renderPublication{}, "", manifest.NewError(
+					manifest.ErrFlux,
+					fmt.Errorf("encode accepted kustomize render: %w", err),
+					"",
+				)
+			}
+			content = manifest.Fingerprint(data)
+		}
+	}
+	return renderPublication{frame: *f, accepted: accepted, data: data}, content, nil
 }
 
 const framePrefixSize = 12

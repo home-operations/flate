@@ -28,7 +28,7 @@ func BenchmarkAddObject_Cold(b *testing.B) {
 }
 
 // BenchmarkAddObject_Warm measures AddObject for an existing id
-// with an identical payload — the reflect.DeepEqual short-circuit
+// with an identical payload — the [reflect.DeepEqual] short-circuit
 // path. This is the dominant cost when a parent KS re-renders and
 // re-emits unchanged children.
 func BenchmarkAddObject_Warm(b *testing.B) {
@@ -66,7 +66,7 @@ func BenchmarkListObjects_Sorted(b *testing.B) {
 
 // BenchmarkSetArtifact_DeepEqual measures SetArtifact against a
 // previous identical artifact — the no-op dedup path that decides
-// the write is redundant. Pre-Item-7 this was reflect.DeepEqual
+// the write is redundant. Pre-Item-7 this was [reflect.DeepEqual]
 // across the full structure; Item 7 adds a pointer-identity
 // short-circuit ahead of DeepEqual so the SAME-pointer re-set (the
 // shape this bench drives — fetchers cache their own SourceArtifact

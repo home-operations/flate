@@ -291,16 +291,16 @@ func TestStore_ListenerPanicRecoveredDuringReplay(t *testing.T) {
 func TestStore_Concurrency(t *testing.T) {
 	t.Parallel()
 	s := New()
-	const N = 200
+	const operations = 200
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		for range N {
+		for range operations {
 			s.AddObject(newCM("a", "ns"))
 		}
 	})
 	wg.Go(func() {
-		for range N {
+		for range operations {
 			_ = s.ListObjects("", "ConfigMap")
 		}
 	})

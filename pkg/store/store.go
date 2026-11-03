@@ -73,6 +73,8 @@ func (sh *shard) requireCapacityLocked(heads ...authority) {
 }
 
 type objectCell struct {
+	authority
+
 	static   manifest.BaseManifest
 	document map[string]any
 	// Direct writes use this revision; emitted values use the immutable producer record.
@@ -83,7 +85,6 @@ type objectCell struct {
 	// Auxiliary follows the emitted contender; current static authority still wins.
 	auxiliary bool
 	preflight string
-	authority
 }
 
 func (c *objectCell) bound() bool {
@@ -91,8 +92,9 @@ func (c *objectCell) bound() bool {
 }
 
 type objectBucket struct {
-	names map[nameID]struct{}
 	authority
+
+	names map[nameID]struct{}
 }
 
 type shard struct {

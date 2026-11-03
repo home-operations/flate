@@ -763,9 +763,9 @@ func testRequireRetainsPredicatesCase2(t *testing.T, testCaseInput *bool,
 		reads.Require(ref)
 	}
 	reads.RequireMaterializer(obj.Named())
-	want := make([]Gate, len(refs))
-	for i, ref := range refs {
-		want[i].DependencyRef = ref
+	want := make([]Gate, 0, len(refs)+1)
+	for _, ref := range refs {
+		want = append(want, Gate{DependencyRef: ref})
 	}
 	materializer := Gate{NamedResource: obj.Named(), Materializer: true}
 	if *testCaseInput {

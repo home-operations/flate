@@ -508,6 +508,8 @@ func (r *ReadSet) ReferenceFacts(id manifest.NamedResource, index *manifest.Disc
 }
 
 // Materializer selects and captures the runnable declaration supplying a production.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) Materializer(id manifest.NamedResource, production manifest.Production) manifest.NamedResource {
 	owner := production.Owner
 	if declaration := production.Declaration; declaration != (manifest.NamedResource{}) &&
@@ -610,6 +612,8 @@ func (r *ReadSet) Inputs() iter.Seq[manifest.NamedResource] {
 }
 
 // Require retains each distinct readiness gate in the execution footprint.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) Require(ref manifest.DependencyRef) {
 	r.require(ref, false)
 }
@@ -705,6 +709,8 @@ func (r *ReadSet) Required() iter.Seq[manifest.NamedResource] {
 func (r *ReadSet) RequireData(id manifest.NamedResource) { r.input(id).required = true }
 
 // CarryWarnings reuses advisories after the caller verifies an equal consumed projection.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) CarryWarnings(previous RenderedOutput) {
 	{
 		warningValues := previous.warnings
@@ -716,6 +722,8 @@ func (r *ReadSet) CarryWarnings(previous RenderedOutput) {
 }
 
 // AddWarning retains a render advisory in this execution's accepted bundle.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (r *ReadSet) AddWarning(warning manifest.Warning) {
 	warning.Detail = slices.Clone(warning.Detail)
 	warning.Related = slices.Clone(warning.Related)

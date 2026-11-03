@@ -9,6 +9,8 @@ import (
 )
 
 // AddWarning retains each complete direct warning payload once, ignoring incoming Count.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (s *Store) AddWarning(w manifest.Warning) {
 	detail := ""
 	if len(w.Detail) > 0 {
@@ -18,6 +20,7 @@ func (s *Store) AddWarning(w manifest.Warning) {
 	}
 	related := ""
 	if len(w.Related) > 0 {
+		//nolint:errchkjson // Related contains only string resource identities with no custom JSON methods.
 		encoded, _ := json.Marshal(w.Related)
 		related = string(encoded)
 	} else {

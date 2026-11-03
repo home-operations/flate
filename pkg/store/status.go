@@ -73,9 +73,9 @@ func (i StatusInfo) Outcome() Outcome {
 		default:
 			return OutcomePassed
 		}
-	default:
-		return OutcomePending
+	case StatusPending:
 	}
+	return OutcomePending
 }
 
 // IsUnavailable reports whether a producer's output cannot be compared.
@@ -83,9 +83,9 @@ func (i StatusInfo) IsUnavailable() bool {
 	switch i.Outcome() {
 	case OutcomeFailed, OutcomeBlocked, OutcomeSkipped, OutcomeSuspended:
 		return true
-	default:
-		return false
+	case OutcomePending, OutcomePassed, OutcomeUnchanged:
 	}
+	return false
 }
 
 // IsDependencyFailure reports whether the Failed status came from failed dependencies.
@@ -106,6 +106,8 @@ func (i StatusInfo) BlockedBy() []manifest.NamedResource {
 }
 
 // DependencyReason returns detached failure context for nested dependency propagation.
+//
+//nolint:gocritic // The SDK preserves value method sets and immutable value snapshots.
 func (i StatusInfo) DependencyReason(subject manifest.DiagnosticIdentity) manifest.DiagnosticReason {
 	reason := manifest.DiagnosticReason{Subject: subject, Message: i.String()}
 	if i.failure != nil {
@@ -214,6 +216,8 @@ func readyCondition(status Status, reason StatusReason, message string) Conditio
 	c := Condition{
 		Type:    ConditionReady,
 		Message: message,
+		Status:  metav1.ConditionUnknown,
+		Reason:  ReasonReconciling,
 	}
 	switch status {
 	case StatusReady:
@@ -222,9 +226,7 @@ func readyCondition(status Status, reason StatusReason, message string) Conditio
 	case StatusFailed:
 		c.Status = metav1.ConditionFalse
 		c.Reason = ReasonFailed
-	default: // StatusPending or unknown
-		c.Status = metav1.ConditionUnknown
-		c.Reason = ReasonReconciling
+	case StatusPending:
 	}
 	if reason != "" {
 		c.Reason = string(reason)
@@ -257,14 +259,14 @@ func (r conditionRecord) statusInfo() (StatusInfo, bool) {
 				applyingObjects: r.applyingObjects,
 				failure:         r.failure,
 			}, true
-		default:
-			return StatusInfo{
-				Status:          StatusPending,
-				Reason:          StatusReason(c.Reason),
-				Message:         c.Message,
-				applyingObjects: r.applyingObjects,
-			}, true
+		case metav1.ConditionUnknown:
 		}
+		return StatusInfo{
+			Status:          StatusPending,
+			Reason:          StatusReason(c.Reason),
+			Message:         c.Message,
+			applyingObjects: r.applyingObjects,
+		}, true
 	}
 	return StatusInfo{}, false
 }
@@ -309,6 +311,8 @@ func (s *Store) UpdateFailure(id manifest.NamedResource, err error) {
 // callers may legitimately establish initial state before AddObject
 // lands (e.g. tests). The FailedResources rollup filters phantoms
 // by intersecting against the object map at read time.
+//
+//nolint:gocritic // The SDK preserves this value input and its snapshot boundary.
 func (s *Store) SetCondition(id manifest.NamedResource, cond Condition) {
 	s.setCondition(id, cond, 0, nil)
 }

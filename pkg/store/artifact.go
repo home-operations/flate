@@ -130,11 +130,12 @@ func (a *SourceArtifact) Input(read ArtifactRead) ArtifactInput {
 }
 
 type artifactRecord struct {
-	value            *SourceArtifact
-	publication      uint64
-	effective        Artifact
-	inventoryVisible bool
 	authority
+
+	value                    *SourceArtifact
+	publication              uint64
+	effective                Artifact
+	inventoryVisible         bool
 	revisionHead, originHead authority
 }
 

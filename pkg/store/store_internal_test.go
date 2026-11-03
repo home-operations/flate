@@ -353,7 +353,7 @@ func TestStore_AddObjectIdempotent(t *testing.T) {
 
 // TestStore_AddObject_CloneTriggersUpdate guards the immutability
 // contract: callers that need to "mutate" a stored object must clone
-// it, mutate the clone, and re-AddObject. The store's reflect.DeepEqual
+// it, mutate the clone, and re-AddObject. The store's [reflect.DeepEqual]
 // dedup recognizes the clone as different and fires EventObjectAdded.
 func TestStore_AddObject_CloneTriggersUpdate(t *testing.T) {
 	t.Parallel()

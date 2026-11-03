@@ -37,7 +37,9 @@ func TestStore_ApplyingStatus(t *testing.T) {
 	assert.Equal(t, changed.Conditions[0].Message, "applying 1234 objects")
 	encoded, err := json.Marshal(current)
 	assert.NoError(t, err)
-	var decoded struct{ Message string }
+	var decoded struct {
+		Message string `json:"Message"`
+	}
 	assert.NoError(t, json.Unmarshal(encoded, &decoded))
 	assert.Equal(t, decoded.Message, "applying 1234 objects")
 	healthy := readyCondition(StatusReady, "", "healthy")

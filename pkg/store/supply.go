@@ -23,7 +23,7 @@ type Supplied struct {
 // NewSupplied validates and snapshots inputs with whole-object last-input precedence.
 func NewSupplied(inputs []SuppliedObject) (*Supplied, error) {
 	if len(inputs) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // No supplied inputs means successful absence of a snapshot.
 	}
 	s := &Supplied{objects: make(map[manifest.NamedResource]SuppliedObject, len(inputs))}
 	for i, input := range inputs {

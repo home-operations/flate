@@ -175,10 +175,10 @@ func TestUpdateFailure_DeleteAndLateWrite(t *testing.T) {
 	}
 }
 
-type fixedFailureMessage struct{ cause error }
+type fixedFailureError struct{ cause error }
 
-func (fixedFailureMessage) Error() string   { return "dependencies failed" }
-func (e fixedFailureMessage) Unwrap() error { return e.cause }
+func (fixedFailureError) Error() string   { return "dependencies failed" }
+func (e fixedFailureError) Unwrap() error { return e.cause }
 
 func TestUpdateFailure_StatusEvents(t *testing.T) {
 	t.Parallel()
@@ -195,7 +195,7 @@ func TestUpdateFailure_StatusEvents(t *testing.T) {
 		}
 	}, false)
 	write := func(deps ...manifest.NamedResource) {
-		st.UpdateFailure(id, fixedFailureMessage{&manifest.DependencyFailedError{Parent: id, Failed: deps}})
+		st.UpdateFailure(id, fixedFailureError{&manifest.DependencyFailedError{Parent: id, Failed: deps}})
 	}
 	write(b, a)
 	write(a, b)

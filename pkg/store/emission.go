@@ -539,6 +539,7 @@ func (s *Store) referenceData(
 		if len(candidate.DeclaredKeys) != 0 || candidate.OfflineData != nil {
 			if object, ok := candidate.OfflineData.(manifest.BaseManifest); ok &&
 				object.Named().Namespace != id.Namespace {
+				//nolint:errcheck // Namespace projection retains the source Data implementation and its assertion contract.
 				candidate.OfflineData = object.WithNamespace(id.Namespace).(manifest.Data)
 			}
 			out = append(out, candidate)
@@ -1081,6 +1082,7 @@ func (s *Store) RecordEmitted(
 			result = s.commitReplacement(id, prev, proposal, generation)
 		}
 		switch result {
+		case publicationAccepted:
 		case publicationRetry:
 			continue
 		case publicationRejected:
